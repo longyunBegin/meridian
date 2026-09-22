@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>脉络 · 最终产品形态 Demo</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --accent:#0071e3;--accent-soft:rgba(0,113,227,.12);
+  --red:#ff3b30;--orange:#ff9500;--green:#34c759;--purple:#af52de;--teal:#00b8b8;
+  --bg:#f5f5f7;--surface:rgba(255,255,255,.72);--surface-solid:#fff;
+  --sidebar:rgba(240,240,243,.62);--hover:rgba(0,0,0,.035);--active:rgba(0,0,0,.06);
+  --hairline:rgba(0,0,0,.09);--hairline-soft:rgba(0,0,0,.05);
+  --text:#1d1d1f;--text-2:rgba(29,31,33,.62);--text-3:rgba(29,31,33,.36);
+  --r-sm:7px;--r:10px;--r-lg:14px;--ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:var(--font);font-size:13px;line-height:1.45;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+input,textarea,select{font:inherit;color:inherit}
+.icon{flex:none;display:block}
+
+/* ---------- 顶栏 ---------- */
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:20px;height:52px;padding:0 22px;
+  background:rgba(245,245,247,.78);backdrop-filter:saturate(180%) blur(24px);box-shadow:0 .5px 0 var(--hairline)}
+.brand{display:flex;align-items:baseline;gap:7px;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.brand small{font-size:10px;font-weight:500;color:var(--text-3);letter-spacing:.04em}
+.tabs{display:flex;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--hover)}
+.tabs button{height:26px;padding:0 11px;border-radius:5px;font-size:12px;font-weight:500;color:var(--text-2);transition:.12s var(--ease)}
+.tabs button:hover{color:var(--text)}
+.tabs button[aria-selected=true]{background:var(--surface-solid);color:var(--text);box-shadow:0 .5px 2px rgba(0,0,0,.12)}
+.top .sp{flex:1}
+.hint{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)}
+.kbd{display:inline-grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border-radius:4px;
+  background:var(--hover);box-shadow:inset 0 0 0 .5px var(--hairline);font-size:10px;color:var(--text-3)}
+
+/* ---------- 布局 ---------- */
+.screen{display:none;height:calc(100vh - 52px)}
+.screen[data-on=true]{display:grid}
+.s-lattice{grid-template-columns:206px minmax(280px,1fr) 340px}
+.s-page{grid-template-columns:206px 1fr}
+.s-hud{grid-template-columns:1fr;place-content:start center;padding:44px 20px 60px;overflow-y:auto}
+
+aside.side{display:flex;flex-direction:column;padding:16px 0;background:var(--sidebar);backdrop-filter:saturate(180%) blur(24px);box-shadow:.5px 0 0 var(--hairline);overflow-y:auto}
+.side h6{margin:0 0 7px;padding:0 18px;font-size:10px;font-weight:600;color:var(--text-3);letter-spacing:.04em}
+.side h6:not(:first-child){margin-top:20px}
+.s-item{display:flex;align-items:center;gap:8px;height:29px;padding:0 9px;margin:0 9px;border-radius:var(--r-sm);
+  font-size:13px;color:var(--text-2);width:calc(100% - 18px);text-align:left}
+.s-item:hover{background:var(--hover);color:var(--text)}
+.s-item[aria-selected=true]{background:var(--active);color:var(--text);font-weight:600}
+.s-item .n{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.s-item .sw{width:7px;height:7px;border-radius:2px;flex:none}
+
+/* ---------- 树 ---------- */
+.mid{display:flex;flex-direction:column;overflow:hidden}
+.mh{display:flex;align-items:center;gap:9px;height:50px;padding:0 18px;flex:none;box-shadow:0 .5px 0 var(--hairline)}
+.mh h1{margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mh .sp{flex:1}
+.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:11px;font-size:11px;color:var(--text-2);background:var(--hover)}
+.tree{flex:1;overflow:auto;padding:8px 10px 30px}
+.row{display:flex;align-items:center;gap:6px;height:28px;padding-right:8px;border-radius:6px;width:100%;text-align:left}
+.row:hover{background:var(--hover)}
+.row[aria-selected=true]{background:var(--active)}
+.tw{width:15px;height:15px;display:grid;place-items:center;color:var(--text-3);flex:none;border-radius:3px}
+.tw:hover{background:var(--active);color:var(--text)}
+.tw svg{transition:transform .14s var(--ease)}
+.tw[data-o=true] svg{transform:rotate(90deg)}
+.rt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.row.br .rt{font-weight:550}
+.row.lm .rt{color:var(--text-2)}
+.row[aria-selected=true] .rt{color:var(--text)}
+.rm{display:flex;align-items:center;gap:6px;flex:none}
+.bar{width:24px;height:3px;border-radius:2px;background:var(--hairline);overflow:hidden;flex:none}
+.bar i{display:block;height:100%;border-radius:2px}
+.dot{width:5px;height:5px;border-radius:50%;flex:none}
+.num{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;width:20px;text-align:right}
+.badge{display:inline-flex;align-items:center;height:15px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;flex:none}
+.b-axiom{color:var(--purple);background:rgba(175,82,222,.13)}
+.b-hyp{color:var(--accent);background:var(--accent-soft)}
+.b-obs{color:var(--green);background:rgba(52,199,89,.15)}
+.src{display:inline-flex;align-items:center;height:15px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;
+  color:var(--teal);background:rgba(0,184,184,.12);flex:none;font-variant-numeric:tabular-nums}
+.cf{display:inline-flex;align-items:center;height:15px;padding:0 5px;border-radius:4px;font-size:10px;font-weight:600;
+  color:var(--red);background:rgba(255,59,48,.11);flex:none}
+.flag{color:var(--orange);display:flex}
+
+/* ---------- 检视 ---------- */
+.insp{overflow-y:auto;background:var(--surface);backdrop-filter:saturate(180%) blur(24px);box-shadow:-.5px 0 0 var(--hairline)}
+.ih{padding:34px 20px 14px}
+.ih h2{margin:0 0 5px;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.01em}
+.ih .sub{font-size:11px;color:var(--text-3);font-family:var(--mono)}
+.sec{padding:14px 20px;box-shadow:0 .5px 0 var(--hairline-soft)}
+.sec:last-child{box-shadow:none}
+.sh{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:600;color:var(--text-3);
+  letter-spacing:.04em;margin-bottom:10px}
+.sh b{font-weight:600;color:var(--text-2);font-variant-numeric:tabular-nums}
+ul.q{margin:0;padding:0 0 0 14px;list-style:none;display:flex;flex-direction:column;gap:7px}
+ul.q li{position:relative;font-size:12px;color:var(--text-2);line-height:1.55}
+ul.q li::before{content:"";position:absolute;left:-14px;top:8px;width:3px;height:3px;border-radius:50%;background:var(--text-3)}
+.ind{display:flex;align-items:center;gap:8px;min-height:22px;font-size:12px;color:var(--text-2)}
+.ind .c{margin-left:auto;font-size:10px;color:var(--text-3);flex:none}
+.warn{margin-top:14px;padding:9px 10px;border-radius:var(--r-sm);background:rgba(255,149,0,.09)}
+.warn .l{font-size:10px;font-weight:600;color:var(--orange);margin-bottom:4px;letter-spacing:.04em}
+.warn .t{font-size:11.5px;color:var(--text-2);line-height:1.55}
+.seg{display:flex;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--hover)}
+.seg button{flex:1;height:22px;border-radius:5px;font-size:11px;font-weight:500;color:var(--text-2)}
+.seg button[aria-selected=true]{background:var(--surface-solid);color:var(--text);box-shadow:0 .5px 2px rgba(0,0,0,.12)}
+.hist{display:flex;align-items:flex-end;gap:3px;height:32px;margin-top:10px}
+.hist i{flex:1;min-width:3px;border-radius:1.5px;background:var(--hairline)}
+.hist i[data-p=true]{background:var(--orange);opacity:.55}
+
+/* ---------- 页面 ---------- */
+.page{overflow-y:auto;padding:0 30px 50px}
+.ph{padding:30px 0 18px}
+.ph h1{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.02em}
+.ph p{margin:0;font-size:12px;color:var(--text-2)}
+.card{background:var(--surface-solid);border-radius:var(--r);box-shadow:0 0 0 .5px var(--hairline-soft);overflow:hidden}
+.card+.card{margin-top:12px}
+.ch{display:flex;align-items:center;gap:8px;padding:11px 14px;font-size:12px;font-weight:600;color:var(--text-2);box-shadow:0 .5px 0 var(--hairline-soft)}
+.ch .sp{flex:1}
+.ch em{font-style:normal;font-weight:400;color:var(--text-3)}
+.cb{padding:4px 14px 12px}
+.q2{display:flex;align-items:flex-start;gap:10px;padding:12px 0;box-shadow:0 .5px 0 var(--hairline-soft)}
+.q2:last-child{box-shadow:none}
+.q2 .b{flex:1;min-width:0}
+.q2 .t{font-size:13px;margin-bottom:4px}
+.q2 .m{font-size:11px;color:var(--text-3);display:flex;gap:8px;flex-wrap:wrap}
+.q2 .a{display:flex;gap:4px;flex:none}
+.btn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:var(--r-sm);font-size:12px;font-weight:500;color:var(--text-2);white-space:nowrap}
+.btn:hover{background:var(--hover);color:var(--text)}
+.btn.s{height:24px}
+.btn-hit{background:rgba(52,199,89,.14);color:var(--green)}
+.btn-hit:hover{background:rgba(52,199,89,.22);color:var(--green)}
+.btn-miss{background:rgba(255,59,48,.12);color:var(--red)}
+.btn-miss:hover{background:rgba(255,59,48,.2);color:var(--red)}
+.btn-pri{background:var(--accent);color:#fff}
+.btn-pri:hover{background:#0077ed;color:#fff}
+.ev{display:flex;align-items:center;gap:8px;padding:9px 0;font-size:12px;box-shadow:0 .5px 0 var(--hairline-soft)}
+.ev:last-child{box-shadow:none}
+.ev .s{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.ev .amt{font-family:var(--mono);font-size:11px}
+.up{color:var(--green)}.down{color:var(--red)}
+.calib{display:flex;align-items:flex-end;gap:10px;height:96px;padding:8px 0 0}
+.calib>div{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+.calib i{width:100%;border-radius:3px 3px 1px 1px;background:var(--accent);opacity:.85;min-height:2px}
+.calib i.bad{background:var(--orange)}
+.calib span{font-size:10px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.calib em{font-size:10px;font-style:normal;color:var(--text-2);font-variant-numeric:tabular-nums}
+
+/* ---------- HUD ---------- */
+.hudwrap{width:660px}
+.hud{background:rgba(245,245,247,.86);backdrop-filter:saturate(180%) blur(30px);border-radius:var(--r-lg);
+  box-shadow:inset 0 0 0 .5px var(--hairline),0 24px 70px rgba(0,0,0,.22);overflow:hidden}
+.hud .in{padding:14px 14px 10px}
+.hud textarea{width:100%;min-height:56px;border:0;outline:0;resize:none;background:none;font-family:var(--font);
+  font-size:13.5px;line-height:1.55;color:var(--text)}
+.hud .bar2{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:11px;color:var(--text-3);box-shadow:0 .5px 0 var(--hairline-soft)}
+.hud .bar2 .sp{flex:1}
+.stage{padding:12px 14px}
+.jev{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.jev>div{padding:9px 10px;border-radius:var(--r-sm);background:var(--hover)}
+.jev .k{font-size:9.5px;font-weight:600;color:var(--text-3);letter-spacing:.04em;margin-bottom:4px}
+.jev .v{font-size:13px;font-weight:600}
+.jev .d{font-size:10px;color:var(--text-3);margin-top:2px}
+.jev .pills{display:flex;flex-direction:column;gap:3px;margin-top:5px}
+.jev .pill{display:flex;justify-content:space-between;font-size:10px;color:var(--text-2)}
+.jev .pill b{font-variant-numeric:tabular-nums;font-weight:600}
+.lem{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:var(--r-sm)}
+.lem:hover{background:var(--hover)}
+.lem .t{flex:1;min-width:0;font-size:12.5px}
+.lem .p{font-size:10.5px;color:var(--text-3);margin-top:2px}
+.lem[data-off=true]{opacity:.38}
+.lem .ck{width:15px;height:15px;border-radius:4px;box-shadow:inset 0 0 0 1.5px var(--hairline);flex:none;display:grid;place-items:center}
+.lem .ck[data-on=true]{background:var(--accent);box-shadow:none}
+.lem .ck[data-on=true]::after{content:"";width:7px;height:4px;border-left:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:rotate(-45deg) translate(1px,-1px)}
+.tray{margin-top:10px;padding:9px 10px;border-radius:var(--r-sm);background:rgba(0,0,0,.03)}
+.tray .k{font-size:9.5px;font-weight:600;color:var(--text-3);letter-spacing:.04em;margin-bottom:6px}
+.tray .r{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-2);padding:3px 0}
+.tray .r .why{font-size:10px;color:var(--text-3);margin-left:auto;flex:none}
+.hud .foot{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:11px;color:var(--text-3);box-shadow:0 -.5px 0 var(--hairline-soft)}
+.hud .foot .sp{flex:1}
+.capnote{margin-top:14px;font-size:11px;color:var(--text-3);text-align:center;line-height:1.6}
+
+/* ---------- 共同前提 ---------- */
+.prem{display:flex;align-items:center;gap:14px;padding:14px 0;box-shadow:0 .5px 0 var(--hairline-soft)}
+.prem:last-child{box-shadow:none}
+.prem .nm{width:130px;flex:none;font-size:13px;font-weight:600}
+.prem .arms{flex:1;display:flex;flex-direction:column;gap:5px}
+.prem .arm{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-2)}
+.prem .arm .tag{font-size:10px;color:var(--text-3);flex:none;width:34px}
+.prem .hit{flex:none;text-align:right}
+.prem .hit b{display:block;font-size:17px;font-weight:600;color:var(--red);font-variant-numeric:tabular-nums}
+.prem .hit span{font-size:10px;color:var(--text-3)}
+
+/* ---------- 审计 ---------- */
+.audit{max-width:560px;margin:0 auto;padding:60px 20px}
+.audit .q3{font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.35;margin-bottom:10px}
+.audit .s2{font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:26px}
+.audit .acts{display:flex;gap:8px}
+.reveal{margin-top:22px;display:none}
+.reveal[data-on=true]{display:block}
+.reveal .r{display:flex;gap:9px;align-items:flex-start;padding:11px 12px;border-radius:var(--r-sm);background:var(--hover);font-size:12px;margin-bottom:6px}
+.reveal .r b{font-weight:600}
+.reveal .r span{color:var(--text-2)}
+.foot{margin-top:26px;padding:16px 30px 40px;font-size:11px;color:var(--text-3);line-height:1.7;border-top:.5px solid var(--hairline)}
+.foot b{color:var(--text-2);font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">脉络 <small>MERIDIAN · v1.0 形态</small></div>
+  <div class="tabs" id="tabs">
+    <button data-s="hud" aria-selected="true">捕获</button>
+    <button data-s="lattice" aria-selected="false">脉络</button>
+    <button data-s="settle" aria-selected="false">结算</button>
+    <button data-s="audit" aria-selected="false">误杀审计</button>
+    <button data-s="premise" aria-selected="false">共同前提</button>
+  </div>
+  <div class="sp"></div>
+  <div class="hint"><span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">V</span> 全局捕获</div>
+</div>
+
+<!-- ============ 1. 捕获 ============ -->
+<section class="screen" data-s="hud" data-on="true">
+  <div class="s-hud">
+    <div class="hudwrap">
+      <div class="hud">
+        <div class="in"><textarea id="raw" spellcheck="false"></textarea></div>
+        <div class="bar2">
+          <span id="gate">Jev 已打标 · 抽取 4 条命题</span><span class="sp"></span>
+          <span>AI 产业链</span><span class="kbd">⏎</span><span>入库</span><span class="kbd">esc</span>
+        </div>
+        <div class="stage">
+          <div class="jev">
+            <div>
+              <div class="k">CHOICE · 来源类型</div>
+              <div class="v">一手数据</div>
+              <div class="pills">
+                <div class="pill"><span>一手数据</span><b>0.71</b></div>
+                <div class="pill"><span>券商研报</span><b>0.22</b></div>
+                <div class="pill"><span>自媒体</span><b>0.07</b></div>
+              </div>
+            </div>
+            <div>
+              <div class="k">SCORE · 来源质量</div>
+              <div class="v">0.68</div>
+              <div class="d">低于研报基准 0.80<br>高于群聊基准 0.35</div>
+            </div>
+            <div>
+              <div class="k">NOUL · 是否重复</div>
+              <div class="v" style="color:var(--green)">0.18 新 claim</div>
+              <div class="d">与库内 3 条命题比对<br>最高相似度 0.18</div>
+            </div>
+          </div>
+          <div id="lems"></div>
+          <div class="tray">
+            <div class="k">被筛掉 · 2 条（留裁决记录，不留原文）</div>
+            <div class="r"><span>“行业整体增长 20%”</span><span class="why">重复 · 已有 2 个独立源</span></div>
+            <div class="r"><span>“某公司管理层变动”</span><span class="why">低质 · 群聊转发 Score 0.20</span></div>
+          </div>
+        </div>
+        <div class="foot2 foot">
+          <span>点击可取消勾选</span><span class="sp"></span>
+          <span id="cnt">4 / 6 条待入库</span>
+        </div>
+      </div>
+      <div class="capnote">
+        入库后，前 2 条落入「光模块 · 铜连接」并触发传导；<br>
+        第 3 条与既有命题「铜连接成本低 40%」标记为<b style="color:var(--red)">冲突</b>，等待你裁决。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. 脉络 ============ -->
+<section class="screen s-lattice" data-s="lattice">
+  <aside class="side">
+    <h6>主题</h6>
+    <button class="s-item" aria-selected="true"><span class="sw" style="background:var(--accent)"></span>AI 产业链<span class="n">28</span></button>
+    <button class="s-item"><span class="sw" style="background:var(--orange)"></span>虚拟货币<span class="n">11</span></button>
+    <button class="s-item"><span class="sw" style="background:var(--text-3)"></span>SaaS 经营<span class="n">0</span></button>
+    <h6>视图</h6>
+    <button class="s-item">冷库<span class="n">6</span></button>
+    <button class="s-item">墓碑区<span class="n">14</span></button>
+    <button class="s-item">已筛掉<span class="n">47</span></button>
+  </aside>
+
+  <div class="mid">
+    <div class="mh">
+      <h1>AI 产业链</h1>
+      <span class="chip">2026-Q3 版</span>
+      <div class="sp"></div>
+      <span class="chip">已回答 <b id="ans">9</b>/15 个问题</span>
+    </div>
+    <div class="tree" id="tree"></div>
+  </div>
+
+  <div class="insp" id="insp"></div>
+</section>
+
+<!-- ============ 3. 结算 ============ -->
+<section class="screen s-page" data-s="settle">
+  <aside class="side">
+    <h6>主题</h6>
+    <button class="s-item" aria-selected="true"><span class="sw" style="background:var(--accent)"></span>AI 产业链<span class="n">28</span></button>
+    <button class="s-item"><span class="sw" style="background:var(--orange)"></span>虚拟货币<span class="n">11</span></button>
+    <h6>视图</h6>
+    <button class="s-item">冷库<span class="n">6</span></button>
+    <button class="s-item">墓碑区<span class="n">14</span></button>
+  </aside>
+  <div class="page">
+    <div class="ph"><h1>结算</h1><p>判断只有在被对答案之后才是资产。</p></div>
+
+    <div class="card">
+      <div class="ch">到期未结算<span class="sp"></span><em>3 条 · 今天</em></div>
+      <div class="cb" id="due"></div>
+    </div>
+
+    <div class="card">
+      <div class="ch">最近传导<span class="sp"></span><em>14 天</em></div>
+      <div class="cb">
+        <div class="ev"><span class="dot" style="background:var(--orange)"></span><span class="s">1.6T 光模块 Q3 出货超指引</span><span class="amt up">+12</span><span style="color:var(--text-3);font-size:11px">→ 云 CapEx 上修</span></div>
+        <div class="ev"><span class="dot" style="background:var(--orange)"></span><span class="s">GPU 下一代产品延期两季</span><span class="amt down">−18</span><span style="color:var(--text-3);font-size:11px">→ 先进封装产能</span></div>
+        <div class="ev"><span class="dot" style="background:var(--orange)"></span><span class="s">北美云 CapEx 指引上调</span><span class="amt up">+9</span><span style="color:var(--text-3);font-size:11px">→ 云 MaaS 收入</span></div>
+        <div class="ev"><span class="dot" style="background:var(--orange)"></span><span class="s">并网队列排队 38 个月</span><span class="amt up">+7</span><span style="color:var(--text-3);font-size:11px">→ 电力资产溢价</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch">命题校准曲线<span class="sp"></span><em>14 条已结算</em></div>
+      <div class="cb">
+        <div class="calib">
+          <div><em>100%</em><i style="height:100%"></i><span>50–59</span></div>
+          <div><em>50%</em><i style="height:50%"></i><span>60–69</span></div>
+          <div><em>100%</em><i style="height:100%"></i><span>70–79</span></div>
+          <div><em>67%</em><i style="height:67%"></i><span>80–89</span></div>
+          <div><em>50%</em><i class="bad" style="height:50%"></i><span>90–100</span></div>
+        </div>
+        <div style="margin-top:12px;font-size:11.5px;color:var(--text-2);line-height:1.6">
+          你在 90–100 区间反而只有 50% 命中——<b>过度自信</b>。这是唯一不能靠时间积累、
+          只能靠结算才能看到的数字。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch">过滤器校准曲线<span class="sp"></span><em>47 条被筛掉</em></div>
+      <div class="cb">
+        <div class="calib">
+          <div><em>0%</em><i class="bad" style="height:6%"></i><span>Score&lt;0.3</span></div>
+          <div><em>2.1%</em><i class="bad" style="height:14%"></i><span>0.3–0.5</span></div>
+          <div><em>8.3%</em><i style="height:55%"></i><span>0.5–0.7</span></div>
+          <div><em>—</em><i style="height:2%;background:var(--hairline)"></i><span>&gt;0.7 不筛</span></div>
+        </div>
+        <div style="margin-top:12px;font-size:11.5px;color:var(--text-2);line-height:1.6">
+          误杀率在 <b>0.5–0.7 区间</b>达到 8.3%——这一档不该自动筛，应进冷库等人看。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4. 误杀审计 ============ -->
+<section class="screen" data-s="audit">
+  <div class="s-page" style="grid-template-columns:1fr">
+    <div class="page" style="padding:0">
+      <div class="audit">
+        <div style="font-size:10px;font-weight:600;color:var(--text-3);letter-spacing:.04em;margin-bottom:14px">每月一次 · 误杀审计</div>
+        <div class="q3">你这个月筛掉了 47 条，<br>其中 3 条后来在别的源里变成了重要命题。</div>
+        <div class="s2">它们当时被判为噪声。现在你已经知道它们不是。<br>要不要看看是哪 3 条，把阈值调过来？</div>
+        <div class="acts">
+          <button class="btn btn-pri" id="yes" style="height:32px;padding:0 16px">看看是哪 3 条</button>
+          <button class="btn" id="no" style="height:32px;padding:0 16px">这个月不管</button>
+        </div>
+        <div class="reveal" id="rev">
+          <div class="r"><span style="color:var(--orange)">●</span><div><b>某国产加速卡流片成功</b><br><span>野号快讯 · 当时 Score 0.24 · 比中信研报早 11 天</span></div></div>
+          <div class="r"><span style="color:var(--orange)">●</span><div><b>HBM4 良率突破 70%</b><br><span>群聊转发 · 当时 Score 0.31 · 后被 3 个独立源确认</span></div></div>
+          <div class="r"><span style="color:var(--orange)">●</span><div><b>某云厂商暂停自研芯片</b><br><span>自媒体 · 当时 Score 0.42 · 影响 4 条上游判断</span></div></div>
+          <div style="margin-top:18px;padding:12px 14px;border-radius:var(--r-sm);background:rgba(255,149,0,.09)">
+            <div style="font-size:10px;font-weight:600;color:var(--orange);letter-spacing:.04em;margin-bottom:5px">建议</div>
+            <div style="font-size:12px;color:var(--text-2);line-height:1.6">
+              把「一手数据 / 群聊转发 / 自媒体」三类的自动拦截阈值从 0.5 降到 0.25，
+              落入冷库而非丢弃。预计误杀率从 6.4% 降到 2% 以下。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5. 共同前提 ============ -->
+<section class="screen s-page" data-s="premise">
+  <aside class="side">
+    <h6>主题</h6>
+    <button class="s-item"><span class="sw" style="background:var(--accent)"></span>AI 产业链<span class="n">28</span></button>
+    <button class="s-item" aria-selected="true"><span class="sw" style="background:var(--orange)"></span>虚拟货币<span class="n">11</span></button>
+  </aside>
+  <div class="page">
+    <div class="ph"><h1>共同前提</h1><p>两个主题各自拆到了不同的树上，但底层是同一个原子。改变它，两边同时受影响。</p></div>
+    <div class="card">
+      <div class="ch">扫描结果<span class="sp"></span><em>3 组 · 每周一次</em></div>
+      <div class="cb" id="prem"></div>
+    </div>
+    <div class="foot">
+      <b>为什么这比「知识连接」值钱：</b>它不是跨领域的知识浪漫，是<b>风险敞口的意外重叠</b>。
+      你以为自己在两个不相关的主题上分散了下注，实际上共用同一个前提。
+    </div>
+  </div>
+</section>
+
+<script>
+/* ---------------- 数据 ---------------- */
+const RAW = "我们跟踪的 1.6T 光模块供应链显示，北美某云厂商 Q4 订单能见度已排到明年 Q2，产能被头部客户锁定。但同时，一家新进入者宣布其硅光方案成本低 30%，预计 2027 年量产。——某产业调研纪要";
+
+const LEMMAS = [
+  {t:"北美云厂商 1.6T 光模块 Q4 订单能见度排至 2027 Q2", ty:"observation", c:82, p:"上游·算力供给 / 光模块·铜连接", on:true},
+  {t:"1.6T 产能已被头部客户锁定，中小客户被挤压", ty:"observation", c:75, p:"上游·算力供给 / 光模块·铜连接", on:true},
+  {t:"硅光方案成本低 30%，2027 年量产", ty:"hypothesis", c:58, p:"上游·算力供给 / 光模块·铜连接", on:true, cf:"与「800G 让位 1.6T 的时点」冲突"},
+  {t:"供给紧张将压制中小客户采购意愿", ty:"hypothesis", c:45, p:"上游·算力供给 / 光模块·铜连接", on:true},
+  {t:"该纪要与库内 3 条命题同构，建议合并来源", ty:"observation", c:70, p:"— 系统建议", on:false},
+  {t:"调研方未披露样本量", ty:"observation", c:30, p:"— 元信息", on:false},
+];
+
+const TY = {axiom:["公理","b-axiom"], hypothesis:["假设","b-hyp"], observation:["观测","b-obs"]};
+
+/* ---------------- HUD ---------------- */
+document.getElementById('raw').value = RAW;
+const lemsEl = document.getElementById('lems');
+function paintLems(){
+  lemsEl.innerHTML = '';
+  LEMMAS.forEach((l,i)=>{
+    const [lab,cls] = TY[l.ty];
+    lemsEl.insertAdjacentHTML('beforeend', `
+      <div class="lem" data-off="${!l.on}" data-i="${i}">
+        <span class="ck" data-on="${l.on}"></span>
+        <span class="badge ${cls}">${lab}</span>
+        <span style="flex:1;min-width:0">
+          <div class="t">${l.t}</div>
+          <div class="p">${l.p}</div>
+        </span>
+        ${l.cf?`<span class="cf">冲突</span>`:''}
+        <span class="bar"><i style="width:${l.c}%;background:${cc(l.c)}"></i></span>
+        <span class="num">${l.c}</span>
+      </div>`);
+  });
+  const n = LEMMAS.filter(l=>l.on).length;
+  document.getElementById('cnt').textContent = `${n} / ${LEMMAS.length} 条待入库`;
+  lemsEl.querySelectorAll('.lem').forEach(el=>el.onclick=()=>{
+    const i = +el.dataset.i; LEMMAS[i].on = !LEMMAS[i].on; paintLems();
+  });
+}
+const cc = c => c<30 ? 'var(--red)' : c<60 ? 'var(--orange)' : 'var(--green)';
+paintLems();
+
+/* ---------------- 树 ---------------- */
+const TREE = [
+  {t:"前提层", d:0, br:1},
+  {t:"算力经济学", d:1, br:1, sc:1},
+  {t:"token 单价连续两季未再下降", ty:"observation", c:71, src:2, d:2, lm:1},
+  {t:"能源约束", d:1, br:1, sc:1},
+  {t:"资本开支周期", d:1, br:1, sc:1},
+  {t:"北美云 CapEx 指引上调 18%", ty:"observation", c:88, src:4, d:2, lm:1, prop:1},
+  {t:"自研芯片占比提升将挤压外采份额", ty:"hypothesis", c:62, src:1, d:2, lm:1},
+  {t:"上游 · 算力供给", d:0, br:1},
+  {t:"GPU · 加速卡", d:1, br:1, sc:1},
+  {t:"下一代产品量产推迟两个季度", ty:"observation", c:79, src:3, d:2, lm:1, prop:1},
+  {t:"先进封装 · 代工", d:1, br:1, sc:1},
+  {t:"HBM · 存储", d:1, br:1, sc:1},
+  {t:"HBM 合约价 Q4 再涨 12%", ty:"observation", c:84, src:3, d:2, lm:1},
+  {t:"HBM 挤占通用 DRAM 产能", ty:"hypothesis", c:66, src:2, d:2, lm:1},
+  {t:"光模块 · 铜连接", d:1, br:1, sc:1, sel:1},
+  {t:"1.6T 光模块 Q3 出货 12 万只，超指引", ty:"observation", c:85, src:3, d:2, lm:1, prop:1},
+  {t:"铜连接在 3 米内成本低 40%", ty:"hypothesis", c:62, src:1, d:2, lm:1},
+  {t:"800G 占比 55%，2027 让位 1.6T", ty:"hypothesis", c:70, src:2, d:2, lm:1},
+  {t:"电力 · IDC · 散热", d:1, br:1, sc:1},
+  {t:"某州并网队列排队 38 个月，创新高", ty:"observation", c:88, src:4, d:2, lm:1, prop:1},
+  {t:"PPA 电价上行压制中小 IDC 扩张", ty:"hypothesis", c:55, src:1, d:2, lm:1},
+  {t:"中游 · 模型与云", d:0, br:1},
+  {t:"基础模型", d:1, br:1, sc:1},
+  {t:"云 · MaaS", d:1, br:1, sc:1},
+  {t:"GPU 租赁价格连续两月跌 15%", ty:"observation", c:78, src:2, d:2, lm:1},
+  {t:"云 AI 收入增速低于 CapEx 增速", ty:"hypothesis", c:65, src:2, d:2, lm:1},
+  {t:"下游 · 需求侧", d:0, br:1},
+  {t:"Agent · 工作流", d:1, br:1, sc:1},
+  {t:"企业 Agent 付费留存停滞", ty:"observation", c:58, src:2, d:2, lm:1},
+  {t:"终端 · 硬件", d:1, br:1, sc:1},
+  {t:"交易层", d:0, br:1},
+  {t:"标的映射", d:1, br:1, sc:1},
+  {t:"利润沉淀在光模块而非 GPU", ty:"hypothesis", c:72, src:2, d:2, lm:1},
+  {t:"估值锚", d:1, br:1, sc:1},
+  {t:"拥挤度", d:1, br:1, sc:1},
+];
+
+const treeEl = document.getElementById('tree');
+function paintTree(){
+  treeEl.innerHTML = '';
+  TREE.forEach((n,i)=>{
+    const [lab,cls] = n.ty ? TY[n.ty] : ['',''];
+    treeEl.insertAdjacentHTML('beforeend', `
+      <button class="row ${n.lm?'lm':'br'}" data-i="${i}" aria-selected="${n.sel?'true':'false'}" style="padding-left:${6+n.d*16}px">
+        <span class="tw" data-o="${n.br?'true':'false'}" style="visibility:${n.br?'visible':'hidden'}">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+        </span>
+        <span class="rt">${n.t}</span>
+        <span class="rm">
+          ${n.lm?`<span class="badge ${cls}">${lab}</span>`:''}
+          ${n.src>1?`<span class="src">${n.src} 源</span>`:''}
+          ${n.prop?`<span class="dot" style="background:var(--orange)" title="14 天内有传导"></span>`:''}
+          ${n.lm?`<span class="bar"><i style="width:${n.c}%;background:${cc(n.c)}"></i></span><span class="num">${n.c}</span>`:''}
+          ${n.lm?`<span class="flag"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 21V4m0 0 8 2 8-2v10l-8 2-8-2"/></svg></span>`:''}
+        </span>
+      </button>`);
+  });
+  treeEl.querySelectorAll('.row').forEach(el=>el.onclick=()=>{
+    TREE.forEach(n=>delete n.sel);
+    TREE[+el.dataset.i].sel = 1;
+    paintTree(); paintInsp();
+  });
+}
+paintTree();
+
+/* ---------------- 检视 ---------------- */
+const SCAFFOLD = {
+  answer:["1.6T 的放量节奏，还是讲故事阶段？","铜连接在什么距离内真正替代光？","年降幅度会不会吞掉量的增长？"],
+  indicators:[["1.6T 出货量","季度"],["800G 占比","季度"],["北美云采购占比","季度"],["单价年降","年度"]],
+  falsifier:"1.6T 出货连续两季低于预期，且铜方案在短距规模落地。"
+};
+function paintInsp(){
+  const n = TREE.find(x=>x.sel) || TREE[0];
+  const insp = document.getElementById('insp');
+  const answered = n.sc ? 2 : 0;
+  insp.innerHTML = `
+    <div class="ih"><h2>${n.t}</h2><div class="sub">AI 产业链 / 上游 · 算力供给 / ${n.t}</div></div>
+    ${n.sc ? `
+    <div class="sec">
+      <div class="sh">这一层要回答 <b>已回答 ${answered} / ${SCAFFOLD.answer.length}</b></div>
+      <ul class="q">${SCAFFOLD.answer.map((q,i)=>`<li style="${i<answered?'':'color:var(--text-3)'}">${i<answered?'✓ ':''}${q}</li>`).join('')}</ul>
+    </div>
+    <div class="sec">
+      <div class="sh">要跟踪 <b>${SCAFFOLD.indicators.length}</b></div>
+      ${SCAFFOLD.indicators.map(([k,c])=>`<div class="ind"><span>${k}</span><span class="c">${c}</span></div>`).join('')}
+      <div class="warn"><div class="l">错了我怎么知道</div><div class="t">${SCAFFOLD.falsifier}</div></div>
+    </div>` : ''}
+    <div class="sec">
+      <div class="sh">来源收敛度 <b>3 个独立源</b></div>
+      <div class="ind"><span>中信研报</span><span class="c">0.80</span></div>
+      <div class="ind"><span>产业调研纪要</span><span class="c">0.68</span></div>
+      <div class="ind"><span>公司公告</span><span class="c">0.95</span></div>
+    </div>
+    <div class="sec">
+      <div class="sh">传导权重 <b>0.60</b></div>
+      <div class="seg"><button>0.3</button><button aria-selected="true">0.6</button><button>0.7</button></div>
+      <div class="hist">
+        <i style="height:60%" data-p="true"></i><i style="height:64%" data-p="true"></i><i style="height:70%"></i>
+        <i style="height:73%"></i><i style="height:79%" data-p="true"></i><i style="height:85%"></i>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;color:var(--text-3)">
+        <span>← 置信度历史</span><span style="color:var(--orange)">■ 传导引起</span>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="sh">下游 <b>3 条子命题</b></div>
+      <div class="ind"><span>1.6T 光模块 Q3 出货超指引</span><span class="c">85</span></div>
+      <div class="ind"><span>铜连接 3 米内成本低 40%</span><span class="c">62</span></div>
+      <div class="ind"><span>800G 占比 55%</span><span class="c">70</span></div>
+    </div>`;
+}
+paintInsp();
+
+/* ---------------- 结算 ---------------- */
+const DUE = [
+  {t:"1.6T 光模块 Q4 出货达到 20 万只", c:80, d:"2026-12-31", p:"上游 / 光模块"},
+  {t:"某大厂上调 2027 全年 CapEx 指引", c:65, d:"2027-01-28", p:"前提层 / 资本开支周期"},
+  {t:"token 单价 Q4 再降 30%", c:70, d:"2026-12-31", p:"前提层 / 算力经济学"},
+];
+document.getElementById('due').innerHTML = DUE.map(q=>`
+  <div class="q2">
+    <span class="dot" style="background:${cc(q.c)};margin-top:6px"></span>
+    <div class="b"><div class="t">${q.t}</div>
+      <div class="m"><span>当时置信度 ${q.c}</span><span>· 到期 ${q.d}</span><span>· ${q.p}</span></div></div>
+    <div class="a"><button class="btn s btn-hit">对了</button><button class="btn s btn-miss">错了</button><button class="btn s">再等等</button></div>
+  </div>`).join('');
+
+/* ---------------- 共同前提 ---------------- */
+const PREM = [
+  {nm:"能源成本", a:[["电力 · IDC","AI"],["矿机与算力","虚拟币"]], hit:7},
+  {nm:"半导体周期", a:[["HBM · 存储","AI"],["矿机与算力","虚拟币"]], hit:5},
+  {nm:"美元流动性", a:[["资本开支周期","AI"],["美元流动性","虚拟币"]], hit:9},
+];
+document.getElementById('prem').innerHTML = PREM.map(p=>`
+  <div class="prem">
+    <div class="nm">${p.nm}</div>
+    <div class="arms">${p.a.map(([x,tag])=>`<div class="arm"><span class="tag">${tag}</span>${x}</div>`).join('')}</div>
+    <div class="hit"><b>${p.hit}</b><span>条判断受影响</span></div>
+  </div>`).join('');
+
+/* ---------------- 审计 ---------------- */
+document.getElementById('yes').onclick = ()=> document.getElementById('rev').dataset.on = 'true';
+document.getElementById('no').onclick = (e)=>{ e.target.textContent = '已推迟到下个月'; e.target.disabled = true; };
+
+/* ---------------- Tab ---------------- */
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#tabs button').forEach(x=>x.setAttribute('aria-selected','false'));
+  b.setAttribute('aria-selected','true');
+  document.querySelectorAll('.screen').forEach(s=>s.dataset.on = String(s.dataset.s === b.dataset.s));
+});
+</script>
+</body>
+</html>

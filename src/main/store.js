@@ -1,0 +1,732 @@
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { dirname, join } from 'node:path'
+import { app } from 'electron'
+
+const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
+
+/** 来源质量基准表。打标器只负责选类型，质量分一律由这张表裁决。 */
+export const SOURCE_QUALITY = [
+  ['财报 / 公告', 0.95],
+  ['一手数据', 0.9],
+  ['券商研报', 0.8],
+  ['独立媒体', 0.65],
+  ['自媒体', 0.5],
+  ['群聊转发', 0.35],
+  ['道听途说', 0.2],
+]
+const QUALITY = new Map(SOURCE_QUALITY)
+
+/** 更新频率 → 结算日偏移（天） */
+const CADENCE_DAYS = { 周: 7, 月: 30, 季度: 95, 半年: 180, 年度: 365, 事件: 60 }
+
+const DEFAULT_SETTINGS = {
+  baseUrl: 'https://api.stepfun.com/v1',
+  apiKey: '',
+  model: 'step-3',
+  hotkey: 'CommandOrControl+Shift+V',
+  labeler: 'table', // table | jev | llm —— 可替换的打标器
+  jevBaseUrl: 'https://openrouter.ai/api/v1',
+  jevModel: 'typesafe/jev-1.13',
+  jevKey: '',
+}
+
+const blank = () => ({
+  version: 3,
+  settings: { ...DEFAULT_SETTINGS },
+  themes: [],
+  nodes: [],
+  verdicts: [], // 被筛掉的裁决记录：留判断，不留原文
+  conflicts: [], // 待裁决的命题冲突
+})
+
+let db = null
+let saveTimer = null
+
+export function load() {
+  if (db) return db
+  const file = DATA_FILE()
+  if (existsSync(file)) {
+    try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
+  } else db = blank()
+  migrate(db)
+  return db
+}
+
+/** v1 → v2：source 单值升级为 sources 数组；补 verdicts / conflicts
+ *  v2 → v3：来源可挂 rawId 指向原文层（见文件末尾），判断层本身不变 */
+function migrate(d) {
+  d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) }
+  d.verdicts = d.verdicts || []
+  d.conflicts = d.conflicts || []
+  for (const n of d.nodes || []) {
+    n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
+    n.tags = Array.isArray(n.tags) ? n.tags : []
+    n.status = n.status || 'live'
+    n.scaffold = n.scaffold || null
+    delete n.source
+  }
+  d.version = 3
+}
+
+function persist() {
+  clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    const file = DATA_FILE()
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify(db, null, 2))
+  }, 120)
+}
+
+export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+export const today = () => new Date().toISOString().slice(0, 10)
+export const addDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+
+const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)))
+const clamp01 = (n) => Math.max(0, Math.min(1, Number(n) || 0))
+const round1 = (n) => Math.round(n * 10) / 10
+
+// ------------------------------------------------------------------ nodes
+
+export function allNodes() { return load().nodes }
+export function getNode(id) { return load().nodes.find((n) => n.id === id) || null }
+export function childrenOf(id) { return load().nodes.filter((n) => n.parentId === id) }
+export function rootNodes(themeId) { return load().nodes.filter((n) => n.themeId === themeId && !n.parentId) }
+
+export function descendants(id) {
+  const out = []
+  const walk = (pid) => { for (const c of childrenOf(pid)) { out.push(c); walk(c.id) } }
+  walk(id)
+  return out
+}
+
+export function addNode(input) {
+  const t = today()
+  const sources = normalizeSources(input.sources || (input.source ? [input.source] : []))
+  const node = {
+    id: uid(),
+    themeId: input.themeId,
+    parentId: input.parentId || null,
+    kind: input.kind === 'branch' ? 'branch' : 'lemma',
+    title: String(input.title || '').trim(),
+    type: input.type || 'hypothesis',
+    confidence: clamp(input.confidence ?? 50),
+    propagation: input.propagation ?? 0.5,
+    sources,
+    tags: [...new Set(input.tags || [])],
+    status: input.status || 'live', // live | cold | dead
+    settlement: input.settlement || null,
+    scaffold: input.scaffold || null,
+    history: [{ t, confidence: clamp(input.confidence ?? 50), by: 'manual' }],
+    createdAt: t,
+    updatedAt: t,
+  }
+  db.nodes.push(node)
+  persist()
+  return node
+}
+
+function normalizeSources(list) {
+  const seen = new Set()
+  const out = []
+  for (const s of list) {
+    if (!s?.kind) continue
+    const key = `${s.kind}|${s.label || ''}`
+    if (seen.has(key)) continue // 同源同出处只计一次
+    seen.add(key)
+    out.push({
+      kind: s.kind,
+      label: s.label || s.kind,
+      quality: QUALITY.has(s.kind) ? QUALITY.get(s.kind) : (s.quality ?? 0.5),
+      at: s.at || today(),
+      // v3：指向原文层的一条依据。旧文件没有这个字段，照常工作
+      ...(s.rawId ? { rawId: s.rawId } : {}),
+    })
+  }
+  return out
+}
+
+export function updateNode(id, patch, { propagate = true } = {}) {
+  const node = getNode(id)
+  if (!node) return null
+
+  if (patch.confidence !== undefined && patch.confidence !== node.confidence) {
+    const before = node.confidence
+    node.confidence = clamp(patch.confidence)
+    node.history.push({ t: today(), confidence: node.confidence, by: 'manual' })
+    if (propagate) propagateFrom(node, before, node.confidence)
+    // 置信度跌破 20 自动进入墓碑区，但不删除——负资产的价值是避免重复犯错
+    if (node.kind === 'lemma' && node.status === 'live' && node.confidence < 20) node.status = 'dead'
+    if (node.kind === 'lemma' && node.status === 'dead' && node.confidence >= 20) node.status = 'live'
+  }
+
+  for (const key of ['title', 'type', 'parentId', 'settlement', 'themeId', 'status']) {
+    if (patch[key] !== undefined) node[key] = patch[key]
+  }
+  if (patch.propagation !== undefined) node.propagation = clamp01(patch.propagation)
+  if (patch.sources !== undefined) node.sources = normalizeSources(patch.sources)
+  if (patch.tags !== undefined) node.tags = [...new Set(patch.tags)]
+  node.updatedAt = today()
+  persist()
+  return node
+}
+
+export function removeNode(id) {
+  const doomed = new Set([id, ...descendants(id).map((n) => n.id)])
+  db.nodes = db.nodes.filter((n) => !doomed.has(n.id))
+  db.conflicts = db.conflicts.filter((c) => !doomed.has(c.a) && !doomed.has(c.b))
+  persist()
+}
+
+/** 追加一个来源；若该 claim 已有独立来源，则只累加不新建。返回新增与否。 */
+export function addSource(id, source) {
+  const node = getNode(id)
+  if (!node) return { added: false, count: 0 }
+  const before = node.sources.length
+  node.sources = normalizeSources([...node.sources, source])
+  const added = node.sources.length > before
+  node.updatedAt = today()
+  persist()
+  return { added, count: node.sources.length }
+}
+
+/**
+ * 传导：置信度变化沿产业链方向向下游衰减。
+ * 每一跳乘以该节点的 propagation 权重，深度衰减由复利自然产生。
+ */
+function propagateFrom(origin, before, after) {
+  const delta = after - before
+  if (Math.abs(delta) < 1) return []
+
+  const queue = [{ id: origin.id, delta }]
+  const seen = new Set([origin.id])
+  const touched = []
+
+  while (queue.length) {
+    const { id, delta: d } = queue.shift()
+    const node = getNode(id)
+    if (!node) continue
+    for (const child of childrenOf(id)) {
+      if (seen.has(child.id) || child.status === 'dead') continue
+      seen.add(child.id)
+      const hop = d * clamp01(node.propagation)
+      const next = clamp(child.confidence + hop)
+      const real = next - child.confidence
+      if (Math.abs(real) < 0.5) continue
+      child.confidence = next
+      child.history.push({ t: today(), confidence: round1(next), by: 'propagation', from: origin.id })
+      touched.push({ id: child.id, delta: round1(real) })
+      queue.push({ id: child.id, delta: real })
+    }
+  }
+  return touched
+}
+
+/** 手动重算某个节点的整棵子树（用于调节权重后刷新） */
+export function repropagate(id) {
+  const node = getNode(id)
+  if (!node) return []
+  const first = node.history.find((h) => h.by === 'manual') || node.history[0]
+  const baseline = first ? first.confidence : node.confidence
+  for (const d of descendants(id)) {
+    const f = d.history.find((h) => h.by === 'manual')
+    d.confidence = clamp(f ? f.confidence : d.confidence)
+  }
+  return propagateFrom(node, baseline, node.confidence) || []
+}
+
+// ------------------------------------------------------------------ themes
+
+export function allThemes() { return load().themes }
+export function addTheme(name) {
+  const theme = { id: uid(), name: String(name || '').trim(), createdAt: today() }
+  db.themes.push(theme)
+  persist()
+  return theme
+}
+export function removeTheme(id) {
+  db.themes = db.themes.filter((t) => t.id !== id)
+  db.nodes = db.nodes.filter((n) => n.themeId !== id)
+  persist()
+}
+export function renameTheme(id, name) {
+  const theme = db.themes.find((t) => t.id === id)
+  if (theme) theme.name = String(name || '').trim()
+  persist()
+}
+
+// ------------------------------------------------------------------ verdicts
+
+/**
+ * 裁决记录：被筛掉的内容只留判断，不留原文。
+ * promotedTo 在「同一条 claim 后来从别的源进了图谱」时回填——那就是一次误杀。
+ */
+export function addVerdict(v) {
+  const verdict = {
+    id: uid(),
+    at: today(),
+    gate: v.gate || 'extract', // extract | source | dedup | user
+    reason: v.reason || 'off-topic',
+    summary: String(v.summary || '').slice(0, 120),
+    score: clamp01(v.score ?? 0),
+    choice: v.choice || null,
+    promotedTo: null,
+    ...(v.nodeId ? { nodeId: v.nodeId } : {}),
+  }
+  db.verdicts.push(verdict)
+  persist()
+  return verdict
+}
+
+export function allVerdicts() { return load().verdicts }
+
+/** 同一条 claim 后来从别的源进了图谱 → 回填 promotedTo，记为一次误杀 */
+export function markPromoted(verdictId, nodeId) {
+  const v = db.verdicts.find((x) => x.id === verdictId)
+  if (v) { v.promotedTo = nodeId; persist() }
+  return v
+}
+
+// ------------------------------------------------------------------ conflicts
+
+export function addConflict(a, b, note) {
+  if (a === b) return null
+  const exists = db.conflicts.find((c) => !c.resolved && ((c.a === a && c.b === b) || (c.a === b && c.b === a)))
+  if (exists) return exists
+  const c = { id: uid(), a, b, note: note || '两条命题互相矛盾', at: today(), resolved: null }
+  db.conflicts.push(c)
+  persist()
+  return c
+}
+
+export function allConflicts() { return load().conflicts }
+
+export function resolveConflict(id, verdict) {
+  const c = db.conflicts.find((x) => x.id === id)
+  if (!c) return null
+  c.resolved = verdict // 'a' | 'b' | 'both'
+  c.resolvedAt = today()
+  persist()
+  return c
+}
+
+export function conflictsOf(nodeId) {
+  return db.conflicts.filter((c) => !c.resolved && (c.a === nodeId || c.b === nodeId))
+}
+
+// ------------------------------------------------------------------ queries
+
+/** 到期未结算的命题 */
+export function dueSettlements() {
+  const t = today()
+  return db.nodes
+    .filter((n) => n.kind === 'lemma' && n.status !== 'dead' && n.settlement?.date && n.settlement.resolved == null && n.settlement.date <= t)
+    .sort((a, b) => a.settlement.date.localeCompare(b.settlement.date))
+}
+
+/** 最近发生过的传导事件（含相对上一条记录的变化量） */
+export function propagationEvents(sinceDays = 14) {
+  const cutoff = Date.now() - sinceDays * 864e5
+  const events = []
+  for (const n of db.nodes) {
+    n.history.forEach((entry, i) => {
+      if (entry.by !== 'propagation') return
+      const ts = Date.parse(entry.t)
+      if (!Number.isFinite(ts) || ts < cutoff) return
+      const prev = n.history[i - 1]?.confidence ?? entry.confidence
+      events.push({
+        id: n.id, title: n.title, previous: prev, confidence: entry.confidence,
+        delta: round1(entry.confidence - prev), from: entry.from, t: entry.t, ts,
+      })
+    })
+  }
+  return events.sort((a, b) => b.ts - a.ts)
+}
+
+/** 命题校准曲线：分置信度桶统计命中率 */
+export function calibration() {
+  const buckets = new Map()
+  for (const n of db.nodes) {
+    if (n.kind !== 'lemma') continue
+    const s = n.settlement
+    if (!s || s.resolved == null || s.correct == null) continue
+    const first = n.history.find((h) => h.by === 'manual') || n.history[0]
+    if (!first) continue
+    const bucket = Math.min(10, Math.floor(first.confidence / 10)) * 10
+    const b = buckets.get(bucket) || { bucket, total: 0, hit: 0 }
+    b.total += 1
+    if (s.correct) b.hit += 1
+    buckets.set(bucket, b)
+  }
+  return [...buckets.values()].map((b) => ({ ...b, accuracy: b.hit / b.total })).sort((a, b) => a.bucket - b.bucket)
+}
+
+/**
+ * 过滤器校准曲线：按 Jev 质量分分桶，统计误杀率。
+ * 误杀 = 该 verdict 的 promotedTo 非空（同一条 claim 后来从别的源进了图谱）。
+ */
+export function filterCalibration() {
+  const edges = [0, 0.3, 0.5, 0.7]
+  const buckets = edges.map((lo) => ({
+    lo,
+    hi: lo === 0.7 ? 1 : edges[edges.indexOf(lo) + 1],
+    total: 0,
+    killed: 0,
+    missed: 0,
+  }))
+  for (const v of db.verdicts) {
+    const b = buckets.find((x) => v.score >= x.lo && v.score < x.hi) || buckets[buckets.length - 1]
+    b.total += 1
+    if (v.promotedTo) b.missed += 1
+  }
+  return buckets.map((b) => ({
+    lo: b.lo,
+    hi: b.hi,
+    total: b.total,
+    missed: b.missed,
+    accuracy: b.total ? b.missed / b.total : 0,
+  }))
+}
+
+/** 误杀审计：本月被筛掉的总数，以及其中后来变成了重要命题的 */
+export function falseKillAudit(days = 30) {
+  const cutoff = Date.now() - days * 864e5
+  const recent = db.verdicts.filter((v) => Date.parse(v.at) >= cutoff)
+  const killed = recent.filter((v) => v.promotedTo)
+  return {
+    window: days,
+    total: recent.length,
+    missed: killed.length,
+    rate: recent.length ? killed.length / recent.length : 0,
+    items: killed.map((v) => ({
+      verdict: v,
+      node: getNode(v.promotedTo),
+    })).filter((x) => x.node),
+  }
+}
+
+/**
+ * 本地归位建议：按标题 token 重合度打分。
+ * 没有 key 时也能用；有打标器时 extract 会给更好的 parentHint。
+ */
+const STOP = new Set(['的', '了', '是', '在', '和', '与', '有', '对', '从', '到', '为', '将', '被', '一个', '这个', '那个', '不会', '可能'])
+
+export function suggestParent(text, themeId) {
+  const tokens = tokenize(text)
+  if (!tokens.length) return []
+  return db.nodes
+    .filter((n) => n.themeId === themeId && n.kind === 'branch')
+    .map((n) => {
+      const own = tokenize(n.title)
+      let hit = 0
+      for (const t of tokens) if (own.includes(t)) hit += t.length >= 2 ? 2 : 1
+      return { node: n, score: hit }
+    })
+    .filter((r) => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+}
+
+function tokenize(text) {
+  const cjk = String(text).match(/[一-龥]{2,}/g) || []
+  const latin = String(text).toLowerCase().match(/[a-z][a-z0-9+.#-]{2,}/g) || []
+  return [...cjk.flatMap((s) => s.split(/(?=[上中下游内])/)), ...latin]
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2 && !STOP.has(s))
+}
+
+/** 找同一条 claim 的既有命题：token 重合度超过阈值即视为同一判断 */
+export function findSimilar(text, themeId, threshold = 0.45) {
+  const tokens = new Set(tokenize(text))
+  if (!tokens.size) return []
+  return db.nodes
+    .filter((n) => n.kind === 'lemma' && n.themeId === themeId && n.status !== 'dead')
+    .map((n) => {
+      const own = tokenize(n.title)
+      if (!own.length) return null
+      let hit = 0
+      for (const t of tokens) if (own.includes(t)) hit += t.length >= 2 ? 2 : 1
+      const denom = own.reduce((s, t) => s + (t.length >= 2 ? 2 : 1), 0)
+      const score = denom ? hit / denom : 0
+      return score >= threshold ? { node: n, score: round1(score) } : null
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+}
+
+/** 找潜在冲突：同一父节点下类型相反的命题 */
+export function findConflicts(nodeId) {
+  const node = getNode(nodeId)
+  if (!node || node.kind !== 'lemma') return []
+  const siblings = childrenOf(node.parentId).filter((n) => n.kind === 'lemma' && n.id !== node.id && n.status !== 'dead')
+  const neg = /(不会|未能|低于|下跌|下降|推迟|不及|放缓|停滞|失败|压制)/
+  const pos = /(超|上调|增长|上升|突破|提前|加速|放量|创新高)/
+  const mine = node.title
+  const out = []
+  for (const s of siblings) {
+    const sameSubject = tokenize(mine).some((t) => tokenize(s.title).includes(t))
+    if (!sameSubject) continue
+    const flip = (neg.test(mine) && pos.test(s.title)) || (pos.test(mine) && neg.test(s.title))
+    if (flip) out.push({ node: s, reason: '方向相反' })
+  }
+  return out
+}
+
+/**
+ * 从环节骨架生成待回答命题。
+ * 结算日由指标更新频率推导——这是 scaffold 和结算层之间的桥。
+ */
+export function spawnFromScaffold(branchId) {
+  const branch = getNode(branchId)
+  if (!branch?.scaffold) return []
+  const created = []
+
+  for (const q of branch.scaffold.answer || []) {
+    created.push(addNode({
+      themeId: branch.themeId,
+      parentId: branchId,
+      kind: 'lemma',
+      title: q,
+      type: 'hypothesis',
+      confidence: 50,
+      tags: branch.tags,
+    }))
+  }
+  for (const ind of branch.scaffold.indicators || []) {
+    const days = CADENCE_DAYS[ind.cadence] ?? 60
+    created.push(addNode({
+      themeId: branch.themeId,
+      parentId: branchId,
+      kind: 'lemma',
+      title: `${ind.name}：按${ind.cadence}节奏更新，本期读数待填`,
+      type: 'observation',
+      confidence: 50,
+      settlement: { date: addDays(days), resolved: null, correct: null },
+      tags: branch.tags,
+    }))
+  }
+  return created
+}
+
+/**
+ * 共同前提：同一批 tag 出现在 ≥2 个主题里，就是跨主题共享的底层假设。
+ * 改变它，两边同时受影响。
+ */
+export function sharedPremises() {
+  const byTag = new Map()
+  for (const n of db.nodes) {
+    if (n.status === 'dead') continue
+    for (const tag of n.tags || []) {
+      if (!byTag.has(tag)) byTag.set(tag, [])
+      byTag.get(tag).push(n)
+    }
+  }
+  const themes = new Map(db.themes.map((t) => [t.id, t]))
+  const out = []
+  for (const [tag, nodes] of byTag) {
+    const byTheme = new Map()
+    for (const n of nodes) {
+      if (!byTheme.has(n.themeId)) byTheme.set(n.themeId, [])
+      byTheme.get(n.themeId).push(n)
+    }
+    if (byTheme.size < 2) continue
+    out.push({
+      tag,
+      themes: [...byTheme.entries()].map(([themeId, list]) => ({
+        themeId,
+        name: themes.get(themeId)?.name || '未知主题',
+        branches: [...new Set(list.map((n) => branchPathOf(n)))].filter(Boolean).slice(0, 3),
+        count: list.length,
+      })),
+      affected: nodes.length,
+    })
+  }
+  return out.sort((a, b) => b.affected - a.affected)
+}
+
+/** 取节点所属的最深一级环节名——共同前提要靠它才看得出具体是哪一层 */
+function branchPathOf(node) {
+  const out = []
+  let cur = node
+  while (cur) {
+    if (cur.kind === 'branch') out.unshift(cur.title)
+    cur = cur.parentId ? getNode(cur.parentId) : null
+  }
+  return out.join(' / ')
+}
+
+export function settleLemma(id, correct) {
+  const node = getNode(id)
+  if (!node) return null
+  node.settlement = { ...(node.settlement || {}), resolved: today(), correct: !!correct }
+  node.updatedAt = today()
+  persist()
+  return node
+}
+
+export function stats() {
+  const nodes = db.nodes
+  const lemmas = nodes.filter((n) => n.kind === 'lemma')
+  return {
+    themes: db.themes.length,
+    branches: nodes.length - lemmas.length,
+    lemmas: lemmas.length,
+    live: lemmas.filter((n) => n.status === 'live').length,
+    cold: lemmas.filter((n) => n.status === 'cold').length,
+    dead: lemmas.filter((n) => n.status === 'dead').length,
+    due: dueSettlements().length,
+    events: propagationEvents(14).length,
+    verdicts: db.verdicts.length,
+    conflicts: db.conflicts.filter((c) => !c.resolved).length,
+    premises: sharedPremises().length,
+  }
+}
+
+export function settings() { return load().settings }
+export function saveSettings(patch) {
+  db.settings = { ...db.settings, ...patch }
+  persist()
+  return db.settings
+}
+
+// ------------------------------------------------------------------ 原文层
+
+/**
+ * 原文层：判断层记"我得出了什么结论"，这里记"我当时读的是什么"。
+ *
+ * 两者生命周期不同，所以拆成两个文件：判断是要复利的资产，
+ * 原文只是一次性依据——清掉原文不该动到任何一条命题。
+ *
+ * 只存"进了判断"的那部分。被筛掉的内容仍然只留裁决记录（见 addVerdict），
+ * 那是 ROADMAP 划的边界：存原文会把产品做成垃圾抽屉。
+ *
+ * 用 JSONL 而不是 JSON：追加是 O(1)，进程崩了最坏丢半行（读的时候跳过），
+ * 不必为了加一条而重写整个文件。
+ */
+const RAW_FILE = () => join(app.getPath('userData'), 'raw.jsonl')
+
+let rawCache = null
+let rawBySha = null
+
+/** 懒加载——没人看原文就不读文件，启动不为它花钱。 */
+function loadRaw() {
+  if (rawCache) return rawCache
+  rawCache = new Map()
+  rawBySha = new Map()
+  const file = RAW_FILE()
+  if (!existsSync(file)) return rawCache
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const e = JSON.parse(line)
+      if (e?.id && e.text) { rawCache.set(e.id, e); rawBySha.set(e.sha256, e.id) }
+    } catch { /* 追加中断留下的半行，直接丢 */ }
+  }
+  return rawCache
+}
+
+const sha = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16)
+
+/**
+ * 落一段原文，返回 rawId。同内容只存一份——sha256 命中就复用旧 id。
+ * 这同时是 v0.4「N 个独立源」的免费数据源：不同 hash 天然就是独立来源。
+ */
+export function appendRaw({ kind, label, text }) {
+  const body = String(text || '').trim()
+  if (!body) return { id: null, added: false }
+  const cache = loadRaw()
+  const h = sha(body)
+  const hit = rawBySha.get(h)
+  if (hit) return { id: hit, added: false }
+
+  const entry = {
+    id: uid(),
+    at: today(),
+    sha256: h,
+    kind: kind || '独立媒体',
+    label: label || kind || '未注明',
+    chars: body.length,
+    text: body,
+  }
+  cache.set(entry.id, entry)
+  rawBySha.set(h, entry.id)
+  const file = RAW_FILE()
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, JSON.stringify(entry) + '\n')
+  return { id: entry.id, added: true }
+}
+
+export function getRaw(id) { return loadRaw().get(id) || null }
+
+/** 被命题引用着的 rawId。清理时绝不动这些。 */
+function referencedRawIds() {
+  const used = new Set()
+  for (const n of db.nodes) for (const s of n.sources || []) if (s.rawId) used.add(s.rawId)
+  return used
+}
+
+function rewriteRaw(entries) {
+  const file = RAW_FILE()
+  mkdirSync(dirname(file), { recursive: true })
+  if (!entries.length) { rmSync(file, { force: true }); return }
+  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
+}
+
+/** 清掉没有任何命题引用的原文。判断层一行不动，这个操作绝对安全。 */
+export function pruneRaw() {
+  const used = referencedRawIds()
+  const cache = loadRaw()
+  const doomed = [...cache.values()].filter((e) => !used.has(e.id))
+  for (const e of doomed) { cache.delete(e.id); rawBySha.delete(e.sha256) }
+  rewriteRaw([...cache.values()])
+  return { removed: doomed.length, kept: cache.size }
+}
+
+/** 清空全部原文，并把节点上的 rawId 摘掉。判断、置信度、校准曲线全部保留。 */
+export function clearRaw() {
+  const cache = loadRaw()
+  const removed = cache.size
+  cache.clear()
+  rawBySha.clear()
+  rewriteRaw([])
+  let unlinked = 0
+  for (const n of db.nodes) {
+    for (const s of n.sources || []) if (s.rawId) { delete s.rawId; unlinked++ }
+  }
+  if (unlinked) persist()
+  return { removed, unlinked }
+}
+
+export function rawStats() {
+  let chars = 0
+  for (const e of loadRaw().values()) chars += Buffer.byteLength(e.text || '', 'utf8')
+  return { count: loadRaw().size, bytes: chars }
+}
+
+/**
+ * 导出带上原文层——它常常抓不回来，是资产的一部分。
+ * withRaw: false 时**整个 raw 键都不出现**，而不是给空数组：
+ * 空数组会被导入端理解成"用空覆盖"，把磁盘上的原文清掉。
+ */
+export function exportAll({ withRaw = true } = {}) {
+  const out = { ...db, version: 3 }
+  if (withRaw) out.raw = [...loadRaw().values()]
+  return JSON.stringify(out, null, 2)
+}
+
+export function importAll(json) {
+  const parsed = JSON.parse(json)
+  if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
+  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [] }
+  migrate(db)
+  // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
+  if (Array.isArray(parsed.raw)) {
+    const keep = parsed.raw.filter((e) => e?.id && e.text)
+    rewriteRaw(keep)
+    rawCache = null
+    rawBySha = null
+  }
+  persist()
+  return true
+}

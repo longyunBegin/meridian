@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<title>脉络</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="app" data-view="lattice">
+  <aside class="sidebar">
+    <nav class="nav" id="nav"></nav>
+    <div class="side-label">主题<span id="theme-add-slot"></span></div>
+    <div class="theme-list" id="themes"></div>
+    <div class="side-label">库</div>
+    <div class="vault-list" id="vaults"></div>
+    <div class="side-foot" id="sidefoot"></div>
+  </aside>
+  <main class="mid" id="mid"></main>
+  <aside class="inspect" id="inspect"></aside>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

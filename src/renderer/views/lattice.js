@@ -1,0 +1,340 @@
+import { h, icon, clear } from '../lib/dom.js'
+import { state, refresh, selectNode, setShape } from '../app.js'
+import { confColor, TYPE_LABEL, todayStr } from './shared.js'
+import { renderGraph } from './graph.js'
+
+const m = window.meridian
+
+/** 每一层的缩进与导轨位置都由它推导，改一处全树同步 */
+const INDENT = 15
+const PAD = 20
+/** 导轨落在父行箭号的圆心上：内容起点 - 8（号宽 16 的一半） */
+const railX = (depth) => PAD + (depth - 1) * INDENT - 8
+
+export function renderLattice(mid) {
+  const theme = state.themes.find((t) => t.id === state.themeId)
+  const isGraph = state.shape === 'graph'
+
+  // 树形管逐条编辑，图管看清结构——同一个主题、同一个选中项，来回切不丢上下文
+  const head = h('div', { class: 'mid-head hairline-b' },
+    h('h1', {}, theme ? theme.name : ''),
+    h('div', { class: 'spacer' }),
+    h('div', { class: 'seg seg-shape' },
+      h('button', {
+        'aria-selected': isGraph ? 'false' : 'true',
+        onclick: () => setShape('tree'),
+      }, '树形'),
+      h('button', {
+        'aria-selected': isGraph ? 'true' : 'false',
+        onclick: () => setShape('graph'),
+      }, '图'),
+    ),
+    h('button', {
+      class: 'btn btn-icon', title: '新建环节', onclick: () => newNode(null),
+    }, icon('plus', 14)),
+  )
+
+  if (isGraph) {
+    const wrap = h('div', { class: 'graph-wrap' })
+    mid.append(head, h('div', { class: 'graph-debug' }, wrap))
+    try {
+      renderGraph(wrap)
+    } catch (e) {
+      console.error('[graph] render failed:', e)
+      wrap.append(h('div', { class: 'graph-error', style: { padding: '20px', color: 'red' } },
+        h('p', {}, '图渲染失败：' + e.message)))
+    }
+    wireKeys(wrap)
+    return
+  }
+
+  const tree = h('div', { class: 'tree' })
+  mid.append(head, h('div', { class: 'tree-wrap' }, tree))
+  paint(tree)
+  wireKeys(tree)
+}
+
+function flatten() {
+  const byParent = new Map([[null, []]])
+  for (const n of state.nodes) {
+    const key = n.parentId || null
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key).push(n)
+  }
+  for (const list of byParent.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  return byParent
+}
+
+/**
+ * 聚合一层下面的命题：平均确信度、条数、待结算数。
+ * 收起时整棵树只剩环节名——没有这三个数，「一目了然」就只是句空话。
+ */
+function aggregate(byParent, id) {
+  let sum = 0, n = 0, due = 0
+  const stack = [id]
+  const seen = new Set()
+  while (stack.length) {
+    for (const c of byParent.get(stack.pop()) || []) {
+      if (seen.has(c.id)) continue
+      seen.add(c.id)
+      if (c.kind === 'lemma') {
+        if (c.status !== 'dead') { sum += c.confidence; n++ }
+        if (c.settlement && c.settlement.resolved == null && c.settlement.date <= todayStr()) due++
+      }
+      stack.push(c.id)
+    }
+  }
+  return { avg: n ? Math.round(sum / n) : null, count: n, due }
+}
+
+/** 十格确信度计。分段比连续条更容易一眼分开 72 和 78。 */
+function meter(value, wide = false) {
+  const v = Math.max(0, Math.min(100, Math.round(value)))
+  const lit = Math.round(v / 10)
+  return h('span', { class: `meter${wide ? ' meter-wide' : ''}`, title: `平均确信度 ${v}` },
+    ...Array.from({ length: 10 }, (_, i) => h('i', {
+      dataset: { on: i < lit ? 'true' : 'false' },
+      style: i < lit ? { background: confColor(v) } : null,
+    })),
+  )
+}
+
+function paint(container) {
+  clear(container)
+  const byParent = flatten()
+  const q = state.query.trim().toLowerCase()
+
+  const keep = (n) => {
+    if (!q) return true
+    if (n.title.toLowerCase().includes(q)) return true
+    return (byParent.get(n.id) || []).some(keep)
+  }
+
+  // 环节序号按未过滤的根序列算，过滤时编号才不会跳
+  const stageNo = new Map((byParent.get(null) || []).map((n, i) => [n.id, i + 1]))
+  const aggCache = new Map()
+  const agg = (id) => {
+    if (!aggCache.has(id)) aggCache.set(id, aggregate(byParent, id))
+    return aggCache.get(id)
+  }
+
+  /** scaffold 摘要：环节的子命题回答了几道题，几条指标有结算日 */
+  function scaffoldSummary(node) {
+    const sc = node.scaffold
+    if (!sc) return null
+    const kids = byParent.get(node.id) || []
+    const lemmas = kids.filter((k) => k.kind === 'lemma')
+    const answered = lemmas.filter((l) => l.settlement?.resolved != null).length
+    const indicators = (sc.indicators || []).length
+    const hasSettlement = lemmas.some((l) => l.settlement?.date)
+    return { answered, total: (sc.answer || []).length, indicators, hasSettlement }
+  }
+
+  /**
+   * 每个子层包一层 .lvl，导轨画在它左边。
+   * 之前 draw() 把所有行平铺进同一个容器，styles.css 里的 .children::before
+   * 从来没有对应的元素，等于白写——缩进成了唯一的层级线索。
+   */
+  const draw = (parentId, depth) => {
+    const list = byParent.get(parentId) || []
+    if (!list.length) return null
+    const lvl = h('div', {
+      class: 'lvl',
+      dataset: { depth: String(depth) },
+      style: { '--rail': `${railX(depth)}px` },
+    })
+
+    for (const node of list) {
+      if (q && !keep(node)) continue
+      const kids = byParent.get(node.id) || []
+      const open = q ? true : state.open.has(node.id)
+      const isLemma = node.kind === 'lemma'
+      const isStage = !isLemma && depth === 0
+      const conf = Math.round(node.confidence)
+      const propagated = node.history.some((x) => x.by === 'propagation')
+      const due = node.settlement && node.settlement.resolved == null && node.settlement.date <= todayStr()
+      const dead = node.status === 'dead'
+      const cold = node.status === 'cold'
+      const srcs = node.sources?.length || 0
+      const a = isLemma ? null : agg(node.id)
+
+      const sc = node.scaffold
+      const scSum = !isLemma && sc ? scaffoldSummary(node) : null
+      const meta = h('span', { class: 'row-meta' },
+        srcs > 1 ? h('span', { class: 'chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
+        cold ? h('span', { class: 'chip', title: '冷库' }, '冷') : null,
+        propagated ? h('span', { class: 'dot', style: { background: 'var(--orange)' }, title: '14 天内有传导' }) : null,
+        due ? h('span', { class: 'chip chip-due', title: '已到结算日' }, icon('flag', 9)) : null,
+        isLemma
+          ? h('span', { class: `badge badge-${node.type}` }, TYPE_LABEL[node.type])
+          : a.due ? h('span', { class: 'chip chip-due', title: `${a.due} 条待结算` }, icon('flag', 9), String(a.due)) : null,
+        isLemma ? meter(conf) : a.avg != null ? meter(a.avg, true) : null,
+        isLemma || a.avg != null
+          ? h('span', {
+              class: `row-conf${isLemma ? '' : ' row-conf-agg'}`,
+              style: isLemma ? null : { color: confColor(a.avg) },
+            }, String(isLemma ? conf : a.avg))
+          : null,
+        scSum ? h('span', { class: 'scaffold-sum', title: `已回答 ${scSum.answered} / ${scSum.total} 题 · ${scSum.indicators} 项指标` },
+            `${scSum.answered}/${scSum.total}`
+          ) : null,
+        // 悬停操作：删除、加子项、切换冷库。不用点到右边栏
+        h('span', { class: 'row-acts' },
+          h('button', {
+            class: 'row-act', title: '删除', onclick: (e) => { e.stopPropagation(); confirmDelete(node.id) },
+          }, icon('trash', 11)),
+          isLemma
+            ? h('button', {
+                class: 'row-act', title: node.status === 'cold' ? '移出冷库' : '移入冷库',
+                onclick: (e) => { e.stopPropagation(); toggleCold(node.id) },
+              }, icon('lattice', 11))
+            : h('button', {
+                class: 'row-act', title: '加子命题',
+                onclick: (e) => { e.stopPropagation(); addChildHere(node.id) },
+              }, icon('plus', 11)),
+        ),
+      )
+
+      const row = h('button', {
+        class: `row ${isLemma ? 'row-lemma' : 'row-branch'}${isStage ? ' row-stage' : ''}`,
+        dataset: { id: node.id, depth: String(depth) },
+        'aria-selected': state.selectedId === node.id ? 'true' : 'false',
+        style: { paddingLeft: `${PAD + depth * INDENT}px`, opacity: dead ? 0.45 : 1 },
+        onclick: () => selectNode(node.id),
+        ondblclick: () => {
+          if (isLemma) startEdit(row, node)
+          else toggle(node.id, container)
+        },
+      },
+        h('span', {
+          class: 'twist',
+          dataset: { open: kids.length ? String(open) : 'true', leaf: kids.length ? 'false' : 'true' },
+          onclick: (e) => { e.stopPropagation(); toggle(node.id, container) },
+        }, kids.length ? icon('chevron', 10) : h('i', { class: 'leaf-dot' })),
+        isStage ? h('span', { class: 'stage-no', title: '产业链第几层' }, String(stageNo.get(node.id))) : null,
+        h('span', { class: 'row-title' }, node.title),
+        meta,
+      )
+
+      lvl.append(row)
+      if (kids.length && open) {
+        const sub = draw(node.id, depth + 1)
+        if (sub) lvl.append(sub)
+      }
+    }
+    return lvl
+  }
+
+  container.append(draw(null, 0))
+}
+
+function toggle(id, container) {
+  state.open.has(id) ? state.open.delete(id) : state.open.add(id)
+  paint(container)
+}
+
+// 行内编辑：双击标题直接改，不走右边栏
+function startEdit(row, node) {
+  const titleEl = row.querySelector('.row-title')
+  if (!titleEl || titleEl.dataset.editing === 'true') return
+  titleEl.dataset.editing = 'true'
+  const input = h('input', {
+    class: 'txt row-edit',
+    value: node.title,
+    onkeydown: (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit() }
+      if (e.key === 'Escape') { titleEl.dataset.editing = 'false'; titleEl.textContent = node.title }
+    },
+    onblur: commit,
+  })
+  titleEl.textContent = ''
+  titleEl.append(input)
+  input.focus()
+  input.select()
+
+  async function commit() {
+    const v = input.value.trim()
+    titleEl.dataset.editing = 'false'
+    if (v && v !== node.title) {
+      await m.updateNode(node.id, { title: v })
+      await refresh()
+    } else {
+      titleEl.textContent = node.title
+    }
+  }
+}
+
+async function confirmDelete(id) {
+  if (!confirm('删除这条及它的全部子树？')) return
+  await m.removeNode(id)
+  if (state.selectedId === id) state.selectedId = null
+  await refresh()
+}
+
+async function toggleCold(id) {
+  const node = state.nodes.find((n) => n.id === id)
+  if (!node) return
+  await m.updateNode(id, { status: node.status === 'cold' ? 'live' : 'cold' })
+  await refresh()
+}
+
+async function addChildHere(parentId) {
+  const node = m.getNode(parentId)
+  if (!node) return
+  const child = await m.addNode({
+    themeId: state.themeId,
+    parentId,
+    kind: node.kind === 'branch' ? 'lemma' : 'lemma',
+    title: '未命名命题',
+    confidence: 50,
+  })
+  state.selectedId = child.id
+  state.open.add(parentId)
+  await refresh()
+  document.querySelector(`.row[data-id="${child.id}"]`)?.scrollIntoView({ block: 'nearest' })
+}
+
+/** ⏎ = 兄弟，Tab = 子层。树形和图共用一套——编辑动作不该因为换了视图就变。 */
+export async function newNode(mode) {
+  const sel = state.nodes.find((n) => n.id === state.selectedId)
+  let spec
+
+  if (!sel) spec = { parentId: null, kind: 'branch', title: '新的环节' }
+  else if (mode === 'child') {
+    spec = { parentId: sel.id, kind: 'lemma', title: '未命名命题' }
+    state.open.add(sel.id)
+  } else {
+    spec = { parentId: sel.parentId || null, kind: sel.kind, title: sel.kind === 'branch' ? '新的环节' : '新命题' }
+    if (sel.parentId) state.open.add(sel.parentId)
+  }
+
+  const node = await m.addNode({ themeId: state.themeId, confidence: 50, ...spec })
+  state.selectedId = node.id
+  await refresh()
+  document.querySelector(`.row[data-id="${node.id}"]`)?.scrollIntoView({ block: 'nearest' })
+}
+
+/** 键盘：⏎ 兄弟、Tab 子层、⌘⌫ 删除子树、↑↓ 在可见行间移动（图里没有 .row，自然空转） */
+export function wireKeys(container) {
+  container.tabIndex = 0
+  container.onkeydown = async (e) => {
+    if (e.target.tagName === 'INPUT' || e.target === 'TEXTAREA') return
+    if (e.key === 'Enter') { e.preventDefault(); await newNode('sibling'); return }
+    if (e.key === 'Tab') { e.preventDefault(); await newNode('child'); return }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Backspace') {
+      e.preventDefault()
+      if (!state.selectedId) return
+      await m.removeNode(state.selectedId)
+      state.selectedId = null
+      await refresh()
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const rows = [...container.querySelectorAll('.row')]
+      const i = rows.findIndex((r) => r.dataset.id === state.selectedId)
+      const next = rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i) + (e.key === 'ArrowDown' ? 1 : -1)))]
+      if (next) selectNode(next.dataset.id)
+    }
+  }
+}
