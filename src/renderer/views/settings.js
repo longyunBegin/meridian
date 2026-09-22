@@ -251,7 +251,8 @@ export async function renderSettings(mid) {
                 try { await m.importAll(text); await renderSettings(mid) }
                 catch { alert('导入失败：不是有效的脉络数据') }
               }
-            }).click(),
+              input.click()
+            },
           }, '导入 JSON'),
           h('button', {
             class: 'btn',
