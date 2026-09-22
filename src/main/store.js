@@ -130,7 +130,7 @@ export function addNode(input) {
     status: input.status || 'live', // live | cold | dead
     settlement: input.settlement || null,
     scaffold: input.scaffold || null,
-    history: [{ t, confidence: clamp(input.confidence ?? 50), by: 'manual' }],
+    history: [{ t, confidence: clamp(input.confidence ?? 50), by: input.by || 'manual' }],
     by: input.by || 'manual',
     stableId: input.stableId || uid(),
     createdAt: t,
@@ -378,14 +378,14 @@ export function propagationEvents(sinceDays = 14) {
   return events.sort((a, b) => b.ts - a.ts)
 }
 
-/** 命题校准曲线：分置信度桶统计命中率 */
+/** 命题校准曲线：分置信度桶统计命中率。只统计 by:'manual' 的置信度设定。 */
 export function calibration() {
   const buckets = new Map()
   for (const n of db.nodes) {
     if (n.kind !== 'lemma') continue
     const s = n.settlement
     if (!s || s.resolved == null || s.correct == null) continue
-    const first = n.history.find((h) => h.by === 'manual') || n.history[0]
+    const first = n.history.find((h) => h.by === 'manual')
     if (!first) continue
     const bucket = Math.min(10, Math.floor(first.confidence / 10)) * 10
     const b = buckets.get(bucket) || { bucket, total: 0, hit: 0 }

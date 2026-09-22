@@ -396,5 +396,13 @@
         }
       ]
     }
-  ]
+  ],
+  "channelPacks": {
+    "ai-chain": [
+      { "name": "arXiv · AI", "kind": "一手数据", "fetch": "rss", "query": "https://export.arxiv.org/rss/cs.AI", "cadence": "日", "needsKey": false },
+      { "name": "Hugging Face Blog", "kind": "一手数据", "fetch": "rss", "query": "https://huggingface.co/blog/feed.xml", "cadence": "周", "needsKey": false },
+      { "name": "Tavily · AI 新闻", "kind": "独立媒体", "fetch": "tavily", "query": "AI infrastructure OR LLM OR GPU supply chain", "cadence": "日", "needsKey": true },
+      { "name": "X · AI 产业链", "kind": "自媒体", "fetch": "grok-x-search", "query": "1.6T optical module OR silicon photonics OR AI supply chain", "cadence": "日", "needsKey": true }
+    ]
+  }
 }

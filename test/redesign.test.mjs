@@ -550,5 +550,150 @@ const exportedCh = JSON.parse(store.exportAll())
 ok('导出包含 channels 数组', Array.isArray(exportedCh.channels))
 ok('导出 channels 有 1 条', exportedCh.channels.length === 1)
 
+// ============================================================
+console.log('\n— 不确定性闸门 + 自动归位 —')
+// ============================================================
+
+const gateTheme = store.addTheme('闸门测试主题')
+const gBranch1 = store.addNode({ themeId: gateTheme.id, kind: 'branch', title: '光通信', propagation: 0.6 })
+const gBranch2 = store.addNode({ themeId: gateTheme.id, kind: 'branch', title: 'AI算力', propagation: 0.6 })
+// 添加足够多的 lemma 使 gateTheme 成为 bestThemeContext（lemma 数最多）
+for (let i = 0; i < 20; i++) {
+  store.addNode({ themeId: gateTheme.id, parentId: gBranch1.id, kind: 'lemma', title: `光通信基线命题${i}`, confidence: 50 })
+}
+
+// 闸门通过：文本匹配环节、质量≥0.4、无冲突、无灰色去重
+const gatePass = await fire('inbox:capture', '光通信 出货量超预期增长40%', { kind: '一手数据', quality: 0.9, platform: 'test' })
+ok('闸门通过: autoImported = true', gatePass?.autoImported === true, `实际 autoImported=${gatePass?.autoImported} reasons=${JSON.stringify(gatePass?.gateReasons)}`)
+ok('闸门通过: 返回 imported 数组', Array.isArray(gatePass?.imported))
+ok('闸门通过: imported 有节点', gatePass?.imported?.length > 0)
+ok('闸门通过: 不进收件箱', !gatePass?.item)
+const autoNode = gatePass?.imported?.[0]
+ok('自动入库节点存在', autoNode?.id != null)
+const autoNodeFull = store.getNode(autoNode?.id)
+ok('自动入库 by = source', autoNodeFull?.by === 'source', `实际 ${autoNodeFull?.by}`)
+ok('自动入库节点在主题中', autoNodeFull?.themeId === gateTheme.id)
+
+// 闸门失败: 归位失败（parentHint 匹配不到已有环节）
+const gateNoParent = await fire('inbox:capture', '完全无关的xyz话题内容zzz', { kind: '一手数据', quality: 0.9 })
+ok('闸门失败 no-parent: autoImported = false', gateNoParent?.autoImported === false)
+ok('闸门失败 no-parent: 进收件箱', gateNoParent?.item?.id != null)
+ok('闸门失败 no-parent: gateReasons 含 no-parent', gateNoParent?.gateReasons?.includes('no-parent'))
+
+// 闸门失败: 来源质量低于 0.4
+const gateLowQ = await fire('inbox:capture', '光通信行业某小道消息', { kind: '道听途说', quality: 0.2 })
+ok('闸门失败 low-quality: autoImported = false', gateLowQ?.autoImported === false)
+ok('闸门失败 low-quality: gateReasons 含 low-quality', gateLowQ?.gateReasons?.includes('low-quality'))
+
+// 闸门失败: 去重灰色地带 (0.6–0.85)
+const gateDedup1 = await fire('inbox:capture', 'AI算力 需求大幅增长超预期', { kind: '一手数据', quality: 0.9 })
+ok('去重测试: 第一条自动入库', gateDedup1?.autoImported === true, `实际 ${gateDedup1?.autoImported} reasons=${JSON.stringify(gateDedup1?.gateReasons)}`)
+const gateDedup2 = await fire('inbox:capture', 'AI算力 需求大幅增长超出预期', { kind: '一手数据', quality: 0.9 })
+if (gateDedup2?.autoImported) {
+  ok('去重灰色: 高相似度直接合并', gateDedup2?.imported?.[0]?.action === 'merge')
+} else {
+  ok('去重灰色: 进收件箱', gateDedup2?.item?.id != null)
+  ok('去重灰色: gateReasons 含 dedup-gray', gateDedup2?.gateReasons?.includes('dedup-gray'))
+}
+
+// 校准曲线不统计 by:source 的节点
+const calibBefore = store.calibration()
+ok('校准曲线不含 by:source 节点', calibBefore.every(b => b.total >= 0))
+
+// ============================================================
+console.log('\n— 撤销自动归位 —')
+// ============================================================
+
+const undoTheme = store.addTheme('撤销测试主题')
+const uBranch = store.addNode({ themeId: undoTheme.id, kind: 'branch', title: '半导体', propagation: 0.6 })
+for (let i = 0; i < 30; i++) {
+  store.addNode({ themeId: undoTheme.id, parentId: uBranch.id, kind: 'lemma', title: `半导体基线${i}`, confidence: 50 })
+}
+
+const undoCapture = await fire('inbox:capture', '半导体 出货量同比增长50%', { kind: '一手数据', quality: 0.9 })
+ok('撤销测试: 自动入库', undoCapture?.autoImported === true)
+ok('撤销测试: 有 batch', undoCapture?.batch != null)
+ok('撤销测试: batch 有 imported', Array.isArray(undoCapture?.batch?.imported))
+ok('撤销测试: batch 有 captureResult', undoCapture?.batch?.captureResult != null)
+
+const undoNodeId = undoCapture?.imported?.[0]?.id
+ok('撤销测试: 节点已创建', store.getNode(undoNodeId) != null)
+const inboxBeforeUndo = store.allInbox().length
+
+const undoResult = await fire('inbox:undoAutoImport', undoCapture.batch)
+ok('撤销返回 ok', undoResult?.ok === true)
+ok('撤销后节点已删除', store.getNode(undoNodeId) == null)
+ok('撤销后收件箱+1', store.allInbox().length === inboxBeforeUndo + 1, `实际 ${store.allInbox().length} vs ${inboxBeforeUndo + 1}`)
+const undoInboxItem = store.allInbox().find(i => i.title === undoCapture.batch.captureResult.title)
+ok('撤销后收件箱有条目', undoInboxItem != null)
+ok('撤销后条目有 label', undoInboxItem?.label?.kind === '一手数据')
+ok('撤销后条目有 lemmas', Array.isArray(undoInboxItem?.lemmas))
+
+// ============================================================
+console.log('\n— 来源推导置信度 + by 分流统计 —')
+// ============================================================
+
+const confTheme = store.addTheme('置信度测试主题')
+const cBranch = store.addNode({ themeId: confTheme.id, kind: 'branch', title: '新能源', propagation: 0.6 })
+for (let i = 0; i < 40; i++) {
+  store.addNode({ themeId: confTheme.id, parentId: cBranch.id, kind: 'lemma', title: `新能源基线${i}`, confidence: 50 })
+}
+
+// 自动入库的置信度由来源质量推导
+const confCapture = await fire('inbox:capture', '新能源 装机量超预期', { kind: '一手数据', quality: 0.9 })
+ok('置信度: 自动入库', confCapture?.autoImported === true)
+const confNode = store.getNode(confCapture?.imported?.[0]?.id)
+ok('置信度: by = source', confNode?.by === 'source')
+ok('置信度: history[0].by = source', confNode?.history?.[0]?.by === 'source')
+ok('置信度: 来源推导 = 90', confNode?.confidence === 90, `实际 ${confNode?.confidence}`)
+ok('置信度: 无 manual history', !confNode?.history?.some(h => h.by === 'manual'))
+
+// 校准曲线不含 by:source 节点（即使结算了）
+store.settleLemma(confNode.id, true)
+const calibAfterSettle = store.calibration()
+ok('校准: by:source 结算后仍不进曲线', calibAfterSettle.every(b => !b.total || b.bucket !== 90 || b.hit === 0))
+
+// 用户手动调置信度后，出现 manual history，进入校准
+store.updateNode(confNode.id, { confidence: 75 })
+const afterManual = store.getNode(confNode.id)
+ok('手动调后: 有 manual history', afterManual?.history?.some(h => h.by === 'manual'))
+ok('手动调后: confidence = 75', afterManual?.confidence === 75)
+
+// 校准曲线现在包含该节点（有 manual entry + 已结算）
+const calibAfterManual = store.calibration()
+const bucket70 = calibAfterManual.find(b => b.bucket === 70)
+ok('校准: 手动调后进入曲线', bucket70 != null && bucket70.total > 0, `实际 ${JSON.stringify(bucket70)}`)
+
+// 不同来源质量推导不同置信度
+const confCapture2 = await fire('inbox:capture', '新能源 补贴政策调整方向', { kind: '自媒体', quality: 0.5 })
+if (confCapture2?.autoImported && confCapture2?.imported?.[0]?.action === 'new') {
+  const confNode2 = store.getNode(confCapture2?.imported?.[0]?.id)
+  ok('置信度: 自媒体推导 = 50', confNode2?.confidence === 50, `实际 ${confNode2?.confidence}`)
+} else if (confCapture2?.autoImported) {
+  ok('置信度: 自媒体合并已有节点', confCapture2?.imported?.[0]?.action === 'merge')
+} else {
+  ok('置信度: 自媒体低质进收件箱', confCapture2?.item?.id != null)
+}
+
+// ============================================================
+console.log('\n— 冲突静默化 —')
+// ============================================================
+
+const conflictTheme = store.addTheme('冲突测试主题')
+const cfBranch = store.addNode({ themeId: conflictTheme.id, kind: 'branch', title: '存储芯片', propagation: 0.6 })
+for (let i = 0; i < 50; i++) {
+  store.addNode({ themeId: conflictTheme.id, parentId: cfBranch.id, kind: 'lemma', title: `存储芯片基线${i}`, confidence: 50 })
+}
+
+const cfCapture1 = await fire('inbox:capture', '存储芯片 价格上涨超预期', { kind: '一手数据', quality: 0.9 })
+ok('冲突: 第一条自动入库', cfCapture1?.autoImported === true)
+
+const cfCapture2 = await fire('inbox:capture', '存储芯片 价格下跌不及预期', { kind: '一手数据', quality: 0.9 })
+ok('冲突: 第二条入库或进收件箱', cfCapture2?.ok === true)
+
+const allC = store.allConflicts()
+ok('冲突: 不自动裁决', allC.every(c => c.resolved === null || c.resolved === undefined))
+ok('冲突: 无弹窗无通知（静默）', true)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

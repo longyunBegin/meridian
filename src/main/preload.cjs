@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('meridian', {
   spawn: (branchId) => ipcRenderer.invoke('db:spawn', branchId),
   addTheme: (name) => ipcRenderer.invoke('theme:add', name),
   addThemeFromTemplate: (templateId) => ipcRenderer.invoke('theme:fromTemplate', templateId),
+  setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
   renameTheme: (id, name) => ipcRenderer.invoke('theme:rename', id, name),
   saveSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
@@ -69,6 +70,7 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
   inboxImport: (themeId, items) => ipcRenderer.invoke('inbox:import', themeId, items),
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
+  inboxUndoAutoImport: (batch) => ipcRenderer.invoke('inbox:undoAutoImport', batch),
 
   // ---- 骨架生成
   generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),

@@ -43,6 +43,11 @@ export function find(id) {
   return read().templates.find((t) => t.id === id) || null
 }
 
+export function channelPack(templateId) {
+  const packs = read().channelPacks || {}
+  return packs[templateId] || []
+}
+
 /** 按 "/" 路径把骨架铺成节点树，返回新建的根节点 id 列表。 */
 export function instantiate(template, createBranch) {
   // 只有路径的终点才挂 scaffold——中间层是分组，不继承子层的问题。

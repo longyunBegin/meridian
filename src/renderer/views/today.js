@@ -10,13 +10,14 @@ let inboxLoading = false
 let renderSeq = 0
 let selectedInboxIdx = null
 const overrides = new Map()
+let lastAutoImport = null
 
 export async function renderToday(mid) {
   const seq = ++renderSeq
   clear(mid)
 
-  const [due, calib, inbox] = await Promise.all([
-    m.due(), m.calibration(), m.inboxList(),
+  const [due, calib, inbox, conflicts] = await Promise.all([
+    m.due(), m.calibration(), m.inboxList(), m.conflicts(),
   ])
   if (seq !== renderSeq) return
   inboxItems = inbox
@@ -32,6 +33,26 @@ export async function renderToday(mid) {
       h('h1', {}, '今日'),
       h('p', {}, '现在该做什么——不是你拥有什么。'),
     ),
+
+    // ---- 自动归位提示
+    lastAutoImport ? h('div', { class: 'auto-import-notice' },
+      h('span', { class: 'auto-import-text' },
+        `${lastAutoImport.count} 条新信息已归位`),
+      h('span', { class: 'auto-import-sub', style: { color: 'var(--text-3)' } },
+        '默认信任，例外修正'),
+      h('span', { style: { flex: 1 } }),
+      h('button', {
+        class: 'btn', style: { height: '26px', fontSize: '12px' },
+        onclick: async () => {
+          if (lastAutoImport?.batch) {
+            await m.inboxUndoAutoImport(lastAutoImport.batch)
+            lastAutoImport = null
+            await refresh()
+            renderToday(mid)
+          }
+        },
+      }, '撤销'),
+    ) : null,
 
     // ---- 顶部两个大数字
     h('div', { class: 'today-metrics' },
@@ -184,6 +205,32 @@ export async function renderToday(mid) {
         )),
       ),
     ),
+
+    // ---- 冲突（静默标记，不强制裁决）
+    conflicts.length ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' },
+        h('h2', {}, '冲突'),
+        h('span', { class: 'spacer' }),
+        h('em', {}, String(conflicts.length)),
+      ),
+      h('div', { class: 'sect-b' },
+        ...conflicts.slice(0, 5).map((c) => {
+          const a = themeNodes.find((n) => n.id === c.a)
+          const b = themeNodes.find((n) => n.id === c.b)
+          return h('div', { class: 'q' },
+            h('span', { class: 'cf', style: { marginTop: '6px' } }, '冲突'),
+            h('div', { class: 'q-body' },
+              h('div', { class: 'q-text', style: { fontSize: '12px' } },
+                a?.title || c.a, ' ↔ ', b?.title || c.b),
+              h('div', { class: 'q-meta' },
+                h('span', { style: { color: 'var(--text-3)' } }, c.note || '方向相反'),
+              ),
+            ),
+          )
+        }),
+        conflicts.length > 5 ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', padding: '4px 0' } }, `+${conflicts.length - 5} 条`) : null,
+      ),
+    ) : null,
 
     // ---- 校准曲线详情
     h('section', { class: 'card' },
@@ -468,7 +515,12 @@ export async function inboxPaste(text) {
   ))
 
   try {
-    await m.inboxCapture(text)
+    const res = await m.inboxCapture(text)
+    if (res?.autoImported) {
+      lastAutoImport = { count: res.count, imported: res.imported, batch: res.batch }
+    } else {
+      lastAutoImport = null
+    }
   } catch { /* 静默失败 */ }
 
   // 捕获完成后重新渲染（renderSeq 会取消上面未完成的 renderToday 调用）

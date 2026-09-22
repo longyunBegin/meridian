@@ -5,7 +5,7 @@
 
 本地优先、零构建、单依赖。`npm install && npm start`。
 
-**状态：v0.5** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
+**状态：v0.6** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
 
 ---
 
@@ -14,7 +14,7 @@
 ```bash
 npm install
 npm start          # 启动
-npm test           # 引擎 + IPC + 改造测试（298 项）
+npm test           # 引擎 + IPC + 改造测试（338 项）
 npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 ```
 
@@ -62,10 +62,17 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 
 ---
 
-## 已实现的能力（v0.5）
+## 已实现的能力（v0.6）
 
 | 能力 | 状态 |
 |---|---|
+| 一句话冷启动（输入产业链描述 → 骨架 + 通道 + 今日页） | ✅ 无 key 降级到静态模板 |
+| 默认通道包（模板自带 RSS + Tavily + Grok，needsKey:false 启用） | ✅ |
+| 不确定性闸门 + 自动归位（通过闸门的信息自动入库，例外才进收件箱） | ✅ |
+| 可撤销自动归位（toast 提示，撤销退回收件箱不丢数据） | ✅ |
+| 来源推导置信度（搬运品 by:source，置信度由来源质量推导） | ✅ 用户零操作 |
+| 校准曲线只算 by:manual（来源推导/模型建议/传导分开统计） | ✅ 护城河不混 |
+| 冲突静默化（标记不弹窗不强制裁决，今日页文字标签待着） | ✅ |
 | 今日视图（开屏=待确认+到期结算+校准曲线，资产优先） | ✅ |
 | 收件箱（全局待确认区，批量裁决，默认全选零思考入库） | ✅ |
 | 收件箱内联输入框（textarea，回车送入打标，Shift+回车换行，拖拽支持） | ✅ |
@@ -98,7 +105,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 原文层（raw.jsonl，与判断层分离） | ✅ |
 | API 密钥加密存储（AES-256-GCM，机器绑定） | ✅ |
 | 本地 JSON 主权 + 导入导出 | ✅ |
-| 引擎 + IPC + 改造测试 | ✅ 298 项 |
+| 引擎 + IPC + 改造测试 | ✅ 338 项 |
 
 ---
 
@@ -147,7 +154,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
     "themeId": "…",
     "parentId": "…",              // 产业链位置
     "kind": "branch | lemma",     // 环节 | 命题
-    "by": "manual",               // manual | model —— 节点来源
+    "by": "manual",               // manual | model | source —— 节点来源（source=搬运品，校准只算manual）
     "title": "1.6T 光模块 Q3 出货超预期",
     "type": "axiom | hypothesis | observation",
     "confidence": 85,
@@ -314,7 +321,7 @@ src/
 test/
   engine.test.mjs       引擎测试（传导 / 结算 / 校准 / 收敛 / 审计 / 前提 / 标的 / 订阅源 / 模板 / 原文层）
   ipc.test.mjs          IPC 层测试（收件箱链路 + 原文层）
-  redesign.test.mjs     改造测试（收件箱 / 通道 / provenance / 骨架 / 加密 / URL / trace / 通道描述符）
+  redesign.test.mjs     改造测试（收件箱 / 通道 / provenance / 骨架 / 加密 / URL / trace / 通道描述符 / 闸门 / 撤销 / 置信度分流）
   electron-stub.mjs     Electron 模块 stub
 tools/shoot.mjs         视觉回归截图
 docs/ROADMAP.md         迭代路线（按 JEV/Effort 排序）
@@ -327,6 +334,13 @@ docs/ROADMAP.md         迭代路线（按 JEV/Effort 排序）
 完整路线见 `docs/ROADMAP.md`，按 JEV/Effort 排序，`<10` 的不碰。当前进度：
 
 - ✅ **今日视图**（开屏=待确认+到期结算+校准曲线，资产优先）
+- ✅ **一句话冷启动**（输入产业链描述 → 骨架 + 通道 + 今日页，2 分钟进场）
+- ✅ **默认通道包**（模板自带 RSS + Tavily + Grok，needsKey:false 启用）
+- ✅ **不确定性闸门 + 自动归位**（通过闸门的信息自动入库，例外才进收件箱）
+- ✅ **可撤销自动归位**（toast 提示，撤销退回收件箱不丢数据）
+- ✅ **来源推导置信度**（搬运品 by:source，置信度由来源质量推导，用户零操作）
+- ✅ **校准曲线只算 by:manual**（来源推导/模型建议/传导分开统计，护城河不混）
+- ✅ **冲突静默化**（标记不弹窗不强制裁决，今日页文字标签待着）
 - ✅ **收件箱**（全局待确认区，⌘⇧V 粘贴 / URL 抓取，批量裁决零思考入库）
 - ✅ **URL 抓取 + 通道推断**（域名 → 一手/研报/自媒体，通道优先于打标表）
 - ✅ **provenance**（平台、URL、抓取时间、检索提示词）

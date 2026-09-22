@@ -1085,6 +1085,18 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 
 .today-page { max-width: 860px; }
 
+.auto-import-notice {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; margin: 0 0 16px;
+  background: var(--accent-bg, rgba(0,113,227,0.08));
+  border: 1px solid rgba(0,113,227,0.2);
+  border-radius: 8px;
+  animation: auto-import-fade 0.3s ease;
+}
+.auto-import-text { font-size: 13px; font-weight: 600; color: var(--accent); }
+.auto-import-sub { font-size: 11px; }
+@keyframes auto-import-fade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
 .today-metrics {
   display: flex; align-items: center; gap: 32px; padding: 8px 0 24px;
 }

@@ -333,30 +333,21 @@ function renderMid() {
 function emptyState() {
   return h('div', { class: 'empty' },
     h('h2', {}, '从一个主题开始'),
-    h('p', {}, '输入一句话描述要跟踪的产业链，模型生成骨架，你裁剪后落库。或选一个专家模板。'),
+    h('p', {}, '说一句话，模型搭骨架，自动配通道——你直接进今日页看结果。'),
     // 骨架生成输入
     h('div', { class: 'skeleton-gen' },
       h('input', {
-        class: 'txt skeleton-input', placeholder: '描述你要跟踪的产业链，如「AI 算力供应链」',
+        class: 'txt skeleton-input', placeholder: '描述你要跟踪的产业链，如「AI 产业链」',
         id: 'skeleton-desc',
         onkeydown: async (e) => {
           if (e.key === 'Enter') {
             const desc = e.target.value.trim()
             if (!desc) return
             e.target.disabled = true
-            const theme = await m.addTheme(desc)
+            const theme = await m.setupNewTheme(desc)
             state.themeId = theme.id
-            state.view = 'lattice'
+            state.view = 'today'
             await refresh()
-            const r = await m.generateSkeleton(desc)
-            if (r.ok) {
-              await m.instantiateSkeleton(theme.id, r.skeleton)
-              await refresh()
-            } else {
-              // 无 key 降级：用静态模板
-              const t = state.templates[0]
-              if (t) { await m.addThemeFromTemplate(t.id); await refresh() }
-            }
           }
         },
       }),
@@ -367,20 +358,12 @@ function emptyState() {
           const desc = input?.value.trim()
           if (!desc) return
           input.disabled = true
-          const theme = await m.addTheme(desc)
+          const theme = await m.setupNewTheme(desc)
           state.themeId = theme.id
-          state.view = 'lattice'
+          state.view = 'today'
           await refresh()
-          const r = await m.generateSkeleton(desc)
-          if (r.ok) {
-            await m.instantiateSkeleton(theme.id, r.skeleton)
-            await refresh()
-          } else {
-            const t = state.templates[0]
-            if (t) { await m.addThemeFromTemplate(t.id); await refresh() }
-          }
         },
-      }, icon('plus', 13), '生成骨架'),
+      }, icon('plus', 13), '开始跟踪'),
     ),
     h('div', { class: 'empty-actions' },
       ...state.templates.map((t) => h('button', {
@@ -388,7 +371,7 @@ function emptyState() {
         onclick: async () => {
           const theme = await m.addThemeFromTemplate(t.id)
           state.themeId = theme.id
-          state.view = 'lattice'
+          state.view = 'today'
           await refresh()
         },
       }, h('b', { style: { fontWeight: '600', color: 'var(--text)' } }, t.name),

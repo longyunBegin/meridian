@@ -16,7 +16,7 @@ import {
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
-import { list as templateList, find as templateFind, instantiate } from './templates.js'
+import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 import { fetchFeed } from './feeds.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
@@ -201,6 +201,64 @@ async function processCapture(text, themeId, channelMeta) {
   }
 }
 
+/**
+ * 不确定性闸门：任一条件不满足就退回收件箱等人裁决。
+ * 顺利通过闸门的信息自动入库，收件箱只留真正需要判断的少数。
+ */
+function gateCheck(result) {
+  const reasons = []
+  if (result.label.quality < 0.4) reasons.push('low-quality')
+  if (result.noulMaxScore >= 0.6 && result.noulMaxScore <= 0.85) reasons.push('dedup-gray')
+  for (const l of result.lemmas) {
+    if (l.action === 'new' && !l.parentId) reasons.push('no-parent')
+    if (l.conflicts?.length > 0) reasons.push('conflict')
+  }
+  return { pass: reasons.length === 0, reasons }
+}
+
+/** 自动归位入库：通过闸门的信息直接进图谱，by:'source' 标记为搬运品 */
+function autoImport(result, themeId) {
+  const raw = result.resolvedText
+    ? appendRaw({ kind: result.label.kind || '独立媒体', label: result.label.kind || '未注明', text: result.resolvedText })
+    : { id: null }
+
+  const sourceQuality = result.label.quality ?? 0.5
+  const derivedConfidence = Math.round(sourceQuality * 100)
+
+  const imported = []
+  for (const l of result.lemmas) {
+    if (l.action === 'merge' && l.mergeInto) {
+      addSource(l.mergeInto, {
+        kind: l.sourceKind || result.label.kind || '独立媒体',
+        label: l.label || result.label.kind || '未注明',
+        at: today(), rawId: raw.id,
+        ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
+        ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
+      })
+      imported.push({ title: l.title, action: 'merge', id: l.mergeInto })
+      continue
+    }
+    const node = addNode({
+      themeId, parentId: l.parentId || null, kind: 'lemma',
+      title: l.title, type: l.type,
+      confidence: derivedConfidence,
+      tags: l.tags || [],
+      sources: [{
+        kind: l.sourceKind || result.label.kind || '独立媒体',
+        label: l.label || result.label.kind || '未注明',
+        at: today(), rawId: raw.id,
+        ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
+        ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
+      }],
+      settlement: l.settlement || null,
+      by: 'source',
+    })
+    for (const c of l.conflicts || []) addConflict(node.id, c.id, c.reason)
+    imported.push({ title: l.title, action: 'new', id: node.id })
+  }
+  return imported
+}
+
 /** 生成来源类型概率分布 pills：选中类型高概率，相邻类型递减 */
 function generatePills(selectedKind) {
   const sorted = SOURCE_QUALITY.slice().sort((a, b) => b[1] - a[1])
@@ -287,6 +345,47 @@ function register({ getMainWindow }) {
     if (!tpl) return null
     const theme = addTheme(tpl.name)
     instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
+    // 自动配默认通道包
+    for (const ch of channelPack(templateId)) {
+      addChannel({
+        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+        cadence: ch.cadence, themeId: theme.id,
+        enabled: !ch.needsKey,
+      })
+    }
+    return theme
+  })
+
+  // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 返回
+  ipcMain.handle('theme:setupNew', async (_, description) => {
+    const theme = addTheme(description)
+    const s = settings()
+    const r = await generateSkeleton(s, description)
+    if (r.ok) {
+      // 模型生成骨架
+      const walk = (node, parentId) => {
+        const n = addNode({
+          themeId: theme.id, parentId, kind: 'branch', title: node.title,
+          propagation: node.propagation || 0.6, by: 'model',
+          stableId: node.id, scaffold: node.scaffold || null,
+        })
+        for (const c of node.children || []) walk(c, n.id)
+      }
+      for (const root of r.skeleton) walk(root, null)
+    } else {
+      // 无 key 降级：用静态模板
+      const tpl = templateFind('ai-chain')
+      if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
+    }
+    // 自动配默认通道包（needsKey:false 启用，needsKey:true 禁用）
+    const packId = r.ok ? 'ai-chain' : 'ai-chain'
+    for (const ch of channelPack(packId)) {
+      addChannel({
+        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+        cadence: ch.cadence, themeId: theme.id,
+        enabled: !ch.needsKey,
+      })
+    }
     return theme
   })
 
@@ -409,14 +508,38 @@ function register({ getMainWindow }) {
   ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
 
   // ---- 收件箱 ----
-  // ⌘⇧V 粘贴进收件箱（不再立即入库）：打标 → 抽取 → 去重 → 冲突 → 等用户裁决
+  // ⌘⇧V 粘贴 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
   ipcMain.handle('inbox:capture', async (_, text, channelMeta) => {
-    const s = settings()
-    // 全局收件箱不按主题分，但打标/去重需要一个主题上下文
-    // 用 lemma 数最多的主题作为默认上下文（用户在裁决时确认或修改）
     const bestTheme = bestThemeContext()
     const defaultThemeId = bestTheme?.id || null
     const result = await processCapture(text, defaultThemeId, channelMeta)
+
+    // 不确定性闸门
+    const gate = gateCheck(result)
+
+    if (gate.pass && defaultThemeId && result.lemmas.length > 0) {
+      const imported = autoImport(result, defaultThemeId)
+      getMainWindow?.()?.webContents.send('db:changed')
+      return {
+        ok: true, autoImported: true, imported, count: imported.length,
+        batch: {
+          themeId: defaultThemeId,
+          imported,
+          captureResult: {
+            text: result.resolvedText || text,
+            title: firstSentence(result.resolvedText || text),
+            label: result.label,
+            lemmas: result.lemmas,
+            rejected: result.rejected,
+            noulCompared: result.noulCompared,
+            noulMaxScore: result.noulMaxScore,
+            provenance: result.resolvedChannel || channelMeta || null,
+          },
+        },
+      }
+    }
+
+    // 未通过闸门 → 进收件箱等人裁决
     const item = addInboxItem({
       text: result.resolvedText || text,
       title: firstSentence(result.resolvedText || text),
@@ -427,7 +550,7 @@ function register({ getMainWindow }) {
       noulMaxScore: result.noulMaxScore,
       provenance: result.resolvedChannel || channelMeta || null,
     })
-    return { ok: true, item }
+    return { ok: true, autoImported: false, item, gateReasons: gate.reasons }
   })
 
   ipcMain.handle('inbox:list', () => allInbox())
@@ -496,6 +619,31 @@ function register({ getMainWindow }) {
   })
 
   ipcMain.handle('inbox:clear', () => clearInbox())
+
+  // 撤销自动归位：删除自动创建的节点 / 移除合并的来源，原文退回收件箱
+  ipcMain.handle('inbox:undoAutoImport', (_, batch) => {
+    for (const item of batch.imported || []) {
+      if (item.action === 'new' && item.id) {
+        removeNode(item.id)
+      } else if (item.action === 'merge' && item.id) {
+        const node = getNode(item.id)
+        if (node && node.sources.length > 1) {
+          updateNode(item.id, { sources: node.sources.slice(0, -1) })
+        }
+      }
+    }
+    const cr = batch.captureResult
+    if (cr) {
+      addInboxItem({
+        text: cr.text || '', title: cr.title || '',
+        label: cr.label || null, lemmas: cr.lemmas || [],
+        rejected: cr.rejected || [], noulCompared: cr.noulCompared || 0,
+        noulMaxScore: cr.noulMaxScore || 0, provenance: cr.provenance || null,
+      })
+    }
+    getMainWindow?.()?.webContents.send('db:changed')
+    return { ok: true }
+  })
 
   // ---- 留痕层 trace ----
   ipcMain.handle('trace:all', () => allTraces())
