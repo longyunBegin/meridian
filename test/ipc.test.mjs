@@ -1,13 +1,9 @@
 /**
- * IPC 层测试：capture:save 这条链路曾经整个是断的。
- *
- * ipc.js 里用了 today() 却没有从 store.js import——抛 ReferenceError，
- * 而且是在求值 sources 对象字面量时抛的，addNode 根本没被调用，
- * 于是「按了回车、什么都没发生」。store.js 的引擎测试覆盖不到这条路径。
+ * IPC 层测试：收件箱链路 + 原文层 + 其他 handler。
  *
  * 运行：node test/ipc.test.mjs
  */
-import { rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
+import { rmSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -31,36 +27,35 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
 const fire = (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
+const fireAsync = async (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
 
 store.load()
-registerIpc({
-  resizeCapture: () => {},
-  showCapture: () => { throw new Error('showCapture 不该在这里被调用') },
-  hideCapture: () => {},
-  getMainWindow: () => undefined,
-})
+registerIpc({ getMainWindow: () => undefined })
 
 const theme = store.addTheme('IPC 测试主题')
 
 const TEXT = '我们跟踪的 1.6T 光模块供应链显示，北美某云厂商 Q4 订单能见度已排到明年 Q2，产能被头部客户锁定。'
-const payload = (extra = {}) => ({
-  themeId: theme.id,
-  labelKind: '一手数据',
+
+console.log('\n— inbox:capture 主链路 —')
+const cap = await fireAsync('inbox:capture', TEXT)
+ok('inbox:capture 返回 ok', cap?.ok === true)
+ok('创建了收件箱条目', store.allInbox().length === 1, `实际 ${store.allInbox().length}`)
+const item = store.allInbox()[0]
+ok('条目有标题', typeof item?.title === 'string' && item.title.length > 0)
+ok('条目状态 pending', item?.status === 'pending')
+
+console.log('\n— inbox:import 入库 —')
+const importResult = await fireAsync('inbox:import', theme.id, [{
+  label: { kind: '一手数据' },
   text: TEXT,
   lemmas: [{
     title: '1.6T 光模块订单能见度排到明年 Q2',
     type: 'observation',
     confidence: 82,
-    action: 'new',
     parentId: null,
-    ...extra,
   }],
-})
-
-console.log('\n— capture:save 主链路 —')
-let threw = null
-try { fire('capture:save', payload()) } catch (e) { threw = e }
-ok('入库不抛异常', threw === null, threw ? `${threw.constructor.name}: ${threw.message}` : '')
+}])
+ok('inbox:import 返回 ok', importResult?.ok === true)
 ok('命题真的入库了', store.allNodes().length === 1, `实际 ${store.allNodes().length}`)
 
 const node = store.allNodes()[0]
@@ -80,23 +75,32 @@ ok('原文记了字数', raw?.chars === TEXT.length)
 ok('raw.jsonl 文件存在', existsSync(join(DATA, 'raw.jsonl')))
 
 console.log('\n— 同一段原文抓两次 —')
-fire('capture:save', payload({ title: '同一段原文的第二条命题' }))
+await fireAsync('inbox:import', theme.id, [{
+  label: { kind: '一手数据' },
+  text: TEXT,
+  lemmas: [{
+    title: '同一段原文的第二条命题',
+    type: 'observation',
+    confidence: 75,
+    parentId: null,
+  }],
+}])
 ok('两条命题都在', store.allNodes().length === 2, `实际 ${store.allNodes().length}`)
 ok('原文只存一份', store.rawStats().count === 1, `实际 ${store.rawStats().count}`)
 ok('两条命题共用同一 rawId',
   store.allNodes()[0].sources[0].rawId === store.allNodes()[1].sources[0].rawId)
 
-console.log('\n— 合并路径（action: merge）—')
+console.log('\n— 合并路径（addSource）—')
 const target = store.addNode({
   themeId: theme.id, parentId: null, kind: 'lemma', title: '既有命题', confidence: 60,
 })
-fire('capture:save', {
-  themeId: theme.id, labelKind: '券商研报', text: TEXT,
-  lemmas: [{ title: '重复 claim', type: 'observation', confidence: 70, action: 'merge', mergeInto: target.id }],
+store.addSource(target.id, {
+  kind: '券商研报', label: '中信', at: store.today(), quality: 0.8,
+  rawId: store.appendRaw({ kind: '券商研报', label: '中信', text: TEXT }).id,
 })
 ok('合并只加来源不新建', store.allNodes().length === 3, `实际 ${store.allNodes().length}`)
 ok('被合并的命题多了一个源', target.sources.length === 1, `实际 ${target.sources.length}`)
-ok('新来源取了 payload 的类型', target.sources[0]?.kind === '券商研报')
+ok('新来源取了类型', target.sources[0]?.kind === '券商研报')
 ok('新来源也挂了 rawId', typeof target.sources[0]?.rawId === 'string')
 
 console.log('\n— 原文层的 IPC —')

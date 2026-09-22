@@ -437,5 +437,118 @@ ok('settings() 返回解密后的 apiKey', liveSettings.apiKey === 'sk-roundtrip
 const rawDb = store.load()
 ok('内部存储的 apiKey 是加密的', rawDb.settings.apiKey.startsWith('enc:v1:'), `实际 ${rawDb.settings.apiKey.slice(0, 20)}...`)
 
+// ============================================================
+console.log('\n— 留痕层 trace —')
+
+// 清空收件箱和 traces，准备测试
+store.clearInbox()
+const traceBefore = store.allTraces().length
+store.addTrace({
+  target: { type: 'node', id: 'test-node-1' },
+  stage: 'label',
+  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+  input: { textHash: 'abc123', textLen: 100, channelMeta: { platform: 'arxiv' } },
+  output: { kind: '一手数据', quality: 0.9, via: 'jev' },
+  decision: { kind: '一手数据', quality: 0.9 },
+  reason: null,
+})
+ok('addTrace 创建了 trace', store.allTraces().length === traceBefore + 1, `实际 ${store.allTraces().length}`)
+
+const tr = store.allTraces()[traceBefore]
+ok('trace 有 id', typeof tr.id === 'string')
+ok('trace 有 t', typeof tr.t === 'string')
+ok('trace stage = label', tr.stage === 'label')
+ok('trace actor.by = model', tr.actor.by === 'model')
+ok('trace actor.model = step-3', tr.actor.model === 'step-3')
+ok('trace actor.promptVersion = v1', tr.actor.promptVersion === 'v1')
+ok('trace output 未加工', tr.output.quality === 0.9)
+ok('trace decision 是最终值', tr.decision.quality === 0.9)
+ok('trace reason 为 null（表值=模型值）', tr.reason === null)
+
+// 取表值 ≠ 模型值时写 reason
+store.addTrace({
+  target: { type: 'node', id: 'test-node-2' },
+  stage: 'label',
+  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+  input: { textHash: 'def456', textLen: 200 },
+  output: { kind: '一手数据', quality: 0.9, via: 'jev' },
+  decision: { kind: '自媒体', quality: 0.4 },
+  reason: '表值 0.4 ≠ 模型值 0.9',
+})
+const tr2 = store.allTraces()[traceBefore + 1]
+ok('trace reason 记录了分歧', tr2.reason.includes('0.4') && tr2.reason.includes('0.9'))
+
+// 按 target 查询
+const byTarget = store.tracesByTarget('test-node-1')
+ok('tracesByTarget 返回 1 条', byTarget.length === 1, `实际 ${byTarget.length}`)
+
+// 模型建议的校准曲线
+store.addTrace({
+  target: { type: 'node', id: 'test-node-3' },
+  stage: 'extract',
+  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+  input: { textHash: 'ghi789', textLen: 300 },
+  output: { confidence: 85, lemmas: [] },
+  decision: { confidence: 72 },
+  reason: null,
+})
+const mc = store.modelCalibration()
+ok('modelCalibration 返回 1 条', mc.length === 1, `实际 ${mc.length}`)
+ok('modelConf = 85', mc[0].modelConf === 85)
+ok('userConf = 72', mc[0].userConf === 72)
+ok('modelCalibration 带 model', mc[0].model === 'step-3')
+ok('modelCalibration 带 promptVersion', mc[0].promptVersion === 'v1')
+
+// 打标器 vs 表的分歧曲线
+const ld = store.labelerDivergence()
+ok('labelerDivergence 返回数组', Array.isArray(ld))
+// 有分歧的那条（0.9 - 0.4 = 0.5）
+const diverged = ld.find((g) => g.kind === '自媒体')
+ok('分歧曲线有自媒体', diverged != null)
+ok('自媒体分歧均值 = 0.5', diverged != null && Math.abs(diverged.meanDiff - 0.5) < 0.01, `实际 ${diverged?.meanDiff}`)
+
+// trace 不内联进 node
+const dbNodes = store.allNodes()
+ok('trace 不内联进 node', dbNodes.every((n) => !n.traces))
+
+// 导入导出包含 traces
+const exportedTraces = JSON.parse(store.exportAll())
+ok('导出包含 traces 数组', Array.isArray(exportedTraces.traces))
+ok('导出 traces 有 ' + store.allTraces().length + ' 条', exportedTraces.traces.length === store.allTraces().length)
+
+// ============================================================
+console.log('\n— 通道描述符 —')
+
+const ch = store.addChannel({
+  name: 'X · AI 产业链',
+  kind: '自媒体',
+  fetch: 'grok-x-search',
+  query: '1.6T optical module supply chain',
+  cadence: '日',
+  themeId: theme.id,
+})
+ok('addChannel 创建了通道', store.allChannels().length === 1, `实际 ${store.allChannels().length}`)
+ok('通道有 id', typeof ch.id === 'string')
+ok('通道 kind = 自媒体', ch.kind === '自媒体')
+ok('通道 fetch = grok-x-search', ch.fetch === 'grok-x-search')
+ok('通道 enabled 默认 true', ch.enabled === true)
+ok('通道 quality 查表', ch.quality === 0.5, `实际 ${ch.quality}`)
+
+store.updateChannel(ch.id, { enabled: false, query: 'updated query' })
+const updatedCh = store.allChannels().find((c) => c.id === ch.id)
+ok('updateChannel 改了 enabled', updatedCh.enabled === false)
+ok('updateChannel 改了 query', updatedCh.query === 'updated query')
+
+store.addChannel({ name: 'arXiv', kind: '一手数据', fetch: 'tavily', themeId: theme.id })
+ok('两个通道', store.allChannels().length === 2, `实际 ${store.allChannels().length}`)
+
+store.removeChannel(ch.id)
+ok('removeChannel 删了', store.allChannels().length === 1, `实际 ${store.allChannels().length}`)
+
+// 导出包含 channels
+const exportedCh = JSON.parse(store.exportAll())
+ok('导出包含 channels 数组', Array.isArray(exportedCh.channels))
+ok('导出 channels 有 1 条', exportedCh.channels.length === 1)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

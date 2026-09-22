@@ -55,12 +55,39 @@ export async function renderToday(mid) {
       ),
     ),
 
-    // ---- 收件箱：左栏列表 + 右栏常驻图
+    // ---- 收件箱：输入框 + 左栏列表 + 右栏常驻图
     h('section', { class: 'card', id: 'inbox-section' },
       h('div', { class: 'card-h' },
         h('h2', {}, '待确认'),
         h('span', { class: 'spacer' }),
         h('em', {}, `${inbox.length} 条`),
+      ),
+      h('div', { class: 'inbox-input-wrap' },
+        h('textarea', {
+          id: 'inbox-textarea',
+          class: 'inbox-textarea',
+          placeholder: '粘贴原文或 URL，或直接输入你的判断',
+          rows: 2,
+          onkeydown: (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              const ta = e.target
+              const val = ta.value.trim()
+              if (!val) return
+              ta.value = ''
+              inboxPaste(val)
+            }
+          },
+          ondragover: (e) => { e.preventDefault() },
+          ondrop: (e) => {
+            e.preventDefault()
+            const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list')
+            if (text?.trim()) {
+              e.target.value = text.trim()
+              e.target.focus()
+            }
+          },
+        }),
       ),
       h('div', { class: 'sect-b' },
         inboxLoading ? h('div', { class: 'feeds-loading' }, h('span', { class: 'hud-dot' }), '正在打标…') : null,

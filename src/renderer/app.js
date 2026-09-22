@@ -30,17 +30,15 @@ export const state = {
 const NAV = [
   { id: 'today', label: '今日', icon: 'settle', key: '⌘1' },
   { id: 'lattice', label: '脉络', icon: 'lattice', key: '⌘2' },
-  { id: 'feeds', label: '数据源', icon: 'export', key: '⌘6' },
-  { id: 'settle', label: '结算', icon: 'settle', key: '⌘3' },
-  { id: 'audit', label: '误杀审计', icon: 'flag', key: '⌘4' },
-  { id: 'premise', label: '共同前提', icon: 'lattice', key: '⌘5' },
+  { id: 'vault', label: '库', icon: 'lattice', key: '⌘3' },
 ]
 
 const VAULTS = [
-  { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
   { id: 'cold', label: '冷库', icon: 'lattice' },
   { id: 'dead', label: '墓碑区', icon: 'trash' },
-  { id: 'filtered', label: '已筛掉', icon: 'export' },
+  { id: 'filtered', label: '误杀审计', icon: 'flag' },
+  { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
+  { id: 'feeds', label: '数据源', icon: 'export' },
 ]
 
 const THEME_COLORS = ['#0071e3', '#af52de', '#34c759', '#ff9500', '#ff2d55', '#00b8b8', '#ff3b30', '#5856d6']
@@ -65,6 +63,14 @@ async function boot() {
     document.querySelector('.app').dataset.view = 'today'
     renderNav()
     inboxPaste(text)
+  })
+  m.onInboxFocus(() => {
+    state.view = 'today'
+    document.querySelector('.app').dataset.view = 'today'
+    renderNav()
+    renderMid()
+    const ta = document.querySelector('#inbox-textarea')
+    if (ta) ta.focus()
   })
   applyUrlParams()
 }
@@ -182,7 +188,11 @@ function renderNav() {
   nav.append(h('button', {
     class: 'nav-item',
     title: 'Ctrl+Shift+V 粘贴到收件箱',
-    onclick: () => m.showCapture(),
+    onclick: () => {
+      setView('today')
+      const ta = document.querySelector('#inbox-textarea')
+      if (ta) ta.focus()
+    },
   }, icon('plus', 15), '捕获', h('span', { style: { marginLeft: 'auto', fontSize: '10px', color: 'var(--text-3)' } }, '⌘⇧V')))
   for (const v of NAV) {
     nav.append(h('button', {
@@ -222,10 +232,7 @@ function renderThemes() {
 
 function renderSideFoot() {
   clear($('#sidefoot')).append(
-    h('button', { class: 'nav-item', onclick: exportJson }, icon('export', 15), '导出 JSON'),
-    h('button', { class: 'nav-item', onclick: importJson }, icon('export', 15), '导入 JSON'),
-    // 设置此前只能靠 ⌘, 进，侧边栏没有任何入口——等于没有。
-    // 按苹果系应用的习惯沉在底部，不和主导航抢注意力。
+
     h('div', { class: 'side-sep' }),
     h('button', {
       class: 'nav-item',
@@ -315,11 +322,11 @@ function renderMid() {
   else if (state.view === 'lattice') {
     if (!state.themeId) { mid.append(emptyState()); return }
     renderLattice(mid)
-  } else if (state.view === 'settle') renderSettle(mid)
-  else if (state.view === 'audit') renderAudit(mid)
-  else if (state.view === 'premise') renderPremise(mid)
-  else if (state.view === 'feeds') renderFeeds(mid)
-  else if (state.view === 'vault') renderVault(mid, state.vaultKind)
+  } else if (state.view === 'vault') {
+    if (state.vaultKind === 'feeds') renderFeeds(mid)
+    else if (state.vaultKind === 'filtered') renderAudit(mid)
+    else renderVault(mid, state.vaultKind)
+  }
   else if (state.view === 'settings') renderSettings(mid)
 }
 
@@ -407,7 +414,7 @@ function renderInspector() {
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
-  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'settle', '4': 'audit', '5': 'premise' }
+  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'vault' }
   if (map[e.key]) { e.preventDefault(); setView(map[e.key]) }
 })
 

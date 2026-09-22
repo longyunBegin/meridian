@@ -5,7 +5,7 @@
 
 本地优先、零构建、单依赖。`npm install && npm start`。
 
-**状态：v0.4** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
+**状态：v0.5** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
 
 ---
 
@@ -14,7 +14,7 @@
 ```bash
 npm install
 npm start          # 启动
-npm test           # 引擎 + IPC + 改造测试（259 项）
+npm test           # 引擎 + IPC + 改造测试（298 项）
 npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 ```
 
@@ -62,15 +62,19 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 
 ---
 
-## 已实现的能力（v0.4）
+## 已实现的能力（v0.5）
 
 | 能力 | 状态 |
 |---|---|
 | 今日视图（开屏=待确认+到期结算+校准曲线，资产优先） | ✅ |
 | 收件箱（全局待确认区，批量裁决，默认全选零思考入库） | ✅ |
+| 收件箱内联输入框（textarea，回车送入打标，Shift+回车换行，拖拽支持） | ✅ |
 | ⌘⇧V 粘贴 / URL 抓取 → 收件箱 | ✅ 粘贴 URL 自动抓取网页正文+推断通道 |
 | 通道优先打标（通道 > 表 > 模型 > 关键词） | ✅ |
 | provenance（平台、URL、抓取时间、检索提示词） | ✅ |
+| 通道描述符（按内容类型选取数器：RSS / Tavily / Brave / Grok X Search） | ✅ |
+| 留痕层 trace（模型介入完整记录，可复现/可对比/可结算） | ✅ |
+| 模型建议校准曲线 + 打标器 vs 表分歧曲线 | ✅ |
 | 主题脉络 + 传导权重 | ✅ |
 | 模型生成骨架 + 可重生成 + 判断挂 stableId | ✅ 无 key 降级到静态模板 |
 | 环节 scaffold（问题 / 指标 / 证伪信号） | ✅ 模板带版本号 |
@@ -80,6 +84,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 边上直接拖传导权重（实时变，松开重传导） | ✅ |
 | 图密度编码（空 scaffold 淡，密集判断实） | ✅ |
 | 连续传导权重滑块（替代三档预设） | ✅ |
+| 侧边栏四行（今日 / 脉络 / 库 / 设置） | ✅ |
 | 来源打标器（table / jev / llm，可替换） | ✅ |
 | 来源收敛度（同 claim 多源只累加不新建） | ✅ |
 | 冲突检测与裁决 | ✅ |
@@ -93,7 +98,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 原文层（raw.jsonl，与判断层分离） | ✅ |
 | API 密钥加密存储（AES-256-GCM，机器绑定） | ✅ |
 | 本地 JSON 主权 + 导入导出 | ✅ |
-| 引擎 + IPC + 改造测试 | ✅ 259 项 |
+| 引擎 + IPC + 改造测试 | ✅ 298 项 |
 
 ---
 
@@ -187,6 +192,26 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
     "interval": 60,               // 拉取间隔（分钟，下限 15）
     "lastFetch": null, "lastCount": null,
     "enabled": true
+  }],
+  "traces": [{                    // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
+    "id": "…", "t": "2026-09-20",
+    "target": { "type": "node|inbox|verdict|channel", "id": "…" },
+    "stage": "label|extract|dedup|route|settle",
+    "actor": { "by": "model|user|table|channel|propagation", "model": "step-3", "promptVersion": "v1" },
+    "input": { "rawId": "…", "textHash": "…", "textLen": 100, "channelMeta": null },
+    "output": null,               // 模型原始返回，未加工
+    "decision": null,             // 最终落库的值
+    "reason": null                // 为什么取这个值而不是模型给的值
+  }],
+  "channels": [{                  // 通道描述符：按内容类型选取数器
+    "id": "…", "name": "X · AI 产业链",
+    "kind": "自媒体",             // 通道决定，不由模型猜
+    "quality": 0.5,               // SOURCE_QUALITY 表裁决
+    "fetch": "grok-x-search",     // manual | rss | rsshub | tavily | brave | grok-x-search | mcp
+    "query": "1.6T optical module supply chain",
+    "cadence": "日",
+    "network": "direct",
+    "themeId": "…", "enabled": true
   }]
 }
 ```
@@ -247,11 +272,8 @@ export const SOURCE_QUALITY = [
 | `⌘⌫` | 删除节点及子树 |
 | `⌘1` | 今日视图（开屏默认：待确认 + 到期结算 + 校准曲线） |
 | `⌘2` | 脉络工作区（树形 ↔ 因果图，默认图） |
-| `⌘3` | 到期结算 |
-| `⌘4` | 误杀审计 |
-| `⌘5` | 共同前提 |
-| `⌘6` | 订阅源 |
-| `⌘,` | 设置 |
+| `⌘3` | 库（冷库 / 墓碑区 / 误杀审计 / 冲突 / 数据源） |
+| `⌘,` | 设置（含导出 / 导入） |
 
 脉络视图支持树形 ↔ 因果图两种形态切换，共用主题、选中项和检视面板。图视图支持边上直接拖传导权重、结算脉冲动画、密度编码（空 scaffold 淡 / 密集判断实）。
 
@@ -275,24 +297,24 @@ export const SOURCE_QUALITY = [
 ```
 src/
   main/                 主进程
-    store.js            引擎：节点、传导、结算、校准、原文层、共同前提、标的、订阅源、收件箱
+    store.js            引擎：节点、传导、结算、校准、原文层、共同前提、标的、订阅源、收件箱、trace、通道
     extract.js          LLM 抽取（OpenAI 兼容）+ 苏格拉底追问 + 骨架生成
     labeler.js          来源打标（table / jev / llm，通道优先）
     fetcher.js          URL 抓取 + 通道推断（域名 → 一手/研报/自媒体…）
     crypto.js           API 密钥加密（AES-256-GCM，机器绑定）
     feeds.js            RSS / Atom 解析器（零依赖）
     templates.{js,json} 主题骨架模板（按版本维护）
-    ipc.js              IPC 编排 + 捕获流水线 + 收件箱 + 骨架
-    main.js             窗口与全局热键（⌘⇧V → inbox:paste）
+    ipc.js              IPC 编排 + 捕获流水线 + 收件箱 + 骨架 + trace + 通道
+    main.js             窗口与全局热键（⌘⇧V → inbox:paste / inbox:focus）
     preload.js          上下文桥
   renderer/             渲染进程（无框架，原生 DOM）
-    views/              今日 / 脉络 / 图 / 结算 / 审计 / 前提 / 库 / 设置 / 检视 / 订阅
+    views/              今日 / 脉络 / 图 / 库 / 设置 / 检视 / 订阅
     lib/dom.js          极简 DOM 工具
     app.js              状态与路由
 test/
   engine.test.mjs       引擎测试（传导 / 结算 / 校准 / 收敛 / 审计 / 前提 / 标的 / 订阅源 / 模板 / 原文层）
-  ipc.test.mjs          IPC 层测试（capture:save 主链路 + 原文层）
-  redesign.test.mjs     改造测试（收件箱 / 通道优先 / provenance / 骨架 / 加密 / URL 抓取 / 图改造）
+  ipc.test.mjs          IPC 层测试（收件箱链路 + 原文层）
+  redesign.test.mjs     改造测试（收件箱 / 通道 / provenance / 骨架 / 加密 / URL / trace / 通道描述符）
   electron-stub.mjs     Electron 模块 stub
 tools/shoot.mjs         视觉回归截图
 docs/ROADMAP.md         迭代路线（按 JEV/Effort 排序）

@@ -10,12 +10,20 @@ import {
   addTicker, removeTicker, nodesByTicker, allTickers,
   allFeeds, addFeed, getFeed, updateFeed, removeFeed, markFeedFetched,
   allInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
+  bestThemeContext,
+  addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
+  allChannels, addChannel, updateChannel, removeChannel,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate } from './templates.js'
 import { fetchFeed } from './feeds.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
+import { createHash } from 'node:crypto'
+
+function hashText(text) {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16)
+}
 
 function branchTitles(themeId, depth = 3) {
   const out = []
@@ -49,6 +57,7 @@ function pathOf(id) {
  * 每一步失败都单独降级，不让整条链路断掉。
  */
 async function processCapture(text, themeId, channelMeta) {
+  const s = settings()
   // URL 抓取：粘贴 URL 时自动抓取网页正文，推断通道元数据
   let actualText = text
   let actualChannel = channelMeta
@@ -69,8 +78,31 @@ async function processCapture(text, themeId, channelMeta) {
 
   const label = await labelSource(settings(), actualText, actualChannel)
 
+  // 留痕：打标阶段
+  addTrace({
+    target: { type: 'inbox', id: null },
+    stage: 'label',
+    actor: { by: label.via || 'table', model: s.model || null, promptVersion: 'v1' },
+    input: { textHash: hashText(actualText), textLen: actualText.length, channelMeta: actualChannel || null },
+    output: { kind: label.kind, quality: label.jevScore ?? null, via: label.via },
+    decision: { kind: label.kind, quality: label.quality },
+    reason: label.jevScore != null && label.jevScore !== label.quality
+      ? `表值 ${label.quality} ≠ 模型值 ${label.jevScore}` : null,
+  })
+
   const hints = branchTitles(themeId)
   const ex = await extractLemmas(settings(), actualText, hints)
+
+  // 留痕：抽取阶段
+  addTrace({
+    target: { type: 'inbox', id: null },
+    stage: 'extract',
+    actor: { by: ex.ok ? 'model' : 'table', model: s.model || null, promptVersion: 'v1' },
+    input: { textHash: hashText(actualText), textLen: actualText.length, channelMeta: actualChannel || null },
+    output: ex.ok ? { lemmas: ex.lemmas, model: ex.model || null } : { error: ex.error || 'no-key' },
+    decision: ex.ok ? { lemmas: ex.lemmas } : { degraded: true },
+    reason: ex.ok ? null : '无 API key 或抽取失败，降级为单条 observation',
+  })
 
   const lemmas = ex.ok ? ex.lemmas : [{
     title: firstSentence(actualText),
@@ -220,11 +252,9 @@ function tokenOverlap(a, b) {
 // ---------------------------------------------------------------- ipc
 
 /**
- * 窗口相关的东西由 main.js 注入，不在这里 import——
- * ES 模块不共享作用域，直接引用 main.js 里的 hideCapture / mainWin 会在运行时
- * 抛 ReferenceError，而 capture:save 是整条捕获链路的最后一环。
+ * 窗口相关的东西由 main.js 注入，不在这里 import。
  */
-function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
+function register({ getMainWindow }) {
   ipcMain.handle('db:stats', () => stats())
   ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
   ipcMain.handle('db:getNode', (_, id) => getNode(id))
@@ -376,59 +406,16 @@ function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
     return { ok: true, results }
   })
 
-  // capture:ready 只作为渲染进程的就绪信号；剪贴板由 main.js 的 showCapture()
-  // 在窗口拿到焦点之后读取——app 未激活时同步读 NSPasteboard 会阻塞主进程。
-  ipcMain.on('capture:resize', (_, height) => resizeCapture?.(height))
-  ipcMain.on('capture:save', (_, payload) => {
-    // 原文只落一次：同一段被抓出多条命题，共用一份依据。
-    // sha256 去重，同内容第二次被抓直接复用旧 id。
-    const raw = payload.text
-      ? appendRaw({ kind: payload.labelKind || '独立媒体', label: payload.labelKind || '未注明', text: payload.text })
-      : { id: null }
-
-    for (const l of payload.lemmas || []) {
-      if (l.action === 'merge' && l.mergeInto) {
-        addSource(l.mergeInto, {
-          kind: l.sourceKind || payload.labelKind || '独立媒体',
-          label: l.label || payload.labelKind || '未注明',
-          at: today(),
-          rawId: raw.id,
-        })
-        continue
-      }
-      const node = addNode({
-        themeId: payload.themeId,
-        parentId: l.parentId || null,
-        kind: 'lemma',
-        title: l.title,
-        type: l.type,
-        confidence: l.confidence,
-        tags: l.tags || [],
-        sources: [{
-          kind: l.sourceKind || payload.labelKind || '独立媒体',
-          label: l.label || payload.labelKind || '未注明',
-          at: today(),
-          rawId: raw.id,
-        }],
-        settlement: l.settlement || null,
-      })
-      // 入库时发现的冲突，登记待裁决
-      for (const c of l.conflicts || []) addConflict(node.id, c.id, c.reason)
-    }
-    hideCapture?.()
-    getMainWindow?.()?.webContents.send('db:changed')
-  })
   ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
-  ipcMain.on('app:showCapture', () => showCapture?.())
 
   // ---- 收件箱 ----
   // ⌘⇧V 粘贴进收件箱（不再立即入库）：打标 → 抽取 → 去重 → 冲突 → 等用户裁决
   ipcMain.handle('inbox:capture', async (_, text, channelMeta) => {
     const s = settings()
     // 全局收件箱不按主题分，但打标/去重需要一个主题上下文
-    // 用第一个主题作为默认上下文，用户在裁决时确认或修改
-    const themes = allThemes()
-    const defaultThemeId = themes[0]?.id || null
+    // 用 lemma 数最多的主题作为默认上下文（用户在裁决时确认或修改）
+    const bestTheme = bestThemeContext()
+    const defaultThemeId = bestTheme?.id || null
     const result = await processCapture(text, defaultThemeId, channelMeta)
     const item = addInboxItem({
       text: result.resolvedText || text,
@@ -509,6 +496,18 @@ function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
   })
 
   ipcMain.handle('inbox:clear', () => clearInbox())
+
+  // ---- 留痕层 trace ----
+  ipcMain.handle('trace:all', () => allTraces())
+  ipcMain.handle('trace:byTarget', (_, targetId) => tracesByTarget(targetId))
+  ipcMain.handle('trace:modelCalibration', () => modelCalibration())
+  ipcMain.handle('trace:labelerDivergence', () => labelerDivergence())
+
+  // ---- 通道描述符 ----
+  ipcMain.handle('channel:list', () => allChannels())
+  ipcMain.handle('channel:add', (_, ch) => addChannel(ch))
+  ipcMain.handle('channel:update', (_, id, patch) => updateChannel(id, patch))
+  ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

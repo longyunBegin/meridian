@@ -223,10 +223,6 @@ export function renderGraph(wrap) {
     markerWidth: '7', markerHeight: '7', orient: 'auto', markerUnits: 'userSpaceOnUse',
   }, s('path', { d: 'M0,0 L8,4 L0,8 Z', fill: 'context-stroke' })))
 
-  const pattern = s('pattern', {
-    id: 'md-dots', width: '26', height: '26', patternUnits: 'userSpaceOnUse',
-  }, s('circle', { cx: '1', cy: '1', r: '1', fill: 'var(--dot)' }))
-  defs.append(pattern)
   svg.append(defs)
 
   const view = s('g', { class: 'graph-view' })
@@ -596,7 +592,7 @@ export function renderGraph(wrap) {
     const cwS = cw * scale, chS = ch * scale
     vb = [minX - (vw - cwS) / 2 / scale, minY - (vh - chS) / 2 / scale, vw / scale, vh / scale]
     applyViewBox()
-    drawDots()
+
     // 给 SVG 显式像素尺寸——show:false 时 CSS 100% 拿不到容器尺寸
     svg.setAttribute('width', String(vw))
     svg.setAttribute('height', String(vh))
@@ -605,21 +601,6 @@ export function renderGraph(wrap) {
     wrap.style.height = vh + 'px'
   }
 
-  /** 点阵底图铺在内容空间里，比容器大一圈，平移时永远有空间参照 */
-  function drawDots() {
-    const m = 800
-    let grid = view.querySelector('.dots')
-    if (!grid) {
-      grid = s('rect', { class: 'dots', fill: 'url(#md-dots)' })
-      view.insertBefore(grid, edges)
-    }
-    // 用 viewBox 当前可见区域外扩一圈
-    const [vx, vy, vw, vh] = vb
-    grid.setAttribute('x', String(vx - m))
-    grid.setAttribute('y', String(vy - m))
-    grid.setAttribute('width', String(vw + m * 2))
-    grid.setAttribute('height', String(vh + m * 2))
-  }
 
   svg.addEventListener('wheel', (e) => {
     e.preventDefault()
@@ -631,7 +612,7 @@ export function renderGraph(wrap) {
     const nw = vb[2] * factor, nh = vb[3] * factor
     vb = [cx - (cx - vb[0]) * factor, cy - (cy - vb[1]) * factor, nw, nh]
     applyViewBox()
-    drawDots()
+
   }, { passive: false })
 
   let drag = null
@@ -648,7 +629,7 @@ export function renderGraph(wrap) {
     const dy = (e.clientY - drag.y) / r.height * drag.vb0[3]
     vb = [drag.vb0[0] - dx, drag.vb0[1] - dy, drag.vb0[2], drag.vb0[3]]
     applyViewBox()
-    drawDots()
+
   })
   const endDrag = () => { drag = null; svg.classList.remove('grabbing') }
   svg.addEventListener('pointerup', endDrag)

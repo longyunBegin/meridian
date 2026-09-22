@@ -41,6 +41,8 @@ const blank = () => ({
   conflicts: [], // 待裁决的命题冲突
   feeds: [], // 订阅源：RSS / 公众号 / X 列表
   inbox: [], // 收件箱：待确认的摄入项，全局不按主题分
+  traces: [], // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
+  channels: [], // 通道描述符：按内容类型选取数器
 })
 
 let db = null
@@ -64,6 +66,8 @@ function migrate(d) {
   d.conflicts = d.conflicts || []
   d.feeds = d.feeds || []
   d.inbox = d.inbox || []
+  d.traces = d.traces || []
+  d.channels = d.channels || []
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
@@ -253,6 +257,22 @@ export function repropagate(id) {
 // ------------------------------------------------------------------ themes
 
 export function allThemes() { return load().themes }
+
+export function bestThemeContext() {
+  const db = load()
+  if (!db.themes.length) return null
+  const counts = {}
+  for (const n of db.nodes) {
+    if (n.kind === 'lemma') counts[n.themeId] = (counts[n.themeId] || 0) + 1
+  }
+  let best = db.themes[0]
+  let max = -1
+  for (const t of db.themes) {
+    const c = counts[t.id] || 0
+    if (c > max) { max = c; best = t }
+  }
+  return best
+}
 export function addTheme(name) {
   const theme = { id: uid(), name: String(name || '').trim(), createdAt: today() }
   db.themes.push(theme)
@@ -867,7 +887,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [] }
+  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -928,4 +948,107 @@ export function clearInbox() {
 
 export function inboxCount() {
   return load().inbox.filter((i) => i.status === 'pending').length
+}
+// ============================================================
+// 留痕层 trace
+// ============================================================
+
+export function addTrace(trace) {
+  const db = load()
+  const record = {
+    id: uid(),
+    t: today(),
+    ...trace,
+  }
+  db.traces.push(record)
+  persist()
+  return record
+}
+
+export function allTraces() {
+  return load().traces
+}
+
+export function tracesByTarget(targetId) {
+  return load().traces.filter((t) => t.target?.id === targetId)
+}
+
+/** 模型建议的校准曲线：模型建议的置信度 vs 用户最终的置信度 */
+export function modelCalibration() {
+  const db = load()
+  const pairs = []
+  for (const tr of db.traces) {
+    if (tr.stage === 'extract' && tr.actor?.by === 'model'
+        && tr.output?.confidence != null && tr.decision?.confidence != null) {
+      pairs.push({
+        nodeId: tr.target?.id,
+        modelConf: tr.output.confidence,
+        userConf: tr.decision.confidence,
+        model: tr.actor?.model,
+        promptVersion: tr.actor?.promptVersion,
+        t: tr.t,
+      })
+    }
+  }
+  return pairs
+}
+
+/** 打标器 vs 表的分歧曲线：Jev 的 Score 和表值的差，按来源类型分开统计 */
+export function labelerDivergence() {
+  const db = load()
+  const byKind = {}
+  for (const tr of db.traces) {
+    if (tr.stage === 'label' && tr.output?.quality != null && tr.decision?.quality != null) {
+      const kind = tr.decision?.kind || '未知'
+      if (!byKind[kind]) byKind[kind] = { kind, count: 0, diffs: [] }
+      byKind[kind].count++
+      byKind[kind].diffs.push(tr.output.quality - tr.decision.quality)
+    }
+  }
+  return Object.values(byKind).map((g) => ({
+    ...g,
+    meanDiff: g.diffs.reduce((a, b) => a + b, 0) / g.diffs.length,
+  }))
+}
+// ============================================================
+// 通道描述符
+// ============================================================
+
+export function allChannels() {
+  return load().channels
+}
+
+export function addChannel(ch) {
+  const db = load()
+  const channel = {
+    id: uid(),
+    name: ch.name || '未命名通道',
+    kind: ch.kind || '自媒体',
+    quality: ch.quality ?? SOURCE_QUALITY.find(([k]) => k === (ch.kind || '自媒体'))?.[1] ?? 0.5,
+    fetch: ch.fetch || 'manual',
+    query: ch.query || '',
+    cadence: ch.cadence || '日',
+    network: ch.network || 'direct',
+    themeId: ch.themeId || null,
+    enabled: ch.enabled !== false,
+    createdAt: today(),
+  }
+  db.channels.push(channel)
+  persist()
+  return channel
+}
+
+export function updateChannel(id, patch) {
+  const db = load()
+  const ch = db.channels.find((c) => c.id === id)
+  if (!ch) return null
+  Object.assign(ch, patch)
+  persist()
+  return ch
+}
+
+export function removeChannel(id) {
+  const db = load()
+  db.channels = db.channels.filter((c) => c.id !== id)
+  persist()
 }

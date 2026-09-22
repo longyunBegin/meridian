@@ -220,5 +220,45 @@ export async function renderSettings(mid) {
         ),
       ),
     ),
+
+    // ---- 数据主权
+    h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '数据主权')),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'row', style: { gap: '8px' } },
+          h('button', {
+            class: 'btn',
+            onclick: async () => {
+              const json = await m.exportAll()
+              const blob = new Blob([json], { type: 'application/json' })
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(blob)
+              a.download = `meridian-${new Date().toISOString().slice(0, 10)}.json`
+              a.click()
+              URL.revokeObjectURL(a.href)
+            },
+          }, '导出 JSON'),
+          h('button', {
+            class: 'btn',
+            onclick: () => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.accept = '.json'
+              input.onchange = async () => {
+                const file = input.files[0]
+                if (!file) return
+                const text = await file.text()
+                try { await m.importAll(text); await renderSettings(mid) }
+                catch { alert('导入失败：不是有效的脉络数据') }
+              }
+            }).click(),
+          }, '导入 JSON'),
+          h('button', {
+            class: 'btn',
+            onclick: () => m.openDataDir(),
+          }, '打开数据目录'),
+        ),
+      ),
+    ),
   ))
 }

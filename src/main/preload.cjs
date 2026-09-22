@@ -58,15 +58,9 @@ contextBridge.exposeInMainWorld('meridian', {
   feedFetchAndLabel: (id) => ipcRenderer.invoke('feed:fetchAndLabel', id),
   feedImport: (feedId, themeId, items) => ipcRenderer.invoke('feed:import', feedId, themeId, items),
 
-  // ---- 捕获
+  // ---- 捕获（已删除 HUD，保留 process/socratic）
   process: (text, themeId) => ipcRenderer.invoke('agent:process', text, themeId),
   socratic: (nodeId) => ipcRenderer.invoke('agent:socratic', nodeId),
-  showCapture: () => ipcRenderer.send('app:showCapture'),
-  captureReady: () => ipcRenderer.send('capture:ready'),
-  captureResize: (height) => ipcRenderer.send('capture:resize', height),
-  captureSave: (payload) => ipcRenderer.send('capture:save', payload),
-  onCaptureFocus: (cb) => ipcRenderer.on('capture:focus', (_, v) => cb(v)),
-  onCaptureReset: (cb) => ipcRenderer.on('capture:reset', () => cb()),
   onChanged: (cb) => ipcRenderer.on('db:changed', () => cb()),
 
   // ---- 收件箱
@@ -80,6 +74,19 @@ contextBridge.exposeInMainWorld('meridian', {
   generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),
   instantiateSkeleton: (themeId, skeleton) => ipcRenderer.invoke('theme:instantiateSkeleton', themeId, skeleton),
 
+  // ---- 留痕层 trace
+  traceAll: () => ipcRenderer.invoke('trace:all'),
+  traceByTarget: (targetId) => ipcRenderer.invoke('trace:byTarget', targetId),
+  traceModelCalibration: () => ipcRenderer.invoke('trace:modelCalibration'),
+  traceLabelerDivergence: () => ipcRenderer.invoke('trace:labelerDivergence'),
+
+  // ---- 通道描述符
+  channelList: () => ipcRenderer.invoke('channel:list'),
+  channelAdd: (ch) => ipcRenderer.invoke('channel:add', ch),
+  channelUpdate: (id, patch) => ipcRenderer.invoke('channel:update', id, patch),
+  channelRemove: (id) => ipcRenderer.invoke('channel:remove', id),
+
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),
+  onInboxFocus: (cb) => ipcRenderer.on('inbox:focus', () => cb()),
 })

@@ -1153,6 +1153,18 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 /* 重新生成骨架按钮 */
 .regenerate-btn { font-size: 11px; color: var(--text-3); }
 .regenerate-btn:hover { color: var(--accent); }
+/* ------------- 收件箱输入框 ------------- */
+
+.inbox-input-wrap { padding: 0 0 12px; }
+.inbox-textarea {
+  width: 100%; min-height: 44px; max-height: 120px; resize: none;
+  padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 8px;
+  font: 13px/1.5 -apple-system, system-ui, sans-serif; color: var(--text-1);
+  background: var(--bg-group); outline: none; transition: border-color .15s;
+}
+.inbox-textarea:focus { border-color: var(--accent); }
+.inbox-textarea::placeholder { color: var(--text-3); }
+
 /* ------------- 收件箱分栏 + 迷你图 ------------- */
 
 .inbox-split { display: flex; gap: 16px; min-height: 200px; }
