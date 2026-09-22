@@ -196,15 +196,14 @@ app.whenReady().then(async () => {
 
   await shoot('03-scaffold', { view: 'lattice', select: opt.id })
   await shoot('04-lemma', { view: 'lattice', select: l1.id })
-  await shoot('05-settle', { view: 'settle' })
-  await shoot('06-audit', { view: 'audit' })
-  await shoot('07-premise', { view: 'premise' })
+  await shoot('05-today', { view: 'today' })
+  await shoot('06-audit', { view: 'vault', vault: 'filtered' })
+  await shoot('07-premise', { view: 'lattice' })
   await shoot('08-conflicts', { view: 'vault', vault: 'conflicts' })
   await shoot('09-cold', { view: 'vault', vault: 'cold' })
   await shoot('10-filtered', { view: 'vault', vault: 'filtered' })
 
-  await shoot('11-hud', { text: SAMPLE, autorun: '1' }, true)
-  await shoot('12-newtheme', { newtheme: '有色金属' })
+  await shoot('11-newtheme', { newtheme: '有色金属' })
 
   // 产业链图：全貌 + 选中后的因果聚焦（上游凭什么成立 / 下游会被带倒几条）
   await shoot('13-graph', { view: 'lattice', shape: 'graph' })
