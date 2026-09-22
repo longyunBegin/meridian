@@ -10,7 +10,7 @@
  * 运行：npm run shoot
  * 输出：/tmp/meridian-shots/*.png
  */
-import { app, BrowserWindow, ipcMain } from 'electron'
+const { app, BrowserWindow, ipcMain } = globalThis.__electron || {}
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'

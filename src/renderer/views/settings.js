@@ -20,6 +20,36 @@ export async function renderSettings(mid) {
     onchange: (e) => onCommit(e.target.value.trim()),
   })
 
+  /** 密钥字段：password 类型 + 显示/隐藏 + 保存按钮 */
+  const secret = (value, onCommit, placeholder) => {
+    const input = h('input', {
+      class: 'txt', type: 'password', value: value || '', placeholder,
+      style: { flex: '1' },
+    })
+    const toggle = h('button', {
+      class: 'btn btn-icon', title: '显示/隐藏', style: { flex: 'none' },
+      onclick: () => { input.type = input.type === 'password' ? 'text' : 'password' },
+    }, '👁')
+    const feedback = h('span', { style: { fontSize: '11px', color: 'var(--text-3)', minWidth: '40px' } }, '')
+    const save = h('button', {
+      class: 'btn btn-primary', style: { height: '28px', flex: 'none' },
+      onclick: async () => {
+        feedback.textContent = '保存中…'
+        feedback.style.color = 'var(--text-3)'
+        try {
+          await onCommit(input.value.trim())
+          feedback.textContent = '✓ 已保存'
+          feedback.style.color = 'var(--green)'
+        } catch {
+          feedback.textContent = '✗ 失败'
+          feedback.style.color = 'var(--red)'
+        }
+        setTimeout(() => { feedback.textContent = '' }, 3000)
+      },
+    }, '保存')
+    return h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, input, toggle, save, feedback)
+  }
+
   const seg = (cur, options, onPick) => h('div', { class: 'seg' },
     ...options.map(([v, label]) => h('button', {
       'aria-selected': cur === v ? 'true' : 'false',
@@ -29,6 +59,7 @@ export async function renderSettings(mid) {
 
   const stats = await m.stats()
   const raw = await m.rawStats()
+  const feeds = await m.feeds()
 
   const mb = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`)
 
@@ -75,7 +106,7 @@ export async function renderSettings(mid) {
         ], async (v) => { await m.saveSettings({ labeler: v }); await renderSettings(mid) }),
           '质量分一律由 SOURCE_QUALITY 表裁决，打标器只负责选类型——否则换一个模型，整条校准曲线的基准就漂移了。'),
         field('Jev 接口', txt(settings.jevBaseUrl, (v) => m.saveSettings({ jevBaseUrl: v }), 'https://openrouter.ai/api/v1'), 'System One Model，只做判断不聊天。'),
-        field('Jev 密钥', txt(settings.jevKey, (v) => m.saveSettings({ jevKey: v }), 'sk-…'), '只存本机 meridian.json，不上传。'),
+        field('Jev 密钥', secret(settings.jevKey, (v) => m.saveSettings({ jevKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定，不上传。'),
         field('Jev 模型', txt(settings.jevModel, (v) => m.saveSettings({ jevModel: v }), 'typesafe/jev-1.13')),
       ),
     ),
@@ -104,7 +135,7 @@ export async function renderSettings(mid) {
       h('div', { class: 'sect-h' }, h('h2', {}, '命题抽取')),
       h('div', { class: 'sect-b' },
         field('接口地址', txt(settings.baseUrl, (v) => m.saveSettings({ baseUrl: v }), 'https://api.stepfun.com/v1'), '任意 OpenAI 兼容端点。'),
-        field('密钥', txt(settings.apiKey, (v) => m.saveSettings({ apiKey: v }), 'sk-…')),
+        field('密钥', secret(settings.apiKey, (v) => m.saveSettings({ apiKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定。'),
         field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3'), '只做「抽取命题」，不需要太强的模型。'),
       ),
     ),
@@ -124,7 +155,43 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '数据'), h('em', {}, `原文层 ${raw.count} 条 · ${mb(raw.bytes)}`)),
+      h('div', { class: 'sect-h' }, h('h2', {}, '订阅源'), h('em', {}, `${feeds.length} 个`)),
+      h('div', { class: 'sect-b' },
+        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
+          'RSS / Atom 订阅源。定时拉取，走和 ⌘⇧V 同一条捕获流水线——把「搬」从手动变自动。'),
+        feeds.length ? h('div', { class: 'src-list', style: { marginBottom: '10px' } },
+          ...feeds.map((f) => h('div', { class: 'src-row' },
+            h('span', { class: `badge ${f.enabled ? 'badge-observation' : 'badge-hypothesis'}` }, f.kind),
+            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name),
+            h('span', { class: 'q' }, f.lastFetch ? `${f.lastCount} 条 · ${f.lastFetch}` : '未拉取'),
+            h('button', { class: 'btn btn-icon', title: '拉取', onclick: async () => {
+              const r = await m.feedFetch(f.id)
+              alert(r.ok ? `拉到 ${r.items.length} 条` : `失败：${r.reason}`)
+              await renderSettings(mid)
+            } }, '↻'),
+            h('button', { class: 'btn btn-icon', title: '删除', onclick: async () => {
+              await m.feedRemove(f.id); await renderSettings(mid)
+            } }, '×'),
+          )),
+        ) : null,
+        h('div', { class: 'field', style: { marginTop: '8px' } },
+          h('label', {}, 'URL'),
+          h('input', {
+            class: 'txt', placeholder: 'https://example.com/feed.xml',
+            onkeydown: async (e) => {
+              if (e.key !== 'Enter') return
+              const url = e.target.value.trim()
+              if (!url) return
+              await m.feedAdd({ url, kind: 'rss', name: url, themeId: state.themeId, interval: 60 })
+              e.target.value = ''
+              await renderSettings(mid)
+            },
+          }),
+        ),
+      ),
+    ),
+
+    h('section', { class: 'sect' },
       h('div', { class: 'sect-b' },
         h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
           `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +

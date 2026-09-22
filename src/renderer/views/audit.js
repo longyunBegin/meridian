@@ -16,6 +16,7 @@ export async function renderAudit(mid) {
   const reveal = h('div', { class: 'reveal', id: 'audit-reveal' })
 
   const card = h('div', { class: 'audit' },
+    h('div', { class: 'audit-tag' }, '误杀审计 · 30 天周期'),
     a.total === 0
       ? h('div', {},
           h('div', { class: 'audit-q' }, '这 30 天没有被筛掉的内容。'),

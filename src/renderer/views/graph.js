@@ -19,7 +19,7 @@
  */
 import { h, icon } from '../lib/dom.js'
 import { state, refresh, selectNode } from '../app.js'
-import { confColor, TYPE_LABEL, todayStr } from './shared.js'
+import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 
 const m = window.meridian
 
@@ -55,13 +55,24 @@ const NS = 'http://www.w3.org/2000/svg'
 
 /** 当前挂着的图的聚焦函数。选中态归 app.js 管，图只负责响应。 */
 let focusFn = null
+/** 当前挂着的脉冲函数。结算后 app.js 调它击穿下游。 */
+let pulseFn = null
 
 /** app.js 的 selectNode 调用它——选中状态只有一个来源，图不自己记。 */
 export function refocusGraph(id) { focusFn?.(id) }
+/** 结算后调它：图上脉冲从结算节点击穿全部下游。 */
+export function pulseFrom(id) { pulseFn?.(id) }
 
-const ROW = 34 // 纵向行距
+const ROW = 42 // 纵向行距
 const PAD = 44 // 父子节点间的水平间隙
 const MAXW = 270 // 节点最宽。再宽列距就撑不开，适应窗口时整图会缩得太小
+
+/** SF Symbol 风格图标路径，以 (0,0) 为中心 */
+const ICONS = {
+  plus: 'M0 -4.5v9M-4.5 0h9',
+  trash: 'M-4.5 -3h9 M-3 -3v-1.5h6v1.5 M-3.5 -3l.5 8h6l.5 -8',
+  snow: 'M0 -4.5v9M-3.9 -2.25l7.8 4.5M3.9 -2.25l-7.8 4.5',
+}
 
 /** SVG 元素助手。h() 建的是 HTML 节点，SVG 必须走 createElementNS。 */
 function s(tag, attrs = {}, ...kids) {
@@ -69,6 +80,7 @@ function s(tag, attrs = {}, ...kids) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v == null || v === false) continue
     if (k === 'text') el.textContent = v
+    else if (k === 'dataset') for (const [dk, dv] of Object.entries(v)) el.setAttribute(`data-${dk}`, String(dv))
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v)
     else el.setAttribute(k, v === true ? '' : String(v))
   }
@@ -186,14 +198,14 @@ export function renderGraph(wrap) {
     const isStage = !isLemma && (pos.get(n.id)?.depth ?? 0) === 0
     const size = isStage ? 13 : 12.5
     const weight = isLemma ? 400 : 550
-    // 右侧固定占位：类型章 + 确信度计 + 数值（命题另有来源章）
-    const chrome = isLemma ? 106 : 62
+    // 右侧固定占位：类型章 + 确信度细条 + 数值（命题另有来源章）
+    const chrome = isLemma ? 94 : 52
     const lead = isStage ? 34 : 12 // 环节层多一个编号章
     const need = PADL + lead + Math.ceil(textW(n.title, size, weight)) + chrome + TAIL
     const w = Math.min(MAXW, Math.max(isStage ? 150 : 118, need))
     box.set(n.id, {
       w,
-      h: isStage ? 36 : isLemma ? 27 : 30,
+      h: isStage ? 44 : isLemma ? 35 : 38,
       size, weight, isLemma, isStage, lead,
       titleMax: Math.max(24, w - PADL - lead - chrome - TAIL),
     })
@@ -239,10 +251,16 @@ export function renderGraph(wrap) {
     const x2 = X(n.id)
     const y2 = Y(n.id) + c.h / 2
     const k = Math.max(18, (x2 - x1) / 2)
+    const pw = n.propagation ?? 0.5
+    const er = Math.round(120 + (0 - 120) * pw)
+    const eg = Math.round(140 + (113 - 140) * pw)
+    const eb = Math.round(160 + (227 - 160) * pw)
+    const ea = (0.15 + 0.43 * pw).toFixed(2)
     const path = s('path', {
       class: 'edge',
       d: `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`,
-      'stroke-width': (0.55 + (n.propagation ?? 0.5) * 1.7).toFixed(2),
+      stroke: `rgba(${er},${eg},${eb},${ea})`,
+      'stroke-width': (0.5 + pw * 2.0).toFixed(2),
       'marker-end': 'url(#md-arrow)',
       dataset: { from: n.parentId, to: n.id },
     })
@@ -251,24 +269,86 @@ export function renderGraph(wrap) {
   }
   view.append(edges)
 
-  // 诊断：画一个红框，如果截图里没有它，说明 SVG 本身不可见
-  view.append(s('rect', { x: minX - 20, y: minY - 20, width: 40, height: 40, fill: 'red', opacity: '0.8' }))
+  // ------------------------------------------------------------- 边拖权重
+  // 传导权重在边上直接拖：垂直拖拽改权重，松开时存盘 + 重传导
+  const edgeHits = s('g', { class: 'edge-hits' })
+  const edgeMeta = new Map()
+  for (const n of nodes) {
+    if (!n.parentId) continue
+    const p = box.get(n.parentId), c = box.get(n.id)
+    if (!p || !c) continue
+    const x1 = X(n.parentId) + p.w
+    const y1 = Y(n.parentId) + p.h / 2
+    const x2 = X(n.id)
+    const y2 = Y(n.id) + c.h / 2
+    const k = Math.max(18, (x2 - x1) / 2)
+    const d = `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`
+    const hit = s('path', {
+      class: 'edge-hit', d, fill: 'none',
+      'stroke-width': '16', stroke: 'transparent',
+      dataset: { childId: n.id },
+    })
+    edgeHits.append(hit)
+    edgeMeta.set(hit, { childId: n.id, parentId: n.parentId, edgeEl: edgeEls.get(`${n.parentId}>${n.id}`), x1, y1, x2, y2, k })
+  }
+  view.append(edgeHits)
+
+  let weightDrag = null
+  edgeHits.addEventListener('pointerdown', (e) => {
+    const meta = edgeMeta.get(e.target)
+    if (!meta) return
+    e.stopPropagation()
+    const child = nodes.find((n) => n.id === meta.childId)
+    if (!child) return
+    weightDrag = {
+      meta, startY: e.clientY,
+      startW: child.propagation ?? 0.5,
+      tooltip: null,
+    }
+    svg.setPointerCapture(e.pointerId)
+    weightDrag.tooltip = h('div', { class: 'weight-tip' }, `×${weightDrag.startW.toFixed(2)}`)
+    wrap.append(weightDrag.tooltip)
+  })
+  svg.addEventListener('pointermove', (e) => {
+    if (!weightDrag) return
+    const dy = weightDrag.startY - e.clientY
+    const nw = Math.max(0, Math.min(1, weightDrag.startW + dy * 0.005))
+    // 实时更新边的视觉
+    const { edgeEl } = weightDrag.meta
+    const er = Math.round(120 + (0 - 120) * nw)
+    const eg = Math.round(140 + (113 - 140) * nw)
+    const eb = Math.round(160 + (227 - 160) * nw)
+    const ea = (0.15 + 0.43 * nw).toFixed(2)
+    edgeEl.setAttribute('stroke', `rgba(${er},${eg},${eb},${ea})`)
+    edgeEl.setAttribute('stroke-width', (0.5 + nw * 2.0).toFixed(2))
+    weightDrag.tooltip.textContent = `×${nw.toFixed(2)}`
+    weightDrag.nw = nw
+  })
+  const endWeightDrag = async (e) => {
+    if (!weightDrag) return
+    const { meta, nw, tooltip } = weightDrag
+    tooltip?.remove()
+    weightDrag = null
+    if (nw == null) return
+    await m.updateNode(meta.childId, { propagation: nw })
+    await m.repropagate(meta.childId)
+    await refresh()
+  }
+  svg.addEventListener('pointerup', endWeightDrag)
+  svg.addEventListener('pointercancel', endWeightDrag)
+
 
   // ------------------------------------------------------------- 节点
   const nodeEls = new Map()
   const nodeLayer = s('g')
 
-  /** 十格确信度计。和树形同一套语法，换视图不用重新学。 */
+  /** 确信度细条：28×3px，Apple 进度条风格 */
+  const METER_W = 28
   const meter = (value, x, y) => {
     const v = Math.max(0, Math.min(100, Math.round(value)))
-    const lit = Math.round(v / 10)
     const g = s('g')
-    for (let i = 0; i < 10; i++) {
-      g.append(s('rect', {
-        x: x + i * 4, y, width: '2.5', height: '9', rx: '1',
-        fill: i < lit ? confColor(v) : 'var(--hairline)',
-      }))
-    }
+    g.append(s('rect', { x, y: y + 3, width: METER_W, height: 3, rx: 1.5, fill: 'var(--hairline)' }))
+    g.append(s('rect', { x, y: y + 3, width: METER_W * v / 100, height: 3, rx: 1.5, fill: confColorContinuous(v) }))
     return g
   }
 
@@ -279,9 +359,16 @@ export function renderGraph(wrap) {
     const cold = n.status === 'cold'
     const a = b.isLemma ? null : agg(n.id)
 
+    // 密度编码：有判断/来源的节点更实，空 scaffold 的节点更淡
+    // 所有权必须体现在图上看得见，不能只藏在 by 字段里
+    const lemmaKids = nodes.filter((nn) => nn.parentId === n.id && nn.kind === 'lemma' && nn.status !== 'dead')
+    const sourceCount = n.sources?.length || 0
+    const judgmentCount = lemmaKids.length + (n.kind === 'lemma' ? 1 : 0)
+    const density = judgmentCount >= 3 || sourceCount >= 4 ? 'high' : judgmentCount >= 1 || sourceCount >= 2 ? 'mid' : 'low'
+
     const g = s('g', {
       class: 'node',
-      dataset: { id: n.id, depth: pos.get(n.id)?.depth ?? 0 },
+      dataset: { id: n.id, depth: pos.get(n.id)?.depth ?? 0, kind: b.isStage ? 'stage' : b.isLemma ? 'lemma' : 'branch', density },
       opacity: dead ? '0.45' : '1',
       onclick: () => { selectNode(n.id); applyFocus(n.id) },
     })
@@ -295,25 +382,41 @@ export function renderGraph(wrap) {
       g.append(s('rect', { class: 'node-ring', x: x - 2, y: y - 2, width: b.w + 4, height: b.h + 4, rx: b.isStage ? '12' : '10' }))
     }
 
-    // 悬停操作按钮——直接在图里删节点、加子项、切换冷库，不用切到右边
-    const acts = s('g', { class: 'node-acts', transform: `translate(${x + b.w - 4},${y + 4})` })
-    acts.append(s('title', { text: '操作' }))
-    const actItems = [
-      { path: 'M6 6l12 12M18 6L6 18', title: '删除', fn: () => confirmDelete(n.id) },
-      ...(b.isLemma
-        ? [{ path: 'M12 8v8M8 12h8', title: node.status === 'cold' ? '移出冷库' : '移入冷库', fn: () => toggleCold(n.id) }]
-        : [{ path: 'M12 5v14M5 12h14', title: '加子命题', fn: () => addChildHere(n.id) }]),
-    ]
+    // 结算状态：左侧色条，一眼看出命中/证伪/待结算（Apple Notes 风格）
+    if (b.isLemma && n.settlement) {
+      let stlColor = null
+      if (n.settlement.resolved) {
+        stlColor = n.settlement.correct ? 'var(--green)' : 'var(--red)'
+      } else if (n.settlement.date && n.settlement.date <= todayStr()) {
+        stlColor = 'var(--orange)'
+      }
+      if (stlColor) {
+        g.append(s('rect', { class: 'node-stl', x: x + 3, y: y + 5, width: 2.5, height: b.h - 10, rx: 1.25, fill: stlColor }))
+      }
+    }
+
+    // 悬停操作——苹果风格药丸，默认隐藏，hover 节点时渐现
+    const actItems = b.isLemma
+      ? [
+          { icon: 'snow', title: n.status === 'cold' ? '移出冷库' : '移入冷库', fn: () => toggleCold(n.id) },
+          { icon: 'trash', title: '删除', fn: () => confirmDelete(n.id) },
+        ]
+      : [
+          { icon: 'plus', title: '加子命题', fn: () => addChildHere(n.id) },
+          { icon: 'trash', title: '删除', fn: () => confirmDelete(n.id) },
+        ]
+    const actSize = 22
+    const actGap = 2
+    const actW = actItems.length * actSize + (actItems.length - 1) * actGap + 6
+    const acts = s('g', { class: 'node-acts', transform: `translate(${x + b.w - actW - 5},${y + b.h / 2 - 12})` })
+    acts.append(s('rect', { class: 'node-acts-bg', x: 0, y: 0, width: actW, height: 24, rx: 12 }))
     actItems.forEach((a, i) => {
-      const btn = s('rect', {
-        class: 'node-act', x: -18 * (actItems.length - i), y: 0, width: 18, height: 18, rx: '4',
-      })
+      const cx = 3 + i * (actSize + actGap) + actSize / 2
+      const btn = s('g', { class: 'node-act', transform: `translate(${cx}, 12)` })
+      btn.append(s('circle', { class: 'node-act-hit', r: 10 }))
+      btn.append(s('path', { class: `node-act-ic ic-${a.icon}`, d: ICONS[a.icon] }))
       btn.addEventListener('click', (e) => { e.stopPropagation(); a.fn() })
       acts.append(btn)
-      acts.append(s('path', {
-        d: a.path, transform: `translate(${-18 * (actItems.length - i) + 9}, 9) scale(0.75)`,
-        class: 'node-act-p',
-      }))
     })
     g.append(acts)
 
@@ -339,9 +442,9 @@ export function renderGraph(wrap) {
       right -= numW
       g.append(s('text', {
         class: 'node-num', x: right, y: y + b.h / 2, text: String(conf),
-        fill: confColor(conf),
+        fill: confColorContinuous(conf),
       }))
-      right -= 6 + 40
+      right -= 6 + METER_W
       g.append(meter(conf, right, y + (b.h - 9) / 2))
       right -= 6
       const badge = TYPE_LABEL[n.type]
@@ -356,14 +459,23 @@ export function renderGraph(wrap) {
         g.append(s('rect', { class: 'node-src', x: right, y: y + 6, width: sw, height: '15', rx: '4' }))
         g.append(s('text', { class: 'node-src-t', x: right + sw / 2, y: y + 13.5, text: label }))
       }
+      if (n.history?.some((h) => h.by === 'propagation')) {
+        right -= 5 + 6
+        g.append(s('circle', { class: 'node-prop-dot', cx: right + 3, cy: y + 13.5, r: 2.5 }))
+      }
+      if (cold) {
+        right -= 5 + 22
+        g.append(s('rect', { class: 'node-cold', x: right, y: y + 6, width: '22', height: '15', rx: '4' }))
+        g.append(s('text', { class: 'node-cold-t', x: right + 11, y: y + 13.5, text: '冷' }))
+      }
     } else if (a.avg != null) {
       const avg = a.avg
       const numW = textW(String(avg), 11, 600) + 2
       right -= numW
       g.append(s('text', {
-        class: 'node-num', x: right, y: y + b.h / 2, text: String(avg), fill: confColor(avg),
+        class: 'node-num', x: right, y: y + b.h / 2, text: String(avg), fill: confColorContinuous(avg),
       }))
-      right -= 6 + 40
+      right -= 6 + METER_W
       g.append(meter(avg, right, y + (b.h - 9) / 2))
       if (a.due) {
         const label = String(a.due)
@@ -375,6 +487,37 @@ export function renderGraph(wrap) {
         right -= 6 + 24
         g.append(s('rect', { class: 'node-cold', x: right, y: y + 6, width: '24', height: '15', rx: '4' }))
         g.append(s('text', { class: 'node-cold-t', x: right + 12, y: y + 13.5, text: '冷' }))
+      }
+    }
+
+    // 底部信息条：标的 / 标签 / 传导权重 — 苹果式副标题，一眼建模
+    const sy = y + b.h - 3.5
+    let sx = x + 12
+    if (b.isLemma) {
+      if (n.tickers?.length) {
+        const codes = n.tickers.slice(0, 2).map(t => t.code).join(' · ')
+        const label = n.tickers.length > 2 ? `${codes} +${n.tickers.length - 2}` : codes
+        g.append(s('text', { class: 'node-strip node-ticker', x: sx, y: sy, text: label }))
+        sx += textW(label, 8.5, 500) + 8
+      }
+      if (n.tags?.length) {
+        for (let i = 0; i < Math.min(3, n.tags.length); i++) {
+          g.append(s('circle', { class: 'node-tag-dot', cx: sx + i * 5, cy: sy - 3, r: 1.5 }))
+        }
+      }
+    } else {
+      const pw = (n.propagation ?? 0.5).toFixed(2)
+      g.append(s('text', { class: 'node-strip node-prop', x: sx, y: sy, text: `×${pw}` }))
+      sx += textW(`×${pw}`, 8.5, 500) + 10
+      const cc = (kids.get(n.id) || []).length
+      if (cc) {
+        g.append(s('text', { class: 'node-strip node-sub', x: sx, y: sy, text: `${cc} 子项` }))
+      }
+      if (n.tickers?.length) {
+        const codes = n.tickers.slice(0, 2).map(t => t.code).join(' · ')
+        const label = n.tickers.length > 2 ? `${codes} +${n.tickers.length - 2}` : codes
+        const tw = textW(label, 8.5, 500)
+        g.append(s('text', { class: 'node-strip node-ticker', x: x + b.w - 12 - tw, y: sy, text: label }))
       }
     }
 
@@ -444,9 +587,10 @@ export function renderGraph(wrap) {
     const cw = maxX - minX, ch = maxY - minY
     if (!cw || !ch) return
 
-    // 直接用视口尺寸——截图工具 show:false 时 wrapper 为零，但视口始终可靠
-    const vw = document.documentElement?.clientWidth || window.innerWidth || 1280
-    const vh = document.documentElement?.clientHeight || window.innerHeight || 820
+    // 优先用容器尺寸，截图工具 show:false 时容器为零，回退到视口
+    const pr = wrap.parentElement?.getBoundingClientRect() || {}
+    const vw = pr.width > 0 ? pr.width : (document.documentElement?.clientWidth || window.innerWidth || 1280)
+    const vh = pr.height > 0 ? pr.height : (document.documentElement?.clientHeight || window.innerHeight || 820)
     const pad = 50
     const scale = Math.min((vw - pad * 2) / cw, (vh - pad * 2) / ch, 1.2)
     const cwS = cw * scale, chS = ch * scale
@@ -516,4 +660,51 @@ export function renderGraph(wrap) {
   ro.observe(wrap)
   // 用两个 rAF 确保浏览器至少完成一轮布局（show:false 的窗口尤其需要）
   requestAnimationFrame(() => requestAnimationFrame(fitView))
+
+  // ------------------------------------------------------------- 结算脉冲
+  /**
+   * 结算后调：从结算节点出发，脉冲沿传导方向击穿全部下游。
+   * 每层延迟 120ms，复利衰减的视觉化——「你这条 85% 黄了，顺着击穿 3 条下游」。
+   */
+  pulseFn = (id) => {
+    const node = nodes.find((n) => n.id === id)
+    if (!node) return
+    // BFS 收集下游，按深度分层
+    const layers = []
+    const seen = new Set([id])
+    let frontier = [id]
+    while (frontier.length) {
+      const next = []
+      for (const fid of frontier) {
+        for (const c of kids.get(fid) || []) {
+          if (seen.has(c.id) || c.status === 'dead') continue
+          seen.add(c.id)
+          next.push(c.id)
+        }
+      }
+      if (next.length) layers.push(next)
+      frontier = next
+    }
+    // 起点脉冲
+    const startB = box.get(id)
+    if (startB) {
+      const cx = X(id) + startB.w / 2, cy = Y(id) + startB.h / 2
+      const ring = s('circle', { class: 'settle-pulse-ring', cx, cy, r: 6, fill: 'none', stroke: 'var(--orange)', 'stroke-width': 2 })
+      view.append(ring)
+      setTimeout(() => ring.remove(), 700)
+    }
+    // 逐层击穿
+    layers.forEach((layer, depth) => {
+      setTimeout(() => {
+        for (const nid of layer) {
+          const b = box.get(nid)
+          if (!b) continue
+          const cx = X(nid) + b.w / 2, cy = Y(nid) + b.h / 2
+          const ring = s('circle', { class: 'settle-pulse-ring', cx, cy, r: 5, fill: 'none', stroke: 'var(--orange)', 'stroke-width': 1.5 })
+          view.append(ring)
+          setTimeout(() => ring.remove(), 600)
+        }
+      }, (depth + 1) * 120)
+    })
+  }
 }

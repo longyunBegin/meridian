@@ -1,5 +1,5 @@
 import { h, icon, clear } from '../lib/dom.js'
-import { state } from '../app.js'
+import { state, settleAndPulse } from '../app.js'
 import { confColor, nodePath } from './shared.js'
 
 const m = window.meridian
@@ -17,8 +17,8 @@ export async function renderSettle(mid) {
       h('p', {}, '判断只有在被对答案之后才是资产。'),
     ),
 
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '到期未结算'), h('em', {}, String(due.length))),
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '到期未结算'), h('em', {}, String(due.length))),
       h('div', { class: 'sect-b' },
         due.length ? due.map((q) => h('div', { class: 'q' },
           h('span', { class: 'dot', style: { background: confColor(q.confidence), marginTop: '6px' } }),
@@ -31,8 +31,8 @@ export async function renderSettle(mid) {
             ),
           ),
           h('div', { class: 'q-acts' },
-            h('button', { class: 'btn btn-hit', onclick: async () => { await m.settle(q.id, true); await renderSettle(mid) } }, '对了'),
-            h('button', { class: 'btn btn-miss', onclick: async () => { await m.settle(q.id, false); await renderSettle(mid) } }, '错了'),
+            h('button', { class: 'btn btn-hit', onclick: async () => { await settleAndPulse(q.id, true); await renderSettle(mid) } }, '对了'),
+            h('button', { class: 'btn btn-miss', onclick: async () => { await settleAndPulse(q.id, false); await renderSettle(mid) } }, '错了'),
             h('button', {
               class: 'btn', title: '推迟两周',
               onclick: async () => {
@@ -48,8 +48,8 @@ export async function renderSettle(mid) {
       ),
     ),
 
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '最近传导'), h('em', {}, '14 天')),
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '最近传导'), h('em', {}, '14 天')),
       h('div', { class: 'sect-b' },
         events.length ? events.slice(0, 8).map((e) => h('div', { class: 'event' },
           icon('lattice', 12),
@@ -61,8 +61,8 @@ export async function renderSettle(mid) {
     ),
 
     // ---- 命题校准曲线
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '命题校准曲线'),
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '命题校准曲线'),
         h('em', {}, calib.length ? `${calib.reduce((s, b) => s + b.total, 0)} 条已结算` : '尚无数据')),
       h('div', { class: 'sect-b' },
         calib.length
@@ -82,8 +82,8 @@ export async function renderSettle(mid) {
     ),
 
     // ---- 过滤器校准曲线
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '过滤器校准曲线'), h('em', {}, '误杀率')),
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '过滤器校准曲线'), h('em', {}, '误杀率')),
       h('div', { class: 'sect-b' },
         filt.some((b) => b.total)
           ? h('div', { class: 'calib' }, ...filt.map((b) => h('div', {},

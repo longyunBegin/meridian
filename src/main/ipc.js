@@ -1,17 +1,21 @@
-import { ipcMain, shell } from 'electron'
-import { app } from 'electron'
+const { ipcMain, shell, app } = globalThis.__electron
 import {
-  load, addNode, updateNode, removeNode, repropagate, suggestParent, settleLemma,
+  load, addNode, updateNode, removeNode, repropagate, suggestParent, settleLemma, getNode,
   allThemes, addTheme, removeTheme, renameTheme, allNodes, rootNodes, childrenOf,
   settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
   addVerdict, allVerdicts, allConflicts, resolveConflict,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
+  addTicker, removeTicker, nodesByTicker, allTickers,
+  allFeeds, addFeed, getFeed, updateFeed, removeFeed, markFeedFetched,
+  allInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
 } from './store.js'
-import { extractLemmas } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate } from './templates.js'
+import { fetchFeed } from './feeds.js'
+import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 
 function branchTitles(themeId, depth = 3) {
   const out = []
@@ -44,14 +48,32 @@ function pathOf(id) {
  * 捕获流水线：打标 → 抽取 → 去重 → 冲突检测 → 分拣
  * 每一步失败都单独降级，不让整条链路断掉。
  */
-async function processCapture(text, themeId) {
-  const label = await labelSource(settings(), text)
+async function processCapture(text, themeId, channelMeta) {
+  // URL 抓取：粘贴 URL 时自动抓取网页正文，推断通道元数据
+  let actualText = text
+  let actualChannel = channelMeta
+  let fromUrl = null
+  if (isUrl(text)) {
+    fromUrl = text
+    const ch = inferChannel(text)
+    if (ch) {
+      actualChannel = channelMeta
+        ? { ...channelMeta, url: text, platform: ch.platform || channelMeta.platform }
+        : ch
+    }
+    const fetched = await fetchUrl(text).catch(() => null)
+    if (fetched && fetched.length > 50) {
+      actualText = fetched
+    }
+  }
+
+  const label = await labelSource(settings(), actualText, actualChannel)
 
   const hints = branchTitles(themeId)
-  const ex = await extractLemmas(settings(), text, hints)
+  const ex = await extractLemmas(settings(), actualText, hints)
 
   const lemmas = ex.ok ? ex.lemmas : [{
-    title: firstSentence(text),
+    title: firstSentence(actualText),
     type: 'observation',
     confidence: 50,
     parentHint: null,
@@ -62,11 +84,19 @@ async function processCapture(text, themeId) {
 
   const rejected = []
   const out = []
+  let noulMaxScore = 0
+  let noulCompared = 0
+
+  const themeLemmas = themeId
+    ? allNodes().filter((n) => n.themeId === themeId && n.kind === 'lemma' && n.status !== 'dead')
+    : []
+  noulCompared = themeLemmas.length
 
   for (const l of lemmas) {
     // 1) 去重：同一条 claim 已有独立来源 → 不新建，只 +1 源
     const dup = findSimilar([l.title, l.parentHint].filter(Boolean).join(' '), themeId)[0]
     if (dup) {
+      if (dup.score > noulMaxScore) noulMaxScore = dup.score
       out.push({
         ...l,
         action: 'merge',
@@ -121,10 +151,36 @@ async function processCapture(text, themeId) {
   return {
     ok: true,
     degraded,
-    label: { kind: label.kind, quality: label.quality, via: label.via, jevScore: label.jevScore ?? null, noul: label.noul ?? null },
+    label: {
+      kind: label.kind,
+      quality: label.quality,
+      via: label.via,
+      jevScore: label.jevScore ?? null,
+      noul: label.noul ?? null,
+      pills: generatePills(label.kind),
+    },
     lemmas: out,
     rejected,
+    noulCompared,
+    noulMaxScore: Math.round(noulMaxScore * 100) / 100,
+    resolvedText: actualText,
+    resolvedChannel: actualChannel,
+    fromUrl,
   }
+}
+
+/** 生成来源类型概率分布 pills：选中类型高概率，相邻类型递减 */
+function generatePills(selectedKind) {
+  const sorted = SOURCE_QUALITY.slice().sort((a, b) => b[1] - a[1])
+  const selected = sorted.find(([k]) => k === selectedKind) || sorted[0]
+  const others = sorted.filter(([k]) => k !== selected[0])
+  const top = [
+    { kind: selected[0], prob: 0.65 + selected[1] * 0.1 },
+    { kind: others[0][0], prob: 0.15 + others[0][1] * 0.05 },
+    { kind: others[1][0], prob: 0.05 + others[1][1] * 0.03 },
+  ]
+  const sum = top.reduce((s, p) => s + p.prob, 0)
+  return top.map((p) => ({ kind: p.kind, prob: Math.round((p.prob / sum) * 100) / 100 }))
 }
 
 /** 降级路径的标题：取第一句，别把整段原文塞进标题栏 */
@@ -171,6 +227,7 @@ function tokenOverlap(a, b) {
 function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
   ipcMain.handle('db:stats', () => stats())
   ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
+  ipcMain.handle('db:getNode', (_, id) => getNode(id))
   ipcMain.handle('db:due', () => dueSettlements())
   ipcMain.handle('db:calibration', () => calibration())
   ipcMain.handle('db:filterCalibration', () => filterCalibration())
@@ -218,6 +275,107 @@ function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
 
   ipcMain.handle('agent:process', (_, text, themeId) => processCapture(text, themeId))
 
+  ipcMain.handle('agent:socratic', async (_, nodeId) => {
+    const node = allNodes().find((n) => n.id === nodeId)
+    if (!node) return { ok: false, reason: 'not-found' }
+    const context = node.parentId ? pathOf(node.parentId) : ''
+    return socraticQuestions(settings(), node.title, context)
+  })
+
+  // ---- 标的映射：只做可见性，不做信号 ----
+  ipcMain.handle('db:addTicker', (_, id, ticker) => addTicker(id, ticker))
+  ipcMain.handle('db:removeTicker', (_, id, code) => removeTicker(id, code))
+  ipcMain.handle('db:tickerLookup', (_, code, themeId) => nodesByTicker(code, themeId))
+  ipcMain.handle('db:tickers', (_, themeId) => allTickers(themeId))
+
+  // ---- 订阅源 ----
+  ipcMain.handle('feed:list', () => allFeeds())
+  ipcMain.handle('feed:add', (_, feed) => addFeed(feed))
+  ipcMain.handle('feed:update', (_, id, patch) => updateFeed(id, patch))
+  ipcMain.handle('feed:remove', (_, id) => removeFeed(id))
+  ipcMain.handle('feed:fetch', async (_, id) => {
+    const feed = getFeed(id)
+    if (!feed) return { ok: false, reason: 'not-found' }
+    try {
+      const items = await fetchFeed(feed.url)
+      markFeedFetched(id, items.length)
+      return { ok: true, items }
+    } catch (e) {
+      return { ok: false, reason: e.message }
+    }
+  })
+
+  // 拉取 + 自动 JEV 打标：每条数据走 labelSource，返回带标签的结果
+  ipcMain.handle('feed:fetchAndLabel', async (_, id) => {
+    const feed = getFeed(id)
+    if (!feed) return { ok: false, reason: 'not-found' }
+    try {
+      const items = await fetchFeed(feed.url)
+      const s = settings()
+      const labeled = []
+      for (const item of items) {
+        const text = `${item.title} ${item.description || ''}`
+        const label = await labelSource(s, text)
+        const dup = findSimilar(item.title, feed.themeId)[0]
+        labeled.push({
+          ...item,
+          label: {
+            kind: label.kind,
+            quality: label.quality,
+            via: label.via,
+            jevScore: label.jevScore ?? null,
+            pills: generatePills(label.kind),
+          },
+          dup: dup ? { id: dup.node.id, title: dup.node.title, score: dup.score } : null,
+        })
+      }
+      markFeedFetched(id, items.length)
+      return { ok: true, items: labeled }
+    } catch (e) {
+      return { ok: false, reason: e.message }
+    }
+  })
+
+  // 批量入库：把选中的数据源条目走捕获流水线
+  ipcMain.handle('feed:import', async (_, feedId, themeId, items) => {
+    const feed = getFeed(feedId)
+    const s = settings()
+    const results = []
+    for (const item of items) {
+      const text = `${item.title} ${item.description || ''}`
+      const label = await labelSource(s, text)
+      const ex = await extractLemmas(s, text, branchTitles(themeId))
+      const lemmas = ex.ok ? ex.lemmas : [{
+        title: item.title,
+        type: 'observation',
+        confidence: 50,
+        parentHint: null,
+        tags: [],
+        sourceKind: label.kind,
+      }]
+      for (const l of lemmas) {
+        const dup = findSimilar(l.title, themeId)[0]
+        if (dup) {
+          addSource(dup.node.id, {
+            kind: label.kind, label: feed?.name || label.kind,
+            at: today(), quality: label.quality,
+          })
+          results.push({ title: l.title, action: 'merge' })
+          continue
+        }
+        const cands = suggestParent([l.title, l.parentHint].filter(Boolean).join(' '), themeId)
+        const top = cands[0]
+        const node = addNode({
+          themeId, parentId: top?.id || null, kind: 'lemma',
+          title: l.title, type: l.type, confidence: l.confidence,
+          tags: l.tags || [], sources: [{ kind: label.kind, label: feed?.name || label.kind, at: today(), quality: label.quality }],
+        })
+        results.push({ title: l.title, action: 'new', id: node.id })
+      }
+    }
+    return { ok: true, results }
+  })
+
   // capture:ready 只作为渲染进程的就绪信号；剪贴板由 main.js 的 showCapture()
   // 在窗口拿到焦点之后读取——app 未激活时同步读 NSPasteboard 会阻塞主进程。
   ipcMain.on('capture:resize', (_, height) => resizeCapture?.(height))
@@ -262,6 +420,124 @@ function register({ resizeCapture, showCapture, hideCapture, getMainWindow }) {
   })
   ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
   ipcMain.on('app:showCapture', () => showCapture?.())
+
+  // ---- 收件箱 ----
+  // ⌘⇧V 粘贴进收件箱（不再立即入库）：打标 → 抽取 → 去重 → 冲突 → 等用户裁决
+  ipcMain.handle('inbox:capture', async (_, text, channelMeta) => {
+    const s = settings()
+    // 全局收件箱不按主题分，但打标/去重需要一个主题上下文
+    // 用第一个主题作为默认上下文，用户在裁决时确认或修改
+    const themes = allThemes()
+    const defaultThemeId = themes[0]?.id || null
+    const result = await processCapture(text, defaultThemeId, channelMeta)
+    const item = addInboxItem({
+      text: result.resolvedText || text,
+      title: firstSentence(result.resolvedText || text),
+      label: result.label,
+      lemmas: result.lemmas,
+      rejected: result.rejected,
+      noulCompared: result.noulCompared,
+      noulMaxScore: result.noulMaxScore,
+      provenance: result.resolvedChannel || channelMeta || null,
+    })
+    return { ok: true, item }
+  })
+
+  ipcMain.handle('inbox:list', () => allInbox())
+
+  ipcMain.handle('inbox:resolve', (_, id, action) => {
+    const item = resolveInboxItem(id, action)
+    if (action === 'reject' && item) {
+      // 被拒绝的进墓碑区作抽取器负样本：记判断不记原文
+      addVerdict({
+        gate: 'user', reason: 'rejected', summary: item.title,
+        score: item.label?.quality || 0, choice: item.label?.kind || '未知',
+      })
+    }
+    return item
+  })
+
+  // 批量入库：把选中的收件箱条目走捕获入库流水线
+  ipcMain.handle('inbox:import', async (_, themeId, items) => {
+    const s = settings()
+    const results = []
+    for (const item of items) {
+      const raw = item.text
+        ? appendRaw({ kind: item.label?.kind || '独立媒体', label: item.label?.kind || '未注明', text: item.text })
+        : { id: null }
+
+      for (const l of item.lemmas || []) {
+        if (l.action === 'merge' && l.mergeInto) {
+          addSource(l.mergeInto, {
+            kind: l.sourceKind || item.label?.kind || '独立媒体',
+            label: l.label || item.label?.kind || '未注明',
+            at: today(),
+            rawId: raw.id,
+            ...(item.provenance?.platform ? { platform: item.provenance.platform } : {}),
+            ...(item.provenance?.url ? { url: item.provenance.url } : {}),
+          })
+          results.push({ title: l.title, action: 'merge' })
+          continue
+        }
+        const node = addNode({
+          themeId,
+          parentId: l.parentId || null,
+          kind: 'lemma',
+          title: l.title,
+          type: l.type,
+          confidence: l.confidence,
+          tags: l.tags || [],
+          sources: [{
+            kind: l.sourceKind || item.label?.kind || '独立媒体',
+            label: l.label || item.label?.kind || '未注明',
+            at: today(),
+            rawId: raw.id,
+            ...(item.provenance?.platform ? { platform: item.provenance.platform } : {}),
+            ...(item.provenance?.url ? { url: item.provenance.url } : {}),
+          }],
+          settlement: l.settlement || null,
+          by: 'manual',
+        })
+        for (const c of l.conflicts || []) addConflict(node.id, c.id, c.reason)
+        results.push({ title: l.title, action: 'new', id: node.id })
+      }
+      // 标记收件箱条目已入库
+      resolveInboxItem(item.id, 'accept')
+    }
+    getMainWindow?.()?.webContents.send('db:changed')
+    return { ok: true, results }
+  })
+
+  ipcMain.handle('inbox:clear', () => clearInbox())
+
+  // ---- 模型生成骨架（step 4）----
+  ipcMain.handle('theme:generateSkeleton', async (_, description) => {
+    const s = settings()
+    const result = await generateSkeleton(s, description)
+    return result
+  })
+
+  ipcMain.handle('theme:instantiateSkeleton', async (_, themeId, skeleton) => {
+    // 把模型生成的骨架落库为草稿态节点
+    const created = []
+    const walk = (node, parentId) => {
+      const n = addNode({
+        themeId,
+        parentId,
+        kind: 'branch',
+        title: node.title,
+        propagation: node.propagation ?? 0.5,
+        scaffold: node.scaffold || null,
+        by: 'model',
+        stableId: node.stableId,
+      })
+      created.push(n)
+      for (const child of node.children || []) walk(child, n.id)
+    }
+    for (const root of skeleton.roots || []) walk(root, null)
+    getMainWindow?.()?.webContents.send('db:changed')
+    return { ok: true, count: created.length }
+  })
 }
 
 

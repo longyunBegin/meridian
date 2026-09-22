@@ -5,7 +5,7 @@
   "private": true,
   "description": "信息 → 归位到主题脉络 → 传导 → 结算。本地优先的判断账本。",
   "type": "module",
-  "main": "src/main/main.js",
+  "main": "src/main/entry.cjs",
   "scripts": {
     "start": "electron .",
     "test": "node test/engine.test.mjs && node test/ipc.test.mjs",
@@ -13,5 +13,8 @@
   },
   "devDependencies": {
     "electron": "^37.0.0"
+  },
+  "allowScripts": {
+    "electron@37.10.3": true
   }
 }

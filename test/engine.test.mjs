@@ -2,17 +2,19 @@
  * 引擎测试：传导、结算、校准曲线、来源收敛度、误杀审计、共同前提、级联删除、模板。
  * 运行：npm test
  *
- * store.js 顶部 `import { app } from 'electron'`，Node 下没有这个模块，
+ * store.js 顶部用 `globalThis.__electron` 获取 electron，Node 下没有这个模块，
  * 所以先把它替换成 stub 再动态导入。替换只针对副本，不动源码。
  */
 import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = join(ROOT, 'src/main/store.js')
+const CRYPTO_SRC = join(ROOT, 'src/main/crypto.js')
 const TMP_DIR = join(ROOT, 'test/.tmp')
 const TMP = join(TMP_DIR, 'store.under-test.mjs')
+const CRYPTO_TMP = join(TMP_DIR, 'crypto.js')
 const DATA = join(TMP_DIR, 'data')
 
 let pass = 0
@@ -23,13 +25,14 @@ const ok = (name, cond, extra = '') => {
 }
 
 mkdirSync(TMP_DIR, { recursive: true })
+writeFileSync(CRYPTO_TMP, readFileSync(CRYPTO_SRC, 'utf8'))
 writeFileSync(TMP, readFileSync(SRC, 'utf8').replace(
-  "import { app } from 'electron'",
+  "const { app } = globalThis.__electron",
   `const app = { getPath: () => ${JSON.stringify(DATA)} }`,
 ))
 rmSync(DATA, { recursive: true, force: true })
 
-const s = await import(TMP)
+const s = await import(pathToFileURL(TMP).href)
 const { load, addNode, updateNode, repropagate, settleLemma, calibration, dueSettlements, descendants, stats } = s
 load()
 
@@ -68,7 +71,7 @@ ok('应用按新权重重算为 52', Math.abs(app_.confidence - 52) < 0.01, `实
 ok('云仍为 70', Math.abs(cloud.confidence - 70) < 0.01, `实际 ${cloud.confidence}`)
 
 console.log('\n— 结算与校准曲线 —')
-const { list, find, instantiate } = await import(join(ROOT, 'src/main/templates.js'))
+const { list, find, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
 const settleTheme = s.addTheme('结算主题')
 const p1 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 确信', confidence: 90, settlement: { date: '2026-01-01' } })
 const p2 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 错', confidence: 92, settlement: { date: '2026-01-01' } })
@@ -264,6 +267,42 @@ s.importAll(JSON.stringify(full))
 ok('导入后原文回来了', s.getRaw(exported.id)?.text === EXPORT_TEXT)
 s.importAll(JSON.stringify(judgeOnly))
 ok('导入无原文的文件不动已有原文', s.getRaw(exported.id)?.text === EXPORT_TEXT)
+
+console.log('\n— 标的映射：只做可见性，不做信号 —')
+const tickerTheme = s.addTheme('标的测试')
+const tn1 = addNode({ themeId: tickerTheme.id, parentId: null, kind: 'lemma', title: '光模块出货超预期', confidence: 80, tickers: [{ code: 'nvda', name: '英伟达', relation: '受益' }] })
+ok('标的随节点创建', tn1.tickers.length === 1 && tn1.tickers[0].code === 'NVDA', `实际 ${JSON.stringify(tn1.tickers)}`)
+ok('代码自动大写', tn1.tickers[0].code === 'NVDA')
+s.addTicker(tn1.id, { code: 'amd', name: 'AMD', relation: '受损' })
+ok('追加标的', s.getNode(tn1.id).tickers.length === 2)
+s.addTicker(tn1.id, { code: 'amd', name: 'AMD', relation: '受益' })
+ok('同代码不重复', s.getNode(tn1.id).tickers.length === 2)
+s.removeTicker(tn1.id, 'AMD')
+ok('删除标的', s.getNode(tn1.id).tickers.length === 1)
+const tn2 = addNode({ themeId: tickerTheme.id, parentId: null, kind: 'lemma', title: 'HBM 涨价', confidence: 70, tickers: [{ code: 'NVDA', name: '英伟达', relation: '受益' }] })
+const lookup = s.nodesByTicker('nvda', tickerTheme.id)
+ok('反查标的关联命题', lookup.length === 2, `实际 ${lookup.length}`)
+ok('反查不限定主题', s.nodesByTicker('NVDA').length === 2)
+const allT = s.allTickers(tickerTheme.id)
+ok('主题下全部标的去重', allT.length === 1 && allT[0].code === 'NVDA' && allT[0].count === 2, JSON.stringify(allT))
+
+console.log('\n— 订阅源 —')
+const feed = s.addFeed({ url: 'https://example.com/feed.xml', kind: 'rss', name: '测试源', themeId: tickerTheme.id, interval: 30 })
+ok('订阅源创建', !!feed && feed.url === 'https://example.com/feed.xml')
+ok('间隔下限 15 分钟', feed.interval === 30)
+const feed2 = s.addFeed({ url: 'https://example.com/2.xml', interval: 5 })
+ok('间隔低于 15 被拉到 15', feed2.interval === 15)
+ok('空 URL 不创建', s.addFeed({ url: '' }) === null)
+s.updateFeed(feed.id, { name: '改名', interval: 120 })
+ok('订阅源可更新', s.getFeed(feed.id).name === '改名' && s.getFeed(feed.id).interval === 120)
+s.markFeedFetched(feed.id, 42)
+ok('拉取后记录条数', s.getFeed(feed.id).lastCount === 42 && s.getFeed(feed.id).lastFetch === s.today())
+s.removeFeed(feed2.id)
+ok('订阅源可删除', s.allFeeds().length === 1)
+ok('订阅源随导出导入', (() => {
+  const exp = JSON.parse(s.exportAll({ withRaw: false }))
+  return Array.isArray(exp.feeds) && exp.feeds.length === 1
+})())
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

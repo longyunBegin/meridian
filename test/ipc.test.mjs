@@ -7,7 +7,6 @@
  *
  * 运行：node test/ipc.test.mjs
  */
-import { register } from 'node:module'
 import { rmSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,14 +15,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DATA = join(ROOT, 'test/.tmp/ipc-data')
 process.env.MERIDIAN_TEST_DATA = DATA
 
-register(new URL('./stub-loader.mjs', import.meta.url))
-
 rmSync(DATA, { recursive: true, force: true })
 mkdirSync(DATA, { recursive: true })
 
+const stub = await import('./electron-stub.mjs')
+globalThis.__electron = stub
+
 const store = await import('../src/main/store.js')
 const { register: registerIpc } = await import('../src/main/ipc.js')
-const stub = await import('./electron-stub.mjs')
 
 let pass = 0
 let fail = 0

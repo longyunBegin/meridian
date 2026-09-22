@@ -1,6 +1,6 @@
 import { h, icon, clear } from '../lib/dom.js'
 import { state, refresh, selectNode, setShape } from '../app.js'
-import { confColor, TYPE_LABEL, todayStr } from './shared.js'
+import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
 
 const m = window.meridian
@@ -19,6 +19,20 @@ export function renderLattice(mid) {
   const head = h('div', { class: 'mid-head hairline-b' },
     h('h1', {}, theme ? theme.name : ''),
     h('div', { class: 'spacer' }),
+    // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动
+    h('button', {
+      class: 'btn regenerate-btn', title: '重新生成骨架',
+      onclick: async () => {
+        if (!theme) return
+        const desc = prompt('描述要跟踪的产业链，模型将重新生成骨架：', theme.name)
+        if (!desc) return
+        const r = await m.generateSkeleton(desc)
+        if (r.ok) {
+          await m.instantiateSkeleton(state.themeId, r.skeleton)
+          await refresh()
+        }
+      },
+    }, icon('lattice', 12), '重新生成'),
     h('div', { class: 'seg seg-shape' },
       h('button', {
         'aria-selected': isGraph ? 'false' : 'true',
@@ -87,16 +101,11 @@ function aggregate(byParent, id) {
   return { avg: n ? Math.round(sum / n) : null, count: n, due }
 }
 
-/** 十格确信度计。分段比连续条更容易一眼分开 72 和 78。 */
+/** 连续细条确信度计：24×3px，按值填色，比分段更安静 */
 function meter(value, wide = false) {
   const v = Math.max(0, Math.min(100, Math.round(value)))
-  const lit = Math.round(v / 10)
-  return h('span', { class: `meter${wide ? ' meter-wide' : ''}`, title: `平均确信度 ${v}` },
-    ...Array.from({ length: 10 }, (_, i) => h('i', {
-      dataset: { on: i < lit ? 'true' : 'false' },
-      style: i < lit ? { background: confColor(v) } : null,
-    })),
-  )
+  return h('span', { class: `bar${wide ? ' bar-wide' : ''}`, title: `确信度 ${v}` },
+    h('i', { style: { width: `${v}%`, background: confColorContinuous(v) } }))
 }
 
 function paint(container) {
@@ -161,23 +170,25 @@ function paint(container) {
       const sc = node.scaffold
       const scSum = !isLemma && sc ? scaffoldSummary(node) : null
       const meta = h('span', { class: 'row-meta' },
-        srcs > 1 ? h('span', { class: 'chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
-        cold ? h('span', { class: 'chip', title: '冷库' }, '冷') : null,
-        propagated ? h('span', { class: 'dot', style: { background: 'var(--orange)' }, title: '14 天内有传导' }) : null,
-        due ? h('span', { class: 'chip chip-due', title: '已到结算日' }, icon('flag', 9)) : null,
         isLemma
           ? h('span', { class: `badge badge-${node.type}` }, TYPE_LABEL[node.type])
           : a.due ? h('span', { class: 'chip chip-due', title: `${a.due} 条待结算` }, icon('flag', 9), String(a.due)) : null,
+        srcs > 1 ? h('span', { class: 'src-chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
+        cold ? h('span', { class: 'chip', title: '冷库' }, '冷') : null,
+        propagated ? h('span', { class: 'dot', style: { background: 'var(--orange)' }, title: '14 天内有传导' }) : null,
         isLemma ? meter(conf) : a.avg != null ? meter(a.avg, true) : null,
         isLemma || a.avg != null
           ? h('span', {
               class: `row-conf${isLemma ? '' : ' row-conf-agg'}`,
-              style: isLemma ? null : { color: confColor(a.avg) },
+              style: isLemma ? null : { color: confColorContinuous(a.avg) },
             }, String(isLemma ? conf : a.avg))
           : null,
+        isLemma ? h('span', { class: 'flag-ic', title: due ? '已到结算日' : '结算标记' }, icon('flag', 11)) : null,
         scSum ? h('span', { class: 'scaffold-sum', title: `已回答 ${scSum.answered} / ${scSum.total} 题 · ${scSum.indicators} 项指标` },
             `${scSum.answered}/${scSum.total}`
           ) : null,
+        node.settlement?.resolved != null && !node.settlement?.correct
+          ? h('span', { class: 'cf', title: '已证伪' }, 'cf') : null,
         // 悬停操作：删除、加子项、切换冷库。不用点到右边栏
         h('span', { class: 'row-acts' },
           h('button', {

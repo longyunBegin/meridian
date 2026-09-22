@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import { app } from 'electron'
+import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
+const { app } = globalThis.__electron
 
 const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
 
@@ -38,6 +39,8 @@ const blank = () => ({
   nodes: [],
   verdicts: [], // 被筛掉的裁决记录：留判断，不留原文
   conflicts: [], // 待裁决的命题冲突
+  feeds: [], // 订阅源：RSS / 公众号 / X 列表
+  inbox: [], // 收件箱：待确认的摄入项，全局不按主题分
 })
 
 let db = null
@@ -59,11 +62,16 @@ function migrate(d) {
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) }
   d.verdicts = d.verdicts || []
   d.conflicts = d.conflicts || []
+  d.feeds = d.feeds || []
+  d.inbox = d.inbox || []
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
+    n.tickers = Array.isArray(n.tickers) ? n.tickers : []
     n.status = n.status || 'live'
     n.scaffold = n.scaffold || null
+    n.by = n.by || 'manual'
+    n.stableId = n.stableId || n.id
     delete n.source
   }
   d.version = 3
@@ -114,10 +122,13 @@ export function addNode(input) {
     propagation: input.propagation ?? 0.5,
     sources,
     tags: [...new Set(input.tags || [])],
+    tickers: normalizeTickers(input.tickers || []),
     status: input.status || 'live', // live | cold | dead
     settlement: input.settlement || null,
     scaffold: input.scaffold || null,
     history: [{ t, confidence: clamp(input.confidence ?? 50), by: 'manual' }],
+    by: input.by || 'manual',
+    stableId: input.stableId || uid(),
     createdAt: t,
     updatedAt: t,
   }
@@ -139,8 +150,11 @@ function normalizeSources(list) {
       label: s.label || s.kind,
       quality: QUALITY.has(s.kind) ? QUALITY.get(s.kind) : (s.quality ?? 0.5),
       at: s.at || today(),
-      // v3：指向原文层的一条依据。旧文件没有这个字段，照常工作
       ...(s.rawId ? { rawId: s.rawId } : {}),
+      ...(s.platform ? { platform: s.platform } : {}),
+      ...(s.url ? { url: s.url } : {}),
+      ...(s.fetchedAt ? { fetchedAt: s.fetchedAt } : {}),
+      ...(s.searchPrompt ? { searchPrompt: s.searchPrompt } : {}),
     })
   }
   return out
@@ -166,6 +180,7 @@ export function updateNode(id, patch, { propagate = true } = {}) {
   if (patch.propagation !== undefined) node.propagation = clamp01(patch.propagation)
   if (patch.sources !== undefined) node.sources = normalizeSources(patch.sources)
   if (patch.tags !== undefined) node.tags = [...new Set(patch.tags)]
+  if (patch.tickers !== undefined) node.tickers = normalizeTickers(patch.tickers)
   node.updatedAt = today()
   persist()
   return node
@@ -565,6 +580,135 @@ export function settleLemma(id, correct) {
   return node
 }
 
+// ------------------------------------------------------------------ tickers
+
+/**
+ * 命题 ↔ 标的映射。只做可见性，不做信号——合规红线。
+ * 标的挂在命题上，可反查「这条产业链位置影响哪些票」。
+ * 不输出买卖建议、评分、目标价。
+ */
+function normalizeTicker(t) {
+  if (!t?.code) return null
+  return {
+    code: String(t.code).trim().toUpperCase().slice(0, 20),
+    name: String(t.name || t.code).trim().slice(0, 40),
+    relation: ['受益', '受损', '中性'].includes(t.relation) ? t.relation : '受益',
+  }
+}
+
+function normalizeTickers(list) {
+  const seen = new Set()
+  const out = []
+  for (const t of list) {
+    const n = normalizeTicker(t)
+    if (!n || seen.has(n.code)) continue
+    seen.add(n.code)
+    out.push(n)
+  }
+  return out
+}
+
+export function addTicker(nodeId, ticker) {
+  const node = getNode(nodeId)
+  if (!node) return null
+  const t = normalizeTicker(ticker)
+  if (!t) return null
+  if (!node.tickers.some((x) => x.code === t.code)) {
+    node.tickers.push(t)
+    node.updatedAt = today()
+    persist()
+  }
+  return node
+}
+
+export function removeTicker(nodeId, code) {
+  const node = getNode(nodeId)
+  if (!node) return null
+  node.tickers = node.tickers.filter((t) => t.code !== code)
+  node.updatedAt = today()
+  persist()
+  return node
+}
+
+/** 反查：某标的关联的所有命题（可选限定主题） */
+export function nodesByTicker(code, themeId) {
+  const c = String(code).trim().toUpperCase()
+  return db.nodes.filter((n) =>
+    n.kind === 'lemma' && n.status !== 'dead' &&
+    n.tickers?.some((t) => t.code === c) &&
+    (!themeId || n.themeId === themeId),
+  )
+}
+
+/** 某主题下出现过的全部标的（去重，按出现次数排序） */
+export function allTickers(themeId) {
+  const counts = new Map()
+  for (const n of db.nodes) {
+    if (n.kind !== 'lemma' || n.status === 'dead') continue
+    if (themeId && n.themeId !== themeId) continue
+    for (const t of n.tickers || []) {
+      const key = t.code
+      const entry = counts.get(key) || { ...t, count: 0 }
+      entry.count++
+      counts.set(key, entry)
+    }
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count)
+}
+
+// ------------------------------------------------------------------ feeds
+
+/**
+ * 订阅源适配器：RSS / 公众号 / X 列表。
+ * 把「搬」从手动变自动——定时拉取，走和 ⌘⇧V 同一条捕获流水线。
+ */
+export function allFeeds() { return load().feeds }
+
+export function addFeed(input) {
+  const feed = {
+    id: uid(),
+    url: String(input.url || '').trim(),
+    kind: input.kind || 'rss',
+    name: String(input.name || '').trim() || String(input.url || '').trim(),
+    themeId: input.themeId || null,
+    interval: Math.max(15, Number(input.interval) || 60),
+    lastFetch: null,
+    lastCount: null,
+    enabled: input.enabled !== false,
+    createdAt: today(),
+  }
+  if (!feed.url) return null
+  db.feeds.push(feed)
+  persist()
+  return feed
+}
+
+export function getFeed(id) { return load().feeds.find((f) => f.id === id) || null }
+
+export function updateFeed(id, patch) {
+  const feed = getFeed(id)
+  if (!feed) return null
+  for (const key of ['url', 'kind', 'name', 'themeId', 'interval', 'enabled']) {
+    if (patch[key] !== undefined) feed[key] = patch[key]
+  }
+  persist()
+  return feed
+}
+
+export function removeFeed(id) {
+  db.feeds = db.feeds.filter((f) => f.id !== id)
+  persist()
+}
+
+export function markFeedFetched(id, count) {
+  const feed = getFeed(id)
+  if (!feed) return null
+  feed.lastFetch = today()
+  feed.lastCount = count
+  persist()
+  return feed
+}
+
 export function stats() {
   const nodes = db.nodes
   const lemmas = nodes.filter((n) => n.kind === 'lemma')
@@ -580,14 +724,19 @@ export function stats() {
     verdicts: db.verdicts.length,
     conflicts: db.conflicts.filter((c) => !c.resolved).length,
     premises: sharedPremises().length,
+    feeds: db.feeds.filter((f) => f.enabled).length,
+    inbox: db.inbox.filter((i) => i.status === 'pending').length,
   }
 }
 
-export function settings() { return load().settings }
+export function settings() { return decryptSettings(load().settings) }
 export function saveSettings(patch) {
-  db.settings = { ...db.settings, ...patch }
+  const enc = { ...patch }
+  if (patch.apiKey !== undefined) enc.apiKey = encrypt(patch.apiKey)
+  if (patch.jevKey !== undefined) enc.jevKey = encrypt(patch.jevKey)
+  db.settings = { ...db.settings, ...enc }
   persist()
-  return db.settings
+  return decryptSettings(db.settings)
 }
 
 // ------------------------------------------------------------------ 原文层
@@ -718,7 +867,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [] }
+  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -729,4 +878,54 @@ export function importAll(json) {
   }
   persist()
   return true
+}
+// ------------------------------------------------------------------ 收件箱
+
+/**
+ * 收件箱：全局待确认区，不按主题分。
+ * 摄入入口（⌘⇧V 粘贴、LLM 检索、订阅源）→ 统一打标/去重/冲突检测 → 等用户裁决。
+ * 摩擦按批摊薄：十条从 10 次热键 + 10 次 round-trip + 10 次审阅
+ * 变成 1 次粘贴 + 1 次 round-trip + 1 次批量勾选。
+ */
+export function allInbox() {
+  return load().inbox.filter((i) => i.status === 'pending')
+}
+
+export function addInboxItem(item) {
+  const entry = {
+    id: uid(),
+    text: item.text || '',
+    title: item.title || '',
+    label: item.label || null,
+    lemmas: item.lemmas || [],
+    rejected: item.rejected || [],
+    noulCompared: item.noulCompared || 0,
+    noulMaxScore: item.noulMaxScore || 0,
+    provenance: item.provenance || null,
+    status: 'pending',
+    createdAt: today(),
+  }
+  load().inbox.push(entry)
+  persist()
+  return entry
+}
+
+export function resolveInboxItem(id, action) {
+  const item = load().inbox.find((i) => i.id === id)
+  if (!item) return null
+  item.status = action === 'accept' ? 'accepted' : 'rejected'
+  persist()
+  return item
+}
+
+export function clearInbox() {
+  const db = load()
+  const before = db.inbox.length
+  db.inbox = db.inbox.filter((i) => i.status === 'pending')
+  persist()
+  return before - db.inbox.length
+}
+
+export function inboxCount() {
+  return load().inbox.filter((i) => i.status === 'pending').length
 }

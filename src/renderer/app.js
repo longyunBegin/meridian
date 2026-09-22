@@ -1,18 +1,20 @@
 import { h, icon, clear, $ } from './lib/dom.js'
+import { renderToday, inboxPaste } from './views/today.js'
 import { renderLattice } from './views/lattice.js'
 import { renderSettle } from './views/settle.js'
 import { renderAudit } from './views/audit.js'
 import { renderPremise } from './views/premise.js'
+import { renderFeeds } from './views/feeds.js'
 import { renderVault } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
 import { renderInspectorLattice } from './views/inspector.js'
-import { refocusGraph } from './views/graph.js'
+import { refocusGraph, pulseFrom } from './views/graph.js'
 
 const m = window.meridian
 
 export const state = {
-  view: 'lattice',
-  shape: 'tree', // tree | graph —— 脉络视图的两种形态，共用主题/选中/检视
+  view: 'today',
+  shape: 'graph', // tree | graph —— 默认图，归位比编辑频繁
   vaultKind: 'cold',
   themeId: null,
   selectedId: null,
@@ -26,10 +28,12 @@ export const state = {
 }
 
 const NAV = [
-  { id: 'lattice', label: '脉络', icon: 'lattice', key: '⌘1' },
-  { id: 'settle', label: '结算', icon: 'settle', key: '⌘2' },
-  { id: 'audit', label: '误杀审计', icon: 'flag', key: '⌘3' },
-  { id: 'premise', label: '共同前提', icon: 'lattice', key: '⌘4' },
+  { id: 'today', label: '今日', icon: 'settle', key: '⌘1' },
+  { id: 'lattice', label: '脉络', icon: 'lattice', key: '⌘2' },
+  { id: 'feeds', label: '数据源', icon: 'export', key: '⌘6' },
+  { id: 'settle', label: '结算', icon: 'settle', key: '⌘3' },
+  { id: 'audit', label: '误杀审计', icon: 'flag', key: '⌘4' },
+  { id: 'premise', label: '共同前提', icon: 'lattice', key: '⌘5' },
 ]
 
 const VAULTS = [
@@ -39,19 +43,29 @@ const VAULTS = [
   { id: 'filtered', label: '已筛掉', icon: 'export' },
 ]
 
+const THEME_COLORS = ['#0071e3', '#af52de', '#34c759', '#ff9500', '#ff2d55', '#00b8b8', '#ff3b30', '#5856d6']
+function themeColor(id) {
+  const idx = state.themes.findIndex((t) => t.id === id)
+  return THEME_COLORS[idx % THEME_COLORS.length]
+}
+
 async function boot() {
   state.themes = await m.themes()
   state.templates = await m.templates()
   state.settings = await m.settings()
+  state.view = 'today'
   if (state.themes.length) {
     state.themeId = state.themes[0].id
-    state.view = 'lattice'
-  } else {
-    state.view = 'settings'
   }
   if (state.themeId) await loadNodes()
   render()
   m.onChanged(() => refresh())
+  m.onInboxPaste((text) => {
+    state.view = 'today'
+    document.querySelector('.app').dataset.view = 'today'
+    renderNav()
+    inboxPaste(text)
+  })
   applyUrlParams()
 }
 
@@ -108,7 +122,7 @@ export function selectTheme(id) {
   state.selectedId = null
   state.open.clear()
   state.query = ''
-  state.view = 'lattice'
+
   refresh()
 }
 
@@ -136,6 +150,19 @@ export function setView(v, vaultKind) {
   render()
 }
 
+/**
+ * 结算并脉冲：结算后切到脉络图视图，脉冲从结算节点击穿全部下游。
+ * 「你这条 85% 黄了，顺着传导击穿 3 条下游」——本该是产品最壮观的时刻。
+ */
+export async function settleAndPulse(id, correct) {
+  await m.settle(id, correct)
+  state.view = 'lattice'
+  state.shape = 'graph'
+  state.selectedId = id
+  await refresh()
+  setTimeout(() => pulseFrom(id), 100)
+}
+
 // ------------------------------------------------------------ 渲染
 
 function render() {
@@ -152,6 +179,11 @@ function render() {
 function renderNav() {
   const nav = $('#nav')
   clear(nav)
+  nav.append(h('button', {
+    class: 'nav-item',
+    title: 'Ctrl+Shift+V 粘贴到收件箱',
+    onclick: () => m.showCapture(),
+  }, icon('plus', 15), '捕获', h('span', { style: { marginLeft: 'auto', fontSize: '10px', color: 'var(--text-3)' } }, '⌘⇧V')))
   for (const v of NAV) {
     nav.append(h('button', {
       class: 'nav-item',
@@ -180,7 +212,7 @@ function renderThemes() {
       class: 'theme-item',
       'aria-selected': state.themeId === t.id ? 'true' : 'false',
       onclick: () => selectTheme(t.id),
-    }, h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null))
+    }, h('span', { class: 'sw', style: { background: themeColor(t.id) } }), h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null))
   }
 
   const slot = $('#theme-add-slot')
@@ -279,12 +311,14 @@ function importJson() {
 function renderMid() {
   const mid = $('#mid')
   clear(mid)
-  if (state.view === 'lattice') {
+  if (state.view === 'today') renderToday(mid)
+  else if (state.view === 'lattice') {
     if (!state.themeId) { mid.append(emptyState()); return }
     renderLattice(mid)
   } else if (state.view === 'settle') renderSettle(mid)
   else if (state.view === 'audit') renderAudit(mid)
   else if (state.view === 'premise') renderPremise(mid)
+  else if (state.view === 'feeds') renderFeeds(mid)
   else if (state.view === 'vault') renderVault(mid, state.vaultKind)
   else if (state.view === 'settings') renderSettings(mid)
 }
@@ -292,7 +326,55 @@ function renderMid() {
 function emptyState() {
   return h('div', { class: 'empty' },
     h('h2', {}, '从一个主题开始'),
-    h('p', {}, '主题是一条你持续跟踪的脉络。骨架只给结构，判断由你自己下。'),
+    h('p', {}, '输入一句话描述要跟踪的产业链，模型生成骨架，你裁剪后落库。或选一个专家模板。'),
+    // 骨架生成输入
+    h('div', { class: 'skeleton-gen' },
+      h('input', {
+        class: 'txt skeleton-input', placeholder: '描述你要跟踪的产业链，如「AI 算力供应链」',
+        id: 'skeleton-desc',
+        onkeydown: async (e) => {
+          if (e.key === 'Enter') {
+            const desc = e.target.value.trim()
+            if (!desc) return
+            e.target.disabled = true
+            const theme = await m.addTheme(desc)
+            state.themeId = theme.id
+            state.view = 'lattice'
+            await refresh()
+            const r = await m.generateSkeleton(desc)
+            if (r.ok) {
+              await m.instantiateSkeleton(theme.id, r.skeleton)
+              await refresh()
+            } else {
+              // 无 key 降级：用静态模板
+              const t = state.templates[0]
+              if (t) { await m.addThemeFromTemplate(t.id); await refresh() }
+            }
+          }
+        },
+      }),
+      h('button', {
+        class: 'btn btn-primary', style: { height: '34px' },
+        onclick: async () => {
+          const input = document.getElementById('skeleton-desc')
+          const desc = input?.value.trim()
+          if (!desc) return
+          input.disabled = true
+          const theme = await m.addTheme(desc)
+          state.themeId = theme.id
+          state.view = 'lattice'
+          await refresh()
+          const r = await m.generateSkeleton(desc)
+          if (r.ok) {
+            await m.instantiateSkeleton(theme.id, r.skeleton)
+            await refresh()
+          } else {
+            const t = state.templates[0]
+            if (t) { await m.addThemeFromTemplate(t.id); await refresh() }
+          }
+        },
+      }, icon('plus', 13), '生成骨架'),
+    ),
     h('div', { class: 'empty-actions' },
       ...state.templates.map((t) => h('button', {
         class: 'btn', style: { height: '34px', justifyContent: 'space-between', padding: '0 12px' },
@@ -317,7 +399,7 @@ function renderInspector() {
   const aside = $('#inspect')
   clear(aside)
   if (state.view === 'lattice' && state.themeId) renderInspectorLattice(aside)
-  else aside.append(h('div', { class: 'insp-empty' }, h('span', {}, '非脉络视图')))
+  else aside.append(h('div', { class: 'insp-empty' }, h('span', {}, '')))
 }
 
 // ------------------------------------------------------------ 键盘
@@ -325,7 +407,7 @@ function renderInspector() {
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
-  const map = { ',': 'settings', '1': 'lattice', '2': 'settle', '3': 'audit', '4': 'premise' }
+  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'settle', '4': 'audit', '5': 'premise' }
   if (map[e.key]) { e.preventDefault(); setView(map[e.key]) }
 })
 

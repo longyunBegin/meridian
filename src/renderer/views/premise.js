@@ -18,8 +18,8 @@ export async function renderPremise(mid) {
     ),
 
     premises.length
-      ? h('section', { class: 'sect' },
-          h('div', { class: 'sect-h' }, h('h2', {}, '扫描结果'), h('em', {}, `${premises.length} 组`)),
+      ? h('section', { class: 'card' },
+          h('div', { class: 'card-h' }, h('h2', {}, '扫描结果'), h('em', {}, `${premises.length} 组`)),
           h('div', { class: 'sect-b' },
             ...premises.map((p) => h('div', { class: 'premise' },
               h('div', { class: 'premise-top' },
@@ -39,8 +39,8 @@ export async function renderPremise(mid) {
             )),
           ),
         )
-      : h('section', { class: 'sect' },
-          h('div', { class: 'sect-h' }, h('h2', {}, '还没有共同前提')),
+      : h('section', { class: 'card' },
+          h('div', { class: 'card-h' }, h('h2', {}, '还没有共同前提')),
           h('div', { class: 'sect-b' },
             h('div', { class: 'q' }, h('div', { class: 'q-body' },
               h('div', { class: 'q-text', style: { color: 'var(--text-3)' } },

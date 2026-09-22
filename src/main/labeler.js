@@ -104,8 +104,24 @@ export async function llmLabel(settings, text) {
   return { ok: true, kind, quality: QUALITY.get(kind), via: 'llm' }
 }
 
-/** 统一入口：按设置选择打标器，失败一律静默降级到查表。 */
-export async function labelSource(settings, text) {
+/**
+ * 统一入口：按设置选择打标器，失败一律静默降级到查表。
+ *
+ * 打标优先级（step 3）：通道元数据 > SOURCE_QUALITY 表 > 模型推断 > 关键词启发式
+ * 前三层都不随模型漂移。channelMeta 是事实（从 arxiv 抓的就是一手数据），
+ * 不是判断——由通道决定，不由模型猜。
+ */
+export async function labelSource(settings, text, channelMeta) {
+  // 1) 通道元数据优先：由来源平台决定类型，质量分查表
+  if (channelMeta?.kind && QUALITY.has(channelMeta.kind)) {
+    return {
+      ok: true,
+      kind: channelMeta.kind,
+      quality: QUALITY.get(channelMeta.kind),
+      via: 'channel',
+    }
+  }
+
   try {
     if (settings.labeler === 'jev') {
       const r = await jevLabel(settings, text)

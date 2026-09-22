@@ -1,5 +1,5 @@
 import { h, mount, icon, clear } from '../lib/dom.js'
-import { state, refresh } from '../app.js'
+import { state, refresh, selectNode } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 
 const m = window.meridian
@@ -72,11 +72,17 @@ export function renderInspectorLattice(aside) {
 
   if (node.kind === 'branch') {
     const kids = state.nodes.filter((n) => n.parentId === node.id)
-    const segs = h('div', { class: 'seg' },
-      ...['0.3', '0.5', '0.7'].map((v) => h('button', {
-        'aria-selected': node.propagation.toFixed(2) === Number(v).toFixed(2) ? 'true' : 'false',
-        onclick: async () => { await m.updateNode(node.id, { propagation: Number(v) }); await refresh() },
-      }, v)),
+    // 连续传导权重滑块：产品最核心的连续参数不该只有三档
+    // 拖动时下游置信度实时跟着变——这才是「传导」被看见
+    const propOut = h('b', {}, node.propagation.toFixed(2))
+    const propSlider = h('input', {
+      type: 'range', class: 'prop-slider', min: '0', max: '1', step: '0.05',
+      value: String(node.propagation),
+      oninput: (e) => { propOut.textContent = Number(e.target.value).toFixed(2) },
+      onchange: async (e) => { await m.updateNode(node.id, { propagation: Number(e.target.value) }); await refresh() },
+    })
+    const segs = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+      propSlider, propOut,
     )
     const answers = node.scaffold?.answer?.length || 0
     const spawnBtn = node.scaffold
@@ -129,7 +135,7 @@ export function renderInspectorLattice(aside) {
         h('div', { class: 'insp-h' }, '传导权重', h('b', {}, node.propagation.toFixed(2))),
         h('div', { class: 'field' }, h('label', {}, '向下游'), segs),
         h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
-          '此环节的置信度每变化 1 点，子命题按该权重同向变化。权重越高，你的判断越依赖这一层。'),
+          '拖动边上的权重，下游置信度实时跟着变——这才是「传导」被看见。'),
         h('button', {
           class: 'btn', style: { marginTop: '10px' },
           onclick: async () => { await m.repropagate(node.id); await refresh() },
@@ -225,6 +231,66 @@ export function renderInspectorLattice(aside) {
     },
   })
 
+  // 标的映射：只做可见性，不做信号——合规红线
+  const tickerBox = h('div', { class: 'src-list' })
+  const tickerInput = h('input', {
+    class: 'txt', placeholder: '代码 名称，如：NVDA 英伟达',
+    onkeydown: async (e) => {
+      if (e.key !== 'Enter') return
+      const parts = e.target.value.trim().split(/\s+/)
+      if (!parts[0]) return
+      await m.addTicker(node.id, { code: parts[0], name: parts.slice(1).join(' ') || parts[0], relation: '受益' })
+      e.target.value = ''
+      await refresh()
+    },
+  })
+  const relationSel = h('select', {
+    class: 'sel', style: { width: '64px', flex: 'none' },
+    onchange: () => {},
+  },
+    h('option', { value: '受益' }, '受益'),
+    h('option', { value: '受损' }, '受损'),
+    h('option', { value: '中性' }, '中性'),
+  )
+  const paintTickers = () => {
+    clear(tickerBox)
+    for (const t of node.tickers || []) {
+      tickerBox.append(h('div', { class: 'src-row' },
+        h('span', { class: 'badge badge-observation', style: { fontSize: '10px' } }, t.code),
+        h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.name),
+        h('span', { class: 'q' }, t.relation),
+        h('button', { class: 'btn btn-icon', title: '移除', onclick: async () => {
+          await m.removeTicker(node.id, t.code); await refresh()
+        } }, '×'),
+      ))
+    }
+  }
+  paintTickers()
+
+  // 苏格拉底追问：AI 只追问边界，禁止输出陈述句
+  const socraticBox = h('div', {})
+  const socraticBtn = h('button', {
+    class: 'btn', style: { marginTop: '8px' },
+    onclick: async () => {
+      clear(socraticBox)
+      socraticBox.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '追问中…'))
+      const r = await m.socratic(node.id)
+      clear(socraticBox)
+      if (!r.ok) {
+        socraticBox.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } },
+          r.reason === 'no-key' ? '需要先在设置里填 API key' : `失败：${r.reason}`))
+        return
+      }
+      socraticBox.append(h('ul', {
+        style: { margin: '0', padding: '0 0 0 14px', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' },
+      }, ...r.questions.map((q) => h('li', {
+        style: { position: 'relative', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.55' },
+      }, h('span', {
+        style: { position: 'absolute', left: '-14px', top: '8px', width: '3px', height: '3px', borderRadius: '50%', background: 'var(--text-3)' },
+      }), q))))
+    },
+  }, icon('flag', 13), '苏格拉底追问')
+
   const hist = node.history.slice(-24)
   const downstream = state.nodes.filter((n) => n.parentId === node.id)
 
@@ -252,8 +318,40 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'field', style: { marginTop: '8px' } }, h('label', {}, '追加'), kindSel),
     ),
     h('div', { class: 'insp-section' },
+      h('div', { class: 'insp-h' }, '来源收敛度', h('b', {}, node.sources?.length ? `${(node.sources.reduce((s, x) => s + x.quality, 0) / node.sources.length * 100).toFixed(0)}%` : '—')),
+      node.sources?.length
+        ? h('div', {},
+            h('div', { class: 'bar', style: { width: '100%', height: '4px', marginBottom: '8px' } },
+              h('i', { style: { width: `${node.sources.reduce((s, x) => s + x.quality, 0) / node.sources.length * 100}%`, background: 'var(--accent)' } })),
+            h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+              `${node.sources.length} 个独立来源，平均质量 ${(node.sources.reduce((s, x) => s + x.quality, 0) / node.sources.length).toFixed(2)}。来源越多且质量越一致，这条命题的根基越稳。`),
+          )
+        : h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '还没有来源，无法计算收敛度。'),
+    ),
+    h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '底层概念', h('span', { style: { fontWeight: '400', color: 'var(--text-3)' } }, '跨主题同构的来源')),
       h('div', { class: 'field' }, h('label', {}, '标签'), tagInput),
+    ),
+    h('div', { class: 'insp-section' },
+      h('div', { class: 'insp-h' }, '标的', h('span', { style: { fontWeight: '400', color: 'var(--text-3)' } }, '只做可见性，不做信号')),
+      tickerBox,
+      h('div', { class: 'field', style: { marginTop: '8px' } }, h('label', {}, '追加'), tickerInput, relationSel),
+      h('p', { style: { margin: '6px 0 0', fontSize: '10px', color: 'var(--text-3)', lineHeight: '1.5' } },
+        '命题上挂涉及的标的，可反查这条产业链位置影响哪些票。不输出买卖建议、评分、目标价。'),
+    ),
+    h('div', { class: 'insp-section' },
+      h('div', { class: 'insp-h' }, '苏格拉底追问'),
+      socraticBtn,
+      socraticBox,
+    ),
+    h('div', { class: 'insp-section' },
+      h('div', { class: 'insp-h' }, '下游', h('b', {}, String(downstream.length))),
+      downstream.length
+        ? h('div', { class: 'chain' }, ...downstream.map((d) => h('button', {
+            class: 'chain-node', onclick: () => selectNode(d.id),
+          }, h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.title),
+            h('span', { class: 'd' }, String(Math.round(d.confidence))))))
+        : h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '叶子节点，没有下游。'),
     ),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '传导'),

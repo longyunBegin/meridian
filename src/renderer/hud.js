@@ -20,10 +20,15 @@ let picked = new Set()
 
 function idle() {
   clear(stage)
-  stage.append(h('div', { class: 'hud-hint' },
-    h('span', {}, themeId ? '' : '先建一个主题'),
+  const themeSel = h('select', {
+    class: 'sel', style: { height: '22px', fontSize: '11px', flex: '0 0 130px' },
+    onchange: async (e) => { themeId = e.target.value; await run() },
+  }, ...themes.map((t) => h('option', { value: t.id, selected: t.id === themeId || undefined }, t.name)))
+  stage.append(h('div', { class: 'hud-bar2' },
+    h('span', {}, themeId ? '粘贴原文后自动打标' : '先建一个主题'),
     h('span', { class: 'spacer' }),
-    h('span', {}, '⏎ 入库为命题'),
+    themeSel,
+    h('span', { class: 'kbd' }, '⏎'), h('span', {}, '入库'),
     h('span', { class: 'kbd' }, 'esc'),
   ))
   m.captureResize(150)
@@ -54,27 +59,48 @@ function showResult() {
   clear(stage)
   const label = result.label || {}
   const lemmas = result.lemmas || []
+  const via = viaLabel(label.via)
+
+  // ---- bar2 状态栏
+  const themeSel = h('select', {
+    class: 'sel', style: { height: '22px', fontSize: '11px', flex: '0 0 130px' },
+    onchange: async (e) => { themeId = e.target.value; await run() },
+  }, ...themes.map((t) => h('option', { value: t.id, selected: t.id === themeId || undefined }, t.name)))
+
+  const bar2 = h('div', { class: 'hud-bar2' },
+    h('span', {}, `${via}已打标 · 抽取 ${lemmas.length} 条命题`),
+    h('span', { class: 'spacer' }),
+    themeSel,
+    h('span', { class: 'kbd' }, '⏎'), h('span', {}, '入库'),
+    h('span', { class: 'kbd' }, 'esc'),
+  )
 
   // ---- Jev 三项打标
+  const pills = label.pills || []
   const choiceCard = h('div', {},
     h('div', { class: 'k' }, 'CHOICE · 来源类型'),
     h('div', { class: 'v' }, label.kind || '未标'),
-    h('div', { class: 'd' }, `质量 ${label.quality ?? '—'} · 经 ${viaLabel(label.via)}`),
+    pills.length ? h('div', { class: 'pills' },
+      ...pills.map((p, i) => h('div', { class: 'pill', dataset: { top: String(i === 0) } },
+        h('span', {}, p.kind), h('b', {}, p.prob.toFixed(2)))),
+    ) : h('div', { class: 'd' }, `经 ${via}`),
   )
 
   const scoreCard = h('div', {},
     h('div', { class: 'k' }, 'SCORE · 来源质量'),
     h('div', { class: 'v' }, label.quality ?? '—'),
-    h('div', { class: 'd' }, label.jevScore != null ? `Jev 打 ${label.jevScore}，最终取表值` : '查表裁决'),
+    h('div', { class: 'd' }, scoreComparison(label.quality, label.jevScore)),
   )
 
+  const hasMerge = lemmas.some((l) => l.action === 'merge')
+  const maxScore = result.noulMaxScore ?? 0
   const noulCard = h('div', {},
     h('div', { class: 'k' }, 'NOUL · 是否重复'),
     h('div', {
       class: 'v',
-      style: { color: lemmas.some((l) => l.action === 'merge') ? 'var(--teal)' : 'var(--green)' },
-    }, lemmas.some((l) => l.action === 'merge') ? '有重复' : '新 claim'),
-    h('div', { class: 'd' }, lemmas.some((l) => l.action === 'merge') ? '重复项将只 +1 来源' : '与库内命题无可合并'),
+      style: { color: hasMerge ? 'var(--teal)' : 'var(--green)' },
+    }, hasMerge ? `${maxScore.toFixed(2)} 有重复` : `${maxScore.toFixed(2)} 新 claim`),
+    h('div', { class: 'd' }, `与库内 ${result.noulCompared || 0} 条命题比对\n最高相似度 ${maxScore.toFixed(2)}`),
   )
 
   const list = h('div', { class: 'hud-list' },
@@ -106,11 +132,6 @@ function showResult() {
     }),
   )
 
-  const themeSel = h('select', {
-    class: 'sel', style: { height: '22px', fontSize: '11px', flex: '0 0 130px' },
-    onchange: async (e) => { themeId = e.target.value; await run() },
-  }, ...themes.map((t) => h('option', { value: t.id, selected: t.id === themeId || undefined }, t.name)))
-
   const tray = result.rejected?.length
     ? h('div', { class: 'hud-tray' },
         h('div', { class: 'k' }, `被筛掉 · ${result.rejected.length} 条（留裁决记录，不留原文）`),
@@ -123,18 +144,49 @@ function showResult() {
 
   clear(stage)
   mount(stage,
-    h('div', { class: 'jev' }, choiceCard, scoreCard, noulCard),
-    h('div', { class: 'hud-hint' }, themeSel, h('span', { class: 'spacer' }), h('span', {}, `${picked.size}/${lemmas.length} 条`)),
-    list,
-    tray,
+    bar2,
+    h('div', { class: 'hud-stage' },
+      h('div', { class: 'jev' }, choiceCard, scoreCard, noulCard),
+      list,
+      tray,
+    ),
     h('div', { class: 'hud-foot' },
       h('span', {}, '点击取消勾选'),
       h('span', { class: 'spacer' }),
-      h('span', { class: 'kbd' }, '⏎'), h('span', {}, '入库'),
-      h('span', { class: 'kbd' }, 'esc'),
+      h('span', {}, `${picked.size}/${lemmas.length} 条待入库`),
     ),
   )
+
+  // ---- capnote
+  const cn = document.getElementById('capnote')
+  if (cn) {
+    clear(cn)
+    const note = buildCapnote(result)
+    if (note) cn.append(h('div', { class: 'capnote' }, note))
+  }
+
   m.captureResize(Math.min(560, 250 + lemmas.length * 40 + (tray ? result.rejected.length * 20 + 34 : 0)))
+}
+
+function scoreComparison(quality, jevScore) {
+  if (quality == null) return '查表裁决'
+  const parts = []
+  if (quality < 0.8) parts.push('低于研报基准 0.80')
+  if (quality > 0.35) parts.push('高于群聊基准 0.35')
+  if (jevScore != null) parts.push(`Jev 打 ${jevScore}，最终取表值`)
+  return parts.join(' · ') || '查表裁决'
+}
+
+function buildCapnote(result) {
+  const lemmas = result.lemmas || []
+  const news = lemmas.filter((l) => l.action === 'new')
+  const merges = lemmas.filter((l) => l.action === 'merge')
+  const conflicts = lemmas.filter((l) => l.conflicts?.length)
+  const parts = []
+  if (news.length) parts.push(`入库后，${news.length} 条新命题落入对应环节并触发传导`)
+  if (merges.length) parts.push(`${merges.length} 条与既有命题合并来源`)
+  if (conflicts.length) parts.push(`${conflicts.length} 条与既有命题标记为冲突，等待你裁决`)
+  return parts.join('；') + (parts.length ? '。' : '')
 }
 
 function viaLabel(v) {
@@ -152,6 +204,8 @@ function hide() {
   input.value = ''
   result = null
   picked.clear()
+  const cn = document.getElementById('capnote')
+  if (cn) clear(cn)
   idle()
   window.close()
 }

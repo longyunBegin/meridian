@@ -74,3 +74,125 @@ function parseLemmas(raw) {
       sourceKind: typeof x.sourceKind === 'string' ? x.sourceKind : null,
     }))
 }
+// ----------------------------------------------------------------- socratic
+
+const SOCRATIC_SYSTEM = `你是一个苏格拉底式的研究助理。针对用户给出的命题，只提出追问，帮助用户检查该命题的边界条件、隐含假设和证伪可能。
+
+硬规则：
+1. 只输出问题，禁止输出陈述句、判断、建议或结论。
+2. 每个问题必须指向一个具体的边界条件或隐含假设。
+3. 最多 5 个问题，按从最重要到最次要排列。
+4. 问题必须能用是/否或具体数值回答。
+
+只输出 JSON 数组，不要 markdown 代码块，不要任何解释：
+["问题1","问题2"]`
+
+export async function socraticQuestions(settings, lemma, context = '') {
+  const { baseUrl, apiKey, model } = settings
+  if (!apiKey) return { ok: false, reason: 'no-key' }
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: SOCRATIC_SYSTEM },
+        { role: 'user', content: `命题：${lemma}${context ? `\n\n上下文：${context}` : ''}` },
+      ],
+    }),
+  })
+
+  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const body = await res.json()
+  const raw = body?.choices?.[0]?.message?.content
+  if (!raw) return { ok: false, reason: 'empty' }
+
+  const questions = parseQuestions(raw)
+  if (!questions.length) return { ok: false, reason: 'unparsable' }
+  return { ok: true, questions }
+}
+
+function parseQuestions(raw) {
+  const start = raw.indexOf('[')
+  const end = raw.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  try {
+    const arr = JSON.parse(raw.slice(start, end + 1))
+    if (!Array.isArray(arr)) return []
+    return arr.filter((q) => typeof q === 'string' && q.trim()).slice(0, 5).map((q) => q.trim())
+  } catch { return [] }
+}
+// ----------------------------------------------------------------- skeleton
+
+/**
+ * 模型生成骨架：输入一句话描述 → 产出环节树 + 传导权重 + scaffold。
+ * 这是 step 4 的核心：建树不再需要用户写标题，模型产出草稿态，用户裁剪。
+ */
+const SKELETON_SYSTEM = `你是一个产业链分析专家。根据用户的描述，生成一条产业链的环节树。
+
+硬规则：
+1. 产出 JSON，不要 markdown 代码块，不要解释。
+2. 结构：{"roots":[{"title":"环节名","propagation":0.5,"scaffold":{"answer":"要回答的核心问题","indicators":["指标1"],"falsifier":"证伪信号"},"children":[...]}]}
+3. 每条边带传导权重 propagation（0-1），上游 → 下游，权重越大传导越强。
+4. 通常 3-5 层深度，每层 2-5 个环节。
+5. scaffold.answer 是该环节要回答的核心问题，indicators 是按周期跟踪的指标，falsifier 是证伪信号。
+6. 环节名称简洁（4-12 字），是产业环节不是公司名。
+
+只输出 JSON：`
+
+export async function generateSkeleton(settings, description) {
+  const { baseUrl, apiKey, model } = settings
+  if (!apiKey) return { ok: false, reason: 'no-key' }
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: SKELETON_SYSTEM },
+        { role: 'user', content: String(description).slice(0, 2000) },
+      ],
+    }),
+  })
+
+  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const body = await res.json()
+  const raw = body?.choices?.[0]?.message?.content
+  if (!raw) return { ok: false, reason: 'empty' }
+
+  const skeleton = parseSkeleton(raw)
+  if (!skeleton) return { ok: false, reason: 'unparsable' }
+  return { ok: true, skeleton }
+}
+
+function parseSkeleton(raw) {
+  const s = String(raw)
+  const a = s.indexOf('{')
+  const b = s.lastIndexOf('}')
+  if (a < 0 || b <= a) return null
+  try {
+    const parsed = JSON.parse(s.slice(a, b + 1))
+    if (!parsed || !Array.isArray(parsed.roots)) return null
+    // 递归清理
+    const clean = (node) => ({
+      title: String(node.title || '').trim().slice(0, 50),
+      propagation: Math.max(0, Math.min(1, Number(node.propagation) || 0.5)),
+      stableId: Math.random().toString(36).slice(2, 10),
+      scaffold: node.scaffold ? {
+        answer: String(node.scaffold.answer || '').trim().slice(0, 200) || null,
+        indicators: Array.isArray(node.scaffold.indicators)
+          ? node.scaffold.indicators.filter((i) => typeof i === 'string').slice(0, 5)
+          : [],
+        falsifier: String(node.scaffold.falsifier || '').trim().slice(0, 200) || null,
+      } : null,
+      children: Array.isArray(node.children) ? node.children.map(clean).filter((c) => c.title) : [],
+    })
+    return {
+      roots: parsed.roots.map(clean).filter((r) => r.title),
+    }
+  } catch { return null }
+}
