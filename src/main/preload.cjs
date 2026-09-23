@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('meridian', {
   exportAll: () => ipcRenderer.invoke('io:export'),
   importAll: (json) => ipcRenderer.invoke('io:import', json),
   openDataDir: () => ipcRenderer.invoke('io:openDataDir'),
+  openExternal: (url) => ipcRenderer.invoke('io:openExternal', url),
 
   // ---- 原文层
   rawStats: () => ipcRenderer.invoke('raw:stats'),
@@ -102,6 +103,8 @@ contextBridge.exposeInMainWorld('meridian', {
   readingsByIndicator: (indicatorId) => ipcRenderer.invoke('reading:byIndicator', indicatorId),
   readingsByMetric: (metric) => ipcRenderer.invoke('reading:byMetric', metric),
   latestReading: (metric) => ipcRenderer.invoke('reading:latest', metric),
+  allReadings: () => ipcRenderer.invoke('reading:all'),
+  groupReadings: (indicatorFilter) => ipcRenderer.invoke('reading:group', indicatorFilter),
 
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),

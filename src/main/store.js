@@ -1324,6 +1324,10 @@ export function readingsByIndicator(indicatorId) {
   return load().readings.filter((r) => r.indicatorId === indicatorId)
 }
 
+export function allReadings() {
+  return load().readings
+}
+
 export function readingsByMetric(metric) {
   return load().readings.filter((r) => r.metric === metric)
 }
@@ -1332,4 +1336,32 @@ export function latestReading(metric) {
   const all = readingsByMetric(metric)
   if (!all.length) return null
   return all.reduce((a, b) => (a.at > b.at ? a : b))
+}
+/**
+ * 按 metric 分组，找最新，排序。纯函数，供渲染层和测试用。
+ *
+ * 返回 [{ metric, count, latest, items }]，items 已排序：
+ * - 最新一条置顶（latest，按 at 比较，同 at 取后加的）
+ * - 其余按 asOf 倒序，无 asOf 排最后
+ * - 超过 10 条时 items 仍返回全部，折叠由 UI 层决定
+ */
+export function groupReadings(readings) {
+  const byMetric = new Map()
+  for (const r of readings) {
+    if (!byMetric.has(r.metric)) byMetric.set(r.metric, [])
+    byMetric.get(r.metric).push(r)
+  }
+  const groups = []
+  for (const [metric, items] of byMetric) {
+    const sorted = [...items].sort((a, b) => {
+      if (a.asOf && b.asOf) return b.asOf.localeCompare(a.asOf)
+      if (a.asOf) return -1
+      if (b.asOf) return 1
+      return 0
+    })
+    const latest = items.reduce((a, b) => (a.at > b.at ? a : b))
+    const reordered = [latest, ...sorted.filter((r) => r !== latest)]
+    groups.push({ metric, count: items.length, latest, items: reordered })
+  }
+  return groups
 }

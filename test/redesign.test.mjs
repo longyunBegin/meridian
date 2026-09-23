@@ -1372,5 +1372,71 @@ const storeExports = Object.keys(store)
 ok('R2: 没有 updateReading', !storeExports.includes('updateReading'))
 ok('R2: 没有 removeReading', !storeExports.includes('removeReading'))
 
+// ============================================================
+console.log('\n— 读数展示: groupReadings 纯函数 —')
+// ============================================================
+
+const { groupReadings } = await import('../src/main/store.js')
+
+// 构造测试数据
+const testReadings = [
+  { metric: 'a.revenue', value: 100, unit: 'USD', asOf: '2024-Q1', at: '2026-09-01', indicatorId: null, source: {} },
+  { metric: 'a.revenue', value: 200, unit: 'USD', asOf: '2024-Q2', at: '2026-09-02', indicatorId: null, source: {} },
+  { metric: 'a.revenue', value: 150, unit: 'USD', asOf: '2024-Q3', at: '2026-09-03', indicatorId: null, source: {} },
+  { metric: 'b.profit', value: 50, unit: 'USD', asOf: '2024-Q2', at: '2026-09-02', indicatorId: 'ind-1', source: {} },
+  { metric: 'b.profit', value: 60, unit: 'USD', asOf: null, at: '2026-09-01', indicatorId: 'ind-1', source: {} },
+]
+
+const groups = groupReadings(testReadings)
+ok('分组: 2 个 metric', groups.length === 2)
+ok('分组: a.revenue 有 3 条', groups.find((g) => g.metric === 'a.revenue').count === 3)
+ok('分组: b.profit 有 2 条', groups.find((g) => g.metric === 'b.profit').count === 2)
+
+// 最新一条置顶
+const aGroup = groups.find((g) => g.metric === 'a.revenue')
+ok('分组: a.revenue 最新置顶', aGroup.items[0].at === '2026-09-03')
+ok('分组: a.revenue 最新 value = 150', aGroup.items[0].value === 150)
+
+// 其余按 asOf 倒序
+ok('分组: a.revenue 第二条 asOf = 2024-Q2', aGroup.items[1].asOf === '2024-Q2')
+ok('分组: a.revenue 第三条 asOf = 2024-Q1', aGroup.items[2].asOf === '2024-Q1')
+
+// 无 asOf 排最后
+const bGroup = groups.find((g) => g.metric === 'b.profit')
+ok('分组: b.profit 无 asOf 排最后', bGroup.items[bGroup.items.length - 1].asOf === null)
+
+// latest 字段正确
+ok('分组: a.revenue latest.at = 2026-09-03', aGroup.latest.at === '2026-09-03')
+ok('分组: b.profit latest.at = 2026-09-02', bGroup.latest.at === '2026-09-02')
+ok('分组: b.profit latest value = 50', bGroup.latest.value === 50)
+
+// 空数组
+ok('分组: 空数组返回空', groupReadings([]).length === 0)
+
+// 单条
+const single = groupReadings([{ metric: 'x', value: 1, asOf: '2024-Q1', at: '2026-09-01', source: {} }])
+ok('分组: 单条 latest = 自身', single[0].latest === single[0].items[0])
+
+// 折叠阈值不在此函数（由 UI 控制），但确认 items 返回全部
+ok('分组: items 返回全部', aGroup.items.length === 3)
+
+// IPC: openExternal 只允许 http/https
+const openResult1 = fire('io:openExternal', 'javascript:alert(1)')
+ok('IPC: openExternal 拒绝 javascript:', openResult1 === false)
+const openResult2 = fire('io:openExternal', 'file:///etc/passwd')
+ok('IPC: openExternal 拒绝 file:', openResult2 === false)
+const openResult3 = fire('io:openExternal', 'not-a-url')
+ok('IPC: openExternal 拒绝非 URL', openResult3 === false)
+
+// preload.js 和 preload.cjs 同步
+import { readFileSync as readFileSync2 } from 'node:fs'
+import { fileURLToPath as fileURLToPath2 } from 'node:url'
+const ROOT2 = join(dirname(fileURLToPath2(import.meta.url)), '..')
+const pj = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+// 提取桥接键对比（去掉 require/import 行差异）
+const extractKeys = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('preload: 两份桥接键同步', JSON.stringify(extractKeys(pj)) === JSON.stringify(extractKeys(pc)))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

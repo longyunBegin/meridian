@@ -3,7 +3,7 @@ import { renderToday, inboxPaste } from './views/today.js'
 import { renderLattice } from './views/lattice.js'
 import { renderAudit } from './views/audit.js'
 import { renderFeeds } from './views/feeds.js'
-import { renderVault } from './views/vault.js'
+import { renderVault, renderReadings } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
 import { renderInspectorLattice } from './views/inspector.js'
 import { refocusGraph, pulseFrom } from './views/graph.js'
@@ -38,6 +38,7 @@ const VAULTS = [
   { id: 'review', label: '复盘', icon: 'settle' },
   { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
   { id: 'feeds', label: '数据源', icon: 'export' },
+  { id: 'readings', label: '读数', icon: 'export' },
 ]
 
 const THEME_COLORS = ['#0071e3', '#af52de', '#34c759', '#ff9500', '#ff2d55', '#00b8b8', '#ff3b30', '#5856d6']
@@ -279,6 +280,7 @@ async function paintVaultCounts() {
     set('cold', st.cold)
     set('dead', st.dead)
     set('filtered', st.verdicts)
+    set('readings', st.readings)
     const cs = await m.conflicts()
     set('conflicts', cs.length)
   } catch { /* 计数失败不该影响主流程 */ }
@@ -340,6 +342,7 @@ function renderMid() {
     renderLattice(mid)
   } else if (state.view === 'vault') {
     if (state.vaultKind === 'feeds') renderFeeds(mid)
+    else if (state.vaultKind === 'readings') renderReadings(mid)
     else if (state.vaultKind === 'filtered') renderAudit(mid)
     else if (state.vaultKind === 'review') renderVault(mid, 'review')
     else renderVault(mid, state.vaultKind)

@@ -15,7 +15,7 @@ import {
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
-  addReading, readingsByIndicator, readingsByMetric, latestReading,
+  addReading, readingsByIndicator, readingsByMetric, latestReading, allReadings, groupReadings,
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
@@ -532,6 +532,14 @@ function register({ getMainWindow }) {
   })
 
   ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
+  ipcMain.handle('io:openExternal', (_, url) => {
+    if (typeof url !== 'string') return false
+    try {
+      const u = new URL(url)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    } catch { return false }
+    return shell.openExternal(url)
+  })
 
   // ---- 收件箱 ----
   // ⌘⇧V 粘贴 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
@@ -768,6 +776,16 @@ function register({ getMainWindow }) {
   ipcMain.handle('reading:byIndicator', (_, indicatorId) => readingsByIndicator(indicatorId))
   ipcMain.handle('reading:byMetric', (_, metric) => readingsByMetric(metric))
   ipcMain.handle('reading:latest', (_, metric) => latestReading(metric))
+  ipcMain.handle('reading:all', () => allReadings())
+  ipcMain.handle('reading:group', (_, indicatorFilter) => {
+    const all = allReadings()
+    const filtered = indicatorFilter === 'unlinked'
+      ? all.filter((r) => !r.indicatorId)
+      : indicatorFilter
+      ? all.filter((r) => r.indicatorId === indicatorFilter)
+      : all
+    return groupReadings(filtered)
+  })
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

@@ -1,4 +1,4 @@
-import { h, icon, clear } from '../lib/dom.js'
+import { h, icon, clear, add, $ } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 
@@ -266,6 +266,165 @@ async function renderReview(mid) {
               h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '还没有采集记录。'),
             )),
       ),
+    ),
+  ))
+}
+
+// ------------------------------------------------------------------ 读数展示
+
+const FOLD_THRESHOLD = 10
+
+function fmtValue(v) {
+  if (typeof v !== 'number') return String(v ?? '—')
+  return v.toLocaleString('en-US')
+}
+
+function readingRow(r, isLatest) {
+  return h('div', { class: 'q', style: isLatest ? { borderLeft: '3px solid var(--blue, #0071e3)' } : {} },
+    h('div', { class: 'q-body' },
+      h('div', { class: 'q-text' },
+        h('span', { style: { fontWeight: isLatest ? '600' : '400' } }, fmtValue(r.value)),
+        r.unit ? h('span', { style: { color: 'var(--text-3)', marginLeft: '4px' } }, r.unit) : null,
+      ),
+      h('div', { class: 'q-meta' },
+        h('span', {}, r.asOf || '—'),
+        h('span', { style: { marginLeft: '6px' } }, `· ${r.basis || 'reported'}`),
+        h('span', { style: { marginLeft: '6px' } }, `· ${r.source?.kind || '未知'}`),
+        h('span', { style: { marginLeft: '6px' } }, `· 抓取于 ${r.at}`),
+        r.source?.url ? h('button', {
+          class: 'btn', style: { marginLeft: '6px', padding: '1px 6px', fontSize: '11px' },
+          onclick: () => m.openExternal(r.source.url),
+        }, '来源') : null,
+      ),
+    ),
+  )
+}
+
+function metricCard(group) {
+  const isFolded = group.count > FOLD_THRESHOLD
+  const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
+  const hiddenCount = group.count - FOLD_THRESHOLD
+
+  const body = h('div', { class: 'sect-b' },
+    ...visible.map((r, i) => readingRow(r, i === 0)),
+  )
+
+  if (isFolded) {
+    let expanded = false
+    const moreBtn = h('button', {
+      class: 'btn', style: { margin: '6px 0' },
+      onclick: () => {
+        if (expanded) return
+        expanded = true
+        for (const r of group.items.slice(FOLD_THRESHOLD)) {
+          body.append(readingRow(r, false))
+        }
+        moreBtn.remove()
+      },
+    }, `+${hiddenCount} 条`)
+    body.append(moreBtn)
+  }
+
+  return h('section', { class: 'sect' },
+    h('div', { class: 'sect-h' },
+      h('h2', {}, group.metric),
+      h('em', {}, String(group.count)),
+    ),
+    body,
+  )
+}
+
+export async function renderReadings(mid) {
+  clear(mid)
+  const all = await m.allReadings()
+
+  // 空态
+  if (!all.length) {
+    mid.append(h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '读数')),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'q' }, h('div', { class: 'q-body' },
+          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } },
+            '现在是空的。读数来自取数器抓取的结构化财务数字——在「数据源」里配一个 EDGAR 通道并点「拉取」，读数就会落在这里。'),
+        )),
+      ),
+    ))
+    return
+  }
+
+  // 筛选器：全部 / 未关联 / 每个 indicator
+  const indicatorIds = [...new Set(all.map((r) => r.indicatorId).filter(Boolean))]
+  const indicatorLabels = {}
+  for (const id of indicatorIds) {
+    const node = await m.getNode(id)
+    indicatorLabels[id] = node ? node.title : id
+  }
+
+  let currentFilter = null
+  const filterBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } })
+
+  const filterBtn = (label, value) => h('button', {
+    class: 'btn', style: { padding: '2px 10px' },
+    onclick: async () => { currentFilter = value; await refresh() },
+  }, label)
+
+  async function refresh() {
+    const groups = await m.groupReadings(currentFilter)
+    const list = $('#readings-list')
+    if (list) { clear(list); add(list, groups.map(metricCard)) }
+  }
+
+  filterBar.append(filterBtn('全部', null))
+  filterBar.append(filterBtn('未关联', 'unlinked'))
+  for (const id of indicatorIds) {
+    filterBar.append(filterBtn(indicatorLabels[id], id))
+  }
+
+  // 手动录入表单
+  const formInputs = {}
+  const form = h('div', { class: 'q', style: { marginBottom: '10px' } },
+    h('div', { class: 'q-body' },
+      h('div', { class: 'q-text' }, '手动记一条读数'),
+      h('div', { class: 'q-meta', style: { flexDirection: 'column', alignItems: 'stretch', gap: '6px' } },
+        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+          h('input', { class: 'txt', placeholder: 'metric（如 nvda.revenue）', style: { flex: '1', minWidth: '120px' }, oninput: (e) => formInputs.metric = e.target.value }),
+          h('input', { class: 'txt', placeholder: 'value', style: { width: '120px' }, oninput: (e) => formInputs.value = e.target.value }),
+          h('input', { class: 'txt', placeholder: 'unit', style: { width: '80px' }, oninput: (e) => formInputs.unit = e.target.value }),
+          h('input', { class: 'txt', placeholder: 'asOf（如 2024-Q3）', style: { width: '120px' }, oninput: (e) => formInputs.asOf = e.target.value }),
+          h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => formInputs.kind = e.target.value },
+            h('option', { value: '财报 / 公告' }, '财报 / 公告'),
+            h('option', { value: '一手数据' }, '一手数据'),
+            h('option', { value: '券商研报' }, '券商研报'),
+            h('option', { value: '独立媒体' }, '独立媒体'),
+            h('option', { value: '自媒体' }, '自媒体'),
+          ),
+          h('button', {
+            class: 'btn btn-primary',
+            onclick: async () => {
+              if (!formInputs.metric || !formInputs.value) return
+              await m.addReading({
+                metric: formInputs.metric,
+                value: Number(formInputs.value),
+                unit: formInputs.unit || null,
+                asOf: formInputs.asOf || null,
+                source: { kind: formInputs.kind || '一手数据' },
+                basis: 'reported',
+              })
+              await refresh()
+            },
+          }, '保存'),
+        ),
+      ),
+    ),
+  )
+
+  const groups = await m.groupReadings(null)
+  mid.append(h('section', { class: 'sect' },
+    h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
+    filterBar,
+    form,
+    h('div', { id: 'readings-list' },
+      ...groups.map(metricCard),
     ),
   ))
 }
