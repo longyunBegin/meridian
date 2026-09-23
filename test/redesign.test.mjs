@@ -1508,5 +1508,110 @@ ok('R3: channel.metric 存储成功', edgarCh.metric === 'RevenueFromContractWit
 const chFromDb = store.allChannels().find((c) => c.id === edgarCh.id)
 ok('R3: channel.metric 从 DB 读回', chFromDb.metric === 'RevenueFromContractWithCustomerExcludingAssessedTax')
 
+// ============================================================
+console.log('\n— 数据源统一为通道：迁移 —')
+// ============================================================
+
+// --- 旧格式数据：3 条 feeds，0 条 channels ---
+const oldData = JSON.stringify({
+  version: 3,
+  settings: {},
+  themes: [],
+  nodes: [],
+  verdicts: [],
+  conflicts: [],
+  feeds: [
+    { id: 'feed-1', name: 'Reuters RSS', url: 'https://reuters.com/feed.xml', kind: 'rss', themeId: null, interval: 60, lastFetch: '2026-09-20', lastCount: 15, enabled: true, createdAt: '2026-09-01' },
+    { id: 'feed-2', name: 'Bloomberg RSS', url: 'https://bloomberg.com/feed.xml', kind: 'rss', themeId: null, interval: 30, lastFetch: null, lastCount: null, enabled: true, createdAt: '2026-09-02' },
+    { id: 'feed-3', name: 'WSJ RSS', url: 'https://wsj.com/feed.xml', kind: 'rss', themeId: null, interval: 120, lastFetch: '2026-09-22', lastCount: 8, enabled: false, createdAt: '2026-09-03' },
+  ],
+  inbox: [],
+  traces: [],
+  channels: [],
+  intakeEvents: [],
+  readings: [],
+})
+
+store.importAll(oldData)
+const migratedChannels = store.allChannels()
+const migratedFeeds = store.load().feeds
+
+ok('迁移: 3 条 feeds → 3 条 channels', migratedChannels.length === 3)
+ok('迁移: feeds 集合清空', migratedFeeds.length === 0)
+ok('迁移: kind 映射为 独立媒体', migratedChannels.every((c) => c.kind === '独立媒体'))
+ok('迁移: 无 rss 出现在 channel.kind', !migratedChannels.some((c) => c.kind === 'rss'))
+ok('迁移: fetch 设为 rss', migratedChannels.every((c) => c.fetch === 'rss'))
+ok('迁移: query 保留原 URL', migratedChannels.some((c) => c.query === 'https://reuters.com/feed.xml'))
+ok('迁移: id 保留', migratedChannels.some((c) => c.id === 'feed-1'))
+ok('迁移: name 保留', migratedChannels.some((c) => c.name === 'Reuters RSS'))
+ok('迁移: interval 保留', migratedChannels.find((c) => c.id === 'feed-1').interval === 60)
+ok('迁移: lastFetch 保留', migratedChannels.find((c) => c.id === 'feed-1').lastFetch === '2026-09-20')
+ok('迁移: lastCount 保留', migratedChannels.find((c) => c.id === 'feed-1').lastCount === 15)
+ok('迁移: enabled 保留', migratedChannels.find((c) => c.id === 'feed-3').enabled === false)
+ok('迁移: review 默认 false', migratedChannels.every((c) => c.review === false))
+
+// --- 幂等：导出再导入，channels 不翻倍 ---
+const migratedExport = store.exportAll()
+const migratedExportJson = JSON.parse(migratedExport)
+ok('幂等: 导出 feeds 为空', Array.isArray(migratedExportJson.feeds) && migratedExportJson.feeds.length === 0)
+ok('幂等: 导出 version 为 4', migratedExportJson.version === 4)
+const channelCountBefore = store.allChannels().length
+store.importAll(migratedExport)
+const channelCountAfter = store.allChannels().length
+ok('幂等: 再导入 channels 不翻倍', channelCountAfter === channelCountBefore)
+
+// --- 去重：旧数据里 feeds 和 channels 有同 URL，不重复 ---
+const dedupData = JSON.stringify({
+  version: 3,
+  settings: {},
+  themes: [],
+  nodes: [],
+  verdicts: [],
+  conflicts: [],
+  feeds: [
+    { id: 'feed-dup', name: 'Reuters RSS', url: 'https://reuters.com/feed.xml', kind: 'rss', interval: 60, enabled: true, createdAt: '2026-09-01' },
+    { id: 'feed-new', name: 'CNBC RSS', url: 'https://cnbc.com/feed.xml', kind: 'rss', interval: 60, enabled: true, createdAt: '2026-09-04' },
+  ],
+  inbox: [],
+  traces: [],
+  channels: [
+    { id: 'ch-existing', name: 'Reuters RSS', kind: '独立媒体', fetch: 'rss', query: 'https://reuters.com/feed.xml', themeId: null, metric: null, interval: 60, lastFetch: null, lastCount: null, cadence: '日', network: 'direct', enabled: true, review: false, createdAt: '2026-09-01' },
+  ],
+  intakeEvents: [],
+  readings: [],
+})
+store.importAll(dedupData)
+const dedupChannels = store.allChannels()
+ok('去重: 同 URL 不重复', dedupChannels.filter((c) => c.query === 'https://reuters.com/feed.xml').length === 1)
+ok('去重: 新 URL 正常添加', dedupChannels.some((c) => c.query === 'https://cnbc.com/feed.xml'))
+ok('去重: 总数 2（1 已有 + 1 新）', dedupChannels.length === 2)
+
+// --- 旧导出文件可导入（version 3 + feeds 有数据） ---
+ok('兼容: 旧格式导入不报错', true)
+
+// --- grep 验收 ---
+const vaultSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const settingsSrc = readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
+const ipcSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const preloadSrc = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const preloadCjsSrc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+
+ok('验收: vault.js 无 inputs.kind ||', !vaultSrc.includes('inputs.kind ||'))
+ok('验收: vault.js 无 inputs.fetch ||', !vaultSrc.includes('inputs.fetch ||'))
+ok('验收: settings.js 无 通道与取数', !settingsSrc.includes('通道与取数'))
+ok('验收: settings.js 无 订阅源', !settingsSrc.includes('订阅源'))
+ok('验收: ipc.js 无 generatePills', !ipcSrc.includes('generatePills'))
+ok('验收: ipc.js 无 feedFetchAndLabel', !ipcSrc.includes('feedFetchAndLabel'))
+ok('验收: ipc.js 无 feedImport', !ipcSrc.includes('feedImport'))
+ok('验收: ipc.js 无 feed:list', !ipcSrc.includes('feed:list'))
+ok('验收: preload.js 无 feedFetchAndLabel', !preloadSrc.includes('feedFetchAndLabel'))
+ok('验收: preload.js 无 feedImport', !preloadSrc.includes('feedImport'))
+ok('验收: preload.cjs 无 feedFetchAndLabel', !preloadCjsSrc.includes('feedFetchAndLabel'))
+ok('验收: preload.cjs 无 feedImport', !preloadCjsSrc.includes('feedImport'))
+
+// feeds.js 已删除
+import { existsSync as existsSync2 } from 'node:fs'
+ok('验收: feeds.js 已删除', !existsSync2(join(ROOT2, 'src/renderer/views/feeds.js')))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

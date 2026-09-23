@@ -65,11 +65,8 @@ export async function renderSettings(mid) {
 
   const stats = await m.stats()
   const raw = await m.rawStats()
-  const feeds = await m.feeds()
   const deletedTs = await m.deletedThemes()
   const purgePreview = await m.purgeDead('all', { dryRun: true })
-  const channels = await m.channelList()
-  const fetchers = await m.availableFetchers()
 
   const toast = h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
   const flash = (msg, color = 'var(--text-2)') => {
@@ -173,127 +170,7 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '订阅源'), h('em', {}, `${feeds.length} 个`)),
-      h('div', { class: 'sect-b' },
-        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
-          'RSS / Atom 订阅源。定时拉取，走和 ⌘⇧V 同一条捕获流水线——把「搬」从手动变自动。'),
-        feeds.length ? h('div', { class: 'src-list', style: { marginBottom: '10px' } },
-          ...feeds.map((f) => h('div', { class: 'src-row' },
-            h('span', { class: `badge ${f.enabled ? 'badge-observation' : 'badge-hypothesis'}` }, f.kind),
-            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name),
-            h('span', { class: 'q' }, f.lastFetch ? `${f.lastCount} 条 · ${f.lastFetch}` : '未拉取'),
-            h('button', { class: 'btn btn-icon', title: '拉取', onclick: async () => {
-              const r = await m.feedFetch(f.id)
-              flash(r.ok ? `拉到 ${r.items.length} 条` : `失败：${r.reason}`)
-              await renderSettings(mid)
-            } }, '↻'),
-            h('button', { class: 'btn btn-icon', title: '删除', onclick: async () => {
-              await m.feedRemove(f.id); await renderSettings(mid)
-            } }, '×'),
-          )),
-        ) : null,
-        h('div', { class: 'field', style: { marginTop: '8px' } },
-          h('label', {}, 'URL'),
-          h('input', {
-            class: 'txt', placeholder: 'https://example.com/feed.xml',
-            onkeydown: async (e) => {
-              if (e.key !== 'Enter') return
-              const url = e.target.value.trim()
-              if (!url) return
-              await m.feedAdd({ url, kind: 'rss', name: url, themeId: state.themeId, interval: 60 })
-              e.target.value = ''
-              await renderSettings(mid)
-            },
-          }),
-        ),
-      ),
-    ),
 
-    // ---- 通道与取数
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '通道与取数'), h('em', {}, String(channels.length))),
-      h('div', { class: 'sect-b' },
-        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-3)', lineHeight: '1.6' } },
-          '通道描述符：按内容类型选取数器。已实现的取数器：' + fetchers.join('、') + '。'),
-        ...channels.map((ch) => h('div', { class: 'q' },
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, ch.name),
-            h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · ${ch.enabled ? '启用' : '停用'}`),
-              fetchers.includes(ch.fetch) ? h('button', {
-                class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
-                onclick: async () => {
-                  flash(`正在拉取「${ch.name}」…`)
-                  const r = await m.channelFetch(ch.id)
-                  if (r.error) { flash(`拉取失败：${r.error}`, 'var(--red)'); return }
-                  if (r.readings) {
-                    flash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
-                  } else {
-                    flash(`拉取到 ${r.items.length} 条`)
-                  }
-                },
-              }, '拉取') : h('span', { style: { marginLeft: '8px', color: 'var(--text-3)' } }, '（未实现）'),
-            ),
-          ),
-          h('div', { class: 'q-acts' },
-            h('select', {
-              class: 'txt', style: { width: 'auto' },
-              onchange: async (e) => { await m.channelUpdate(ch.id, { fetch: e.target.value }); flash(`已设 ${ch.name} → ${e.target.value}`) },
-            },
-              ...['manual', 'rss', 'web', 'edgarConcept', 'edgarFilings', 'cninfo', 'eastmoneyReport', 'jina', 'tavily', 'grok-x-search'].map((f) =>
-                h('option', { value: f, selected: ch.fetch === f }, f),
-              ),
-            ),
-            h('button', {
-              class: 'btn',
-              onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSettings(mid) },
-            }, ch.enabled ? '停用' : '启用'),
-            h('button', {
-              class: 'btn', style: { color: 'var(--red)' },
-              onclick: async () => { await m.channelRemove(ch.id); flash('已删除通道'); await renderSettings(mid) },
-            }, '删除'),
-          ),
-        )),
-        h('div', { class: 'field', style: { marginTop: '8px' } },
-          h('label', {}, '新增通道'),
-          h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-            ...(() => {
-              const inputs = {}
-              return [
-                h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '80px' }, oninput: (e) => inputs.name = e.target.value }),
-                h('input', { class: 'txt', placeholder: 'query (URL/CIK/ticker)', style: { flex: '1', minWidth: '80px' }, oninput: (e) => inputs.query = e.target.value }),
-                h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.fetch = e.target.value },
-                  h('option', { value: 'manual' }, 'manual'),
-                  h('option', { value: 'rss' }, 'rss'),
-                  h('option', { value: 'web' }, 'web'),
-                  h('option', { value: 'edgarConcept' }, 'edgarConcept'),
-                  h('option', { value: 'edgarFilings' }, 'edgarFilings'),
-                ),
-                h('input', { class: 'txt', placeholder: 'metric (us-gaap 标签)', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value }),
-                h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
-                  h('option', { value: '财报 / 公告' }, '财报 / 公告'),
-                  h('option', { value: '一手数据' }, '一手数据'),
-                  h('option', { value: '券商研报' }, '券商研报'),
-                  h('option', { value: '独立媒体' }, '独立媒体'),
-                  h('option', { value: '自媒体' }, '自媒体'),
-                ),
-                h('button', {
-                  class: 'btn btn-primary',
-                  onclick: async () => {
-                    if (!inputs.name) { flash('请填名称', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch || 'manual', metric: inputs.metric || null, kind: inputs.kind || '自媒体' })
-                    flash('已添加通道')
-                    await renderSettings(mid)
-                  },
-                }, '添加'),
-              ]
-            })(),
-          ),
-        ),
-      ),
-    ),
-
-    h('section', { class: 'sect' },
       h('div', { class: 'sect-b' },
         h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
           `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +

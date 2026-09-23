@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS = {
 }
 
 const blank = () => ({
-  version: 3,
+  version: 4,
   settings: { ...DEFAULT_SETTINGS },
   themes: [],
   nodes: [],
@@ -61,7 +61,8 @@ export function load() {
 }
 
 /** v1 → v2：source 单值升级为 sources 数组；补 verdicts / conflicts
- *  v2 → v3：来源可挂 rawId 指向原文层（见文件末尾），判断层本身不变 */
+ *  v2 → v3：来源可挂 rawId 指向原文层（见文件末尾），判断层本身不变
+ *  v3 → v4：feeds 合并进 channels。RSS 只是 fetch 类型的一种，不该有平行系统。 */
 function migrate(d) {
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) }
   d.verdicts = d.verdicts || []
@@ -82,7 +83,32 @@ function migrate(d) {
     n.stableId = n.stableId || n.id
     delete n.source
   }
-  d.version = 3
+  // feeds → channels 迁移。feeds.kind 硬编码 'rss' 不在 SOURCE_QUALITY 表里，
+  // 统一映射成 '独立媒体'（0.65）——对来源不明的 RSS 这是诚实的中性值。
+  if (Array.isArray(d.feeds) && d.feeds.length) {
+    for (const f of d.feeds) {
+      if (d.channels.some((c) => c.fetch === 'rss' && c.query === f.url)) continue
+      d.channels.push({
+        id: f.id,
+        name: f.name || f.url,
+        kind: '独立媒体',
+        fetch: 'rss',
+        query: f.url,
+        themeId: f.themeId || null,
+        metric: null,
+        interval: Math.max(15, Number(f.interval) || 60),
+        lastFetch: f.lastFetch || null,
+        lastCount: f.lastCount ?? null,
+        cadence: '日',
+        network: 'direct',
+        enabled: f.enabled !== false,
+        review: false,
+        createdAt: f.createdAt || today(),
+      })
+    }
+    d.feeds = []
+  }
+  d.version = 4
 }
 
 function persist() {
@@ -817,58 +843,7 @@ export function allTickers(themeId) {
   return [...counts.values()].sort((a, b) => b.count - a.count)
 }
 
-// ------------------------------------------------------------------ feeds
-
-/**
- * 订阅源适配器：RSS / 公众号 / X 列表。
- * 把「搬」从手动变自动——定时拉取，走和 ⌘⇧V 同一条捕获流水线。
- */
-export function allFeeds() { return load().feeds }
-
-export function addFeed(input) {
-  const feed = {
-    id: uid(),
-    url: String(input.url || '').trim(),
-    kind: input.kind || 'rss',
-    name: String(input.name || '').trim() || String(input.url || '').trim(),
-    themeId: input.themeId || null,
-    interval: Math.max(15, Number(input.interval) || 60),
-    lastFetch: null,
-    lastCount: null,
-    enabled: input.enabled !== false,
-    createdAt: today(),
-  }
-  if (!feed.url) return null
-  db.feeds.push(feed)
-  persist()
-  return feed
-}
-
-export function getFeed(id) { return load().feeds.find((f) => f.id === id) || null }
-
-export function updateFeed(id, patch) {
-  const feed = getFeed(id)
-  if (!feed) return null
-  for (const key of ['url', 'kind', 'name', 'themeId', 'interval', 'enabled']) {
-    if (patch[key] !== undefined) feed[key] = patch[key]
-  }
-  persist()
-  return feed
-}
-
-export function removeFeed(id) {
-  db.feeds = db.feeds.filter((f) => f.id !== id)
-  persist()
-}
-
-export function markFeedFetched(id, count) {
-  const feed = getFeed(id)
-  if (!feed) return null
-  feed.lastFetch = today()
-  feed.lastCount = count
-  persist()
-  return feed
-}
+// ------------------------------------------------------------------ stats
 
 export function stats() {
   const nodes = db.nodes
@@ -885,7 +860,7 @@ export function stats() {
     verdicts: db.verdicts.length,
     conflicts: db.conflicts.filter((c) => !c.resolved).length,
     premises: sharedPremises().length,
-    feeds: db.feeds.filter((f) => f.enabled).length,
+    feeds: db.channels.filter((c) => c.enabled).length,
     inbox: db.inbox.filter((i) => i.status === 'pending').length,
     readings: db.readings.length,
   }
@@ -1025,7 +1000,7 @@ export function rawStats() {
  * 空数组会被导入端理解成"用空覆盖"，把磁盘上的原文清掉。
  */
 export function exportAll({ withRaw = true } = {}) {
-  const out = { ...db, version: 3 }
+  const out = { ...db, version: 4 }
   if (withRaw) out.raw = [...loadRaw().values()]
   return JSON.stringify(out, null, 2)
 }
@@ -1033,7 +1008,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [] }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -1258,6 +1233,10 @@ export function addChannel(ch) {
     network: ch.network || 'direct',
     themeId: ch.themeId || null,
     metric: ch.metric || null,
+    interval: Math.max(15, Number(ch.interval) || 60),
+    lastFetch: ch.lastFetch || null,
+    lastCount: ch.lastCount ?? null,
+    review: ch.review === true,
     enabled: ch.enabled !== false,
     createdAt: today(),
   }

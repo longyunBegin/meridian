@@ -1,4 +1,4 @@
-import { h, icon, clear, add, $ } from '../lib/dom.js'
+import { h, icon, clear, add, $, toast } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { groupReadings } from '../../shared/readings.js'
@@ -431,6 +431,140 @@ export async function renderReadings(mid) {
     form,
     h('div', { id: 'readings-list' },
       ...groups.map(metricCard),
+    ),
+  ))
+}
+
+// ============================================================
+// 数据源：通道管理
+// ============================================================
+
+const FETCH_OPTIONS = [
+  'manual', 'rss', 'web', 'edgarConcept', 'edgarFilings',
+  'cninfo', 'eastmoneyReport', 'jina', 'tavily', 'grok-x-search',
+]
+
+const KIND_OPTIONS = [
+  '财报 / 公告', '一手数据', '券商研报', '独立媒体', '自媒体',
+]
+
+export async function renderSources(mid) {
+  clear(mid)
+  const [channels, fetchers] = await Promise.all([m.channelList(), m.availableFetchers()])
+
+  const flash = h('span', { style: { fontSize: '12px', color: 'var(--text-3)', marginLeft: '8px' } }, '')
+  const showFlash = (msg, color = 'var(--text-2)') => {
+    flash.textContent = msg
+    flash.style.color = color
+    setTimeout(() => { flash.textContent = '' }, 4000)
+  }
+
+  mid.append(h('div', { class: 'page' },
+    h('div', { class: 'page-head' },
+      h('h1', {}, '数据源'),
+      h('p', {}, '通道描述符：按内容类型选取数器。已实现的取数器：' + fetchers.join('、') + '。'),
+      flash,
+    ),
+
+    channels.length ? h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '通道列表'), h('em', {}, String(channels.length))),
+      h('div', { class: 'sect-b' },
+        ...channels.map((ch) => h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, ch.name),
+            h('div', { class: 'q-meta' },
+              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · ${ch.enabled ? '启用' : '停用'}`),
+              ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
+              fetchers.includes(ch.fetch) ? h('button', {
+                class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
+                onclick: async () => {
+                  showFlash(`正在拉取「${ch.name}」…`)
+                  const r = await m.channelFetch(ch.id)
+                  if (r.error) { showFlash(`拉取失败：${r.error}`, 'var(--red)'); return }
+                  if (r.readings) {
+                    showFlash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
+                  } else {
+                    showFlash(`拉取到 ${r.items.length} 条`)
+                  }
+                },
+              }, '拉取') : h('span', { style: { marginLeft: '8px', color: 'var(--text-3)' } }, '（未实现）'),
+            ),
+          ),
+          h('div', { class: 'q-acts' },
+            h('select', {
+              class: 'txt', style: { width: 'auto' },
+              onchange: async (e) => { await m.channelUpdate(ch.id, { fetch: e.target.value }); showFlash(`已设 ${ch.name} → ${e.target.value}`) },
+            },
+              ...FETCH_OPTIONS.map((f) =>
+                h('option', { value: f, selected: ch.fetch === f }, f),
+              ),
+            ),
+            h('button', {
+              class: 'btn',
+              onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
+            }, ch.enabled ? '停用' : '启用'),
+            h('button', {
+              class: 'btn', style: { color: 'var(--red)' },
+              onclick: async () => { await m.channelRemove(ch.id); showFlash('已删除通道'); await renderSources(mid) },
+            }, '删除'),
+          ),
+        )),
+      ),
+    ) : h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '通道列表')),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'q' }, h('div', { class: 'q-body' },
+          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '还没有通道。下面添加一个。'),
+        )),
+      ),
+    ),
+
+    h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '新增通道')),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'field', style: { marginTop: '8px' } },
+          h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'flex-end' } },
+            ...(() => {
+              const inputs = { kind: '独立媒体', fetch: 'manual' }
+              return [
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '名称'),
+                  h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.name = e.target.value }),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
+                  h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.fetch = e.target.value },
+                    ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
+                  ),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric (us-gaap 标签)'),
+                  h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value }),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '来源类型'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
+                    ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
+                  ),
+                ),
+                h('button', {
+                  class: 'btn btn-primary',
+                  onclick: async () => {
+                    if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind })
+                    showFlash('已添加通道')
+                    await renderSources(mid)
+                  },
+                }, '添加'),
+              ]
+            })(),
+          ),
+        ),
+      ),
     ),
   ))
 }

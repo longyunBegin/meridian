@@ -2,8 +2,7 @@ import { h, icon, clear, $, toast } from './lib/dom.js'
 import { renderToday, inboxPaste } from './views/today.js'
 import { renderLattice } from './views/lattice.js'
 import { renderAudit } from './views/audit.js'
-import { renderFeeds } from './views/feeds.js'
-import { renderVault, renderReadings } from './views/vault.js'
+import { renderVault, renderReadings, renderSources } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
 import { renderInspectorLattice } from './views/inspector.js'
 import { refocusGraph, pulseFrom } from './views/graph.js'
@@ -341,7 +340,7 @@ function renderMid() {
     if (!state.themeId) { mid.append(emptyState()); return }
     renderLattice(mid)
   } else if (state.view === 'vault') {
-    if (state.vaultKind === 'feeds') renderFeeds(mid)
+    if (state.vaultKind === 'feeds') renderSources(mid)
     else if (state.vaultKind === 'readings') renderReadings(mid)
     else if (state.vaultKind === 'filtered') renderAudit(mid)
     else if (state.vaultKind === 'review') renderVault(mid, 'review')

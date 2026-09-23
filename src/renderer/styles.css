@@ -1031,59 +1031,7 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 /* capnote: HUD 下方说明 */
 .capnote { margin-top: 14px; font-size: 11px; color: var(--text-3); text-align: center; line-height: 1.6; }
 
-/* ------------- 数据源 ------------- */
 
-.feeds-layout { display: grid; grid-template-columns: 280px 1fr; gap: 14px; }
-.feeds-side { display: flex; flex-direction: column; gap: 10px; }
-.feeds-list { display: flex; flex-direction: column; gap: 2px; }
-.feed-item {
-  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px;
-  border-radius: var(--r-sm); font-size: 12px; color: var(--text-2); width: 100%; text-align: left;
-  transition: background 120ms var(--ease);
-}
-.feed-item:hover { background: var(--hover); color: var(--text); }
-.feed-item[aria-selected="true"] { background: var(--active); color: var(--text); font-weight: 600; }
-.feed-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
-.feed-count { font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
-.feed-add { display: flex; gap: 6px; margin: 10px 0 4px; }
-.feed-url-input { flex: 1; height: 26px; }
-.feed-name-input { width: 80px; height: 26px; flex: none; }
-
-.feeds-main { min-height: 400px; }
-.feeds-empty { display: grid; place-content: center; height: 100%; min-height: 300px; text-align: center; }
-.feed-detail { display: flex; flex-direction: column; gap: 14px; }
-.feed-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.feeds-loading { display: flex; align-items: center; gap: 7px; padding: 20px; font-size: 12px; color: var(--text-2); }
-
-.feed-stats { display: flex; gap: 16px; padding: 12px 0; border-bottom: 0.5px solid var(--hairline-soft); }
-.feed-stat { display: flex; flex-direction: column; gap: 2px; }
-.feed-stat-num { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.feed-stat-label { font-size: 10px; color: var(--text-3); }
-.feed-stat-kinds { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-.feed-stat-kind { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); }
-
-.feed-items { display: flex; flex-direction: column; gap: 8px; }
-.feed-card {
-  display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--r); background: var(--surface-solid);
-  box-shadow: 0 0.5px 0 var(--hairline-soft), 0 1px 3px rgba(0, 0, 0, 0.04);
-  transition: opacity 120ms var(--ease);
-}
-.feed-card[data-on="false"] { opacity: 0.45; }
-.feed-card-ck { flex: none; padding: 0; background: none; border: 0; cursor: pointer; }
-.feed-card-ck .ck { width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--hairline); display: grid; place-items: center; }
-.feed-card-ck .ck[data-on="true"] { background: var(--accent); box-shadow: none; }
-.feed-card-ck .ck[data-on="true"]::after { content: ""; width: 8px; height: 5px; border-left: 1.5px solid #fff; border-bottom: 1.5px solid #fff; transform: rotate(-45deg) translate(1px, -1px); }
-.feed-card-body { flex: 1; min-width: 0; }
-.feed-card-title { font-size: 13px; font-weight: 550; margin-bottom: 6px; }
-.feed-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.feed-badge { display: inline-flex; align-items: center; height: 16px; padding: 0 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-.feed-quality { display: flex; align-items: center; gap: 4px; }
-.feed-dup { font-size: 10px; color: var(--teal); font-weight: 600; }
-.feed-new { font-size: 10px; color: var(--green); font-weight: 600; }
-.feed-via { font-size: 9px; color: var(--text-3); padding: 1px 4px; border: 0.5px solid var(--hairline); border-radius: 3px; }
-.feed-card-desc { font-size: 11px; color: var(--text-3); margin-top: 6px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.feed-import-bar { display: flex; align-items: center; gap: 8px; padding: 12px 0; margin-top: 4px; border-top: 0.5px solid var(--hairline-soft); }
 /* ------------- 今日视图 ------------- */
 
 .today-page { max-width: 860px; }

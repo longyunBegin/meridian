@@ -9,7 +9,7 @@ import {
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
-  allFeeds, addFeed, getFeed, updateFeed, removeFeed, markFeedFetched,
+
   allInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
@@ -21,7 +21,7 @@ import {
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
-import { fetchFeed } from './feeds.js'
+
 import { fetchChannel, availableFetchers } from './fetchers.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
@@ -197,7 +197,7 @@ async function processCapture(text, themeId, channelMeta) {
       via: label.via,
       jevScore: label.jevScore ?? null,
       noul: label.noul ?? null,
-      pills: generatePills(label.kind),
+
     },
     lemmas: out,
     rejected,
@@ -279,19 +279,6 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   return { imported, rawId: raw.id }
 }
 
-/** 生成来源类型概率分布 pills：选中类型高概率，相邻类型递减 */
-function generatePills(selectedKind) {
-  const sorted = SOURCE_QUALITY.slice().sort((a, b) => b[1] - a[1])
-  const selected = sorted.find(([k]) => k === selectedKind) || sorted[0]
-  const others = sorted.filter(([k]) => k !== selected[0])
-  const top = [
-    { kind: selected[0], prob: 0.65 + selected[1] * 0.1 },
-    { kind: others[0][0], prob: 0.15 + others[0][1] * 0.05 },
-    { kind: others[1][0], prob: 0.05 + others[1][1] * 0.03 },
-  ]
-  const sum = top.reduce((s, p) => s + p.prob, 0)
-  return top.map((p) => ({ kind: p.kind, prob: Math.round((p.prob / sum) * 100) / 100 }))
-}
 
 /** 降级路径的标题：取第一句，别把整段原文塞进标题栏 */
 function firstSentence(text) {
@@ -442,94 +429,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:tickerLookup', (_, code, themeId) => nodesByTicker(code, themeId))
   ipcMain.handle('db:tickers', (_, themeId) => allTickers(themeId))
 
-  // ---- 订阅源 ----
-  ipcMain.handle('feed:list', () => allFeeds())
-  ipcMain.handle('feed:add', (_, feed) => addFeed(feed))
-  ipcMain.handle('feed:update', (_, id, patch) => updateFeed(id, patch))
-  ipcMain.handle('feed:remove', (_, id) => removeFeed(id))
-  ipcMain.handle('feed:fetch', async (_, id) => {
-    const feed = getFeed(id)
-    if (!feed) return { ok: false, reason: 'not-found' }
-    try {
-      const items = await fetchFeed(feed.url)
-      markFeedFetched(id, items.length)
-      return { ok: true, items }
-    } catch (e) {
-      return { ok: false, reason: e.message }
-    }
-  })
-
-  // 拉取 + 自动 JEV 打标：每条数据走 labelSource，返回带标签的结果
-  ipcMain.handle('feed:fetchAndLabel', async (_, id) => {
-    const feed = getFeed(id)
-    if (!feed) return { ok: false, reason: 'not-found' }
-    try {
-      const items = await fetchFeed(feed.url)
-      const s = settings()
-      const labeled = []
-      for (const item of items) {
-        const text = `${item.title} ${item.description || ''}`
-        const label = await labelSource(s, text)
-        const dup = findSimilar(item.title, feed.themeId)[0]
-        labeled.push({
-          ...item,
-          label: {
-            kind: label.kind,
-            quality: label.quality,
-            via: label.via,
-            jevScore: label.jevScore ?? null,
-            pills: generatePills(label.kind),
-          },
-          dup: dup ? { id: dup.node.id, title: dup.node.title, score: dup.score } : null,
-        })
-      }
-      markFeedFetched(id, items.length)
-      return { ok: true, items: labeled }
-    } catch (e) {
-      return { ok: false, reason: e.message }
-    }
-  })
-
-  // 批量入库：把选中的数据源条目走捕获流水线
-  ipcMain.handle('feed:import', async (_, feedId, themeId, items) => {
-    const feed = getFeed(feedId)
-    const s = settings()
-    const results = []
-    for (const item of items) {
-      const text = `${item.title} ${item.description || ''}`
-      const label = await labelSource(s, text)
-      const ex = await extractLemmas(s, text, branchTitles(themeId))
-      const lemmas = ex.ok ? ex.lemmas : [{
-        title: item.title,
-        type: 'observation',
-        confidence: 50,
-        parentHint: null,
-        tags: [],
-        sourceKind: label.kind,
-      }]
-      for (const l of lemmas) {
-        const dup = findSimilar(l.title, themeId)[0]
-        if (dup) {
-          addSource(dup.node.id, {
-            kind: label.kind, label: feed?.name || label.kind,
-            at: today(), quality: label.quality,
-          })
-          results.push({ title: l.title, action: 'merge' })
-          continue
-        }
-        const cands = suggestParent([l.title, l.parentHint].filter(Boolean).join(' '), themeId)
-        const top = cands[0]
-        const node = addNode({
-          themeId, parentId: top?.id || null, kind: 'lemma',
-          title: l.title, type: l.type, confidence: l.confidence,
-          tags: l.tags || [], sources: [{ kind: label.kind, label: feed?.name || label.kind, at: today(), quality: label.quality }],
-        })
-        promoteMatchingVerdicts(l.title, node.id, themeId)
-        results.push({ title: l.title, action: 'new', id: node.id })
-      }
-    }
-    return { ok: true, results }
-  })
+  // ---- 订阅源（已统一为通道，见 channel:* handler）----
 
   ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
   ipcMain.handle('io:openExternal', (_, url) => {

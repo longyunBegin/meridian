@@ -56,14 +56,6 @@ contextBridge.exposeInMainWorld('meridian', {
   rawPrune: () => ipcRenderer.invoke('raw:prune'),
   rawClear: () => ipcRenderer.invoke('raw:clear'),
 
-  // ---- 订阅源
-  feeds: () => ipcRenderer.invoke('feed:list'),
-  feedAdd: (feed) => ipcRenderer.invoke('feed:add', feed),
-  feedUpdate: (id, patch) => ipcRenderer.invoke('feed:update', id, patch),
-  feedRemove: (id) => ipcRenderer.invoke('feed:remove', id),
-  feedFetch: (id) => ipcRenderer.invoke('feed:fetch', id),
-  feedFetchAndLabel: (id) => ipcRenderer.invoke('feed:fetchAndLabel', id),
-  feedImport: (feedId, themeId, items) => ipcRenderer.invoke('feed:import', feedId, themeId, items),
 
   // ---- 捕获（已删除 HUD，保留 process/socratic）
   process: (text, themeId) => ipcRenderer.invoke('agent:process', text, themeId),
