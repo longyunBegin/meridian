@@ -1199,5 +1199,48 @@ const overrideRate = agg.autoImported + agg.confirmed > 0 ? Math.round((agg.over
 ok('Fix3: 归位修改率 > 0', overrideRate > 0, `实际 ${overrideRate}%`)
 ok('Fix3: 归位修改率 = overridden/(auto+confirmed)', agg.overridden === 2 && overrideRate === Math.round(2 / (agg.autoImported + agg.confirmed) * 100), `实际 ${overrideRate}% (overridden=${agg.overridden} auto=${agg.autoImported} confirmed=${agg.confirmed})`)
 
+// ============================================================
+console.log('\n— Fix4: planPurge 取消后数据不变 —')
+// ============================================================
+
+const { planPurge } = await import('../src/main/store.js')
+
+// 构造有用户删和跌死节点的场景
+const ppTheme = store.addTheme('planPurge 测试')
+const ppBranch = store.addNode({ themeId: ppTheme.id, kind: 'branch', title: 'pp 环节', propagation: 0.5 })
+const ppUser = store.addNode({ themeId: ppTheme.id, parentId: ppBranch.id, kind: 'lemma', title: '用户删的', confidence: 60 })
+const ppAuto = store.addNode({ themeId: ppTheme.id, parentId: ppBranch.id, kind: 'lemma', title: '跌死的', confidence: 15 })
+store.removeNode(ppUser.id)
+store.updateNode(ppAuto.id, { confidence: 8 })
+
+const deadBefore = store.allNodes().filter((n) => n.status === 'dead').length
+
+// 场景1：用户点取消
+const preview1 = store.purgeDead('user', { dryRun: true })
+const plan1 = planPurge('user', preview1, false)
+ok('Fix4: 取消时 willDelete = false', !plan1.willDelete)
+ok('Fix4: 取消时 reason = canceled', plan1.reason === 'canceled')
+ok('Fix4: 取消后 dead 节点数不变', store.allNodes().filter((n) => n.status === 'dead').length === deadBefore, `实际 ${store.allNodes().filter((n) => n.status === 'dead').length} vs ${deadBefore}`)
+ok('Fix4: 取消后用户删节点仍在', store.getNode(ppUser.id) != null)
+ok('Fix4: 取消后跌死节点仍在', store.getNode(ppAuto.id) != null)
+
+// 场景2：用户确认
+const preview2 = store.purgeDead('user', { dryRun: true })
+const plan2 = planPurge('user', preview2, true)
+ok('Fix4: 确认时 willDelete = true', plan2.willDelete)
+ok('Fix4: 确认时 count = preview.removed', plan2.count === preview2.removed)
+if (plan2.willDelete) {
+  const r = store.purgeDead(plan2.scope)
+  ok('Fix4: 确认后真删了', r.removed > 0)
+  ok('Fix4: 确认后用户删节点不在', store.getNode(ppUser.id) == null)
+  ok('Fix4: 确认后跌死节点仍在（只删 user scope）', store.getNode(ppAuto.id) != null)
+}
+
+// 场景3：空集
+const preview3 = store.purgeDead('user', { dryRun: true })
+const plan3 = planPurge('user', preview3, true)
+ok('Fix4: 空集时 willDelete = false', !plan3.willDelete)
+ok('Fix4: 空集时 reason = empty', plan3.reason === 'empty')
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

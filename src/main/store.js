@@ -246,6 +246,16 @@ export function purgeDead(scope = 'all', { dryRun = false } = {}) {
   return { removed: deadIds.size, userDeleted: userDeleted.length, autoDead: autoDead.length }
 }
 
+/**
+ * 纯函数：根据 dryRun 预览和用户确认，决定是否执行真删。
+ * 把确认逻辑从 UI 回调里抽出来，让测试能断言「取消后数据不变」。
+ */
+export function planPurge(scope, dryRunResult, confirmed) {
+  if (dryRunResult.removed === 0) return { willDelete: false, scope, reason: 'empty' }
+  if (!confirmed) return { willDelete: false, scope, reason: 'canceled' }
+  return { willDelete: true, scope, count: dryRunResult.removed }
+}
+
 /** 追加一个来源；若该 claim 已有独立来源，则只累加不新建。返回新增与否。 */
 export function addSource(id, source) {
   const node = getNode(id)

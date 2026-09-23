@@ -4,6 +4,12 @@ import { confColor } from './shared.js'
 
 const m = window.meridian
 
+const planPurge = (scope, dryRunResult, confirmed) => {
+  if (dryRunResult.removed === 0) return { willDelete: false, scope, reason: 'empty' }
+  if (!confirmed) return { willDelete: false, scope, reason: 'canceled' }
+  return { willDelete: true, scope, count: dryRunResult.removed }
+}
+
 export async function renderSettings(mid) {
   clear(mid)
   const [settings, templates] = await Promise.all([m.settings(), m.templates()])
@@ -61,6 +67,7 @@ export async function renderSettings(mid) {
   const raw = await m.rawStats()
   const feeds = await m.feeds()
   const deletedTs = await m.deletedThemes()
+  const purgePreview = await m.purgeDead('all', { dryRun: true })
 
   const toast = h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
   const flash = (msg, color = 'var(--text-2)') => {
@@ -230,35 +237,26 @@ export async function renderSettings(mid) {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
               const preview = await m.purgeDead('user', { dryRun: true })
-              if (preview.removed === 0) { flash('没有你删的节点'); return }
-              if (!confirm(`真删 ${preview.removed} 条你用 ⌘⌫ 删的节点？\n\n不可恢复。`)) return
-              const r = await m.purgeDead('user')
+              const confirmed = preview.removed > 0 && confirm(`真删 ${preview.removed} 条你用 ⌘⌫ 删的节点？\n\n不可恢复。`)
+              const plan = planPurge('user', preview, confirmed)
+              if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有你删的节点'); return }
+              const r = await m.purgeDead(plan.scope)
               flash(`已真删 ${r.removed} 条你删的节点`)
               await renderSettings(mid)
             },
-          }, `清空我删的（${stats.dead} 中含 ⌘⌫）`),
+          }, `清空我删的（${purgePreview.userDeleted}）`),
           h('button', {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
               const preview = await m.purgeDead('auto', { dryRun: true })
-              if (preview.removed === 0) { flash('没有跌死的节点'); return }
-              if (!confirm(`真删 ${preview.removed} 条置信度跌破 20 自动进墓的节点？\n\n不可恢复。`)) return
-              const r = await m.purgeDead('auto')
+              const confirmed = preview.removed > 0 && confirm(`真删 ${preview.removed} 条置信度跌破 20 自动进墓的节点？\n\n不可恢复。`)
+              const plan = planPurge('auto', preview, confirmed)
+              if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有跌死的节点'); return }
+              const r = await m.purgeDead(plan.scope)
               flash(`已真删 ${r.removed} 条跌死的节点`)
               await renderSettings(mid)
             },
-          }, `清空我删的（${stats.dead} 中含 ⌘⌫）`),
-          h('button', {
-            class: 'btn', style: { color: 'var(--red)' },
-            onclick: async () => {
-              const r = await m.purgeDead('auto')
-              if (r.removed === 0) { flash('没有跌死的节点'); return }
-              if (!confirm(`真删 ${r.removed} 条置信度跌破 20 自动进墓的节点？\n\n不可恢复。`)) return
-              const r2 = await m.purgeDead('auto')
-              flash(`已真删 ${r2.removed} 条跌死的节点`)
-              await renderSettings(mid)
-            },
-          }, '清空跌死的'),
+          }, `清空跌死的（${purgePreview.autoDead}）`),
         ),
       ),
     ),
