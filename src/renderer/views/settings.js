@@ -219,14 +219,18 @@ export async function renderSettings(mid) {
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, ch.name),
             h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch} · ${ch.enabled ? '启用' : '停用'}`),
+              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · ${ch.enabled ? '启用' : '停用'}`),
               fetchers.includes(ch.fetch) ? h('button', {
                 class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
                 onclick: async () => {
                   flash(`正在拉取「${ch.name}」…`)
                   const r = await m.channelFetch(ch.id)
                   if (r.error) { flash(`拉取失败：${r.error}`, 'var(--red)'); return }
-                  flash(`拉取到 ${r.items.length} 条`)
+                  if (r.readings) {
+                    flash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
+                  } else {
+                    flash(`拉取到 ${r.items.length} 条`)
+                  }
                 },
               }, '拉取') : h('span', { style: { marginLeft: '8px', color: 'var(--text-3)' } }, '（未实现）'),
             ),
@@ -265,11 +269,19 @@ export async function renderSettings(mid) {
                   h('option', { value: 'edgarConcept' }, 'edgarConcept'),
                   h('option', { value: 'edgarFilings' }, 'edgarFilings'),
                 ),
+                h('input', { class: 'txt', placeholder: 'metric (us-gaap 标签)', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value }),
+                h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
+                  h('option', { value: '财报 / 公告' }, '财报 / 公告'),
+                  h('option', { value: '一手数据' }, '一手数据'),
+                  h('option', { value: '券商研报' }, '券商研报'),
+                  h('option', { value: '独立媒体' }, '独立媒体'),
+                  h('option', { value: '自媒体' }, '自媒体'),
+                ),
                 h('button', {
                   class: 'btn btn-primary',
                   onclick: async () => {
                     if (!inputs.name) { flash('请填名称', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch || 'manual', kind: '自媒体' })
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch || 'manual', metric: inputs.metric || null, kind: inputs.kind || '自媒体' })
                     flash('已添加通道')
                     await renderSettings(mid)
                   },

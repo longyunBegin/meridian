@@ -1257,6 +1257,7 @@ export function addChannel(ch) {
     cadence: ch.cadence || '日',
     network: ch.network || 'direct',
     themeId: ch.themeId || null,
+    metric: ch.metric || null,
     enabled: ch.enabled !== false,
     createdAt: today(),
   }

@@ -765,9 +765,23 @@ function register({ getMainWindow }) {
   ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
   ipcMain.handle('channel:fetch', async (_, channelId) => {
     const ch = allChannels().find((c) => c.id === channelId)
-    if (!ch) return { items: [], error: 'channel not found' }
-    const items = await fetchChannel(ch)
-    return { items, error: null }
+    if (!ch) return { items: [], readings: null, error: 'channel not found' }
+    const result = await fetchChannel(ch)
+    if (result.error) return result
+    // Path B：有 items 需要走 processCapture 产命题
+    if (result.items && result.items.length) {
+      const themeId = ch.themeId || bestThemeContext()?.id || null
+      for (const item of result.items) {
+        if (themeId) {
+          await processCapture(item.text, themeId, {
+            kind: item.kind || ch.kind,
+            platform: item.platform || null,
+            url: item.url || null,
+          })
+        }
+      }
+    }
+    return result
   })
   ipcMain.handle('channel:fetchers', () => availableFetchers())
 

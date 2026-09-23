@@ -1,0 +1,16 @@
+{
+  "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+  "entity": "NVIDIA CORP",
+  "label": "Revenue from Contract with Customer, Excluding Assessed Tax",
+  "description": "Amount of revenue from contract with customers excluding assessed tax.",
+  "units": {
+    "USD": [
+      { "start": "2017-01-30", "end": "2018-01-28", "val": 9714000000, "accn": "0001045810-19-000010", "fy": 2018, "fp": "FY", "form": "10-K", "filed": "2019-02-21", "frame": "CY2017" },
+      { "start": "2017-01-30", "end": "2018-01-28", "val": 9714000000, "accn": "0001045810-20-000036", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-02-20", "frame": "CY2017" },
+      { "start": "2018-01-29", "end": "2019-01-27", "val": 11716000000, "accn": "0001045810-20-000036", "fy": 2020, "fp": "FY", "form": "10-K", "filed": "2020-02-20", "frame": "CY2018" },
+      { "start": "2019-01-28", "end": "2020-01-26", "val": 16193000000, "accn": "0001045810-21-000010", "fy": 2021, "fp": "FY", "form": "10-K", "filed": "2021-02-25", "frame": "CY2019" },
+      { "start": "2020-01-27", "end": "2021-01-31", "val": 16675000000, "accn": "0001045810-22-000036", "fy": 2022, "fp": "FY", "form": "10-K", "filed": "2022-02-23", "frame": "CY2020" },
+      { "start": "2024-01-29", "end": "2025-01-26", "val": 13050000000, "accn": "0001045810-25-000010", "fy": 2025, "fp": "FY", "form": "10-K", "filed": "2025-02-21", "frame": "CY2024" }
+    ]
+  }
+}

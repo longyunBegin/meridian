@@ -1257,15 +1257,15 @@ ok('R1: availableFetchers 不含 null 值', avail.every((k) => k != null))
 
 // 未实现的 fetch 类型静默返回空
 const unkResult = await fetchChannel({ fetch: 'tavily', query: 'test', kind: '自媒体' })
-ok('R1: 未实现类型返回空数组', Array.isArray(unkResult) && unkResult.length === 0)
+ok('R1: 未实现类型返回空 items', unkResult.items.length === 0 && !unkResult.error)
 
 // 未知 fetch 类型也静默返回空
 const unkResult2 = await fetchChannel({ fetch: 'nonexistent', query: 'test' })
-ok('R1: 未知类型返回空数组', Array.isArray(unkResult2) && unkResult2.length === 0)
+ok('R1: 未知类型返回空 items', unkResult2.items.length === 0 && !unkResult2.error)
 
 // web fetcher 对短文本返回空
 const shortResult = await fetchChannel({ fetch: 'web', query: 'about:blank', name: 'test', kind: '自媒体' })
-ok('R1: web fetcher 失败时返回空数组', Array.isArray(shortResult) && shortResult.length === 0)
+ok('R1: web fetcher 失败时返回空 items', shortResult.items.length === 0)
 
 // ============================================================
 console.log('\n— R2: readings 读数集合 —')
@@ -1442,6 +1442,71 @@ const pc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 // 提取桥接键对比（去掉 require/import 行差异）
 const extractKeys = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('preload: 两份桥接键同步', JSON.stringify(extractKeys(pj)) === JSON.stringify(extractKeys(pc)))
+
+// ============================================================
+console.log('\n— R3: SEC EDGAR 取数器 —')
+// ============================================================
+
+const { convertEdgarConcept, filterFilings } = await import('../src/main/fetchers.js')
+const conceptFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-companyconcept.json'), 'utf8'))
+const filingsFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-submissions.json'), 'utf8'))
+
+// --- Path A: convertEdgarConcept 纯函数 ---
+const testChannel = { id: 'ch-edgar', kind: '财报 / 公告', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', query: 'NVDA' }
+const readingInputs = convertEdgarConcept(conceptFixture, testChannel, '0001045810', 'NVDA', 'NVIDIA CORP')
+
+ok('R3: convertEdgarConcept 产出 6 条', readingInputs.length === 6)
+ok('R3: metric 命名用 ticker 小写', readingInputs[0].metric === 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax')
+ok('R3: value 正确', readingInputs[0].value === 9714000000)
+ok('R3: unit = USD', readingInputs[0].unit === 'USD')
+ok('R3: asOf = rec.end', readingInputs[0].asOf === '2018-01-28')
+ok('R3: basis = reported (10-K)', readingInputs[0].basis === 'reported')
+ok('R3: source.kind 由取数器给定', readingInputs[0].source.kind === '财报 / 公告')
+ok('R3: source.platform = SEC EDGAR', readingInputs[0].source.platform === 'SEC EDGAR')
+ok('R3: source.url 存在', readingInputs[0].source.url.includes('sec.gov'))
+ok('R3: indicatorId 为 null', readingInputs[0].indicatorId === null)
+ok('R3: channelId 正确', readingInputs[0].channelId === 'ch-edgar')
+
+// 重复期间（1.4 实例）：同一 start+end 不同 accn，两条都在
+ok('R3: 重复期间第1条 accn', readingInputs[0].source.accn === '0001045810-19-000010')
+ok('R3: 重复期间第2条 accn', readingInputs[1].source.accn === '0001045810-20-000036')
+ok('R3: 重复期间 dedupeKey 不同', readingInputs[0].dedupeKey !== readingInputs[1].dedupeKey)
+
+// --- Path A: 幂等 — 同一批 readingInputs 跑两次 addReading ---
+let added1 = 0, skipped1 = 0
+for (const input of readingInputs) {
+  const r = store.addReading(input)
+  if (r.added) added1++; else skipped1++
+}
+ok('R3: 第一次全部 added', added1 === 6 && skipped1 === 0)
+
+let added2 = 0, skipped2 = 0
+for (const input of readingInputs) {
+  const r = store.addReading(input)
+  if (r.added) added2++; else skipped2++
+}
+ok('R3: 第二次全部 skipped (幂等)', added2 === 0 && skipped2 === 6)
+
+// --- Path B: filterFilings 纯函数 ---
+const filtered = filterFilings(filingsFixture.filings, 5)
+const forms = filtered.map((f) => f.form)
+ok('R3: filterFilings 只含 10-K/10-Q/8-K', forms.every((f) => ['10-K', '10-Q', '8-K'].includes(f)))
+ok('R3: filterFilings 过滤掉 Form 4', !forms.includes('4'))
+ok('R3: filterFilings 过滤掉 144', !forms.includes('144'))
+ok('R3: filterFilings 最多 5 条', filtered.length <= 5)
+ok('R3: filterFilings 有 accessionNumber', filtered[0].accessionNumber != null)
+ok('R3: filterFilings 有 primaryDocument', filtered[0].primaryDocument != null)
+
+// --- grep 验收 ---
+const fetchersSrc = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
+ok('R3: fetchers.js 不调 labelSource', !fetchersSrc.includes('labelSource'))
+ok('R3: fetchers.js 不用 companyfacts', !fetchersSrc.includes('companyfacts'))
+
+// --- channels.metric 端到端 ---
+const edgarCh = store.addChannel({ name: 'EDGAR 测试', query: 'NVDA', fetch: 'edgarConcept', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', kind: '财报 / 公告' })
+ok('R3: channel.metric 存储成功', edgarCh.metric === 'RevenueFromContractWithCustomerExcludingAssessedTax')
+const chFromDb = store.allChannels().find((c) => c.id === edgarCh.id)
+ok('R3: channel.metric 从 DB 读回', chFromDb.metric === 'RevenueFromContractWithCustomerExcludingAssessedTax')
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
