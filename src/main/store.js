@@ -18,6 +18,26 @@ export const SOURCE_QUALITY = [
 ]
 const QUALITY = new Map(SOURCE_QUALITY)
 
+/** us-gaap 常用标签置顶——探活实测过的高频标签 */
+export const COMMON_US_GAAP = [
+  'Revenues',
+  'RevenueFromContractWithCustomerExcludingAssessedTax',
+  'GrossProfit',
+  'OperatingIncomeLoss',
+  'NetIncomeLoss',
+  'EarningsPerShareBasic',
+  'CostOfRevenue',
+  'CostOfGoodsAndServicesSold',
+  'ResearchAndDevelopmentExpense',
+  'InventoryNet',
+  'PaymentsToAcquirePropertyPlantAndEquipment',
+  'NetCashProvidedByUsedInOperatingActivities',
+  'LongTermDebt',
+  'Assets',
+  'Liabilities',
+  'StockholdersEquity',
+]
+
 /** 更新频率 → 结算日偏移（天） */
 const CADENCE_DAYS = { 周: 7, 月: 30, 季度: 95, 半年: 180, 年度: 365, 事件: 60 }
 
@@ -1260,6 +1280,12 @@ export function updateChannel(id, patch) {
 export function removeChannel(id) {
   const db = load()
   db.channels = db.channels.filter((c) => c.id !== id)
+  // 清理节点上的悬空引用——不靠 UI 的 filter(Boolean) 兜底
+  for (const n of db.nodes) {
+    if (Array.isArray(n.channelIds) && n.channelIds.includes(id)) {
+      n.channelIds = n.channelIds.filter((x) => x !== id)
+    }
+  }
   persist()
 }
 // ------------------------------------------------------------------ 读数层

@@ -1,5 +1,5 @@
 import { h, mount, icon, clear } from '../lib/dom.js'
-import { state, refresh, selectNode } from '../app.js'
+import { state, refresh, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 
 const m = window.meridian
@@ -41,8 +41,13 @@ async function sourcePanel(node) {
       box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
     }
 
-    // 挂通道下拉
+    // 挂通道下拉（按主题分组）
     if (unattached.length) {
+      const opt = (ch) => h('option', { value: ch.id }, `${ch.name} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''}`)
+      const mine = unattached.filter((c) => c.themeId === node.themeId)
+      const global = unattached.filter((c) => !c.themeId)
+      const others = unattached.filter((c) => c.themeId && c.themeId !== node.themeId)
+      const themeName = state.themes.find((t) => t.id === node.themeId)?.name || '当前主题'
       const chSel = h('select', {
         class: 'sel', style: { marginTop: '8px' },
         onchange: async (e) => {
@@ -53,11 +58,17 @@ async function sourcePanel(node) {
         },
       },
         h('option', { value: '' }, '+ 挂通道…'),
-        ...unattached.map((ch) => h('option', { value: ch.id }, `${ch.name} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''}`)),
+        mine.length ? h('optgroup', { label: `当前主题 · ${themeName}` }, ...mine.map(opt)) : null,
+        global.length ? h('optgroup', { label: '全局（所有主题可用）' }, ...global.map(opt)) : null,
+        others.length ? h('optgroup', { label: '其他主题' }, ...others.map(opt)) : null,
       )
       box.append(chSel)
     } else if (channels.length === 0) {
-      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '没有可选通道，去「数据源」建一个'))
+      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } },
+        '没有可选通道，去',
+        h('a', { style: { color: 'var(--blue, #0071e3)', cursor: 'pointer', textDecoration: 'underline' }, onclick: () => setView('vault', 'feeds') }, '数据源'),
+        '建一个',
+      ))
     }
 
     // 最新读数

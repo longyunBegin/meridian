@@ -23,6 +23,7 @@ import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 
 import { fetchChannel, availableFetchers } from './fetchers.js'
+import { discoverTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 
@@ -687,6 +688,15 @@ function register({ getMainWindow }) {
     return result
   })
   ipcMain.handle('channel:fetchers', () => availableFetchers())
+
+  // ---- EDGAR 标签发现（仅手动触发）----
+  ipcMain.handle('edgar:discoverTags', async (_, ticker) => {
+    try {
+      return await discoverTags(ticker)
+    } catch (e) {
+      return { tags: [], error: e.message || String(e), entityName: null }
+    }
+  })
 
   // ---- 读数层 ----
   ipcMain.handle('reading:add', (_, input) => addReading(input))

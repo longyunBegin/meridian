@@ -1464,7 +1464,7 @@ ok('R3: basis = reported (10-K)', readingInputs[0].basis === 'reported')
 ok('R3: source.kind 由取数器给定', readingInputs[0].source.kind === '财报 / 公告')
 ok('R3: source.platform = SEC EDGAR', readingInputs[0].source.platform === 'SEC EDGAR')
 ok('R3: source.url 存在', readingInputs[0].source.url.includes('sec.gov'))
-ok('R3: indicatorId 为 null', readingInputs[0].indicatorId === null)
+ok('R3: indicatorId 不再写入', readingInputs[0].indicatorId === undefined)
 ok('R3: channelId 正确', readingInputs[0].channelId === 'ch-edgar')
 
 // 重复期间（1.4 实例）：同一 start+end 不同 accn，两条都在
@@ -1731,6 +1731,106 @@ ok('R7 验收: preload 两份同步', JSON.stringify(extractKeysR7(pjR7)) === JS
 // 新 store 导出函数有渲染层调用方
 ok('R7 验收: indicatorsForReading 有渲染层调用', inspectorSrc.includes('indicatorsForReading') || vaultSrcR7.includes('indicatorsForReading'))
 ok('R7 验收: latestReadingByChannel 有渲染层调用', inspectorSrc.includes('latestReadingByChannel') || vaultSrcR7.includes('latestReadingByChannel'))
+
+// ============================================================
+// v0.6.3: O1-O5 优化
+// ============================================================
+
+console.log('\n— v0.6.3: O1-O5 优化 —')
+
+// --- O1: us-gaap 标签发现 ---
+const { parseCompanyFacts } = await import('../src/main/discover.js')
+const { COMMON_US_GAAP } = await import('../src/main/store.js')
+const factsFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-companyfacts.json'), 'utf8'))
+const parsedTags = parseCompanyFacts(factsFixture)
+
+ok('O1: parseCompanyFacts 返回标签数组', Array.isArray(parsedTags))
+ok('O1: 解析出 6 个 us-gaap 标签', parsedTags.length === 6, `实际 ${parsedTags.length}`)
+// 常用标签置顶
+const commonTags = parsedTags.filter((t) => t.common)
+ok('O1: 常用标签置顶', commonTags.length > 0 && parsedTags.indexOf(commonTags[0]) === 0)
+ok('O1: Revenues 是常用标签', parsedTags.find((t) => t.tag === 'Revenues')?.common === true)
+ok('O1: NetIncomeLoss 是常用标签', parsedTags.find((t) => t.tag === 'NetIncomeLoss')?.common === true)
+ok('O1: SomeObscureTag 不是常用标签', parsedTags.find((t) => t.tag === 'SomeObscureTag')?.common === false)
+// 期间数
+ok('O1: Revenues 有 2 个期间', parsedTags.find((t) => t.tag === 'Revenues')?.periods === 2)
+ok('O1: DeferredRevenue 有 0 个期间', parsedTags.find((t) => t.tag === 'DeferredRevenue')?.periods === 0)
+ok('O1: NetIncomeLoss 有 1 个期间', parsedTags.find((t) => t.tag === 'NetIncomeLoss')?.periods === 1)
+// 常用标签按 COMMON_US_GAAP 中的顺序
+const revIdx = parsedTags.findIndex((t) => t.tag === 'Revenues')
+const niIdx = parsedTags.findIndex((t) => t.tag === 'NetIncomeLoss')
+ok('O1: Revenues 在 NetIncomeLoss 前', revIdx < niIdx)
+// 非常用标签按字母序
+const obscureIdx = parsedTags.findIndex((t) => t.tag === 'SomeObscureTag')
+const defIdx = parsedTags.findIndex((t) => t.tag === 'DeferredRevenue')
+ok('O1: 非常用按字母序 (DeferredRevenue < SomeObscureTag)', defIdx < obscureIdx)
+// 空数据降级
+ok('O1: 空数据返回空数组', parseCompanyFacts(null).length === 0)
+ok('O1: 无 us-gaap 返回空数组', parseCompanyFacts({ facts: {} }).length === 0)
+// companyfacts 不进轮询
+const schedulerSrc = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
+ok('O1: scheduler.js 无 companyfacts', !schedulerSrc.includes('companyfacts'))
+ok('O1: fetchers.js 无 companyfacts', !fetchersSrc.includes('companyfacts'))
+// discoverTags 在 discover.js 中（手动触发，不是轮询）
+const discoverSrc = readFileSync2(join(ROOT2, 'src/main/discover.js'), 'utf8')
+ok('O1: discover.js 有 discoverTags', discoverSrc.includes('discoverTags'))
+ok('O1: discover.js 有 parseCompanyFacts', discoverSrc.includes('parseCompanyFacts'))
+// IPC + preload 桥
+ok('O1: ipc.js 有 edgar:discoverTags', readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8').includes('edgar:discoverTags'))
+ok('O1: preload.js 有 discoverTags', pjR7.includes('discoverTags'))
+ok('O1: preload.cjs 有 discoverTags', pcR7.includes('discoverTags'))
+// vault.js 有发现标签按钮
+ok('O1: vault.js 有发现标签按钮', vaultSrcR7.includes('发现标签'))
+
+// --- O2: 通道归属主题 + optgroup ---
+const o2Theme = store.addTheme('O2 测试主题')
+const o2Other = store.addTheme('O2 其他主题')
+// O2a: 建通道时传 themeId
+const o2Ch1 = store.addChannel({ name: '当前主题通道', fetch: 'rss', kind: '独立媒体', themeId: o2Theme.id })
+ok('O2a: 通道有 themeId', o2Ch1.themeId === o2Theme.id)
+const o2Ch2 = store.addChannel({ name: '全局通道', fetch: 'rss', kind: '独立媒体' })
+ok('O2a: 默认 themeId 为 null', o2Ch2.themeId === null)
+const o2Ch3 = store.addChannel({ name: '其他主题通道', fetch: 'rss', kind: '独立媒体', themeId: o2Other.id })
+ok('O2a: 其他主题通道有 themeId', o2Ch3.themeId === o2Other.id)
+// 从 DB 读回
+const o2Channels = store.allChannels()
+ok('O2a: channelList 包含主题私有通道', o2Channels.some((c) => c.id === o2Ch1.id && c.themeId === o2Theme.id))
+ok('O2a: channelList 包含全局通道', o2Channels.some((c) => c.id === o2Ch2.id && c.themeId === null))
+// O2b: inspector.js 有 optgroup
+ok('O2b: inspector.js 有 optgroup', inspectorSrc.includes('optgroup'))
+ok('O2b: inspector.js 有当前主题分组', inspectorSrc.includes('当前主题'))
+ok('O2b: inspector.js 有全局分组', inspectorSrc.includes('全局'))
+// vault.js 通道列表显示归属
+ok('O2: vault.js 通道列表显示主题归属', vaultSrcR7.includes('ch.themeId'))
+
+// --- O3: 删通道清悬空引用 ---
+const o3Theme = store.addTheme('O3 测试主题')
+const o3Ch = store.addChannel({ name: 'O3 通道', fetch: 'rss', kind: '独立媒体', themeId: o3Theme.id })
+const o3Node = store.addNode({ themeId: o3Theme.id, kind: 'lemma', title: 'O3 指标', type: 'observation', channelIds: [o3Ch.id] })
+ok('O3: 挂通道前 channelIds 有 1 个', o3Node.channelIds.length === 1)
+ok('O3: channelIds 包含通道 id', o3Node.channelIds.includes(o3Ch.id))
+store.removeChannel(o3Ch.id)
+const o3NodeAfter = store.getNode(o3Node.id)
+ok('O3: 删通道后 channelIds 为空', o3NodeAfter.channelIds.length === 0, `实际 ${o3NodeAfter.channelIds.length}`)
+ok('O3: channelIds 不含已删通道 id', !o3NodeAfter.channelIds.includes(o3Ch.id))
+// 通道确实被删了
+ok('O3: 通道已删除', !store.allChannels().some((c) => c.id === o3Ch.id))
+
+// --- O4: 清理 indicatorId 写入 ---
+ok('O4: fetchers.js 无 indicatorId', !fetchersSrc.includes('indicatorId'))
+// store.js addReading 里有 indicatorId 是旧代码兼容（schema 只加不改），不算新写
+const storeSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+ok('O4: store.js 保留 indicatorId 兼容旧数据', storeSrc.includes('indicatorId'))
+
+// --- O5: 空态提示加跳转 ---
+ok('O5: inspector.js 有 setView 导入', inspectorSrc.includes('setView'))
+ok('O5: inspector.js 有跳转链接', inspectorSrc.includes("setView('vault', 'feeds')"))
+
+// --- v0.6.3 preload 两份同步（再验一次，加了 discoverTags）---
+const pj63 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pc63 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const extractKeys63 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('v0.6.3 验收: preload 两份同步', JSON.stringify(extractKeys63(pj63)) === JSON.stringify(extractKeys63(pc63)))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

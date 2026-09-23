@@ -494,6 +494,7 @@ export async function renderSources(mid) {
             h('div', { class: 'q-text' }, ch.name),
             h('div', { class: 'q-meta' },
               h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
+              ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
               fetchers.includes(ch.fetch) ? h('button', {
                 class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
@@ -561,11 +562,106 @@ export async function renderSources(mid) {
           h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'flex-end' } },
             ...(() => {
               const inputs = { kind: '独立媒体', fetch: 'manual' }
+              // metric 输入框引用，供标签选择回填
+              let metricInput = null
+              // 发现标签按钮（仅 EDGAR 类型显示）
+              const discoverBtn = h('button', {
+                class: 'btn', style: { display: 'none', padding: '4px 8px', fontSize: '11px' },
+                onclick: async () => {
+                  if (!inputs.query) { showFlash('请先填 query (ticker)', 'var(--red)'); return }
+                  showFlash(`正在发现标签…`)
+                  const result = await m.discoverTags(inputs.query)
+                  if (result.error) { showFlash(`发现失败：${result.error}`, 'var(--red)'); return }
+                  showFlash(result.entityName ? `${result.entityName} · ${result.tags.length} 个标签` : `${result.tags.length} 个标签`)
+                  renderTagPanel(result.tags, metricInput)
+                },
+              }, '发现标签')
+              // 标签面板容器
+              const tagPanel = h('div', { style: { marginTop: '8px', width: '100%' } })
+              function renderTagPanel(tags, inputEl) {
+                clear(tagPanel)
+                if (!tags.length) { tagPanel.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '没有标签')); return }
+                // 过滤框
+                let filterText = ''
+                const filterInput = h('input', { class: 'txt', placeholder: '过滤标签…', style: { width: '100%', marginBottom: '6px' }, oninput: (e) => { filterText = e.target.value.toLowerCase(); refreshList() } })
+                const listBox = h('div', { style: { maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border, #e0e0e0)', borderRadius: '4px' } })
+                function refreshList() {
+                  clear(listBox)
+                  const filtered = filterText
+                    ? tags.filter((t) => t.tag.toLowerCase().includes(filterText))
+                    : tags
+                  for (const t of filtered) {
+                    const row = h('div', {
+                      style: { padding: '3px 8px', cursor: t.periods > 0 ? 'pointer' : 'default', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #f0f0f0)' },
+                      onclick: t.periods > 0 ? () => {
+                        if (inputEl) { inputEl.value = t.tag; inputs.metric = t.tag }
+                        clear(tagPanel)
+                      } : null,
+                    },
+                      h('span', { style: { color: t.periods > 0 ? 'var(--text-2)' : 'var(--text-3)', fontWeight: t.common ? '600' : '400' } }, t.tag),
+                      h('span', { style: { color: 'var(--text-3)', fontSize: '10px' } }, String(t.periods)),
+                    )
+                    listBox.append(row)
+                  }
+                }
+                refreshList()
+                tagPanel.append(filterInput, listBox)
+              }
               return [
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '名称'),
                   h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.name = e.target.value }),
                 ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
+                  h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => {
+                    inputs.fetch = e.target.value
+                    discoverBtn.style.display = EDGAR_FETCHES.has(e.target.value) ? '' : 'none'
+                  } },
+                    ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
+                  ),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric (us-gaap 标签)'),
+                  h('div', { style: { display: 'flex', gap: '4px', alignItems: 'flex-end' } },
+                    (metricInput = h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value })),
+                    discoverBtn,
+                  ),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '来源类型'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
+                    ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
+                  ),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '间隔 (分钟)'),
+                  h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
+                ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '所属主题'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.themeId = e.target.value || null },
+                    h('option', { value: '' }, '全局（所有主题可用）'),
+                    ...state.themes.map((t) => h('option', { value: t.id, selected: t.id === state.themeId }, t.name)),
+                  ),
+                ),
+                h('button', {
+                  class: 'btn btn-primary',
+                  onclick: async () => {
+                    if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
+                    showFlash('已添加通道')
+                    await renderSources(mid)
+                  },
+                }, '添加'),
+                tagPanel,
+              ]
+            })(),
+          ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
                   h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
@@ -590,11 +686,18 @@ export async function renderSources(mid) {
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '间隔 (分钟)'),
                   h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
                 ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '所属主题'),
+                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.themeId = e.target.value || null },
+                    h('option', { value: '' }, '全局（所有主题可用）'),
+                    ...state.themes.map((t) => h('option', { value: t.id, selected: t.id === state.themeId }, t.name)),
+                  ),
+                ),
                 h('button', {
                   class: 'btn btn-primary',
                   onclick: async () => {
                     if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60) })
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
                     showFlash('已添加通道')
                     await renderSources(mid)
                   },

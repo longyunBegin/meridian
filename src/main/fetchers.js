@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** SEC EDGAR 硬要求：不带 UA 全站 403。邮箱要换成真实的。 */
-const UA = 'Meridian/0.6 (contact: meridian@example.com)'
+export const UA = 'Meridian/0.6 (contact: meridian@example.com)'
 
 const { app } = globalThis.__electron
 
@@ -73,6 +73,8 @@ async function resolveTicker(ticker) {
   return hit
 }
 
+export { resolveTicker }
+
 /**
  * companyconcept 响应 → reading 对象数组。纯函数，供测试用。
  *
@@ -105,7 +107,7 @@ export function convertEdgarConcept(data, channel, cik, ticker, entityName) {
     },
     basis_explicit: ['10-K', '10-Q', '8-K'].includes(rec.form) ? 'reported' : 'estimated',
     channelId: channel.id,
-    indicatorId: null,
+
   }))
 }
 
@@ -262,3 +264,4 @@ export async function fetchChannel(channel) {
 export function availableFetchers() {
   return Object.keys(FETCHERS).filter((k) => FETCHERS[k] != null)
 }
+

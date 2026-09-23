@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld('meridian', {
   channelFetch: (id) => ipcRenderer.invoke('channel:fetch', id),
   availableFetchers: () => ipcRenderer.invoke('channel:fetchers'),
 
+  // ---- EDGAR 标签发现
+  discoverTags: (ticker) => ipcRenderer.invoke('edgar:discoverTags', ticker),
+
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),
   allReadings: () => ipcRenderer.invoke('reading:all'),
