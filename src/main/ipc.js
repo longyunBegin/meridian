@@ -1,7 +1,7 @@
 const { ipcMain, shell, app } = globalThis.__electron
 import {
   load, addNode, updateNode, removeNode, restoreNode, purgeDead, repropagate, suggestParent, settleLemma, getNode,
-  allThemes, addTheme, removeTheme, renameTheme, allNodes, rootNodes, childrenOf,
+  allThemes, addTheme, removeTheme, restoreTheme, renameTheme, allNodes, rootNodes, childrenOf,
   settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
@@ -351,7 +351,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:updateNode', (_, id, patch) => updateNode(id, patch))
   ipcMain.handle('db:removeNode', (_, id) => removeNode(id))
   ipcMain.handle('db:restoreNode', (_, id) => restoreNode(id))
-  ipcMain.handle('db:purgeDead', () => purgeDead())
+  ipcMain.handle('db:purgeDead', (_, scope) => purgeDead(scope))
   ipcMain.handle('db:repropagate', (_, id) => repropagate(id))
   ipcMain.handle('db:settle', (_, id, correct) => settleLemma(id, correct))
   ipcMain.handle('db:addSource', (_, id, source) => addSource(id, source))
@@ -359,6 +359,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:all', () => allThemes())
   ipcMain.handle('theme:add', (_, name) => addTheme(name))
   ipcMain.handle('theme:remove', (_, id) => removeTheme(id))
+  ipcMain.handle('theme:restore', (_, id) => restoreTheme(id))
   ipcMain.handle('theme:rename', (_, id, name) => renameTheme(id, name))
   ipcMain.handle('theme:templates', () => templateList())
   ipcMain.handle('theme:fromTemplate', (_, templateId) => {

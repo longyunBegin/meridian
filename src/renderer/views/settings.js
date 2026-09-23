@@ -220,9 +220,15 @@ export async function renderSettings(mid) {
           h('button', {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
-              if (!confirm('清空墓碑区？\n\n所有 dead 节点将被永久删除，不可恢复。')) return
-              const n = await m.purgeDead()
-              alert(`已永久删除 ${n} 条墓碑节点`)
+              const s = await m.stats()
+              const msg = `清空墓碑区？\n\n` +
+                `当前墓碑区共 ${s.dead} 条：\n` +
+                `· 你用 ⌘⌫ 删的会真删\n` +
+                `· 置信度跌破 20 自动进墓的也会真删\n\n` +
+                `不可恢复。`
+              if (!confirm(msg)) return
+              const r = await m.purgeDead()
+              alert(`已永久删除 ${r.removed} 条墓碑节点`)
               await renderSettings(mid)
             },
           }, '清空墓碑区'),

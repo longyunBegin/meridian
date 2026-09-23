@@ -223,14 +223,25 @@ export function restoreNode(id) {
   return true
 }
 
-/** 真删：清空所有墓碑区节点（不可恢复） */
-export function purgeDead() {
+/**
+ * 真删：清空墓碑区节点（不可恢复）。
+ * scope: 'user' = 只删用户软删的（有 deletedAt），'auto' = 只删跌死的（无 deletedAt），'all' = 全部
+ * 返回 { removed, userDeleted, autoDead } 方便 UI 拆开显示计数。
+ */
+export function purgeDead(scope = 'all') {
   const db = load()
-  const deadIds = new Set(db.nodes.filter((n) => n.status === 'dead').map((n) => n.id))
+  const deadNodes = db.nodes.filter((n) => n.status === 'dead')
+  const userDeleted = deadNodes.filter((n) => n.deletedAt)
+  const autoDead = deadNodes.filter((n) => !n.deletedAt)
+  let toRemove
+  if (scope === 'user') toRemove = userDeleted
+  else if (scope === 'auto') toRemove = autoDead
+  else toRemove = deadNodes
+  const deadIds = new Set(toRemove.map((n) => n.id))
   db.nodes = db.nodes.filter((n) => !deadIds.has(n.id))
   db.conflicts = db.conflicts.filter((c) => !deadIds.has(c.a) && !deadIds.has(c.b))
   persist()
-  return deadIds.size
+  return { removed: deadIds.size, userDeleted: userDeleted.length, autoDead: autoDead.length }
 }
 
 /** 追加一个来源；若该 claim 已有独立来源，则只累加不新建。返回新增与否。 */
@@ -292,7 +303,7 @@ export function repropagate(id) {
 
 // ------------------------------------------------------------------ themes
 
-export function allThemes() { return load().themes }
+export function allThemes() { return load().themes.filter((t) => !t.deletedAt) }
 
 export function bestThemeContext() {
   const db = load()
@@ -315,10 +326,25 @@ export function addTheme(name) {
   persist()
   return theme
 }
+/** 软删主题：标记 deletedAt，所有根节点走 removeNode（递归软删子树） */
 export function removeTheme(id) {
-  db.themes = db.themes.filter((t) => t.id !== id)
-  db.nodes = db.nodes.filter((n) => n.themeId !== id)
+  const theme = db.themes.find((t) => t.id === id)
+  if (!theme) return
+  theme.deletedAt = today()
+  for (const root of rootNodes(id)) removeNode(root.id)
   persist()
+}
+
+/** 恢复主题：清除 deletedAt，恢复所有该主题下被软删的节点 */
+export function restoreTheme(id) {
+  const theme = db.themes.find((t) => t.id === id)
+  if (!theme || !theme.deletedAt) return false
+  delete theme.deletedAt
+  for (const n of db.nodes.filter((n) => n.themeId === id && n.status === 'dead' && n.deletedAt)) {
+    restoreNode(n.id)
+  }
+  persist()
+  return true
 }
 export function renameTheme(id, name) {
   const theme = db.themes.find((t) => t.id === id)
@@ -412,12 +438,17 @@ export function conflictsOf(nodeId) {
 
 // ------------------------------------------------------------------ queries
 
-/** 到期未结算的命题 */
+/** 到期未结算的命题（附带上下文：下游数 + 挂点路径，供通知使用） */
 export function dueSettlements() {
   const t = today()
   return db.nodes
     .filter((n) => n.kind === 'lemma' && n.status !== 'dead' && n.settlement?.date && n.settlement.resolved == null && n.settlement.date <= t)
     .sort((a, b) => a.settlement.date.localeCompare(b.settlement.date))
+    .map((n) => ({
+      ...n,
+      downstreamCount: descendants(n.id).length,
+      branchPath: branchPathOf(n) || null,
+    }))
 }
 
 /** 最近发生过的传导事件（含相对上一条记录的变化量） */
@@ -484,9 +515,9 @@ export function filterCalibration() {
   }))
 
   // 按 gate 拆分误杀率（附加，不破坏原有数组结构）
-  const gateStats = { source: { total: 0, missed: 0 }, dedup: { total: 0, missed: 0 }, user: { total: 0, missed: 0 } }
+  const gateStats = { source: { total: 0, missed: 0 }, dedup: { total: 0, missed: 0 }, user: { total: 0, missed: 0 }, other: { total: 0, missed: 0 } }
   for (const v of db.verdicts) {
-    const g = gateStats[v.gate] ? v.gate : 'source'
+    const g = gateStats[v.gate] ? v.gate : 'other'
     gateStats[g].total++
     if (v.promotedTo) gateStats[g].missed++
   }
@@ -494,6 +525,7 @@ export function filterCalibration() {
     source: { ...gateStats.source, accuracy: gateStats.source.total ? gateStats.source.missed / gateStats.source.total : 0, label: '明确误杀' },
     dedup: { ...gateStats.dedup, accuracy: gateStats.dedup.total ? gateStats.dedup.missed / gateStats.dedup.total : 0, label: '收敛度存疑' },
     user: { ...gateStats.user, accuracy: gateStats.user.total ? gateStats.user.missed / gateStats.user.total : 0, label: '用户误判' },
+    other: { ...gateStats.other, accuracy: gateStats.other.total ? gateStats.other.missed / gateStats.other.total : 0, label: '其他 gate' },
   }
 
   return result

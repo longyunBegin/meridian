@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld('meridian', {
   updateNode: (id, patch) => ipcRenderer.invoke('db:updateNode', id, patch),
   removeNode: (id) => ipcRenderer.invoke('db:removeNode', id),
   restoreNode: (id) => ipcRenderer.invoke('db:restoreNode', id),
-  purgeDead: () => ipcRenderer.invoke('db:purgeDead'),
+  purgeDead: (scope) => ipcRenderer.invoke('db:purgeDead', scope),
   repropagate: (id) => ipcRenderer.invoke('db:repropagate', id),
   settle: (id, correct) => ipcRenderer.invoke('db:settle', id, correct),
   addSource: (id, source) => ipcRenderer.invoke('db:addSource', id, source),
@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('meridian', {
   addThemeFromTemplate: (templateId) => ipcRenderer.invoke('theme:fromTemplate', templateId),
   setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
+  restoreTheme: (id) => ipcRenderer.invoke('theme:restore', id),
   renameTheme: (id, name) => ipcRenderer.invoke('theme:rename', id, name),
   saveSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
 

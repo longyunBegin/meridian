@@ -223,7 +223,7 @@ async function renderReview(mid) {
       h('div', { class: 'card-h' }, h('h2', {}, '误杀率按 gate 拆分')),
       h('div', { class: 'sect-b' },
         h('div', { class: 'review-funnel' },
-          ...['source', 'dedup', 'user'].map((g) => {
+          ...['source', 'dedup', 'user', 'other'].map((g) => {
             const s = filterCalib.byGate[g]
             return h('div', { class: 'review-metric' },
               h('div', { class: 'review-metric-num', style: { color: s.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, `${Math.round(s.accuracy * 100)}%`),

@@ -76,8 +76,17 @@ async function boot() {
     document.querySelector('.app').dataset.view = 'today'
     renderNav()
     renderMid()
-    const el = document.getElementById('due-section')
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setTimeout(() => {
+      const firstDue = document.querySelector('#due-section .q')
+      if (firstDue) {
+        firstDue.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        firstDue.classList.add('pulse')
+        setTimeout(() => firstDue.classList.remove('pulse'), 2000)
+      } else {
+        const el = document.getElementById('due-section')
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }, 300)
   })
   applyUrlParams()
 }

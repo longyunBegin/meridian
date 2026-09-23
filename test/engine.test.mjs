@@ -177,7 +177,7 @@ ok('后代也复活', s.getNode(app_.id)?.status === 'live')
 s.removeNode(gpu.id)
 const deadCount = s.allNodes().filter(n => n.status === 'dead').length
 const purged = s.purgeDead()
-ok('purgeDead 真删', purged === deadCount, `实际 ${purged} vs ${deadCount}`)
+ok('purgeDead 真删', purged.removed === deadCount, `实际 ${purged.removed} vs ${deadCount}`)
 ok('真删后节点不在', s.getNode(gpu.id) == null)
 ok('冲突引用被清理', s.allConflicts().every((c) => s.getNode(c.a) && s.getNode(c.b)))
 

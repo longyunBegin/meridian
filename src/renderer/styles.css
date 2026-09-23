@@ -1022,6 +1022,9 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .hud-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1s var(--ease) infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
 
+.q.pulse { animation: due-highlight 1.5s var(--ease) 1; }
+@keyframes due-highlight { 0% { background: var(--accent); color: white; } 100% { background: transparent; } }
+
 .hud-window { background: rgba(245, 245, 247, 0.84); backdrop-filter: saturate(180%) blur(30px); box-shadow: inset 0 0 0 0.5px var(--hairline); }
 @media (prefers-color-scheme: dark) { .hud-window { background: rgba(30, 30, 32, 0.86); } }
 

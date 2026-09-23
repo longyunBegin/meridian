@@ -1011,5 +1011,88 @@ ok('R4: 按 missed 降序', byCh[0]?.missed >= (byCh[1]?.missed || 0))
 const oldVerdict = store.allVerdicts().find(v => !v.channelId)
 ok('R4: 存在无 channelId 的 verdict', oldVerdict != null)
 
+// ============================================================
+console.log('\n— Fix: filterCalibration other gate 桶 —')
+// ============================================================
+
+store.addVerdict({ gate: 'extract', reason: 'off-topic', summary: 'extract gate 测试', score: 0.4, choice: '自媒体' })
+const fcOther = store.filterCalibration()
+ok('Fix: byGate 有 other', fcOther.byGate.other != null)
+ok('Fix: other 有 label', fcOther.byGate.other.label === '其他 gate')
+ok('Fix: other 有 accuracy', typeof fcOther.byGate.other.accuracy === 'number')
+ok('Fix: other total > 0', fcOther.byGate.other.total > 0, `实际 ${fcOther.byGate.other.total}`)
+
+// ============================================================
+console.log('\n— Fix: purgeDead 区分用户删 vs 跌死 —')
+// ============================================================
+
+const purgeTheme = store.addTheme('purge 区分测试')
+const purgeBranch = store.addNode({ themeId: purgeTheme.id, kind: 'branch', title: '测试环节', propagation: 0.5 })
+const userDeleted = store.addNode({ themeId: purgeTheme.id, parentId: purgeBranch.id, kind: 'lemma', title: '用户手删的命题', confidence: 60 })
+const autoDead = store.addNode({ themeId: purgeTheme.id, parentId: purgeBranch.id, kind: 'lemma', title: '跌死命题', confidence: 15 })
+
+store.removeNode(userDeleted.id)
+ok('Fix: 用户删后 status=dead', store.getNode(userDeleted.id)?.status === 'dead')
+ok('Fix: 用户删有 deletedAt', store.getNode(userDeleted.id)?.deletedAt != null)
+
+store.updateNode(autoDead.id, { confidence: 10 })
+ok('Fix: 跌死 status=dead', store.getNode(autoDead.id)?.status === 'dead')
+ok('Fix: 跌死无 deletedAt', store.getNode(autoDead.id)?.deletedAt == null)
+
+const beforeDead = store.allNodes().filter((n) => n.status === 'dead')
+const beforeUser = beforeDead.filter((n) => n.deletedAt).length
+const beforeAuto = beforeDead.filter((n) => !n.deletedAt).length
+
+const purgeAll = store.purgeDead()
+ok('Fix: purgeAll removed = 全部 dead', purgeAll.removed === beforeDead.length, `实际 ${purgeAll.removed} vs ${beforeDead.length}`)
+ok('Fix: purgeAll userDeleted 计数正确', purgeAll.userDeleted === beforeUser, `实际 ${purgeAll.userDeleted} vs ${beforeUser}`)
+ok('Fix: purgeAll autoDead 计数正确', purgeAll.autoDead === beforeAuto, `实际 ${purgeAll.autoDead} vs ${beforeAuto}`)
+ok('Fix: 真删后用户删节点不在', store.getNode(userDeleted.id) == null)
+ok('Fix: 真删后跌死节点不在', store.getNode(autoDead.id) == null)
+
+// scope = 'user' 只删用户删的
+const purgeTheme2 = store.addTheme('purge scope 测试')
+const purgeB2 = store.addNode({ themeId: purgeTheme2.id, kind: 'branch', title: '环节2', propagation: 0.5 })
+const u2 = store.addNode({ themeId: purgeTheme2.id, parentId: purgeB2.id, kind: 'lemma', title: '手删2', confidence: 60 })
+const a2 = store.addNode({ themeId: purgeTheme2.id, parentId: purgeB2.id, kind: 'lemma', title: '跌死2', confidence: 15 })
+store.removeNode(u2.id)
+store.updateNode(a2.id, { confidence: 8 })
+const purgeUser = store.purgeDead('user')
+ok('Fix: purgeUser removed = 1', purgeUser.removed === 1, `实际 ${purgeUser.removed}`)
+ok('Fix: purgeUser 后跌死还在', store.getNode(a2.id)?.status === 'dead')
+store.purgeDead('auto')
+
+// ============================================================
+console.log('\n— Fix: removeTheme 软删 —')
+// ============================================================
+
+const softTheme = store.addTheme('软删主题测试')
+const softBranch = store.addNode({ themeId: softTheme.id, kind: 'branch', title: '软删环节', propagation: 0.5 })
+const softLemma = store.addNode({ themeId: softTheme.id, parentId: softBranch.id, kind: 'lemma', title: '软删命题', confidence: 70 })
+
+store.removeTheme(softTheme.id)
+ok('Fix: 软删后主题不在 allThemes', !store.allThemes().some((t) => t.id === softTheme.id))
+ok('Fix: 软删后节点 status=dead', store.getNode(softBranch.id)?.status === 'dead')
+ok('Fix: 软删后子节点也 dead', store.getNode(softLemma.id)?.status === 'dead')
+ok('Fix: 软删后节点有 deletedAt', store.getNode(softBranch.id)?.deletedAt != null)
+
+const restored = store.restoreTheme(softTheme.id)
+ok('Fix: restoreTheme 返回 true', restored === true)
+ok('Fix: 恢复后主题在 allThemes', store.allThemes().some((t) => t.id === softTheme.id))
+ok('Fix: 恢复后节点 status=live', store.getNode(softBranch.id)?.status === 'live')
+ok('Fix: 恢复后子节点也 live', store.getNode(softLemma.id)?.status === 'live')
+
+// ============================================================
+console.log('\n— Fix: buildNotification 带上下文 —')
+// ============================================================
+
+const nCtx = buildNotification([{ id: 'x', title: '光模块超预期', confidence: 85, branchPath: '半导体 / 光模块', downstreamCount: 3 }])
+ok('Fix: 通知正文含置信度', nCtx?.body.includes('85%'), `实际 ${nCtx?.body}`)
+ok('Fix: 通知正文含挂点', nCtx?.body.includes('半导体 / 光模块'), `实际 ${nCtx?.body}`)
+ok('Fix: 通知正文含下游数', nCtx?.body.includes('3 条下游'), `实际 ${nCtx?.body}`)
+
+const nNoCtx = buildNotification([{ id: 'y', title: '无上下文命题' }])
+ok('Fix: 无上下文时正文只有标题', nNoCtx?.body === '无上下文命题', `实际 ${nNoCtx?.body}`)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

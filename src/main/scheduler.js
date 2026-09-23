@@ -18,13 +18,19 @@ export function dueToNotify(due, notified) {
   return due.filter((d) => !notified.has(d.id))
 }
 
-/** 构造通知内容 */
+/** 构造通知内容（正文附带上下文：当时置信度 · 挂点 · 下游数） */
 export function buildNotification(items) {
   if (!items?.length) return null
+  const first = items[0]
+  const parts = [first.title]
+  if (first.confidence != null) parts.push(`当时 ${Math.round(first.confidence)}%`)
+  if (first.branchPath) parts.push(first.branchPath)
+  if (first.downstreamCount > 0) parts.push(`${first.downstreamCount} 条下游`)
+  const body = parts.join(' · ')
   if (items.length === 1) {
-    return { title: '脉络 · 到期结算', body: items[0].title }
+    return { title: '脉络 · 到期结算', body }
   }
-  return { title: `脉络 · ${items.length} 条判断到期`, body: items[0].title }
+  return { title: `脉络 · ${items.length} 条判断到期`, body }
 }
 
 /**
