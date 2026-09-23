@@ -564,6 +564,7 @@ export async function renderSources(mid) {
               const inputs = { kind: '独立媒体', fetch: 'manual' }
               // metric 输入框引用，供标签选择回填
               let metricInput = null
+              let metricRow = null
               // 发现标签按钮（仅 EDGAR 类型显示）
               const discoverBtn = h('button', {
                 class: 'btn', style: { display: 'none', padding: '4px 8px', fontSize: '11px' },
@@ -620,18 +621,21 @@ export async function renderSources(mid) {
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => {
                     inputs.fetch = e.target.value
-                    discoverBtn.style.display = EDGAR_FETCHES.has(e.target.value) ? '' : 'none'
+                    const isEdgar = e.target.value === 'edgarConcept'
+                    metricRow.style.display = isEdgar ? '' : 'none'
+                    discoverBtn.style.display = isEdgar ? '' : 'none'
+                    if (!isEdgar) { inputs.metric = ''; if (metricInput) metricInput.value = '' }
                   } },
                     ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
                   ),
                 ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                (metricRow = h('div', { style: { display: 'none', flexDirection: 'column', gap: '2px' } },
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric (us-gaap 标签)'),
                   h('div', { style: { display: 'flex', gap: '4px', alignItems: 'flex-end' } },
                     (metricInput = h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value })),
                     discoverBtn,
                   ),
-                ),
+                )),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '来源类型'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
@@ -653,55 +657,13 @@ export async function renderSources(mid) {
                   class: 'btn btn-primary',
                   onclick: async () => {
                     if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
+                    if (inputs.fetch === 'edgarConcept' && !inputs.metric?.trim()) { showFlash('edgarConcept 必须填 us-gaap 标签', 'var(--red)'); return }
                     await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
                     showFlash('已添加通道')
                     await renderSources(mid)
                   },
                 }, '添加'),
                 tagPanel,
-              ]
-            })(),
-          ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
-                  h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.fetch = e.target.value },
-                    ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
-                  ),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric (us-gaap 标签)'),
-                  h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '来源类型'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
-                    ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
-                  ),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '间隔 (分钟)'),
-                  h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '所属主题'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.themeId = e.target.value || null },
-                    h('option', { value: '' }, '全局（所有主题可用）'),
-                    ...state.themes.map((t) => h('option', { value: t.id, selected: t.id === state.themeId }, t.name)),
-                  ),
-                ),
-                h('button', {
-                  class: 'btn btn-primary',
-                  onclick: async () => {
-                    if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
-                    showFlash('已添加通道')
-                    await renderSources(mid)
-                  },
-                }, '添加'),
               ]
             })(),
           ),
