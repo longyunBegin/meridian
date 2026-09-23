@@ -16,14 +16,15 @@ import {
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
   addReading, allReadings, indicatorsForReading, latestReadingByChannel,
+  updateTheme, rankChannelsByTags, kindToTags, sicToTags,
   uid,
 } from './store.js'
-import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 
 import { fetchChannel, availableFetchers } from './fetchers.js'
-import { discoverTags } from './discover.js'
+import { discoverTags, deriveChannelTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 
@@ -352,11 +353,13 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:remove', (_, id) => removeTheme(id))
   ipcMain.handle('theme:restore', (_, id) => restoreTheme(id))
   ipcMain.handle('theme:rename', (_, id, name) => renameTheme(id, name))
+  ipcMain.handle('theme:update', (_, id, patch) => updateTheme(id, patch))
   ipcMain.handle('theme:templates', () => templateList())
   ipcMain.handle('theme:fromTemplate', (_, templateId) => {
     const tpl = templateFind(templateId)
     if (!tpl) return null
     const theme = addTheme(tpl.name)
+    if (Array.isArray(tpl.tags) && tpl.tags.length) updateTheme(theme.id, { tags: tpl.tags })
     instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
     // 自动配默认通道包
     for (const ch of channelPack(templateId)) {
@@ -369,7 +372,7 @@ function register({ getMainWindow }) {
     return theme
   })
 
-  // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 返回
+  // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 打标签 → 返回
   ipcMain.handle('theme:setupNew', async (_, description) => {
     const theme = addTheme(description)
     const s = settings()
@@ -402,6 +405,9 @@ function register({ getMainWindow }) {
         })
       }
     }
+    // 主题打标签（降级：无 key → tags: []，不阻塞）
+    const tagResult = await generateThemeTags(s, description)
+    if (tagResult.ok && tagResult.tags.length) updateTheme(theme.id, { tags: tagResult.tags })
     return theme
   })
 
@@ -664,8 +670,26 @@ function register({ getMainWindow }) {
 
   // ---- 通道描述符 ----
   ipcMain.handle('channel:list', () => allChannels())
-  ipcMain.handle('channel:add', (_, ch) => addChannel(ch))
-  ipcMain.handle('channel:update', (_, id, patch) => updateChannel(id, patch))
+  ipcMain.handle('channel:add', async (_, ch) => {
+    const channel = addChannel(ch)
+    try {
+      const tags = await deriveChannelTags(channel, settings())
+      if (tags.length) return updateChannel(channel.id, { tags })
+    } catch { /* 推导失败不阻塞建通道 */ }
+    return channel
+  })
+  ipcMain.handle('channel:update', async (_, id, patch) => {
+    const updated = updateChannel(id, patch)
+    if (!updated) return null
+    // 改了 query / fetch / kind 时重算 tags
+    if (patch.query !== undefined || patch.fetch !== undefined || patch.kind !== undefined) {
+      try {
+        const tags = await deriveChannelTags(updated, settings())
+        return updateChannel(id, { tags })
+      } catch { /* 重算失败保留旧 tags */ }
+    }
+    return updated
+  })
   ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
   ipcMain.handle('channel:fetch', async (_, channelId) => {
     const ch = allChannels().find((c) => c.id === channelId)

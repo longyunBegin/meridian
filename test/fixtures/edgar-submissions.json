@@ -3,6 +3,8 @@
   "ein": "94-1718029",
   "cik": "0001045810",
   "tickers": ["NVDA"],
+  "sic": "3674",
+  "sicDescription": "Semiconductors and Related Devices",
   "filings": {
     "recent": {
       "accessionNumber": [

@@ -44,6 +44,74 @@ export const SYNONYM_GROUPS = [
   ['CostOfRevenue', 'CostOfGoodsAndServicesSold'],
 ]
 
+/** 来源类型 → 标签推导映射 */
+export const KIND_TO_TAGS = {
+  '财报 / 公告': ['财报'],
+  '一手数据': ['一手数据'],
+  '券商研报': ['券商研报'],
+  '独立媒体': ['独立媒体'],
+  '自媒体': ['自媒体'],
+  '群聊转发': ['群聊转发'],
+  '道听途说': ['道听途说'],
+}
+
+/** SEC SIC 代码 → 中文行业标签（覆盖常见行业，查不到的用 sicDescription 原文） */
+export const SIC_TO_TAG = {
+  3674: '半导体',
+  3570: '计算机',
+  3812: '通信设备',
+  7372: '软件',
+  7380: '服务',
+  6021: '银行',
+  6022: '银行',
+  6199: '金融',
+  6331: '保险',
+  1311: '石油',
+  2834: '医药',
+  3841: '医疗器械',
+  4813: '电信',
+  5900: '零售',
+  2000: '食品',
+  2800: '化工',
+  3300: '金属',
+  3400: '制造',
+  3600: '电子',
+  3700: '汽车',
+  4600: '运输',
+  5000: '批发',
+  7000: '酒店',
+  8000: '服务',
+}
+
+/** 来源类型 → 标签（纯函数） */
+export function kindToTags(kind) {
+  return KIND_TO_TAGS[kind] || []
+}
+
+/** SIC 代码 → 行业标签（纯函数，查不到用 sicDescription 原文） */
+export function sicToTags(sic, sicDescription) {
+  const tags = []
+  const sicNum = Number(sic)
+  if (SIC_TO_TAG[sicNum]) tags.push(SIC_TO_TAG[sicNum])
+  if (sicDescription && !tags.includes(sicDescription)) tags.push(sicDescription)
+  return tags
+}
+
+/**
+ * 按标签交集给通道排序。交集多的在前，交集 0 的排最后。
+ * 返回 [{ channel, score, shared }]，score = 交集数量。
+ */
+export function rankChannelsByTags(channels, themeTags) {
+  if (!themeTags?.length) return channels.map((c) => ({ channel: c, score: 0, shared: [] }))
+  const want = new Set(themeTags)
+  return channels
+    .map((c) => {
+      const shared = (c.tags || []).filter((t) => want.has(t))
+      return { channel: c, score: shared.length, shared }
+    })
+    .sort((a, b) => b.score - a.score)
+}
+
 /** 更新频率 → 结算日偏移（天） */
 const CADENCE_DAYS = { 周: 7, 月: 30, 季度: 95, 半年: 180, 年度: 365, 事件: 60 }
 
@@ -99,6 +167,8 @@ function migrate(d) {
   d.channels = d.channels || []
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
+  for (const t of d.themes || []) t.tags = Array.isArray(t.tags) ? t.tags : []
+  for (const c of d.channels || []) c.tags = Array.isArray(c.tags) ? c.tags : []
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
@@ -392,8 +462,17 @@ export function bestThemeContext() {
   return best
 }
 export function addTheme(name) {
-  const theme = { id: uid(), name: String(name || '').trim(), createdAt: today() }
+  const theme = { id: uid(), name: String(name || '').trim(), tags: [], createdAt: today() }
   db.themes.push(theme)
+  persist()
+  return theme
+}
+/** 更新主题字段（目前支持 name / tags） */
+export function updateTheme(id, patch) {
+  const theme = db.themes.find((t) => t.id === id)
+  if (!theme) return null
+  if (patch.name !== undefined) theme.name = String(patch.name).trim()
+  if (patch.tags !== undefined) theme.tags = [...new Set(patch.tags.filter((t) => typeof t === 'string'))]
   persist()
   return theme
 }
@@ -1267,6 +1346,7 @@ export function addChannel(ch) {
     lastCount: ch.lastCount ?? null,
     lastOk: ch.lastOk ?? null,
     lastError: ch.lastError || null,
+    tags: [...new Set((ch.tags || []).filter((t) => typeof t === 'string'))],
     review: ch.review === true,
     enabled: ch.enabled !== false,
     createdAt: today(),

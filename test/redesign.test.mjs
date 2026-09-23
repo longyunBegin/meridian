@@ -1898,5 +1898,128 @@ const pc64 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 const extractKeys64 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('v0.6.4 验收: preload 两份同步', JSON.stringify(extractKeys64(pj64)) === JSON.stringify(extractKeys64(pc64)))
 
+// ============================================================
+// 主题标签与通道相关性匹配
+// ============================================================
+
+console.log('\n— 主题标签与通道相关性匹配 —')
+
+const { rankChannelsByTags, kindToTags, sicToTags, KIND_TO_TAGS, SIC_TO_TAG, updateTheme } = store
+const inspectorSrcT = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+const extractSrc = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
+const templatesJson = JSON.parse(readFileSync2(join(ROOT2, 'src/main/templates.json'), 'utf8'))
+
+// --- T1: themes.tags 迁移 ---
+const t1Theme = store.addTheme('T1 标签测试')
+ok('T1: addTheme 有 tags 空数组', Array.isArray(t1Theme.tags) && t1Theme.tags.length === 0)
+// updateTheme
+const t1Updated = updateTheme(t1Theme.id, { tags: ['半导体', 'AI', '美股'] })
+ok('T1: updateTheme 设 tags', t1Updated.tags.length === 3 && t1Updated.tags.includes('半导体'))
+// 去重
+const t1Dedup = updateTheme(t1Theme.id, { tags: ['半导体', '半导体', 'AI'] })
+ok('T1: updateTheme tags 去重', t1Dedup.tags.length === 2)
+// 旧数据迁移
+const t1OldData = JSON.parse(store.exportAll({ withRaw: false }))
+delete t1OldData.themes[0].tags
+store.importAll(JSON.stringify(t1OldData))
+ok('T1: 旧主题导入后 tags 为空数组', Array.isArray(store.allThemes()[0].tags) && store.allThemes()[0].tags.length === 0)
+
+// --- T2: 静态模板标签 ---
+for (const tpl of templatesJson.templates) {
+  ok(`T2: 模板 ${tpl.id} 有 tags`, Array.isArray(tpl.tags) && tpl.tags.length > 0)
+}
+ok('T2: ai-chain 含半导体', templatesJson.templates.find((t) => t.id === 'ai-chain').tags.includes('半导体'))
+ok('T2: ai-chain 含 AI', templatesJson.templates.find((t) => t.id === 'ai-chain').tags.includes('AI'))
+ok('T2: crypto 含虚拟货币', templatesJson.templates.find((t) => t.id === 'crypto').tags.includes('虚拟货币'))
+ok('T2: saas 含 SaaS', templatesJson.templates.find((t) => t.id === 'saas').tags.includes('SaaS'))
+// fromTemplate 设 tags
+const t2Theme = store.addTheme('T2 临时')
+store.removeTheme(t2Theme.id)
+// 模拟 fromTemplate：建主题 + 设 tags
+const t2FromTpl = store.addTheme('AI 产业链')
+updateTheme(t2FromTpl.id, { tags: templatesJson.templates.find((t) => t.id === 'ai-chain').tags })
+ok('T2: fromTemplate 主题有 tags', store.allThemes().find((t) => t.id === t2FromTpl.id)?.tags.includes('半导体'))
+
+// --- T3: channels.tags ---
+const t3Ch = store.addChannel({ name: 'T3 通道', fetch: 'rss', kind: '独立媒体', tags: ['AI', '学术'] })
+ok('T3: addChannel 存储 tags', t3Ch.tags.length === 2 && t3Ch.tags.includes('AI'))
+// 旧数据迁移
+const t3OldCh = JSON.parse(store.exportAll({ withRaw: false }))
+delete t3OldCh.channels[0].tags
+store.importAll(JSON.stringify(t3OldCh))
+ok('T3: 旧通道导入后 tags 为空数组', Array.isArray(store.allChannels()[0].tags) && store.allChannels()[0].tags.length === 0)
+
+// --- T4: kindToTags 纯函数 ---
+ok('T4: 财报→财报', kindToTags('财报 / 公告').includes('财报'))
+ok('T4: 一手数据→一手数据', kindToTags('一手数据').includes('一手数据'))
+ok('T4: 券商研报→券商研报', kindToTags('券商研报').includes('券商研报'))
+ok('T4: 未知 kind 返回空', kindToTags('未知').length === 0)
+
+// --- T5: sicToTags 纯函数 ---
+ok('T5: SIC 3674→半导体', sicToTags('3674', 'Semiconductors').includes('半导体'))
+ok('T5: SIC 3674 含 description', sicToTags('3674', 'Semiconductors and Related Devices').includes('Semiconductors and Related Devices'))
+ok('T5: 未知 SIC 用 description', sicToTags('9999', 'Custom Industry').includes('Custom Industry'))
+ok('T5: 无 SIC 无 description 返回空', sicToTags(null, null).length === 0)
+// fixture 有 SIC
+const submissionsFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-submissions.json'), 'utf8'))
+ok('T5: fixture 有 sic', submissionsFixture.sic === '3674')
+ok('T5: fixture 有 sicDescription', submissionsFixture.sicDescription === 'Semiconductors and Related Devices')
+ok('T5: fixture SIC 推导含半导体', sicToTags(submissionsFixture.sic, submissionsFixture.sicDescription).includes('半导体'))
+
+// --- T6: rankChannelsByTags 纯函数 ---
+const t6Channels = [
+  { id: 'a', name: 'A', tags: ['半导体', 'AI', '美股'] },
+  { id: 'b', name: 'B', tags: ['半导体', '美股'] },
+  { id: 'c', name: 'C', tags: ['AI', '学术'] },
+  { id: 'd', name: 'D', tags: ['美食'] },
+]
+const t6ThemeTags = ['半导体', 'AI', '美股']
+const t6Ranked = rankChannelsByTags(t6Channels, t6ThemeTags)
+ok('T6: 交集 3 排第一', t6Ranked[0].channel.id === 'a' && t6Ranked[0].score === 3)
+ok('T6: 交集 2 排第二', t6Ranked[1].channel.id === 'b' && t6Ranked[1].score === 2)
+ok('T6: 交集 1 排第三', t6Ranked[2].channel.id === 'c' && t6Ranked[2].score === 1)
+ok('T6: 交集 0 排最后', t6Ranked[3].channel.id === 'd' && t6Ranked[3].score === 0)
+ok('T6: shared 数组正确', t6Ranked[0].shared.length === 3 && t6Ranked[0].shared.includes('半导体'))
+// 主题 tags 为空 → 全部 score 0，顺序不变
+const t6Empty = rankChannelsByTags(t6Channels, [])
+ok('T6: 空 tags 全部 score 0', t6Empty.every((r) => r.score === 0))
+ok('T6: 空 tags 顺序不变', t6Empty[0].channel.id === 'a' && t6Empty[3].channel.id === 'd')
+// null tags
+const t6Null = rankChannelsByTags(t6Channels, null)
+ok('T6: null tags 全部 score 0', t6Null.every((r) => r.score === 0))
+
+// --- T7: inspector.js 相关性排序 ---
+ok('T7: inspector.js 有 themeTags', inspectorSrcT.includes('themeTags'))
+ok('T7: inspector.js 有 score 分组', inspectorSrcT.includes('score'))
+ok('T7: inspector.js 有最相关', inspectorSrcT.includes('最相关'))
+ok('T7: inspector.js 有相关', inspectorSrcT.includes('相关'))
+ok('T7: inspector.js 有其他', inspectorSrcT.includes('其他'))
+ok('T7: inspector.js 退化保留 themeId 分组', inspectorSrcT.includes('当前主题'))
+
+// --- T8: 不手填 ---
+ok('T8: vault.js 无 tags 输入框', !vaultSrcF.includes('placeholder.*tags') && !vaultSrcF.includes("placeholder: 'tags'"))
+ok('T8: inspector.js 无 tags 输入框', !inspectorSrcT.includes("placeholder: 'tags'"))
+
+// --- T9: LLM 降级 ---
+ok('T9: extract.js 有 generateThemeTags', extractSrc.includes('generateThemeTags'))
+ok('T9: generateThemeTags 无 key 返回 ok: false', extractSrc.includes("return { ok: false, reason: 'no-key' }"))
+
+// --- T10: IPC + preload ---
+ok('T10: ipc.js 有 theme:update', ipcSrcF.includes('theme:update'))
+ok('T10: ipc.js channel:add 异步推导 tags', ipcSrcF.includes('deriveChannelTags'))
+ok('T10: ipc.js channel:update 重算 tags', ipcSrcF.includes('patch.query') || ipcSrcF.includes('patch.fetch'))
+ok('T10: preload.js 有 themeUpdate', pj64.includes('themeUpdate'))
+ok('T10: preload.cjs 有 themeUpdate', pc64.includes('themeUpdate'))
+
+// --- T11: SIC 映射表 ---
+ok('T11: SIC_TO_TAG 有 3674', SIC_TO_TAG[3674] === '半导体')
+ok('T11: KIND_TO_TAGS 有 财报', KIND_TO_TAGS['财报 / 公告'].includes('财报'))
+
+// --- T12: preload 两份同步 ---
+const pjT = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcT = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const extractKeysT = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('T12: preload 两份同步', JSON.stringify(extractKeysT(pjT)) === JSON.stringify(extractKeysT(pcT)))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

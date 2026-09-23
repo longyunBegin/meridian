@@ -41,13 +41,37 @@ async function sourcePanel(node) {
       box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
     }
 
-    // 挂通道下拉（按主题分组）
+    // 挂通道下拉（按标签相关性排序，themeId 次级）
     if (unattached.length) {
       const opt = (ch) => h('option', { value: ch.id }, `${ch.name} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''}`)
-      const mine = unattached.filter((c) => c.themeId === node.themeId)
-      const global = unattached.filter((c) => !c.themeId)
-      const others = unattached.filter((c) => c.themeId && c.themeId !== node.themeId)
       const themeName = state.themes.find((t) => t.id === node.themeId)?.name || '当前主题'
+      const themeTags = state.themes.find((t) => t.id === node.themeId)?.tags || []
+      // themeId 次级排序：当前主题 → 全局 → 其他
+      const byThemeRank = (c) => c.themeId === node.themeId ? 0 : (!c.themeId ? 1 : 2)
+      let groups
+      if (themeTags.length) {
+        const want = new Set(themeTags)
+        const ranked = unattached
+          .map((c) => ({ ch: c, score: (c.tags || []).filter((t) => want.has(t)).length }))
+          .sort((a, b) => b.score - a.score || byThemeRank(a.ch) - byThemeRank(b.ch))
+        const high = ranked.filter((r) => r.score >= 2)
+        const mid = ranked.filter((r) => r.score === 1)
+        const low = ranked.filter((r) => r.score === 0)
+        groups = [
+          high.length ? [`最相关（${high.length}）`, high.map((r) => r.ch)] : null,
+          mid.length ? [`相关（${mid.length}）`, mid.map((r) => r.ch)] : null,
+          low.length ? [`其他（${low.length}）`, low.map((r) => r.ch)] : null,
+        ].filter(Boolean)
+      } else {
+        const mine = unattached.filter((c) => c.themeId === node.themeId).sort((a, b) => byThemeRank(a) - byThemeRank(b))
+        const global = unattached.filter((c) => !c.themeId)
+        const others = unattached.filter((c) => c.themeId && c.themeId !== node.themeId)
+        groups = [
+          mine.length ? [`当前主题 · ${themeName}`, mine] : null,
+          global.length ? ['全局（所有主题可用）', global] : null,
+          others.length ? ['其他主题', others] : null,
+        ].filter(Boolean)
+      }
       const chSel = h('select', {
         class: 'sel', style: { marginTop: '8px' },
         onchange: async (e) => {
@@ -58,9 +82,7 @@ async function sourcePanel(node) {
         },
       },
         h('option', { value: '' }, '+ 挂通道…'),
-        mine.length ? h('optgroup', { label: `当前主题 · ${themeName}` }, ...mine.map(opt)) : null,
-        global.length ? h('optgroup', { label: '全局（所有主题可用）' }, ...global.map(opt)) : null,
-        others.length ? h('optgroup', { label: '其他主题' }, ...others.map(opt)) : null,
+        ...groups.map(([label, chans]) => h('optgroup', { label }, ...chans.map(opt))),
       )
       box.append(chSel)
     } else if (channels.length === 0) {

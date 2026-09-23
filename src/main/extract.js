@@ -124,6 +124,57 @@ function parseQuestions(raw) {
     return arr.filter((q) => typeof q === 'string' && q.trim()).slice(0, 5).map((q) => q.trim())
   } catch { return [] }
 }
+// ----------------------------------------------------------------- theme tags
+
+const THEME_TAGS_SYSTEM = `你是一个产业链分析专家。根据用户给出的主题描述，生成 3-6 个中文标签。
+
+硬规则：
+1. 只要名词性标签，不要句子。
+2. 优先行业、资产类别、市场。
+3. 标签要能跨主题复用——「半导体」比「台积电」好，「美股」比「纳斯达克」好。
+4. 3-6 个，不多不少。
+
+只输出 JSON 数组，不要 markdown 代码块，不要任何解释：
+["标签1","标签2"]`
+
+export async function generateThemeTags(settings, description) {
+  const { baseUrl, apiKey, model } = settings
+  if (!apiKey) return { ok: false, reason: 'no-key' }
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: THEME_TAGS_SYSTEM },
+        { role: 'user', content: String(description).slice(0, 500) },
+      ],
+    }),
+  })
+
+  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const body = await res.json()
+  const raw = body?.choices?.[0]?.message?.content
+  if (!raw) return { ok: false, reason: 'empty' }
+
+  const tags = parseThemeTags(raw)
+  if (!tags.length) return { ok: false, reason: 'unparsable' }
+  return { ok: true, tags }
+}
+
+function parseThemeTags(raw) {
+  const start = raw.indexOf('[')
+  const end = raw.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  try {
+    const arr = JSON.parse(raw.slice(start, end + 1))
+    if (!Array.isArray(arr)) return []
+    return arr.filter((t) => typeof t === 'string' && t.trim()).slice(0, 6).map((t) => t.trim())
+  } catch { return [] }
+}
+
 // ----------------------------------------------------------------- skeleton
 
 /**
