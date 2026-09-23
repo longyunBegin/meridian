@@ -15,7 +15,7 @@ import {
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
-  addReading, allReadings,
+  addReading, allReadings, indicatorsForReading, latestReadingByChannel,
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
@@ -389,14 +389,17 @@ function register({ getMainWindow }) {
       const tpl = templateFind('ai-chain')
       if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
     }
-    // 自动配默认通道包（needsKey:false 启用，needsKey:true 禁用）
-    const packId = r.ok ? 'ai-chain' : 'ai-chain'
-    for (const ch of channelPack(packId)) {
-      addChannel({
-        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
-        cadence: ch.cadence, themeId: theme.id,
-        enabled: !ch.needsKey,
-      })
+    // 按描述匹配通道包，匹配不到不配任何通道——比塞一套不相关的通道诚实
+    const AI_KEYWORDS = /AI|人工智能|LLM|大模型|GPU|芯片|算力|光模块|半导体|silicon|photonics|inference|training|token|cloud|云/
+    const packId = AI_KEYWORDS.test(description) ? 'ai-chain' : null
+    if (packId) {
+      for (const ch of channelPack(packId)) {
+        addChannel({
+          name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+          cadence: ch.cadence, themeId: theme.id,
+          enabled: !ch.needsKey,
+        })
+      }
     }
     return theme
   })
@@ -688,6 +691,8 @@ function register({ getMainWindow }) {
   // ---- 读数层 ----
   ipcMain.handle('reading:add', (_, input) => addReading(input))
   ipcMain.handle('reading:all', () => allReadings())
+  ipcMain.handle('reading:indicatorsFor', (_, reading) => indicatorsForReading(reading))
+  ipcMain.handle('reading:latestByChannel', (_, channelId) => latestReadingByChannel(channelId))
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

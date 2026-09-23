@@ -337,7 +337,7 @@ function metricCard(group) {
 
 export async function renderReadings(mid) {
   clear(mid)
-  const all = await m.allReadings()
+  const [all, channels] = await Promise.all([m.allReadings(), m.channelList()])
 
   // 空态
   if (!all.length) {
@@ -353,12 +353,12 @@ export async function renderReadings(mid) {
     return
   }
 
-  // 筛选器：全部 / 未关联 / 每个 indicator
-  const indicatorIds = [...new Set(all.map((r) => r.indicatorId).filter(Boolean))]
-  const indicatorLabels = {}
-  for (const id of indicatorIds) {
-    const node = await m.getNode(id)
-    indicatorLabels[id] = node ? node.title : id
+  // 筛选器：全部 / 按 channelId 筛选
+  const channelIds = [...new Set(all.map((r) => r.channelId).filter(Boolean))]
+  const channelNames = {}
+  for (const id of channelIds) {
+    const ch = channels.find((c) => c.id === id)
+    channelNames[id] = ch ? ch.name : id
   }
 
   let currentFilter = null
@@ -370,10 +370,8 @@ export async function renderReadings(mid) {
   }, label)
 
   async function refresh() {
-    const filtered = currentFilter === 'unlinked'
-      ? all.filter((r) => !r.indicatorId)
-      : currentFilter
-      ? all.filter((r) => r.indicatorId === currentFilter)
+    const filtered = currentFilter
+      ? all.filter((r) => r.channelId === currentFilter)
       : all
     const groups = groupReadings(filtered)
     const list = $('#readings-list')
@@ -381,9 +379,8 @@ export async function renderReadings(mid) {
   }
 
   filterBar.append(filterBtn('全部', null))
-  filterBar.append(filterBtn('未关联', 'unlinked'))
-  for (const id of indicatorIds) {
-    filterBar.append(filterBtn(indicatorLabels[id], id))
+  for (const id of channelIds) {
+    filterBar.append(filterBtn(channelNames[id], id))
   }
 
   // 手动录入表单
@@ -433,6 +430,27 @@ export async function renderReadings(mid) {
       ...groups.map(metricCard),
     ),
   ))
+
+  // 缺口列表：没有挂通道的 observation 指标
+  const gaps = state.nodes.filter((n) =>
+    n.type === 'observation' && n.status !== 'dead' &&
+    (!n.channelIds || n.channelIds.length === 0))
+  if (gaps.length) {
+    mid.append(h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '未关联指标'), h('em', {}, String(gaps.length))),
+      h('div', { class: 'sect-b' },
+        ...gaps.map((n) => h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, n.title),
+            h('div', { class: 'q-meta' },
+              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
+              h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
+            ),
+          ),
+        )),
+      ),
+    ))
+  }
 }
 
 // ============================================================
@@ -447,6 +465,8 @@ const FETCH_OPTIONS = [
 const KIND_OPTIONS = [
   '财报 / 公告', '一手数据', '券商研报', '独立媒体', '自媒体',
 ]
+
+const EDGAR_FETCHES = new Set(['edgarConcept', 'edgarFilings'])
 
 export async function renderSources(mid) {
   clear(mid)
@@ -473,7 +493,7 @@ export async function renderSources(mid) {
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, ch.name),
             h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · ${ch.enabled ? '启用' : '停用'}`),
+              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
               fetchers.includes(ch.fetch) ? h('button', {
                 class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
@@ -493,7 +513,22 @@ export async function renderSources(mid) {
           h('div', { class: 'q-acts' },
             h('select', {
               class: 'txt', style: { width: 'auto' },
-              onchange: async (e) => { await m.channelUpdate(ch.id, { fetch: e.target.value }); showFlash(`已设 ${ch.name} → ${e.target.value}`) },
+              onchange: async (e) => {
+                const newFetch = e.target.value
+                const patch = { fetch: newFetch }
+                // edgar ↔ 其他：query/metric 语义不同，清掉不相干字段
+                if (EDGAR_FETCHES.has(ch.fetch) && !EDGAR_FETCHES.has(newFetch)) {
+                  patch.metric = null
+                  showFlash(`已设 ${ch.name} → ${newFetch}，已清空 metric，请重新填写`)
+                } else if (!EDGAR_FETCHES.has(ch.fetch) && EDGAR_FETCHES.has(newFetch)) {
+                  patch.metric = null
+                  showFlash(`已设 ${ch.name} → ${newFetch}，已清空 metric，请重新填写`)
+                } else {
+                  showFlash(`已设 ${ch.name} → ${newFetch}`)
+                }
+                await m.channelUpdate(ch.id, patch)
+                await renderSources(mid)
+              },
             },
               ...FETCH_OPTIONS.map((f) =>
                 h('option', { value: f, selected: ch.fetch === f }, f),
@@ -551,11 +586,15 @@ export async function renderSources(mid) {
                     ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
                   ),
                 ),
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '间隔 (分钟)'),
+                  h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
+                ),
                 h('button', {
                   class: 'btn btn-primary',
                   onclick: async () => {
                     if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind })
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60) })
                     showFlash('已添加通道')
                     await renderSources(mid)
                   },

@@ -81,6 +81,7 @@ function migrate(d) {
     n.scaffold = n.scaffold || null
     n.by = n.by || 'manual'
     n.stableId = n.stableId || n.id
+    n.channelIds = Array.isArray(n.channelIds) ? n.channelIds : []
     delete n.source
   }
   // feeds → channels 迁移。feeds.kind 硬编码 'rss' 不在 SOURCE_QUALITY 表里，
@@ -163,6 +164,7 @@ export function addNode(input) {
     history: [{ t, confidence: clamp(input.confidence ?? 50), by: input.by || 'manual' }],
     by: input.by || 'manual',
     stableId: input.stableId || uid(),
+    channelIds: [...new Set(input.channelIds || [])],
     createdAt: t,
     updatedAt: t,
     ...(input.intakeId ? { intakeId: input.intakeId } : {}),
@@ -216,6 +218,7 @@ export function updateNode(id, patch, { propagate = true } = {}) {
   if (patch.sources !== undefined) node.sources = normalizeSources(patch.sources)
   if (patch.tags !== undefined) node.tags = [...new Set(patch.tags)]
   if (patch.tickers !== undefined) node.tickers = normalizeTickers(patch.tickers)
+  if (patch.channelIds !== undefined) node.channelIds = [...new Set(patch.channelIds)]
   node.updatedAt = today()
   persist()
   return node
@@ -1302,4 +1305,20 @@ export function addReading(input) {
 
 export function allReadings() {
   return load().readings
+}
+/** 反查：某个读数属于哪些指标节点 */
+export function indicatorsForReading(reading) {
+  const db = load()
+  const ch = db.channels.find((c) => c.id === reading.channelId)
+  if (!ch) return []
+  return db.nodes.filter((n) => (n.channelIds || []).includes(ch.id))
+}
+
+/** 取某通道产出的最新一条读数 */
+export function latestReadingByChannel(channelId) {
+  const db = load()
+  const readings = db.readings.filter((r) => r.channelId === channelId)
+  if (!readings.length) return null
+  return readings.reduce((latest, r) =>
+    (r.at || '') > (latest.at || '') ? r : latest, readings[0])
 }

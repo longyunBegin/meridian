@@ -1613,5 +1613,124 @@ ok('验收: preload.cjs 无 feedImport', !preloadCjsSrc.includes('feedImport'))
 import { existsSync as existsSync2 } from 'node:fs'
 ok('验收: feeds.js 已删除', !existsSync2(join(ROOT2, 'src/renderer/views/feeds.js')))
 
+// ============================================================
+console.log('\n— R7: 指标来源面板 —')
+// ============================================================
+
+// --- 3.1 packId 修复：非 AI 描述 → 0 通道 ---
+const nonAiTheme = await fire('theme:setupNew', '纺织服装供应链')
+const nonAiChannels = store.allChannels().filter((c) => c.themeId === nonAiTheme.id)
+ok('R7 packId: 非 AI 描述 → 0 通道', nonAiChannels.length === 0, `实际 ${nonAiChannels.length}`)
+
+const aiTheme = await fire('theme:setupNew', 'AI 产业链')
+const aiChannels = store.allChannels().filter((c) => c.themeId === aiTheme.id)
+ok('R7 packId: AI 描述 → 有通道', aiChannels.length > 0, `实际 ${aiChannels.length}`)
+
+// --- 3.2 指针机制：channelIds ---
+const ptrTheme = store.addTheme('R7 指针测试')
+const r7Ch1 = store.addChannel({ name: 'EDGAR NVDA', fetch: 'edgarConcept', query: 'NVDA', kind: '财报 / 公告', themeId: ptrTheme.id })
+const r7Ch2 = store.addChannel({ name: 'EDGAR MSFT', fetch: 'edgarConcept', query: 'MSFT', kind: '财报 / 公告', themeId: ptrTheme.id })
+const r7Ch3 = store.addChannel({ name: 'EDGAR GOOGL', fetch: 'edgarConcept', query: 'GOOGL', kind: '财报 / 公告', themeId: ptrTheme.id })
+
+const indNode = store.addNode({ themeId: ptrTheme.id, kind: 'lemma', title: '云厂商 capex', type: 'observation', channelIds: [r7Ch1.id, r7Ch2.id, r7Ch3.id] })
+ok('R7 channelIds: 挂 3 个通道', indNode.channelIds.length === 3)
+
+store.updateNode(indNode.id, { channelIds: [r7Ch1.id, r7Ch2.id] })
+ok('R7 channelIds: 更新为 2', store.getNode(indNode.id).channelIds.length === 2)
+
+// 旧节点 migrate 补 channelIds
+const oldNodeData = JSON.stringify({
+  version: 4,
+  settings: {},
+  themes: [],
+  nodes: [{ id: 'r7-old-node', themeId: null, parentId: null, kind: 'lemma', title: '旧指标', type: 'observation', confidence: 50, sources: [], tags: [], tickers: [], status: 'live', history: [], by: 'manual', stableId: 'r7-old', createdAt: '2026-01-01', updatedAt: '2026-01-01' }],
+  verdicts: [], conflicts: [], feeds: [], inbox: [], traces: [], channels: [], intakeEvents: [], readings: [],
+})
+store.importAll(oldNodeData)
+const oldNode = store.allNodes().find((n) => n.id === 'r7-old-node')
+ok('R7 migrate: 旧节点 channelIds 为空数组', Array.isArray(oldNode?.channelIds) && oldNode.channelIds.length === 0)
+
+// 导出导入 channelIds 不丢
+store.addNode({ themeId: null, kind: 'lemma', title: '导出测试', type: 'observation', channelIds: ['fake-ch-1', 'fake-ch-2'] })
+const r7Export = store.exportAll()
+store.importAll(r7Export)
+const exportedNode = store.allNodes().find((n) => n.title === '导出测试')
+ok('R7 导出导入: channelIds 不丢', exportedNode?.channelIds?.length === 2)
+
+// --- indicatorsForReading ---
+const ifrTheme = store.addTheme('R7 反查测试')
+const ifrCh = store.addChannel({ name: 'EDGAR TSLA', fetch: 'edgarConcept', query: 'TSLA', kind: '财报 / 公告', themeId: ifrTheme.id })
+const ifrNode = store.addNode({ themeId: ifrTheme.id, kind: 'lemma', title: 'TSLA 收入', type: 'observation', channelIds: [ifrCh.id] })
+const ifrReading = store.addReading({ metric: 'tsla.revenue', value: 96773000000, unit: 'USD', channelId: ifrCh.id, source: { kind: '财报 / 公告', start: '2024-01-01', end: '2024-03-31', accn: '0001628280-24-020' } })
+ok('R7 addReading: 返回 added', ifrReading.added === true)
+const inds = store.indicatorsForReading(ifrReading.reading)
+ok('R7 indicatorsForReading: 返回该指标', inds.length === 1 && inds[0].id === ifrNode.id)
+
+// 无 channelId 的读数 → 空数组
+const orphanReading = { channelId: null, metric: 'test' }
+ok('R7 indicatorsForReading: 无 channelId → 空', store.indicatorsForReading(orphanReading).length === 0)
+
+// --- latestReadingByChannel ---
+const latest1 = store.latestReadingByChannel(ifrCh.id)
+ok('R7 latestReadingByChannel: 返回最新', latest1 != null && latest1.metric === 'tsla.revenue')
+
+// 多条读数取最新
+store.addReading({ metric: 'tsla.revenue', value: 97000000000, unit: 'USD', channelId: ifrCh.id, source: { kind: '财报 / 公告', start: '2024-04-01', end: '2024-06-30', accn: '0001628280-24-030' }, at: '2026-09-24' })
+const latest2 = store.latestReadingByChannel(ifrCh.id)
+ok('R7 latestReadingByChannel: 多条取最新', latest2.value === 97000000000)
+
+// 不存在的 channel → null
+ok('R7 latestReadingByChannel: 不存在 → null', store.latestReadingByChannel('nonexistent') === null)
+
+// --- 3.4 interval 端到端 ---
+const intervalCh = store.addChannel({ name: '间隔测试', fetch: 'rss', query: 'https://example.com', kind: '独立媒体', interval: 30 })
+ok('R7 interval: 填 30 → 读回 30', intervalCh.interval === 30)
+const intervalChFromDb = store.allChannels().find((c) => c.id === intervalCh.id)
+ok('R7 interval: 从 DB 读回 30', intervalChFromDb.interval === 30)
+
+// --- 3.6 改 fetch 类型清场 ---
+const clearCh = store.addChannel({ name: '清场测试', fetch: 'edgarConcept', query: 'NVDA', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', kind: '财报 / 公告' })
+ok('R7 清场: 初始有 metric', clearCh.metric != null)
+store.updateChannel(clearCh.id, { fetch: 'web', metric: null })
+const clearedCh = store.allChannels().find((c) => c.id === clearCh.id)
+ok('R7 清场: edgarConcept → web 清 metric', clearedCh.metric === null)
+
+// --- 缺口列表：observation 节点无 channelIds ---
+const gapTheme = store.addTheme('R7 缺口测试')
+store.addNode({ themeId: gapTheme.id, kind: 'lemma', title: '有通道的指标', type: 'observation', channelIds: ['some-ch'] })
+store.addNode({ themeId: gapTheme.id, kind: 'lemma', title: '无通道的指标1', type: 'observation' })
+store.addNode({ themeId: gapTheme.id, kind: 'lemma', title: '无通道的指标2', type: 'observation' })
+const gapNodes = store.allNodes().filter((n) => n.themeId === gapTheme.id && n.type === 'observation' && (!n.channelIds || n.channelIds.length === 0))
+ok('R7 缺口: 2 个无通道指标', gapNodes.length === 2)
+
+// --- grep 验收 ---
+const inspectorSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+const vaultSrcR7 = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+
+// 读数视图和来源面板无「加权」「汇总」「总量」「合计」
+ok('R7 验收: vault.js 无 加权', !vaultSrcR7.includes('加权'))
+ok('R7 验收: vault.js 无 汇总', !vaultSrcR7.includes('汇总'))
+ok('R7 验收: vault.js 无 总量', !vaultSrcR7.includes('总量'))
+ok('R7 验收: vault.js 无 合计', !vaultSrcR7.includes('合计'))
+ok('R7 验收: inspector.js 无 加权', !inspectorSrc.includes('加权'))
+ok('R7 验收: inspector.js 无 汇总', !inspectorSrc.includes('汇总'))
+ok('R7 验收: inspector.js 无 总量', !inspectorSrc.includes('总量'))
+ok('R7 验收: inspector.js 无 合计', !inspectorSrc.includes('合计'))
+
+// 新代码不写 indicatorId（store.js addReading 里有 indicatorId 是旧代码，不算新写）
+// 检查 inspector.js 和 vault.js 不含 indicatorId 写入
+ok('R7 验收: inspector.js 无 indicatorId 写入', !inspectorSrc.includes('indicatorId'))
+ok('R7 验收: vault.js 无 indicatorId 写入', !vaultSrcR7.includes('indicatorId'))
+
+// preload 两份同步
+const pjR7 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcR7 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const extractKeysR7 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('R7 验收: preload 两份同步', JSON.stringify(extractKeysR7(pjR7)) === JSON.stringify(extractKeysR7(pcR7)))
+
+// 新 store 导出函数有渲染层调用方
+ok('R7 验收: indicatorsForReading 有渲染层调用', inspectorSrc.includes('indicatorsForReading') || vaultSrcR7.includes('indicatorsForReading'))
+ok('R7 验收: latestReadingByChannel 有渲染层调用', inspectorSrc.includes('latestReadingByChannel') || vaultSrcR7.includes('latestReadingByChannel'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

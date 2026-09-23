@@ -4,6 +4,92 @@ import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 
 const m = window.meridian
 
+/** 读数来源面板：挂通道 → 看最新读数 → 判断有没有东西能验证 */
+async function sourcePanel(node) {
+  const box = h('div', { class: 'insp-section' })
+  box.append(h('div', { class: 'insp-h' }, '读数来源'),
+    h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载中…'))
+
+  try {
+    const channels = await m.channelList()
+    const attached = (node.channelIds || []).map((id) => channels.find((c) => c.id === id)).filter(Boolean)
+    const unattached = channels.filter((c) => !(node.channelIds || []).includes(c.id))
+
+    // 最新读数
+    const latestReadings = []
+    for (const ch of attached) {
+      const r = await m.latestReadingByChannel(ch.id)
+      if (r) latestReadings.push({ channel: ch, reading: r })
+    }
+
+    clear(box)
+    box.append(h('div', { class: 'insp-h' }, '读数来源'))
+
+    // 已挂通道
+    if (attached.length) {
+      box.append(h('div', { class: 'src-list', style: { marginTop: '6px' } },
+        ...attached.map((ch) => h('div', { class: 'src-row' },
+          h('span', { class: 'badge badge-observation', style: { fontSize: '10px' } }, ch.fetch),
+          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name),
+          h('button', { class: 'btn btn-icon', title: '移除', onclick: async () => {
+            await m.updateNode(node.id, { channelIds: (node.channelIds || []).filter((id) => id !== ch.id) })
+            await refresh()
+          } }, '×'),
+        )),
+      ))
+    } else {
+      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
+    }
+
+    // 挂通道下拉
+    if (unattached.length) {
+      const chSel = h('select', {
+        class: 'sel', style: { marginTop: '8px' },
+        onchange: async (e) => {
+          if (!e.target.value) return
+          await m.updateNode(node.id, { channelIds: [...(node.channelIds || []), e.target.value] })
+          e.target.value = ''
+          await refresh()
+        },
+      },
+        h('option', { value: '' }, '+ 挂通道…'),
+        ...unattached.map((ch) => h('option', { value: ch.id }, `${ch.name} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''}`)),
+      )
+      box.append(chSel)
+    } else if (channels.length === 0) {
+      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '没有可选通道，去「数据源」建一个'))
+    }
+
+    // 最新读数
+    if (latestReadings.length) {
+      box.append(h('div', { class: 'insp-h', style: { marginTop: '14px' } }, '最新读数'))
+      for (const { channel, reading } of latestReadings) {
+        const indicators = await m.indicatorsForReading(reading)
+        box.append(h('div', { class: 'src-row', style: { marginTop: '4px' } },
+          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', color: 'var(--text-2)' } },
+            `${reading.metric}  ${(typeof reading.value === 'number' ? reading.value.toLocaleString('en-US') : reading.value)}${reading.unit ? ' ' + reading.unit : ''}`,
+          ),
+          h('span', { style: { fontSize: '10px', color: 'var(--text-3)', flex: 'none' } }, reading.asOf || '—'),
+          reading.source?.url ? h('button', { class: 'btn', style: { padding: '1px 6px', fontSize: '11px', flex: 'none' }, onclick: () => m.openExternal(reading.source.url) }, '来源') : null,
+        ))
+        if (indicators.length) {
+          box.append(h('p', { style: { margin: '0 0 4px', fontSize: '10px', color: 'var(--text-3)' } },
+            `跟踪指标：${indicators.map((n) => n.title).join('、')}`))
+        }
+      }
+    }
+
+    // 状态行
+    box.append(h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)' } },
+      attached.length ? `有 ${attached.length} 个自动源` : '暂无自动源，需手填'))
+  } catch {
+    clear(box)
+    box.append(h('div', { class: 'insp-h' }, '读数来源'),
+      h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载失败'))
+  }
+  return box
+}
+
 /**
  * 环节上的研究台：
  *   要回答什么问题 → 跟踪什么指标 → 什么信号出现说明这一层错了
@@ -348,6 +434,7 @@ export function renderInspectorLattice(aside) {
       h('p', { style: { margin: '6px 0 0', fontSize: '10px', color: 'var(--text-3)', lineHeight: '1.5' } },
         '命题上挂涉及的标的，可反查这条产业链位置影响哪些票。不输出买卖建议、评分、目标价。'),
     ),
+    (() => { const sp = h('div'); sourcePanel(node).then((el) => { sp.replaceWith(el) }); return sp })(),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '苏格拉底追问'),
       socraticBtn,
