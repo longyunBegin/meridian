@@ -304,17 +304,19 @@ export function repropagate(id) {
 // ------------------------------------------------------------------ themes
 
 export function allThemes() { return load().themes.filter((t) => !t.deletedAt) }
+export function deletedThemes() { return load().themes.filter((t) => t.deletedAt) }
 
 export function bestThemeContext() {
   const db = load()
-  if (!db.themes.length) return null
+  const live = db.themes.filter((t) => !t.deletedAt)
+  if (!live.length) return null
   const counts = {}
   for (const n of db.nodes) {
-    if (n.kind === 'lemma') counts[n.themeId] = (counts[n.themeId] || 0) + 1
+    if (n.kind === 'lemma' && n.status !== 'dead') counts[n.themeId] = (counts[n.themeId] || 0) + 1
   }
-  let best = db.themes[0]
+  let best = live[0]
   let max = -1
-  for (const t of db.themes) {
+  for (const t of live) {
     const c = counts[t.id] || 0
     if (c > max) { max = c; best = t }
   }
@@ -858,12 +860,12 @@ export function stats() {
   const nodes = db.nodes
   const lemmas = nodes.filter((n) => n.kind === 'lemma')
   return {
-    themes: db.themes.length,
+    themes: db.themes.filter((t) => !t.deletedAt).length,
     branches: nodes.length - lemmas.length,
     lemmas: lemmas.length,
     live: lemmas.filter((n) => n.status === 'live').length,
     cold: lemmas.filter((n) => n.status === 'cold').length,
-    dead: lemmas.filter((n) => n.status === 'dead').length,
+    dead: nodes.filter((n) => n.status === 'dead').length,
     due: dueSettlements().length,
     events: propagationEvents(14).length,
     verdicts: db.verdicts.length,

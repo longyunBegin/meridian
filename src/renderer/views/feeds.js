@@ -1,4 +1,4 @@
-import { h, icon, clear } from '../lib/dom.js'
+import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh } from '../app.js'
 import { confColorContinuous } from './shared.js'
 
@@ -129,7 +129,7 @@ function renderFeedDetail(feed, mid) {
           class: 'btn btn-primary', style: { height: '28px' },
           onclick: async () => {
             const chosen = [...picked].sort((a, b) => a - b).map((i) => feedItems[i])
-            if (!state.themeId) { alert('先选择一个主题'); return }
+            if (!state.themeId) { toast('先选择一个主题', 'var(--red)'); return }
             await m.feedImport(feed.id, state.themeId, chosen)
             feedItems = []
             picked.clear()

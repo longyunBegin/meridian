@@ -1,7 +1,7 @@
 const { ipcMain, shell, app } = globalThis.__electron
 import {
   load, addNode, updateNode, removeNode, restoreNode, purgeDead, repropagate, suggestParent, settleLemma, getNode,
-  allThemes, addTheme, removeTheme, restoreTheme, renameTheme, allNodes, rootNodes, childrenOf,
+  allThemes, addTheme, removeTheme, restoreTheme, renameTheme, deletedThemes, allNodes, rootNodes, childrenOf,
   settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
@@ -357,6 +357,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:addSource', (_, id, source) => addSource(id, source))
 
   ipcMain.handle('theme:all', () => allThemes())
+  ipcMain.handle('theme:deleted', () => deletedThemes())
   ipcMain.handle('theme:add', (_, name) => addTheme(name))
   ipcMain.handle('theme:remove', (_, id) => removeTheme(id))
   ipcMain.handle('theme:restore', (_, id) => restoreTheme(id))

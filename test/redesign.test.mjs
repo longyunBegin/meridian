@@ -1094,5 +1094,42 @@ ok('Fix: 通知正文含下游数', nCtx?.body.includes('3 条下游'), `实际 
 const nNoCtx = buildNotification([{ id: 'y', title: '无上下文命题' }])
 ok('Fix: 无上下文时正文只有标题', nNoCtx?.body === '无上下文命题', `实际 ${nNoCtx?.body}`)
 
+// ============================================================
+console.log('\n— Fix2: bestThemeContext 不选已删主题 —')
+// ============================================================
+
+const btcTheme = store.addTheme('BTC 大主题')
+const btcBranch = store.addNode({ themeId: btcTheme.id, kind: 'branch', title: 'BTC 环节', propagation: 0.5 })
+for (let i = 0; i < 500; i++) {
+  store.addNode({ themeId: btcTheme.id, parentId: btcBranch.id, kind: 'lemma', title: `BTC 命题 ${i}`, confidence: 60 })
+}
+const smallTheme = store.addTheme('小主题')
+store.addNode({ themeId: smallTheme.id, kind: 'branch', title: '小环节', propagation: 0.5 })
+store.addNode({ themeId: smallTheme.id, kind: 'lemma', title: '小命题', confidence: 60 })
+
+ok('Fix2: 软删前 BTC 是 bestThemeContext', store.bestThemeContext()?.id === btcTheme.id, `实际 ${store.bestThemeContext()?.name}`)
+
+store.removeTheme(btcTheme.id)
+ok('Fix2: 软删后 bestThemeContext 不选已删主题', store.bestThemeContext()?.id !== btcTheme.id, `实际 ${store.bestThemeContext()?.name}`)
+ok('Fix2: 软删后 bestThemeContext 选活跃主题', !store.deletedThemes().some((t) => t.id === store.bestThemeContext()?.id))
+
+// stats().themes 也不包含已删主题
+const stAfter = store.stats()
+ok('Fix2: stats.themes 不含已删主题', stAfter.themes === store.allThemes().length, `实际 stats=${stAfter.themes} allThemes=${store.allThemes().length}`)
+
+// stats().dead 数所有 dead 节点（含 branch）
+const deadNodes = store.allNodes().filter((n) => n.status === 'dead')
+ok('Fix2: stats.dead 数所有 dead 节点', stAfter.dead === deadNodes.length, `实际 stats=${stAfter.dead} actual=${deadNodes.length}`)
+
+// 恢复
+store.restoreTheme(btcTheme.id)
+ok('Fix2: 恢复后 bestThemeContext 回到 BTC', store.bestThemeContext()?.id === btcTheme.id, `实际 ${store.bestThemeContext()?.name}`)
+
+// deletedThemes 列表
+store.removeTheme(smallTheme.id)
+const delTs = store.deletedThemes()
+ok('Fix2: deletedThemes 返回已删主题', delTs.some((t) => t.id === smallTheme.id))
+ok('Fix2: deletedThemes 不含活跃主题', !delTs.some((t) => t.id === btcTheme.id))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

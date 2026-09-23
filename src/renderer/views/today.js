@@ -1,4 +1,4 @@
-import { h, icon, clear } from '../lib/dom.js'
+import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
 import { confColor, confColorContinuous, nodePath } from './shared.js'
 
@@ -142,7 +142,7 @@ export async function renderToday(mid) {
               h('button', {
                 class: 'btn btn-primary', style: { height: '28px' },
                 onclick: async () => {
-                  if (!state.themeId) { alert('先选择一个主题'); return }
+                  if (!state.themeId) { toast('先选择一个主题', 'var(--red)'); return }
                   const chosen = [...picked].sort((a, b) => a - b).map((i) => inbox[i])
                   const ovMap = {}
                   for (const item of chosen) {

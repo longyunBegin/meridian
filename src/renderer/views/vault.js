@@ -128,11 +128,14 @@ function side(n, label) {
 async function renderReview(mid) {
   clear(mid)
 
-  const [series, filterCalib, verdicts] = await Promise.all([
+  const [series, filterCalib, verdicts, byChannel, channels] = await Promise.all([
     m.intakeSeries(30),
     m.filterCalibration(),
     m.verdicts(),
+    m.falseKillByChannel(30),
+    m.channelList(),
   ])
+  const chName = (id) => channels.find((c) => c.id === id)?.kind || id
 
   // 聚合最近 30 天
   const agg = series.reduce((a, b) => ({
@@ -231,6 +234,20 @@ async function renderReview(mid) {
               h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${s.missed} / ${s.total}`),
             )
           }),
+        ),
+      ),
+    ) : null,
+
+    // 误杀归因到通道
+    byChannel.length ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '误杀归因到通道'), h('em', {}, `近 30 天 · ${byChannel.length} 通道`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          ...byChannel.map((c) => h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: c.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, `${Math.round(c.rate * 100)}%`),
+            h('div', { class: 'review-metric-label' }, chName(c.channelId)),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${c.missed} / ${c.total}`),
+          )),
         ),
       ),
     ) : null,

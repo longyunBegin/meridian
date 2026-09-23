@@ -47,6 +47,15 @@ export function mount(parent, ...children) {
 export const $ = (sel, root = document) => root.querySelector(sel)
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)]
 
+/** 临时浮层提示，3 秒后自动消失。替代 alert()。 */
+export function toast(msg, color = 'var(--text-2)') {
+  const el = document.createElement('div')
+  el.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:${color === 'var(--red)' ? 'var(--red)' : 'var(--bg-2, #333)'};color:${color === 'var(--red)' ? 'white' : color};padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.15)`
+  el.textContent = msg
+  document.body.append(el)
+  setTimeout(() => el.remove(), 3000)
+}
+
 /** 行内 SVG 图标，1.5px 描边，风格贴近 SF Symbols。 */
 const PATHS = {
   capture: 'M4 8v8M8 4v16M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z',

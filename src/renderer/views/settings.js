@@ -60,6 +60,14 @@ export async function renderSettings(mid) {
   const stats = await m.stats()
   const raw = await m.rawStats()
   const feeds = await m.feeds()
+  const deletedTs = await m.deletedThemes()
+
+  const toast = h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
+  const flash = (msg, color = 'var(--text-2)') => {
+    toast.textContent = msg
+    toast.style.color = color
+    setTimeout(() => { toast.textContent = '' }, 3000)
+  }
 
   const mb = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`)
 
@@ -94,6 +102,7 @@ export async function renderSettings(mid) {
     h('div', { class: 'page-head' },
       h('h1', {}, '设置'),
       h('p', {}, '归位与打标。没有 key 也能用——捕获时整段原文会存成一条观测命题。'),
+      toast,
     ),
 
     h('section', { class: 'sect' },
@@ -166,7 +175,7 @@ export async function renderSettings(mid) {
             h('span', { class: 'q' }, f.lastFetch ? `${f.lastCount} 条 · ${f.lastFetch}` : '未拉取'),
             h('button', { class: 'btn btn-icon', title: '拉取', onclick: async () => {
               const r = await m.feedFetch(f.id)
-              alert(r.ok ? `拉到 ${r.items.length} 条` : `失败：${r.reason}`)
+              flash(r.ok ? `拉到 ${r.items.length} 条` : `失败：${r.reason}`)
               await renderSettings(mid)
             } }, '↻'),
             h('button', { class: 'btn btn-icon', title: '删除', onclick: async () => {
@@ -204,7 +213,7 @@ export async function renderSettings(mid) {
             class: 'btn',
             onclick: async () => {
               const r = await m.rawPrune()
-              alert(`清理了 ${r.removed} 条无引用原文，保留 ${r.kept} 条`)
+              flash(`清理了 ${r.removed} 条无引用原文，保留 ${r.kept} 条`)
               await renderSettings(mid)
             },
           }, '清理无引用原文'),
@@ -213,28 +222,66 @@ export async function renderSettings(mid) {
             onclick: async () => {
               if (!confirm('清空全部原文？\n\n判断、置信度、校准曲线全部保留，但所有「看原文」都会失效。')) return
               const r = await m.rawClear()
-              alert(`已清空 ${r.removed} 条原文，摘除 ${r.unlinked} 处引用`)
+              flash(`已清空 ${r.removed} 条原文，摘除 ${r.unlinked} 处引用`)
               await renderSettings(mid)
             },
           }, '清空全部原文'),
           h('button', {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
-              const s = await m.stats()
-              const msg = `清空墓碑区？\n\n` +
-                `当前墓碑区共 ${s.dead} 条：\n` +
-                `· 你用 ⌘⌫ 删的会真删\n` +
-                `· 置信度跌破 20 自动进墓的也会真删\n\n` +
-                `不可恢复。`
-              if (!confirm(msg)) return
-              const r = await m.purgeDead()
-              alert(`已永久删除 ${r.removed} 条墓碑节点`)
+              const r = await m.purgeDead('user')
+              if (r.removed === 0) { flash('没有你删的节点'); return }
+              if (!confirm(`真删 ${r.removed} 条你用 ⌘⌫ 删的节点？\n\n不可恢复。`)) return
+              const r2 = await m.purgeDead('user')
+              flash(`已真删 ${r2.removed} 条你删的节点`)
               await renderSettings(mid)
             },
-          }, '清空墓碑区'),
+          }, `清空我删的（${stats.dead} 中含 ⌘⌫）`),
+          h('button', {
+            class: 'btn', style: { color: 'var(--red)' },
+            onclick: async () => {
+              const r = await m.purgeDead('auto')
+              if (r.removed === 0) { flash('没有跌死的节点'); return }
+              if (!confirm(`真删 ${r.removed} 条置信度跌破 20 自动进墓的节点？\n\n不可恢复。`)) return
+              const r2 = await m.purgeDead('auto')
+              flash(`已真删 ${r2.removed} 条跌死的节点`)
+              await renderSettings(mid)
+            },
+          }, '清空跌死的'),
         ),
       ),
     ),
+
+    // ---- 已删主题（可恢复）
+    deletedTs.length ? h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '已删主题'), h('em', {}, String(deletedTs.length))),
+      h('div', { class: 'sect-b' },
+        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-3)', lineHeight: '1.6' } },
+          '软删的主题可恢复。节点仍在墓碑区，恢复后整棵子树复活。'),
+        ...deletedTs.map((t) => h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, t.name),
+            h('div', { class: 'q-meta' }, h('span', {}, `删于 ${t.deletedAt}`)),
+          ),
+          h('div', { class: 'q-acts' },
+            h('button', {
+              class: 'btn',
+              onclick: async () => { await m.restoreTheme(t.id); flash(`已恢复主题「${t.name}」`, 'var(--green)'); await renderSettings(mid) },
+            }, '恢复'),
+            h('button', {
+              class: 'btn', style: { color: 'var(--red)' },
+              onclick: async () => {
+                if (!confirm(`永久删除主题「${t.name}」及其所有节点？\n\n不可恢复。`)) return
+                await m.removeTheme(t.id)
+                await m.purgeDead('all')
+                flash(`已永久删除主题「${t.name}」`)
+                await renderSettings(mid)
+              },
+            }, '真删'),
+          ),
+        )),
+      ),
+    ) : null,
 
     // ---- 数据主权
     h('section', { class: 'sect' },
@@ -264,7 +311,7 @@ export async function renderSettings(mid) {
                 if (!file) return
                 const text = await file.text()
                 try { await m.importAll(text); await renderSettings(mid) }
-                catch { alert('导入失败：不是有效的脉络数据') }
+                catch { flash('导入失败：不是有效的脉络数据', 'var(--red)') }
               }
               input.click()
             },

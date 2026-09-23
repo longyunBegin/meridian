@@ -1,4 +1,4 @@
-import { h, icon, clear, $ } from './lib/dom.js'
+import { h, icon, clear, $, toast } from './lib/dom.js'
 import { renderToday, inboxPaste } from './views/today.js'
 import { renderLattice } from './views/lattice.js'
 import { renderAudit } from './views/audit.js'
@@ -325,7 +325,7 @@ function importJson() {
         state.themeId = (await m.themes())[0]?.id || null
         await refresh()
       } catch {
-        alert('导入失败：不是有效的脉络数据')
+        toast('导入失败：不是有效的脉络数据', 'var(--red)')
       }
     },
   }).click()

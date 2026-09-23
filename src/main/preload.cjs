@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('meridian', {
   setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
   restoreTheme: (id) => ipcRenderer.invoke('theme:restore', id),
+  deletedThemes: () => ipcRenderer.invoke('theme:deleted'),
   renameTheme: (id, name) => ipcRenderer.invoke('theme:rename', id, name),
   saveSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
 
