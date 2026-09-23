@@ -146,7 +146,7 @@ async function renderReview(mid) {
     confirmed: a.confirmed + b.confirmed,
     rejected: a.rejected + b.rejected,
     undone: a.undone + b.undone,
-    overridden: a.overridden + a.overridden,
+    overridden: a.overridden + b.overridden,
     degraded: a.degraded + b.degraded,
   }), { captured: 0, gatedIn: 0, autoImported: 0, toInbox: 0, confirmed: 0, rejected: 0, undone: 0, overridden: 0, degraded: 0 })
 

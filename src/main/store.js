@@ -226,9 +226,10 @@ export function restoreNode(id) {
 /**
  * 真删：清空墓碑区节点（不可恢复）。
  * scope: 'user' = 只删用户软删的（有 deletedAt），'auto' = 只删跌死的（无 deletedAt），'all' = 全部
+ * { dryRun: true } 只返回计数不落盘，用于确认前预览。
  * 返回 { removed, userDeleted, autoDead } 方便 UI 拆开显示计数。
  */
-export function purgeDead(scope = 'all') {
+export function purgeDead(scope = 'all', { dryRun = false } = {}) {
   const db = load()
   const deadNodes = db.nodes.filter((n) => n.status === 'dead')
   const userDeleted = deadNodes.filter((n) => n.deletedAt)
@@ -237,6 +238,7 @@ export function purgeDead(scope = 'all') {
   if (scope === 'user') toRemove = userDeleted
   else if (scope === 'auto') toRemove = autoDead
   else toRemove = deadNodes
+  if (dryRun) return { removed: toRemove.length, userDeleted: userDeleted.length, autoDead: autoDead.length }
   const deadIds = new Set(toRemove.map((n) => n.id))
   db.nodes = db.nodes.filter((n) => !deadIds.has(n.id))
   db.conflicts = db.conflicts.filter((c) => !deadIds.has(c.a) && !deadIds.has(c.b))

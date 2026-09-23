@@ -318,7 +318,7 @@ function renderInboxItem(item, i, mid, themeNodes) {
       h('button', {
         class: 'btn btn-primary', style: { height: '24px' },
         onclick: async () => {
-          if (!state.themeId) { alert('先选择一个主题'); return }
+          if (!state.themeId) { toast('先选择一个主题', 'var(--red)'); return }
           const o = overrides.get(item.id) || {}
           const ovMap = Object.keys(o).length ? { [item.id]: o } : {}
           await m.inboxImport(state.themeId, [item], ovMap)

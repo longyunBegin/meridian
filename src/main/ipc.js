@@ -351,7 +351,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:updateNode', (_, id, patch) => updateNode(id, patch))
   ipcMain.handle('db:removeNode', (_, id) => removeNode(id))
   ipcMain.handle('db:restoreNode', (_, id) => restoreNode(id))
-  ipcMain.handle('db:purgeDead', (_, scope) => purgeDead(scope))
+  ipcMain.handle('db:purgeDead', (_, scope, opts) => purgeDead(scope, opts))
   ipcMain.handle('db:repropagate', (_, id) => repropagate(id))
   ipcMain.handle('db:settle', (_, id, correct) => settleLemma(id, correct))
   ipcMain.handle('db:addSource', (_, id, source) => addSource(id, source))

@@ -1131,5 +1131,73 @@ const delTs = store.deletedThemes()
 ok('Fix2: deletedThemes 返回已删主题', delTs.some((t) => t.id === smallTheme.id))
 ok('Fix2: deletedThemes 不含活跃主题', !delTs.some((t) => t.id === btcTheme.id))
 
+// ============================================================
+console.log('\n— Fix3: purgeDead dryRun 不落盘 —')
+// ============================================================
+
+const dryTheme = store.addTheme('dryRun 测试')
+const dryBranch = store.addNode({ themeId: dryTheme.id, kind: 'branch', title: 'dry 环节', propagation: 0.5 })
+const dryLemma = store.addNode({ themeId: dryTheme.id, parentId: dryBranch.id, kind: 'lemma', title: 'dry 命题', confidence: 60 })
+store.removeNode(dryLemma.id)
+
+const beforeCount = store.allNodes().filter((n) => n.status === 'dead').length
+const dryResult = store.purgeDead('user', { dryRun: true })
+ok('Fix3: dryRun 返回计数', dryResult.removed > 0, `实际 ${dryResult.removed}`)
+ok('Fix3: dryRun 不删节点', store.allNodes().filter((n) => n.status === 'dead').length === beforeCount, `实际 ${store.allNodes().filter((n) => n.status === 'dead').length} vs ${beforeCount}`)
+ok('Fix3: dryRun 后节点仍在', store.getNode(dryLemma.id) != null)
+
+const realResult = store.purgeDead('user')
+ok('Fix3: 真删后节点不在', store.getNode(dryLemma.id) == null)
+ok('Fix3: 真删 removed > 0', realResult.removed > 0)
+
+// ============================================================
+console.log('\n— Fix3: 复盘页聚合逻辑 —')
+// ============================================================
+
+// 构造多天 intakeEvents，含 overridden
+const aggTheme = store.addTheme('聚合测试主题')
+const aggBranch = store.addNode({ themeId: aggTheme.id, kind: 'branch', title: '聚合环节', propagation: 0.5 })
+for (let i = 0; i < 200; i++) {
+  store.addNode({ themeId: aggTheme.id, parentId: aggBranch.id, kind: 'lemma', title: `聚合命题 ${i}`, confidence: 60 })
+}
+
+// 第一天：3 条捕获，1 条 overridden
+store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['a'], overridden: true })
+store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['b'] })
+store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['c'] })
+
+// 第二天：2 条捕获，1 条 overridden
+store.addIntakeEvent({ at: '2026-09-21', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['d'], overridden: true })
+store.addIntakeEvent({ at: '2026-09-21', themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['e'] })
+
+const aggSeries = store.intakeSeries(30)
+const day20 = aggSeries.find((b) => b.date === '2026-09-20')
+const day21 = aggSeries.find((b) => b.date === '2026-09-21')
+
+ok('Fix3: day20 captured = 3', day20?.captured === 3, `实际 ${day20?.captured}`)
+ok('Fix3: day20 overridden = 1', day20?.overridden === 1, `实际 ${day20?.overridden}`)
+ok('Fix3: day21 overridden = 1', day21?.overridden === 1, `实际 ${day21?.overridden}`)
+
+// 复盘页聚合逻辑（与 vault.js renderReview 中的 reduce 相同）
+const agg = aggSeries.reduce((a, b) => ({
+  captured: a.captured + b.captured,
+  gatedIn: a.gatedIn + b.gatedIn,
+  autoImported: a.autoImported + b.autoImported,
+  toInbox: a.toInbox + b.toInbox,
+  confirmed: a.confirmed + b.confirmed,
+  rejected: a.rejected + b.rejected,
+  undone: a.undone + b.undone,
+  overridden: a.overridden + b.overridden,
+  degraded: a.degraded + b.degraded,
+}), { captured: 0, gatedIn: 0, autoImported: 0, toInbox: 0, confirmed: 0, rejected: 0, undone: 0, overridden: 0, degraded: 0 })
+
+ok('Fix3: 聚合 overridden > 0', agg.overridden > 0, `实际 ${agg.overridden}`)
+ok('Fix3: 聚合 overridden = 2', agg.overridden === 2, `实际 ${agg.overridden}`)
+
+// 归位修改率 = overridden / (autoImported + confirmed)
+const overrideRate = agg.autoImported + agg.confirmed > 0 ? Math.round((agg.overridden / (agg.autoImported + agg.confirmed)) * 100) : 0
+ok('Fix3: 归位修改率 > 0', overrideRate > 0, `实际 ${overrideRate}%`)
+ok('Fix3: 归位修改率 = overridden/(auto+confirmed)', agg.overridden === 2 && overrideRate === Math.round(2 / (agg.autoImported + agg.confirmed) * 100), `实际 ${overrideRate}% (overridden=${agg.overridden} auto=${agg.autoImported} confirmed=${agg.confirmed})`)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

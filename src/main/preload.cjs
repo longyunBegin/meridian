@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld('meridian', {
   updateNode: (id, patch) => ipcRenderer.invoke('db:updateNode', id, patch),
   removeNode: (id) => ipcRenderer.invoke('db:removeNode', id),
   restoreNode: (id) => ipcRenderer.invoke('db:restoreNode', id),
-  purgeDead: (scope) => ipcRenderer.invoke('db:purgeDead', scope),
+  purgeDead: (scope, opts) => ipcRenderer.invoke('db:purgeDead', scope, opts),
   repropagate: (id) => ipcRenderer.invoke('db:repropagate', id),
   settle: (id, correct) => ipcRenderer.invoke('db:settle', id, correct),
   addSource: (id, source) => ipcRenderer.invoke('db:addSource', id, source),
