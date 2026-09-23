@@ -282,6 +282,8 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
           `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +
           `${stats.verdicts} 条裁决 · ${stats.conflicts} 待裁决冲突 · ${stats.due} 待结算 · ${stats.readings} 读数`),
         h('p', { style: { margin: '0 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
