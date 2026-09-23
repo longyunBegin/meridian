@@ -620,7 +620,7 @@ const inboxBeforeUndo = store.allInbox().length
 
 const undoResult = await fire('inbox:undoAutoImport', undoCapture.intakeEventId)
 ok('撤销返回 ok', undoResult?.ok === true)
-ok('撤销后节点已删除', store.getNode(undoNodeId) == null)
+ok('撤销后节点入墓', store.getNode(undoNodeId)?.status === 'dead')
 ok('撤销后收件箱+1', store.allInbox().length === inboxBeforeUndo + 1, `实际 ${store.allInbox().length} vs ${inboxBeforeUndo + 1}`)
 const undoInboxItem = store.allInbox().find(i => i.title === '半导体 出货量同比增长50%')
 ok('撤销后收件箱有条目', undoInboxItem != null)
@@ -939,6 +939,77 @@ if (rawAutoCap?.imported?.[0]?.id) {
     ok('raw: 自动入库 raw 有 url', autoRaw?.url === 'https://spacex.com/launches', `实际 ${autoRaw?.url}`)
   }
 }
+
+// ============================================================
+console.log('\n— R2: 定时器纯函数 —')
+// ============================================================
+
+const { isQuietHours, dueToNotify, buildNotification } = await import('../src/main/scheduler.js')
+
+// 时段边界
+ok('scheduler: 10:00 不静默', isQuietHours(new Date('2026-01-01T10:00:00')) === false)
+ok('scheduler: 21:59 不静默', isQuietHours(new Date('2026-01-01T21:59:00')) === false)
+ok('scheduler: 22:00 静默', isQuietHours(new Date('2026-01-01T22:00:00')) === true)
+ok('scheduler: 03:00 静默', isQuietHours(new Date('2026-01-01T03:00:00')) === true)
+ok('scheduler: 08:59 静默', isQuietHours(new Date('2026-01-01T08:59:00')) === true)
+ok('scheduler: 09:00 不静默', isQuietHours(new Date('2026-01-01T09:00:00')) === false)
+
+// 去重
+const notified = new Set(['a'])
+const dueList = [{ id: 'a', title: '已通知' }, { id: 'b', title: '新到期' }, { id: 'c', title: '也新' }]
+const fresh = dueToNotify(dueList, notified)
+ok('scheduler: 去重后只剩 2 条', fresh.length === 2, `实际 ${fresh.length}`)
+ok('scheduler: 去重后是 b 和 c', fresh[0]?.id === 'b' && fresh[1]?.id === 'c')
+
+// 通知构造
+const n1 = buildNotification([{ id: 'x', title: '光模块超预期' }])
+ok('scheduler: 单条标题', n1?.title === '脉络 · 到期结算', `实际 ${n1?.title}`)
+ok('scheduler: 单条正文', n1?.body === '光模块超预期')
+
+const n3 = buildNotification([{ id: 'a', title: '第一条' }, { id: 'b', title: '第二条' }, { id: 'c', title: '第三条' }])
+ok('scheduler: 多条标题', n3?.title === '脉络 · 3 条判断到期', `实际 ${n3?.title}`)
+ok('scheduler: 多条正文取最早', n3?.body === '第一条')
+
+ok('scheduler: 空列表返回 null', buildNotification([]) === null)
+ok('scheduler: null 返回 null', buildNotification(null) === null)
+
+// ============================================================
+console.log('\n— R3: 误杀率按 gate 拆分 —')
+// ============================================================
+
+const fcResult = store.filterCalibration()
+ok('R3: filterCalibration 返回数组', Array.isArray(fcResult))
+ok('R3: 有 byGate 属性', fcResult.byGate != null)
+ok('R3: byGate 有 source', fcResult.byGate.source != null)
+ok('R3: byGate 有 dedup', fcResult.byGate.dedup != null)
+ok('R3: byGate 有 user', fcResult.byGate.user != null)
+ok('R3: source 有 label', fcResult.byGate.source.label === '明确误杀')
+ok('R3: dedup 有 label', fcResult.byGate.dedup.label === '收敛度存疑')
+ok('R3: user 有 label', fcResult.byGate.user.label === '用户误判')
+ok('R3: source 有 accuracy', typeof fcResult.byGate.source.accuracy === 'number')
+ok('R3: 原有数组结构不变', fcResult.length > 0 && typeof fcResult[0].lo === 'number')
+
+// ============================================================
+console.log('\n— R4: 误杀归因到通道 —')
+// ============================================================
+
+// 构造带 channelId 的 verdict
+store.addVerdict({ gate: 'source', reason: 'low-quality', summary: '通道A误杀', score: 0.2, choice: '自媒体', channelId: 'ch-a' })
+store.addVerdict({ gate: 'source', reason: 'low-quality', summary: '通道A再误杀', score: 0.3, choice: '自媒体', channelId: 'ch-a' })
+store.addVerdict({ gate: 'dedup', reason: 'duplicate', summary: '通道B误杀', score: 0.5, choice: '一手数据', channelId: 'ch-b' })
+store.addVerdict({ gate: 'source', reason: 'low-quality', summary: '无通道', score: 0.2, choice: '未知' })
+
+const byCh = store.falseKillByChannel(30)
+ok('R4: falseKillByChannel 返回数组', Array.isArray(byCh))
+ok('R4: 有 ch-a', byCh.some(c => c.channelId === 'ch-a'), `实际 ${JSON.stringify(byCh.map(c => c.channelId))}`)
+ok('R4: 有 ch-b', byCh.some(c => c.channelId === 'ch-b'))
+ok('R4: 有未知通道', byCh.some(c => c.channelId === '未知通道'))
+ok('R4: ch-a total = 2', byCh.find(c => c.channelId === 'ch-a')?.total === 2, `实际 ${byCh.find(c => c.channelId === 'ch-a')?.total}`)
+ok('R4: 按 missed 降序', byCh[0]?.missed >= (byCh[1]?.missed || 0))
+
+// 老 verdict 无 channelId 不报错
+const oldVerdict = store.allVerdicts().find(v => !v.channelId)
+ok('R4: 存在无 channelId 的 verdict', oldVerdict != null)
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

@@ -155,11 +155,30 @@ ok('墓碑节点不再被传导', (() => {
   return tomb.confidence === before
 })())
 
-console.log('\n— 删除级联 —')
+console.log('\n— 删除降级为入墓 —')
 const before = stats().lemmas
+const gpuParent = gpu.parentId
 s.removeNode(gpu.id)
-ok('子树被删除', descendants(gpu.id).length === 0 && s.getNode(app_.id) === null)
-ok('命题数减少', stats().lemmas < before, `${before} → ${stats().lemmas}`)
+ok('子树仍在数据里（soft delete）', s.getNode(gpu.id) != null)
+ok('子树 status = dead', s.getNode(gpu.id)?.status === 'dead')
+ok('子树有 deletedAt', s.getNode(gpu.id)?.deletedAt != null)
+ok('子树有 deletedFrom', s.getNode(gpu.id)?.deletedFrom === gpuParent)
+ok('后代也入墓', s.getNode(app_.id)?.status === 'dead')
+ok('命题数不变（soft delete）', stats().lemmas === before, `${before} → ${stats().lemmas}`)
+
+// 整棵复活
+s.restoreNode(gpu.id)
+ok('复活后 status = live', s.getNode(gpu.id)?.status === 'live')
+ok('复活后 deletedAt 清除', s.getNode(gpu.id)?.deletedAt == null)
+ok('复活后 parentId 还原', s.getNode(gpu.id)?.parentId === gpuParent)
+ok('后代也复活', s.getNode(app_.id)?.status === 'live')
+
+// 真删
+s.removeNode(gpu.id)
+const deadCount = s.allNodes().filter(n => n.status === 'dead').length
+const purged = s.purgeDead()
+ok('purgeDead 真删', purged === deadCount, `实际 ${purged} vs ${deadCount}`)
+ok('真删后节点不在', s.getNode(gpu.id) == null)
 ok('冲突引用被清理', s.allConflicts().every((c) => s.getNode(c.a) && s.getNode(c.b)))
 
 console.log('\n— 模板实例化 —')

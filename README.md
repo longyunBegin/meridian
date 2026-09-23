@@ -5,7 +5,7 @@
 
 本地优先、零构建、单依赖。`npm install && npm start`。
 
-**状态：v0.6.1** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
+**状态：v0.6.2** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
 
 ---
 
@@ -14,7 +14,7 @@
 ```bash
 npm install
 npm start          # 启动
-npm test           # 引擎 + IPC + 改造测试（397 项）
+npm test           # 引擎 + IPC + 改造测试（438 项）
 npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 ```
 
@@ -102,6 +102,11 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 撤销持久化（重启后仍可撤销自动归位） | ✅ v0.6.1 |
 | 原文层通道元数据（url/platform/fetchedAt 落盘） | ✅ v0.6.1 |
 | 复盘视图（漏斗五项 + 过滤器校准曲线 + 每日趋势） | ✅ v0.6.1 |
+| 删除护栏（⌘⌫ 降级为入墓，整棵子树可恢复，清空墓碑区二次确认） | ✅ v0.6.2 |
+| 到期结算定时器 + 原生通知 + Dock 角标（9–22 时，15 分钟 tick） | ✅ v0.6.2 |
+| 误杀率按 gate 拆分（source/dedup/user 三栏） | ✅ v0.6.2 |
+| 误杀归因到通道（verdict 带 channelId，按通道聚合查询） | ✅ v0.6.2 |
+| 检视面板数值输入（传导权重/置信度可键入精确值） | ✅ v0.6.2 |
 | 跨主题共同前提扫描 | ✅ |
 | 命题 ↔ 标的映射（只做可见性，不做信号） | ✅ 合规红线 |
 | 苏格拉底追问（AI 只追问边界，禁止输出陈述句） | ✅ |
@@ -111,7 +116,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 原文层（raw.jsonl，与判断层分离） | ✅ |
 | API 密钥加密存储（AES-256-GCM，机器绑定） | ✅ |
 | 本地 JSON 主权 + 导入导出 | ✅ |
-| 引擎 + IPC + 改造测试 | ✅ 397 项 |
+| 引擎 + IPC + 改造测试 | ✅ 438 项 |
 
 ---
 

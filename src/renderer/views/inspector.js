@@ -74,11 +74,14 @@ export function renderInspectorLattice(aside) {
     const kids = state.nodes.filter((n) => n.parentId === node.id)
     // 连续传导权重滑块：产品最核心的连续参数不该只有三档
     // 拖动时下游置信度实时跟着变——这才是「传导」被看见
-    const propOut = h('b', {}, node.propagation.toFixed(2))
+    const propOut = h('input', { type: 'number', min: '0', max: '1', step: '0.05', value: node.propagation.toFixed(2),
+      style: { width: '48px', fontSize: '12px', textAlign: 'center' },
+      onchange: async (e) => { const v = Math.max(0, Math.min(1, Number(e.target.value) || 0)); propSlider.value = String(v); await m.updateNode(node.id, { propagation: v }); await refresh() },
+    })
     const propSlider = h('input', {
       type: 'range', class: 'prop-slider', min: '0', max: '1', step: '0.05',
       value: String(node.propagation),
-      oninput: (e) => { propOut.textContent = Number(e.target.value).toFixed(2) },
+      oninput: (e) => { propOut.value = Number(e.target.value).toFixed(2) },
       onchange: async (e) => { await m.updateNode(node.id, { propagation: Number(e.target.value) }); await refresh() },
     })
     const segs = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
@@ -95,13 +98,16 @@ export function renderInspectorLattice(aside) {
 
     // 环节自己的确信度。没有它，传导在界面上永远触发不了——
     // 产业链上有子节点的全是环节，而环节恰恰是唯一该被拖动的那个。
-    const segConfOut = h('b', {}, String(Math.round(node.confidence)))
+    const segConfOut = h('input', { type: 'number', min: '0', max: '100', value: String(Math.round(node.confidence)),
+      style: { width: '42px', fontSize: '12px', textAlign: 'center' },
+      onchange: async (e) => { const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))); segSlider.value = String(v); segBar.style.width = `${v}%`; segBar.style.background = confColor(v); await m.updateNode(node.id, { confidence: v }); await refresh() },
+    })
     const segBar = h('i', { style: { width: `${node.confidence}%`, background: confColor(node.confidence) } })
     const segSlider = h('input', {
       type: 'range', min: '0', max: '100', value: String(Math.round(node.confidence)),
       oninput: (e) => {
         const v = Number(e.target.value)
-        segConfOut.textContent = String(v)
+        segConfOut.value = String(v)
         segBar.style.width = `${v}%`
         segBar.style.background = confColor(v)
       },
@@ -150,13 +156,16 @@ export function renderInspectorLattice(aside) {
   }
 
   // ---------------- 命题 ----------------
-  const confOut = h('b', {}, String(Math.round(node.confidence)))
+  const confOut = h('input', { type: 'number', min: '0', max: '100', value: String(Math.round(node.confidence)),
+    style: { width: '42px', fontSize: '12px', textAlign: 'center' },
+    onchange: async (e) => { const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))); slider.value = String(v); bar.style.width = `${v}%`; bar.style.background = confColor(v); await m.updateNode(node.id, { confidence: v }); await refresh() },
+  })
   const bar = h('i', { style: { width: `${node.confidence}%`, background: confColor(node.confidence) } })
   const slider = h('input', {
     type: 'range', min: '0', max: '100', value: String(Math.round(node.confidence)),
     oninput: (e) => {
       const v = Number(e.target.value)
-      confOut.textContent = String(v)
+      confOut.value = String(v)
       bar.style.width = `${v}%`
       bar.style.background = confColor(v)
     },

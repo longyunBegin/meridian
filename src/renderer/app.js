@@ -71,6 +71,14 @@ async function boot() {
     const ta = document.querySelector('#inbox-textarea')
     if (ta) ta.focus()
   })
+  m.onDueNotify(() => {
+    state.view = 'today'
+    document.querySelector('.app').dataset.view = 'today'
+    renderNav()
+    renderMid()
+    const el = document.getElementById('due-section')
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
   applyUrlParams()
 }
 

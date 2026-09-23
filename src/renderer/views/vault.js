@@ -29,7 +29,7 @@ export async function renderVault(mid, kind) {
 
   if (kind === 'review') return renderReview(mid)
   if (kind === 'conflicts') return renderConflicts(mid, meta)
-  if (kind === 'filtered') return renderFiltered(mid, meta)
+
 
   const nodes = (await m.nodes(state.themeId)).filter((n) =>
     kind === 'cold' ? n.status === 'cold' : n.status === 'dead')
@@ -51,16 +51,21 @@ export async function renderVault(mid, kind) {
                   h('span', {}, TYPE_LABEL[n.type]),
                   h('span', {}, `· 置信度 ${Math.round(n.confidence)}`),
                   h('span', {}, `· ${nodePath(state.nodes, n.id) || '未归档'}`),
+                  n.deletedAt ? h('span', { style: { color: 'var(--text-3)' } }, `· 删于 ${n.deletedAt}`) : null,
                 ),
               ),
               h('div', { class: 'q-acts' },
                 h('button', {
                   class: 'btn',
                   onclick: async () => {
-                    await m.updateNode(n.id, { status: kind === 'cold' ? 'live' : 'live', confidence: kind === 'dead' ? Math.max(25, n.confidence) : n.confidence })
+                    if (n.deletedAt) {
+                      await m.restoreNode(n.id)
+                    } else {
+                      await m.updateNode(n.id, { status: 'live', confidence: kind === 'dead' ? Math.max(25, n.confidence) : n.confidence })
+                    }
                     await renderVault(mid, kind)
                   },
-                }, kind === 'cold' ? '移回主图谱' : '复活'),
+                }, n.deletedAt ? '整棵复活' : (kind === 'cold' ? '移回主图谱' : '复活')),
                 h('button', { class: 'btn', onclick: () => { selectNode(n.id); setView('lattice') } }, '查看'),
               ),
             )),
@@ -115,35 +120,6 @@ function side(n, label) {
   )
 }
 
-async function renderFiltered(mid, meta) {
-  const verdicts = (await m.verdicts()).slice().reverse()
-
-  mid.append(h('div', { class: 'page' },
-    h('div', { class: 'page-head' },
-      h('h1', {}, meta.title),
-      h('p', {}, meta.note),
-    ),
-    verdicts.length
-      ? h('section', { class: 'sect' },
-          h('div', { class: 'sect-h' }, h('h2', {}, '全部裁决记录'), h('em', {}, String(verdicts.length))),
-          h('div', { class: 'sect-b' },
-            ...verdicts.slice(0, 100).map((v) => h('div', { class: 'q' },
-              h('span', { class: 'dot', style: { background: v.promotedTo ? 'var(--red)' : 'var(--text-3)', marginTop: '6px' } }),
-              h('div', { class: 'q-body' },
-                h('div', { class: 'q-text' }, v.summary),
-                h('div', { class: 'q-meta' },
-                  h('span', {}, v.reason === 'duplicate' ? '重复' : v.reason === 'low-quality' ? '低质' : v.reason),
-                  h('span', {}, `· ${v.choice || '未知来源'} ${v.score}`),
-                  h('span', {}, `· ${v.at}`),
-                  v.promotedTo ? h('span', { style: { color: 'var(--red)' } }, '· 误杀') : null,
-                ),
-              ),
-            )),
-          ),
-        )
-      : empty(meta),
-  ))
-}
 
 // ============================================================
 // 复盘：采集漏斗 + 误杀校准曲线
@@ -241,6 +217,23 @@ async function renderReview(mid) {
             )),
       ),
     ),
+
+    // 误杀率按 gate 拆分
+    filterCalib.byGate ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '误杀率按 gate 拆分')),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          ...['source', 'dedup', 'user'].map((g) => {
+            const s = filterCalib.byGate[g]
+            return h('div', { class: 'review-metric' },
+              h('div', { class: 'review-metric-num', style: { color: s.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, `${Math.round(s.accuracy * 100)}%`),
+              h('div', { class: 'review-metric-label' }, s.label),
+              h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${s.missed} / ${s.total}`),
+            )
+          }),
+        ),
+      ),
+    ) : null,
 
     // 最近采集条目（下钻）
     h('section', { class: 'card' },

@@ -49,6 +49,8 @@ function createMain() {
 }
 
 import { register } from './ipc.js'
+import { startScheduler } from './scheduler.js'
+import { dueSettlements } from './store.js'
 
 // ---------------------------------------------------------------- boot
 
@@ -63,6 +65,28 @@ app.whenReady().then(() => {
   load()
   createMain()
   register({ getMainWindow: () => mainWin })
+
+  // 到期结算通知
+  startScheduler({
+    due: () => dueSettlements(),
+    notify: (n, onClick) => {
+      const { Notification } = globalThis.__electron
+      const notification = new Notification({ title: n.title, body: n.body })
+      notification.on('click', () => { if (onClick) onClick() })
+      notification.show()
+    },
+    badge: (count) => {
+      if (isMac && app.dock) app.dock.setBadge(count > 0 ? String(count) : '')
+    },
+    onClick: () => {
+      if (mainWin) {
+        if (mainWin.isMinimized()) mainWin.restore()
+        mainWin.show()
+        mainWin.focus()
+        mainWin.webContents.send('due:notify')
+      }
+    },
+  })
 
   const hk = settings().hotkey
   if (!globalShortcut.register(hk, () => {

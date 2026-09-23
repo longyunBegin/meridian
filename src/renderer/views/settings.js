@@ -217,6 +217,15 @@ export async function renderSettings(mid) {
               await renderSettings(mid)
             },
           }, '清空全部原文'),
+          h('button', {
+            class: 'btn', style: { color: 'var(--red)' },
+            onclick: async () => {
+              if (!confirm('清空墓碑区？\n\n所有 dead 节点将被永久删除，不可恢复。')) return
+              const n = await m.purgeDead()
+              alert(`已永久删除 ${n} 条墓碑节点`)
+              await renderSettings(mid)
+            },
+          }, '清空墓碑区'),
         ),
       ),
     ),

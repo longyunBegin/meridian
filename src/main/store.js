@@ -194,10 +194,43 @@ export function updateNode(id, patch, { propagate = true } = {}) {
 }
 
 export function removeNode(id) {
-  const doomed = new Set([id, ...descendants(id).map((n) => n.id)])
-  db.nodes = db.nodes.filter((n) => !doomed.has(n.id))
-  db.conflicts = db.conflicts.filter((c) => !doomed.has(c.a) && !doomed.has(c.b))
+  const t = today()
+  const doomed = [id, ...descendants(id).map((n) => n.id)]
+  for (const nid of doomed) {
+    const node = getNode(nid)
+    if (!node) continue
+    node.deletedFrom = node.parentId || null
+    node.deletedAt = t
+    node.status = 'dead'
+  }
   persist()
+}
+
+/** 恢复整棵子树：把 deletedAt 的节点复活，还原 parentId */
+export function restoreNode(id) {
+  const node = getNode(id)
+  if (!node || node.status !== 'dead') return false
+  const restored = [id, ...descendants(id).map((n) => n.id)]
+  for (const nid of restored) {
+    const n = getNode(nid)
+    if (!n || n.status !== 'dead' || !n.deletedAt) continue
+    n.status = 'live'
+    n.parentId = n.deletedFrom
+    delete n.deletedAt
+    delete n.deletedFrom
+  }
+  persist()
+  return true
+}
+
+/** 真删：清空所有墓碑区节点（不可恢复） */
+export function purgeDead() {
+  const db = load()
+  const deadIds = new Set(db.nodes.filter((n) => n.status === 'dead').map((n) => n.id))
+  db.nodes = db.nodes.filter((n) => !deadIds.has(n.id))
+  db.conflicts = db.conflicts.filter((c) => !deadIds.has(c.a) && !deadIds.has(c.b))
+  persist()
+  return deadIds.size
 }
 
 /** 追加一个来源；若该 claim 已有独立来源，则只累加不新建。返回新增与否。 */
@@ -311,6 +344,7 @@ export function addVerdict(v) {
     promotedTo: null,
     ...(v.nodeId ? { nodeId: v.nodeId } : {}),
     ...(v.themeId ? { themeId: v.themeId } : {}),
+    ...(v.channelId ? { channelId: v.channelId } : {}),
   }
   db.verdicts.push(verdict)
   persist()
@@ -441,13 +475,28 @@ export function filterCalibration() {
     b.total += 1
     if (v.promotedTo) b.missed += 1
   }
-  return buckets.map((b) => ({
+  const result = buckets.map((b) => ({
     lo: b.lo,
     hi: b.hi,
     total: b.total,
     missed: b.missed,
     accuracy: b.total ? b.missed / b.total : 0,
   }))
+
+  // 按 gate 拆分误杀率（附加，不破坏原有数组结构）
+  const gateStats = { source: { total: 0, missed: 0 }, dedup: { total: 0, missed: 0 }, user: { total: 0, missed: 0 } }
+  for (const v of db.verdicts) {
+    const g = gateStats[v.gate] ? v.gate : 'source'
+    gateStats[g].total++
+    if (v.promotedTo) gateStats[g].missed++
+  }
+  result.byGate = {
+    source: { ...gateStats.source, accuracy: gateStats.source.total ? gateStats.source.missed / gateStats.source.total : 0, label: '明确误杀' },
+    dedup: { ...gateStats.dedup, accuracy: gateStats.dedup.total ? gateStats.dedup.missed / gateStats.dedup.total : 0, label: '收敛度存疑' },
+    user: { ...gateStats.user, accuracy: gateStats.user.total ? gateStats.user.missed / gateStats.user.total : 0, label: '用户误判' },
+  }
+
+  return result
 }
 
 /** 误杀审计：本月被筛掉的总数，以及其中后来变成了重要命题的 */
@@ -465,6 +514,23 @@ export function falseKillAudit(days = 30) {
       node: getNode(v.promotedTo),
     })).filter((x) => x.node),
   }
+}
+
+/** 按通道聚合误杀，返回误杀最多的通道 top N */
+export function falseKillByChannel(days = 30, topN = 10) {
+  const cutoff = Date.now() - days * 864e5
+  const recent = db.verdicts.filter((v) => Date.parse(v.at) >= cutoff)
+  const byChannel = {}
+  for (const v of recent) {
+    const ch = v.channelId || '未知通道'
+    if (!byChannel[ch]) byChannel[ch] = { channelId: ch, total: 0, missed: 0 }
+    byChannel[ch].total++
+    if (v.promotedTo) byChannel[ch].missed++
+  }
+  return Object.values(byChannel)
+    .map((c) => ({ ...c, rate: c.total ? c.missed / c.total : 0 }))
+    .sort((a, b) => b.missed - a.missed || b.total - a.total)
+    .slice(0, topN)
 }
 
 /**

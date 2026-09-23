@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('meridian', {
   calibration: () => ipcRenderer.invoke('db:calibration'),
   filterCalibration: () => ipcRenderer.invoke('db:filterCalibration'),
   falseKill: (days) => ipcRenderer.invoke('db:falseKill', days),
+  falseKillByChannel: (days) => ipcRenderer.invoke('db:falseKillByChannel', days),
   events: () => ipcRenderer.invoke('db:events'),
   conflicts: () => ipcRenderer.invoke('db:conflicts'),
   verdicts: () => ipcRenderer.invoke('db:verdicts'),
@@ -27,6 +28,8 @@ contextBridge.exposeInMainWorld('meridian', {
   addNode: (input) => ipcRenderer.invoke('db:addNode', input),
   updateNode: (id, patch) => ipcRenderer.invoke('db:updateNode', id, patch),
   removeNode: (id) => ipcRenderer.invoke('db:removeNode', id),
+  restoreNode: (id) => ipcRenderer.invoke('db:restoreNode', id),
+  purgeDead: () => ipcRenderer.invoke('db:purgeDead'),
   repropagate: (id) => ipcRenderer.invoke('db:repropagate', id),
   settle: (id, correct) => ipcRenderer.invoke('db:settle', id, correct),
   addSource: (id, source) => ipcRenderer.invoke('db:addSource', id, source),
@@ -93,4 +96,5 @@ contextBridge.exposeInMainWorld('meridian', {
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),
   onInboxFocus: (cb) => ipcRenderer.on('inbox:focus', () => cb()),
+  onDueNotify: (cb) => ipcRenderer.on('due:notify', () => cb()),
 })

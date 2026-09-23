@@ -1,10 +1,11 @@
 const { ipcMain, shell, app } = globalThis.__electron
 import {
-  load, addNode, updateNode, removeNode, repropagate, suggestParent, settleLemma, getNode,
+  load, addNode, updateNode, removeNode, restoreNode, purgeDead, repropagate, suggestParent, settleLemma, getNode,
   allThemes, addTheme, removeTheme, renameTheme, allNodes, rootNodes, childrenOf,
   settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
+  falseKillByChannel,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
@@ -163,12 +164,14 @@ async function processCapture(text, themeId, channelMeta) {
   }
 
   // 4) 分拣记录：被筛掉的只留判断，不留原文
+  const verdictChannelId = actualChannel?.channelId || channelMeta?.channelId || null
   for (const l of lemmas) {
     const dup = findSimilar(l.title, themeId)[0]
     if (dup && dup.score >= 0.6) {
       const v = addVerdict({
         gate: 'dedup', reason: 'duplicate', summary: l.title,
         score: label.quality, choice: label.kind, themeId,
+        ...(verdictChannelId ? { channelId: verdictChannelId } : {}),
       })
       rejected.push({ id: v.id, summary: l.title, why: `重复 · 已有 ${dup.node.sources.length} 个独立源` })
       continue
@@ -177,6 +180,7 @@ async function processCapture(text, themeId, channelMeta) {
       const v = addVerdict({
         gate: 'source', reason: 'low-quality', summary: l.title,
         score: label.quality, choice: label.kind, themeId,
+        ...(verdictChannelId ? { channelId: verdictChannelId } : {}),
       })
       rejected.push({ id: v.id, summary: l.title, why: `低质 · ${label.kind} Score ${label.quality}` })
     }
@@ -334,6 +338,7 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:calibration', () => calibration())
   ipcMain.handle('db:filterCalibration', () => filterCalibration())
   ipcMain.handle('db:falseKill', (_, days) => falseKillAudit(days))
+  ipcMain.handle('db:falseKillByChannel', (_, days) => falseKillByChannel(days))
   ipcMain.handle('db:events', () => propagationEvents(14).slice(0, 40))
   ipcMain.handle('db:conflicts', () => allConflicts().filter((c) => !c.resolved))
   ipcMain.handle('db:resolveConflict', (_, id, verdict) => resolveConflict(id, verdict))
@@ -345,6 +350,8 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:addNode', (_, input) => addNode(input))
   ipcMain.handle('db:updateNode', (_, id, patch) => updateNode(id, patch))
   ipcMain.handle('db:removeNode', (_, id) => removeNode(id))
+  ipcMain.handle('db:restoreNode', (_, id) => restoreNode(id))
+  ipcMain.handle('db:purgeDead', () => purgeDead())
   ipcMain.handle('db:repropagate', (_, id) => repropagate(id))
   ipcMain.handle('db:settle', (_, id, correct) => settleLemma(id, correct))
   ipcMain.handle('db:addSource', (_, id, source) => addSource(id, source))
