@@ -43,6 +43,7 @@ const blank = () => ({
   inbox: [], // 收件箱：待确认的摄入项，全局不按主题分
   traces: [], // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
   channels: [], // 通道描述符：按内容类型选取数器
+  intakeEvents: [], // 采集漏斗：每次捕获一条记录
 })
 
 let db = null
@@ -68,6 +69,7 @@ function migrate(d) {
   d.inbox = d.inbox || []
   d.traces = d.traces || []
   d.channels = d.channels || []
+  d.intakeEvents = d.intakeEvents || []
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
@@ -135,6 +137,7 @@ export function addNode(input) {
     stableId: input.stableId || uid(),
     createdAt: t,
     updatedAt: t,
+    ...(input.intakeId ? { intakeId: input.intakeId } : {}),
   }
   db.nodes.push(node)
   persist()
@@ -307,6 +310,7 @@ export function addVerdict(v) {
     choice: v.choice || null,
     promotedTo: null,
     ...(v.nodeId ? { nodeId: v.nodeId } : {}),
+    ...(v.themeId ? { themeId: v.themeId } : {}),
   }
   db.verdicts.push(verdict)
   persist()
@@ -320,6 +324,29 @@ export function markPromoted(verdictId, nodeId) {
   const v = db.verdicts.find((x) => x.id === verdictId)
   if (v) { v.promotedTo = nodeId; persist() }
   return v
+}
+
+/** 回查既有 verdicts，匹配到被筛掉的同一 claim 则回填 promotedTo（误杀闭环） */
+export function promoteMatchingVerdicts(nodeTitle, nodeId, themeId) {
+  const norm = (s) => String(s || '').trim().toLowerCase()
+  const nodeTokens = new Set(tokenize(nodeTitle))
+  for (const v of db.verdicts) {
+    if (v.promotedTo != null) continue // 幂等：已回填的跳过
+    if (v.themeId && v.themeId !== themeId) continue // 只回填同主题
+    // 优先级 1：标题规范化后精确相等
+    if (norm(v.summary) === norm(nodeTitle)) {
+      markPromoted(v.id, nodeId)
+      continue
+    }
+    // 优先级 2：token 重合度 ≥ 0.6
+    const ownTokens = tokenize(v.summary)
+    if (!ownTokens.length || !nodeTokens.size) continue
+    let hit = 0
+    for (const t of nodeTokens) if (ownTokens.includes(t)) hit += t.length >= 2 ? 2 : 1
+    const denom = ownTokens.reduce((s, t) => s + (t.length >= 2 ? 2 : 1), 0)
+    const score = denom ? hit / denom : 0
+    if (score >= 0.6) markPromoted(v.id, nodeId)
+  }
 }
 
 // ------------------------------------------------------------------ conflicts
@@ -462,7 +489,7 @@ export function suggestParent(text, themeId) {
     .slice(0, 5)
 }
 
-function tokenize(text) {
+export function tokenize(text) {
   const cjk = String(text).match(/[一-龥]{2,}/g) || []
   const latin = String(text).toLowerCase().match(/[a-z][a-z0-9+.#-]{2,}/g) || []
   return [...cjk.flatMap((s) => s.split(/(?=[上中下游内])/)), ...latin]
@@ -801,7 +828,7 @@ const sha = (text) => createHash('sha256').update(text).digest('hex').slice(0, 1
  * 落一段原文，返回 rawId。同内容只存一份——sha256 命中就复用旧 id。
  * 这同时是 v0.4「N 个独立源」的免费数据源：不同 hash 天然就是独立来源。
  */
-export function appendRaw({ kind, label, text }) {
+export function appendRaw({ kind, label, text, channel }) {
   const body = String(text || '').trim()
   if (!body) return { id: null, added: false }
   const cache = loadRaw()
@@ -817,6 +844,10 @@ export function appendRaw({ kind, label, text }) {
     label: label || kind || '未注明',
     chars: body.length,
     text: body,
+    ...(channel?.platform ? { platform: channel.platform } : {}),
+    ...(channel?.url ? { url: channel.url } : {}),
+    ...(channel?.fetchedAt ? { fetchedAt: channel.fetchedAt } : {}),
+    ...(channel?.channelId ? { channelId: channel.channelId } : {}),
   }
   cache.set(entry.id, entry)
   rawBySha.set(h, entry.id)
@@ -887,7 +918,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [] }
+  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -934,6 +965,7 @@ export function resolveInboxItem(id, action) {
   const item = load().inbox.find((i) => i.id === id)
   if (!item) return null
   item.status = action === 'accept' ? 'accepted' : 'rejected'
+  item.resolvedAt = today()
   persist()
   return item
 }
@@ -948,6 +980,86 @@ export function clearInbox() {
 
 export function inboxCount() {
   return load().inbox.filter((i) => i.status === 'pending').length
+}
+// ============================================================
+// 采集漏斗 intakeEvents
+// ============================================================
+
+export function addIntakeEvent(event) {
+  const db = load()
+  const record = {
+    id: uid(),
+    at: today(),
+    ...event,
+    undone: false,
+  }
+  db.intakeEvents.push(record)
+  persist()
+  return record
+}
+
+export function getIntakeEvent(id) {
+  return load().intakeEvents.find((e) => e.id === id) || null
+}
+
+export function markIntakeUndone(id) {
+  const db = load()
+  const event = db.intakeEvents.find((e) => e.id === id)
+  if (!event) return null
+  event.undone = true
+  persist()
+  return event
+}
+
+export function markIntakeResolved(inboxItemId, overridden) {
+  const db = load()
+  const event = db.intakeEvents.find((e) => e.inboxItemId === inboxItemId)
+  if (!event) return null
+  event.resolved = true
+  if (overridden) event.overridden = true
+  persist()
+  return event
+}
+
+/** 最近一条未撤销的自动归位事件，用于渲染层恢复撤销入口 */
+export function lastAutoIntakeEvent() {
+  const db = load()
+  for (let i = db.intakeEvents.length - 1; i >= 0; i--) {
+    if (db.intakeEvents[i].outcome === 'auto' && !db.intakeEvents[i].undone) {
+      return db.intakeEvents[i]
+    }
+  }
+  return null
+}
+
+/** 按天返回采集漏斗 */
+export function intakeSeries(sinceDays = 30) {
+  const db = load()
+  const cutoff = new Date(Date.now() - sinceDays * 864e5).toISOString().slice(0, 10)
+  const byDate = {}
+  for (const e of db.intakeEvents) {
+    if (e.at < cutoff) continue
+    if (!byDate[e.at]) {
+      byDate[e.at] = {
+        date: e.at, captured: 0, gatedIn: 0, autoImported: 0, toInbox: 0,
+        confirmed: 0, rejected: 0, undone: 0, overridden: 0, degraded: 0,
+      }
+    }
+    const b = byDate[e.at]
+    b.captured++
+    if (e.gate?.pass) b.gatedIn++
+    if (e.outcome === 'auto') b.autoImported++
+    if (e.outcome === 'inbox') b.toInbox++
+    if (e.undone) b.undone++
+    if (e.degraded) b.degraded++
+    if (e.overridden) b.overridden++
+    if (e.outcome === 'inbox' && e.inboxItemId) {
+      const item = db.inbox.find((i) => i.id === e.inboxItemId)
+      if (item?.status === 'accepted') b.confirmed++
+      if (item?.status === 'rejected') b.rejected++
+    }
+  }
+  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date))
 }
 // ============================================================
 // 留痕层 trace

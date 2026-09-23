@@ -27,6 +27,7 @@ export async function renderVault(mid, kind) {
   clear(mid)
   const meta = META[kind] || META.cold
 
+  if (kind === 'review') return renderReview(mid)
   if (kind === 'conflicts') return renderConflicts(mid, meta)
   if (kind === 'filtered') return renderFiltered(mid, meta)
 
@@ -141,6 +142,121 @@ async function renderFiltered(mid, meta) {
           ),
         )
       : empty(meta),
+  ))
+}
+
+// ============================================================
+// 复盘：采集漏斗 + 误杀校准曲线
+// ============================================================
+
+async function renderReview(mid) {
+  clear(mid)
+
+  const [series, filterCalib, verdicts] = await Promise.all([
+    m.intakeSeries(30),
+    m.filterCalibration(),
+    m.verdicts(),
+  ])
+
+  // 聚合最近 30 天
+  const agg = series.reduce((a, b) => ({
+    captured: a.captured + b.captured,
+    gatedIn: a.gatedIn + b.gatedIn,
+    autoImported: a.autoImported + b.autoImported,
+    toInbox: a.toInbox + b.toInbox,
+    confirmed: a.confirmed + b.confirmed,
+    rejected: a.rejected + b.rejected,
+    undone: a.undone + b.undone,
+    overridden: a.overridden + a.overridden,
+    degraded: a.degraded + b.degraded,
+  }), { captured: 0, gatedIn: 0, autoImported: 0, toInbox: 0, confirmed: 0, rejected: 0, undone: 0, overridden: 0, degraded: 0 })
+
+  const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) : 0
+  const friction = pct(agg.toInbox, agg.captured)
+  const undoRate = pct(agg.undone, agg.autoImported)
+  const overrideRate = pct(agg.overridden, agg.autoImported + agg.confirmed)
+  const falseKillCount = verdicts.filter(v => v.promotedTo != null).length
+  const falseKillRate = pct(falseKillCount, verdicts.length)
+  const degradeRate = pct(agg.degraded, agg.captured)
+
+  const metrics = [
+    { label: '摩擦率', value: friction, target: '< 20%', raw: `${agg.toInbox} / ${agg.captured}`, color: friction > 20 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '撤销率', value: undoRate, target: '< 5%', raw: `${agg.undone} / ${agg.autoImported}`, color: undoRate > 5 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '归位修改率', value: overrideRate, target: '< 15%', raw: `${agg.overridden} / ${agg.autoImported + agg.confirmed}`, color: overrideRate > 15 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '误杀率', value: falseKillRate, target: '< 10%', raw: `${falseKillCount} / ${verdicts.length}`, color: falseKillRate > 10 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '降级率', value: degradeRate, target: '—', raw: `${agg.degraded} / ${agg.captured}`, color: 'var(--text-3)' },
+  ]
+
+  mid.append(h('div', { class: 'page' },
+    h('div', { class: 'page-head' },
+      h('h1', {}, '复盘'),
+      h('p', {}, '入库链路的健康度——不是你拥有什么，是搬得准不准。'),
+    ),
+
+    // 漏斗五项
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '采集漏斗'), h('em', {}, `近 30 天 · ${agg.captured} 次捕获`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          ...metrics.map((mt) => h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: mt.color } }, `${mt.value}%`),
+            h('div', { class: 'review-metric-label' }, mt.label),
+            h('div', { class: 'review-metric-target' }, `目标 ${mt.target}`),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, mt.raw),
+          )),
+        ),
+      ),
+    ),
+
+    // 每日趋势
+    series.length ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '每日趋势'), h('em', {}, `${series.length} 天`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-daily' },
+          ...series.slice(-14).map((b) => h('div', { class: 'review-day' },
+            h('span', { class: 'review-day-date', style: { color: 'var(--text-3)' } }, b.date.slice(5)),
+            h('span', { class: 'review-day-bar' },
+              h('i', { style: { width: `${pct(b.autoImported, b.captured)}%`, background: 'var(--accent)' } }),
+              h('i', { style: { width: `${pct(b.toInbox, b.captured)}%`, background: 'var(--orange)' } }),
+            ),
+            h('span', { style: { fontSize: '10px', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } }, String(b.captured)),
+          )),
+        ),
+      ),
+    ) : null,
+
+    // 误杀校准曲线
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '过滤器校准曲线'),
+        h('em', {}, filterCalib.length ? `${filterCalib.reduce((s, b) => s + b.total, 0)} 条被筛` : '尚无数据')),
+      h('div', { class: 'sect-b' },
+        filterCalib.length
+          ? h('div', { class: 'calib' }, ...filterCalib.map((b) => h('div', {},
+              h('em', {}, `${Math.round(b.accuracy * 100)}%`),
+              h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } }),
+              h('span', {}, `${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`),
+            )))
+          : h('div', { class: 'q' }, h('div', { class: 'q-body' },
+              h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '尚无被筛掉的记录。有了数据之后，这里会显示各质量段的误杀率。'),
+            )),
+      ),
+    ),
+
+    // 最近采集条目（下钻）
+    h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '最近采集'), h('em', {}, `近 ${series.length} 天`)),
+      h('div', { class: 'sect-b' },
+        agg.captured > 0
+          ? h('div', {}, ...series.slice(-3).reverse().flatMap((b) =>
+              h('div', { class: 'review-day-group' },
+                h('div', { class: 'review-day-header' }, `${b.date} · 捕获 ${b.captured} · 自动 ${b.autoImported} · 收件箱 ${b.toInbox} · 撤销 ${b.undone}`),
+              )
+            ))
+          : h('div', { class: 'q' }, h('div', { class: 'q-body' },
+              h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '还没有采集记录。'),
+            )),
+      ),
+    ),
   ))
 }
 

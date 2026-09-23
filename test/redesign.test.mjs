@@ -612,19 +612,17 @@ for (let i = 0; i < 30; i++) {
 
 const undoCapture = await fire('inbox:capture', '半导体 出货量同比增长50%', { kind: '一手数据', quality: 0.9 })
 ok('撤销测试: 自动入库', undoCapture?.autoImported === true)
-ok('撤销测试: 有 batch', undoCapture?.batch != null)
-ok('撤销测试: batch 有 imported', Array.isArray(undoCapture?.batch?.imported))
-ok('撤销测试: batch 有 captureResult', undoCapture?.batch?.captureResult != null)
+ok('撤销测试: 有 intakeEventId', undoCapture?.intakeEventId != null)
 
 const undoNodeId = undoCapture?.imported?.[0]?.id
 ok('撤销测试: 节点已创建', store.getNode(undoNodeId) != null)
 const inboxBeforeUndo = store.allInbox().length
 
-const undoResult = await fire('inbox:undoAutoImport', undoCapture.batch)
+const undoResult = await fire('inbox:undoAutoImport', undoCapture.intakeEventId)
 ok('撤销返回 ok', undoResult?.ok === true)
 ok('撤销后节点已删除', store.getNode(undoNodeId) == null)
 ok('撤销后收件箱+1', store.allInbox().length === inboxBeforeUndo + 1, `实际 ${store.allInbox().length} vs ${inboxBeforeUndo + 1}`)
-const undoInboxItem = store.allInbox().find(i => i.title === undoCapture.batch.captureResult.title)
+const undoInboxItem = store.allInbox().find(i => i.title === '半导体 出货量同比增长50%')
 ok('撤销后收件箱有条目', undoInboxItem != null)
 ok('撤销后条目有 label', undoInboxItem?.label?.kind === '一手数据')
 ok('撤销后条目有 lemmas', Array.isArray(undoInboxItem?.lemmas))
@@ -694,6 +692,253 @@ ok('冲突: 第二条入库或进收件箱', cfCapture2?.ok === true)
 const allC = store.allConflicts()
 ok('冲突: 不自动裁决', allC.every(c => c.resolved === null || c.resolved === undefined))
 ok('冲突: 无弹窗无通知（静默）', true)
+
+// ============================================================
+console.log('\n— 任务1: 误杀闭环 —')
+// ============================================================
+
+const killTheme = store.addTheme('误杀测试主题')
+const kBranch = store.addNode({ themeId: killTheme.id, kind: 'branch', title: '算力', propagation: 0.6 })
+// 已有 lemma，用于触发 dedup（3 个 token 完全匹配 → score = 1.0）
+const existLemma = store.addNode({ themeId: killTheme.id, parentId: kBranch.id, kind: 'lemma', title: '算力 芯片 需求', confidence: 60 })
+for (let i = 0; i < 60; i++) {
+  store.addNode({ themeId: killTheme.id, parentId: kBranch.id, kind: 'lemma', title: `算力基线${i}`, confidence: 50 })
+}
+
+// 第一次捕获：相似文本被 dedup 筛掉，产生 verdict
+const killSim = store.findSimilar('算力 芯片 需求 超预期', killTheme.id)
+ok('误杀: findSimilar 能找到', killSim.length > 0, `实际 ${JSON.stringify(killSim.map(s => ({ s: s.score, t: s.node.title })))}`)
+ok('误杀: 相似度 >= 0.6', killSim[0]?.score >= 0.6, `实际 ${killSim[0]?.score}`)
+const killCap1 = await fire('inbox:capture', '算力 芯片 需求 超预期', { kind: '一手数据', quality: 0.9 })
+const killVerdictsBefore = store.allVerdicts().filter(v => v.themeId === killTheme.id)
+ok('误杀: 第一次捕获后有 verdict', killVerdictsBefore.length > 0, `实际 ${killVerdictsBefore.length}`)
+if (killVerdictsBefore.length > 0) {
+  ok('误杀: verdict gate = dedup', killVerdictsBefore.some(v => v.gate === 'dedup'))
+  ok('误杀: verdict promotedTo 为 null', killVerdictsBefore.every(v => v.promotedTo == null))
+}
+
+// 删除已有 lemma，使第二次捕获不被 dedup
+store.removeNode(existLemma.id)
+
+// 第二次捕获：同样的文本从别的源进来，这次作为新节点入库
+const killCap2 = await fire('inbox:capture', '算力 芯片 需求 超预期', { kind: '券商研报', quality: 0.8 })
+ok('误杀: 第二次捕获入库', killCap2?.ok === true)
+
+// 检查误杀闭环
+const verdictsAfter = store.allVerdicts().filter(v => v.themeId === killTheme.id)
+const promoted = verdictsAfter.filter(v => v.promotedTo != null)
+ok('误杀: verdict 被回填 promotedTo', promoted.length >= 1, `实际 ${promoted.length}`)
+
+const audit = store.falseKillAudit(30)
+ok('误杀: falseKillAudit missed >= 1', audit.missed >= 1, `实际 ${audit.missed}`)
+
+const filterCalib = store.filterCalibration()
+ok('误杀: filterCalibration 有非零误杀率', filterCalib.some(b => b.missed > 0), `实际 ${JSON.stringify(filterCalib)}`)
+
+// 幂等：再次入库同一标题不重复回填
+if (killCap2?.imported?.[0]?.id) {
+  store.promoteMatchingVerdicts('算力 芯片 需求 超预期', killCap2.imported[0].id, killTheme.id)
+  const promotedAgain = store.allVerdicts().filter(v => v.themeId === killTheme.id && v.promotedTo != null)
+  ok('误杀: 幂等不重复回填', promotedAgain.length === promoted.length, `实际 ${promotedAgain.length} vs ${promoted.length}`)
+}
+
+// ============================================================
+console.log('\n— route trace：自动归位 —')
+// ============================================================
+
+const rtTheme = store.addTheme('route-trace 测试主题')
+const rtBranch = store.addNode({ themeId: rtTheme.id, kind: 'branch', title: '半导体', propagation: 0.6 })
+for (let i = 0; i < 200; i++) {
+  store.addNode({ themeId: rtTheme.id, parentId: rtBranch.id, kind: 'lemma', title: `半导体基线命题${i}`, confidence: 50 })
+}
+
+// 高质量捕获 → 通过闸门 → 自动归位
+const rtCap = await fire('inbox:capture', '半导体 出货量超预期增长40%', { kind: '一手数据', quality: 0.9, platform: 'test' })
+ok('route: 自动归位成功', rtCap?.autoImported === true, `实际 autoImported=${rtCap?.autoImported} reasons=${JSON.stringify(rtCap?.gateReasons)}`)
+
+if (rtCap?.imported?.[0]?.id) {
+  const rtTraces = store.tracesByTarget(rtCap.imported[0].id)
+  const routeTraces = rtTraces.filter(t => t.stage === 'route')
+  ok('route: 自动归位节点有 route trace', routeTraces.length > 0, `实际 ${routeTraces.length}`)
+  if (routeTraces.length > 0) {
+    const rt = routeTraces[0]
+    ok('route: actor.by = gate', rt.actor?.by === 'gate', `实际 ${rt.actor?.by}`)
+    ok('route: reason 以 gate-pass 开头', rt.reason?.startsWith('gate-pass'), `实际 ${rt.reason}`)
+    ok('route: output 有 parentId', rt.output?.parentId != null || rt.output?.parentId === null)
+    ok('route: decision 有 confidence', typeof rt.decision?.confidence === 'number')
+    ok('route: input 有 suggestedParentId', rt.input?.suggestedParentId !== undefined)
+    ok('route: input 有 suggestedConfidence', typeof rt.input?.suggestedConfidence === 'number')
+  }
+}
+
+// ============================================================
+console.log('\n— route trace：用户 override —')
+// ============================================================
+
+// 创建收件箱条目（未通过闸门的那种）
+const ovItem = store.addInboxItem({
+  text: '某公司可能要裁员',
+  title: '某公司可能要裁员',
+  label: { kind: '社交媒体', quality: 0.4, via: 'channel' },
+  lemmas: [{ title: '某公司可能要裁员', type: 'observation', confidence: 40, action: 'new', parentId: rtBranch.id }],
+  provenance: null,
+})
+ok('route: 收件箱条目创建', ovItem.id != null)
+
+// 带 override 入库：改置信度
+const ovResult = await fire('inbox:import', rtTheme.id, [ovItem], {
+  [ovItem.id]: { confidence: 75, parentId: rtBranch.id },
+})
+ok('route: override 入库成功', ovResult?.ok === true)
+
+if (ovResult?.results?.[0]?.id) {
+  const ovTraces = store.tracesByTarget(ovResult.results[0].id)
+  const routeTraces = ovTraces.filter(t => t.stage === 'route')
+  ok('route: override 节点有 route trace', routeTraces.length > 0, `实际 ${routeTraces.length}`)
+  if (routeTraces.length > 0) {
+    const rt = routeTraces[0]
+    ok('route: actor.by = user', rt.actor?.by === 'user', `实际 ${rt.actor?.by}`)
+    ok('route: reason = user-override', rt.reason === 'user-override', `实际 ${rt.reason}`)
+    ok('route: output.confidence ≠ decision.confidence', rt.output?.confidence !== rt.decision?.confidence,
+      `实际 output=${rt.output?.confidence} decision=${rt.decision?.confidence}`)
+    ok('route: decision.confidence = 75', rt.decision?.confidence === 75, `实际 ${rt.decision?.confidence}`)
+  }
+}
+
+// 无 override 入库：reason = user-confirmed
+const confirmItem = store.addInboxItem({
+  text: '另一条待确认信息',
+  title: '另一条待确认信息',
+  label: { kind: '社交媒体', quality: 0.5, via: 'channel' },
+  lemmas: [{ title: '另一条待确认信息', type: 'observation', confidence: 50, action: 'new', parentId: rtBranch.id }],
+  provenance: null,
+})
+const confirmResult = await fire('inbox:import', rtTheme.id, [confirmItem], {})
+ok('route: 无 override 入库成功', confirmResult?.ok === true)
+
+if (confirmResult?.results?.[0]?.id) {
+  const cfTraces = store.tracesByTarget(confirmResult.results[0].id)
+  const routeTraces = cfTraces.filter(t => t.stage === 'route')
+  ok('route: confirmed 节点有 route trace', routeTraces.length > 0, `实际 ${routeTraces.length}`)
+  if (routeTraces.length > 0) {
+    ok('route: reason = user-confirmed', routeTraces[0].reason === 'user-confirmed', `实际 ${routeTraces[0].reason}`)
+    ok('route: output = decision (无修改)', routeTraces[0].output?.confidence === routeTraces[0].decision?.confidence)
+  }
+}
+
+// ============================================================
+console.log('\n— 任务3: intakeEvents 采集漏斗 —')
+// ============================================================
+
+// intakeSeries 返回今天的漏斗
+const series = store.intakeSeries(3)
+ok('intake: series 返回数组', Array.isArray(series))
+ok('intake: series 有今天的数据', series.some(b => b.captured > 0), `实际 ${JSON.stringify(series)}`)
+
+const todayBucket = series.find(b => b.captured > 0)
+if (todayBucket) {
+  ok('intake: 有 captured', todayBucket.captured > 0)
+  ok('intake: 有 autoImported', todayBucket.autoImported >= 0)
+  ok('intake: 有 toInbox', todayBucket.toInbox >= 0)
+  ok('intake: autoImported + toInbox <= captured', todayBucket.autoImported + todayBucket.toInbox <= todayBucket.captured)
+}
+
+// 验证 intakeEvent 存在且结构正确
+const allIntakeEvents = store.load().intakeEvents
+ok('intake: intakeEvents 非空', allIntakeEvents.length > 0, `实际 ${allIntakeEvents.length}`)
+const sampleEvent = allIntakeEvents[0]
+ok('intake: event 有 id', sampleEvent.id != null)
+ok('intake: event 有 at', sampleEvent.at != null)
+ok('intake: event 有 gate', sampleEvent.gate != null)
+ok('intake: event 有 outcome', sampleEvent.outcome != null)
+ok('intake: event 有 label', sampleEvent.label != null)
+ok('intake: event 有 lemmas', Array.isArray(sampleEvent.lemmas))
+ok('intake: event 有 undone', sampleEvent.undone === false)
+
+// 撤销后 intakeEvent 标记 undone
+const undoEventId = rtCap?.intakeEventId
+if (undoEventId) {
+  await fire('inbox:undoAutoImport', undoEventId)
+  const undoneEvent = store.getIntakeEvent(undoEventId)
+  ok('intake: 撤销后 undone = true', undoneEvent?.undone === true, `实际 ${undoneEvent?.undone}`)
+}
+
+// 模拟重启：重新 load 后撤销入口仍在
+store.load()
+const lastAuto = store.lastAutoIntakeEvent()
+ok('intake: lastAutoIntakeEvent 返回最近自动归位', lastAuto != null, `实际 null`)
+if (lastAuto) {
+  ok('intake: lastAuto outcome = auto', lastAuto.outcome === 'auto')
+  ok('intake: lastAuto undone = false', lastAuto.undone === false)
+}
+
+// resolveInboxItem 补了 resolvedAt
+const resolveTestItem = store.addInboxItem({
+  text: 'resolveAt 测试', title: 'resolveAt 测试',
+  label: { kind: '社交媒体', quality: 0.4, via: 'channel' },
+  lemmas: [], provenance: null,
+})
+const resolvedAtTest = store.resolveInboxItem(resolveTestItem.id, 'accept')
+ok('intake: resolveInboxItem 有 resolvedAt', resolvedAtTest?.resolvedAt != null, `实际 ${resolvedAtTest?.resolvedAt}`)
+
+// 导出 → 导入 → intakeEvents 不丢
+const exportedJson = store.exportAll()
+const exportedObj = JSON.parse(exportedJson)
+ok('intake: 导出包含 intakeEvents', Array.isArray(exportedObj.intakeEvents), `实际 ${typeof exportedObj.intakeEvents}`)
+ok('intake: 导出 intakeEvents 非空', exportedObj.intakeEvents.length > 0, `实际 ${exportedObj.intakeEvents.length}`)
+
+// 老文件导入后 intakeEvents 是空数组而非 undefined
+const oldFile = JSON.stringify({
+  version: 3, settings: {}, themes: [], nodes: [], verdicts: [], conflicts: [],
+  feeds: [], inbox: [], traces: [], channels: [],
+})
+store.importAll(oldFile)
+ok('intake: 老文件导入后 intakeEvents 是空数组', Array.isArray(store.load().intakeEvents) && store.load().intakeEvents.length === 0,
+  `实际 ${typeof store.load().intakeEvents} len=${store.load().intakeEvents?.length}`)
+
+// 导入有 intakeEvents 的文件后恢复
+store.importAll(exportedJson)
+ok('intake: 导入后 intakeEvents 恢复', store.load().intakeEvents.length === exportedObj.intakeEvents.length,
+  `实际 ${store.load().intakeEvents.length} vs ${exportedObj.intakeEvents.length}`)
+
+// ============================================================
+console.log('\n— 任务4: raw 层补通道元数据 —')
+// ============================================================
+
+// 直接测试 appendRaw 带 channel
+const rawWithChannel = store.appendRaw({
+  kind: '一手数据', label: '一手数据',
+  text: 'raw-channel-test-content-unique',
+  channel: { platform: 'arxiv', url: 'https://arxiv.org/abs/2026.12345', fetchedAt: '2026-09-23' },
+})
+ok('raw: appendRaw 返回 id', rawWithChannel.id != null)
+const rawEntry = store.getRaw(rawWithChannel.id)
+ok('raw: 有 platform', rawEntry?.platform === 'arxiv', `实际 ${rawEntry?.platform}`)
+ok('raw: 有 url', rawEntry?.url === 'https://arxiv.org/abs/2026.12345', `实际 ${rawEntry?.url}`)
+ok('raw: 有 fetchedAt', rawEntry?.fetchedAt === '2026-09-23', `实际 ${rawEntry?.fetchedAt}`)
+
+// 无 channel 的老条目仍正常
+const rawNoChannel = store.appendRaw({ kind: '社交媒体', label: '社交媒体', text: 'raw-no-channel-test-unique' })
+const rawNoChannelEntry = store.getRaw(rawNoChannel.id)
+ok('raw: 无 channel 时无 platform', rawNoChannelEntry?.platform === undefined)
+ok('raw: 无 channel 时无 url', rawNoChannelEntry?.url === undefined)
+
+// 自动入库后 raw 带 channel 元数据
+const rawTestTheme = store.addTheme('raw-channel 测试主题')
+const rawTestBranch = store.addNode({ themeId: rawTestTheme.id, kind: 'branch', title: '航天', propagation: 0.6 })
+for (let i = 0; i < 300; i++) {
+  store.addNode({ themeId: rawTestTheme.id, parentId: rawTestBranch.id, kind: 'lemma', title: `航天基线${i}`, confidence: 50 })
+}
+const rawAutoCap = await fire('inbox:capture', '航天 发射次数创历史新高', { kind: '一手数据', quality: 0.9, platform: 'spacex', url: 'https://spacex.com/launches' })
+ok('raw: 自动入库成功', rawAutoCap?.autoImported === true, `实际 ${rawAutoCap?.autoImported}`)
+if (rawAutoCap?.imported?.[0]?.id) {
+  const autoNode = store.getNode(rawAutoCap.imported[0].id)
+  if (autoNode?.sources?.[0]?.rawId) {
+    const autoRaw = store.getRaw(autoNode.sources[0].rawId)
+    ok('raw: 自动入库 raw 有 platform', autoRaw?.platform === 'spacex', `实际 ${autoRaw?.platform}`)
+    ok('raw: 自动入库 raw 有 url', autoRaw?.url === 'https://spacex.com/launches', `实际 ${autoRaw?.url}`)
+  }
+}
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

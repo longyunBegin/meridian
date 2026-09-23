@@ -68,9 +68,11 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxCapture: (text, channelMeta) => ipcRenderer.invoke('inbox:capture', text, channelMeta),
   inboxList: () => ipcRenderer.invoke('inbox:list'),
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
-  inboxImport: (themeId, items) => ipcRenderer.invoke('inbox:import', themeId, items),
+  inboxImport: (themeId, items, overrides) => ipcRenderer.invoke('inbox:import', themeId, items, overrides),
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
-  inboxUndoAutoImport: (batch) => ipcRenderer.invoke('inbox:undoAutoImport', batch),
+  inboxUndoAutoImport: (intakeEventId) => ipcRenderer.invoke('inbox:undoAutoImport', intakeEventId),
+  inboxLastAutoImport: () => ipcRenderer.invoke('inbox:lastAutoImport'),
+  intakeSeries: (sinceDays) => ipcRenderer.invoke('intake:series', sinceDays),
 
   // ---- 骨架生成
   generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),

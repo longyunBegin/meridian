@@ -5,7 +5,7 @@
 
 本地优先、零构建、单依赖。`npm install && npm start`。
 
-**状态：v0.6** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
+**状态：v0.6.1** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
 
 ---
 
@@ -14,7 +14,7 @@
 ```bash
 npm install
 npm start          # 启动
-npm test           # 引擎 + IPC + 改造测试（338 项）
+npm test           # 引擎 + IPC + 改造测试（397 项）
 npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 ```
 
@@ -96,6 +96,12 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 来源收敛度（同 claim 多源只累加不新建） | ✅ |
 | 冲突检测与裁决 | ✅ |
 | 误杀审计 + 过滤器校准曲线 | ✅ |
+| 误杀闭环（verdict → promotedTo 回填，幂等） | ✅ v0.6.1 |
+| route trace（归位留痕：gate/user，output vs decision） | ✅ v0.6.1 |
+| 采集漏斗 intakeEvents（每次捕获一条记录，可追溯） | ✅ v0.6.1 |
+| 撤销持久化（重启后仍可撤销自动归位） | ✅ v0.6.1 |
+| 原文层通道元数据（url/platform/fetchedAt 落盘） | ✅ v0.6.1 |
+| 复盘视图（漏斗五项 + 过滤器校准曲线 + 每日趋势） | ✅ v0.6.1 |
 | 跨主题共同前提扫描 | ✅ |
 | 命题 ↔ 标的映射（只做可见性，不做信号） | ✅ 合规红线 |
 | 苏格拉底追问（AI 只追问边界，禁止输出陈述句） | ✅ |
@@ -105,7 +111,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 原文层（raw.jsonl，与判断层分离） | ✅ |
 | API 密钥加密存储（AES-256-GCM，机器绑定） | ✅ |
 | 本地 JSON 主权 + 导入导出 | ✅ |
-| 引擎 + IPC + 改造测试 | ✅ 338 项 |
+| 引擎 + IPC + 改造测试 | ✅ 397 项 |
 
 ---
 

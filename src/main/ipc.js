@@ -4,15 +4,17 @@ import {
   allThemes, addTheme, removeTheme, renameTheme, allNodes, rootNodes, childrenOf,
   settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
-  addVerdict, allVerdicts, allConflicts, resolveConflict,
+  addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
   allFeeds, addFeed, getFeed, updateFeed, removeFeed, markFeedFetched,
   allInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
+  addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
+  uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
@@ -166,7 +168,7 @@ async function processCapture(text, themeId, channelMeta) {
     if (dup && dup.score >= 0.6) {
       const v = addVerdict({
         gate: 'dedup', reason: 'duplicate', summary: l.title,
-        score: label.quality, choice: label.kind,
+        score: label.quality, choice: label.kind, themeId,
       })
       rejected.push({ id: v.id, summary: l.title, why: `重复 · 已有 ${dup.node.sources.length} 个独立源` })
       continue
@@ -174,7 +176,7 @@ async function processCapture(text, themeId, channelMeta) {
     if (label.quality < 0.35 && l.confidence < 45) {
       const v = addVerdict({
         gate: 'source', reason: 'low-quality', summary: l.title,
-        score: label.quality, choice: label.kind,
+        score: label.quality, choice: label.kind, themeId,
       })
       rejected.push({ id: v.id, summary: l.title, why: `低质 · ${label.kind} Score ${label.quality}` })
     }
@@ -217,9 +219,9 @@ function gateCheck(result) {
 }
 
 /** 自动归位入库：通过闸门的信息直接进图谱，by:'source' 标记为搬运品 */
-function autoImport(result, themeId) {
+function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   const raw = result.resolvedText
-    ? appendRaw({ kind: result.label.kind || '独立媒体', label: result.label.kind || '未注明', text: result.resolvedText })
+    ? appendRaw({ kind: result.label.kind || '独立媒体', label: result.label.kind || '未注明', text: result.resolvedText, channel: result.resolvedChannel || null })
     : { id: null }
 
   const sourceQuality = result.label.quality ?? 0.5
@@ -252,11 +254,23 @@ function autoImport(result, themeId) {
       }],
       settlement: l.settlement || null,
       by: 'source',
+      intakeId,
     })
     for (const c of l.conflicts || []) addConflict(node.id, c.id, c.reason)
+    promoteMatchingVerdicts(l.title, node.id, themeId)
+    // route trace：记录闸门自动归位的建议值和最终值
+    addTrace({
+      target: { type: 'node', id: node.id },
+      stage: 'route',
+      actor: { by: 'gate', model: null, promptVersion: 'v1' },
+      input: { textHash: hashText(result.resolvedText || ''), suggestedParentId: l.parentId || null, suggestedConfidence: derivedConfidence },
+      output: { parentId: l.parentId || null, confidence: derivedConfidence },
+      decision: { parentId: node.parentId, confidence: node.confidence },
+      reason: `gate-pass${gateReasons?.length ? ':' + gateReasons.join(',') : ''}`,
+    })
     imported.push({ title: l.title, action: 'new', id: node.id })
   }
-  return imported
+  return { imported, rawId: raw.id }
 }
 
 /** 生成来源类型概率分布 pills：选中类型高概率，相邻类型递减 */
@@ -499,6 +513,7 @@ function register({ getMainWindow }) {
           title: l.title, type: l.type, confidence: l.confidence,
           tags: l.tags || [], sources: [{ kind: label.kind, label: feed?.name || label.kind, at: today(), quality: label.quality }],
         })
+        promoteMatchingVerdicts(l.title, node.id, themeId)
         results.push({ title: l.title, action: 'new', id: node.id })
       }
     }
@@ -516,26 +531,43 @@ function register({ getMainWindow }) {
 
     // 不确定性闸门
     const gate = gateCheck(result)
+    const textHash = hashText(result.resolvedText || text)
+    const channel = result.resolvedChannel || channelMeta || null
+    const degraded = result.degraded || false
 
     if (gate.pass && defaultThemeId && result.lemmas.length > 0) {
-      const imported = autoImport(result, defaultThemeId)
+      const batchId = uid()
+      const intakeId = uid()
+      const { imported, rawId } = autoImport(result, defaultThemeId, gate.reasons, batchId, intakeId)
+      // 采集漏斗记录
+      const intakeEvent = addIntakeEvent({
+        themeId: defaultThemeId, textHash, rawId,
+        channel: channel ? {
+          platform: channel.platform || null, url: channel.url || null,
+          fetchedAt: channel.fetchedAt || null, kind: result.label?.kind || null,
+        } : null,
+        label: result.label,
+        gate: { pass: true, reasons: gate.reasons },
+        outcome: 'auto',
+        lemmas: result.lemmas.map((l, i) => ({
+          title: l.title, action: imported[i]?.action || 'new',
+          nodeId: imported[i]?.id || null,
+          suggestedParentId: l.parentId || null,
+          suggestedConfidence: Math.round((result.label.quality ?? 0.5) * 100),
+        })),
+        batchId, intakeId, degraded,
+        captureSnapshot: {
+          text: result.resolvedText || text,
+          title: firstSentence(result.resolvedText || text),
+          label: result.label, lemmas: result.lemmas,
+          rejected: result.rejected, noulCompared: result.noulCompared,
+          noulMaxScore: result.noulMaxScore, provenance: channel,
+        },
+      })
       getMainWindow?.()?.webContents.send('db:changed')
       return {
         ok: true, autoImported: true, imported, count: imported.length,
-        batch: {
-          themeId: defaultThemeId,
-          imported,
-          captureResult: {
-            text: result.resolvedText || text,
-            title: firstSentence(result.resolvedText || text),
-            label: result.label,
-            lemmas: result.lemmas,
-            rejected: result.rejected,
-            noulCompared: result.noulCompared,
-            noulMaxScore: result.noulMaxScore,
-            provenance: result.resolvedChannel || channelMeta || null,
-          },
-        },
+        intakeEventId: intakeEvent.id,
       }
     }
 
@@ -548,7 +580,25 @@ function register({ getMainWindow }) {
       rejected: result.rejected,
       noulCompared: result.noulCompared,
       noulMaxScore: result.noulMaxScore,
-      provenance: result.resolvedChannel || channelMeta || null,
+      provenance: channel,
+    })
+    // 采集漏斗记录
+    addIntakeEvent({
+      themeId: defaultThemeId, textHash, rawId: null,
+      channel: channel ? {
+        platform: channel.platform || null, url: channel.url || null,
+        fetchedAt: channel.fetchedAt || null, kind: result.label?.kind || null,
+      } : null,
+      label: result.label,
+      gate: { pass: false, reasons: gate.reasons },
+      outcome: 'inbox',
+      lemmas: result.lemmas.map((l) => ({
+        title: l.title, action: l.action || 'new',
+        nodeId: null,
+        suggestedParentId: l.parentId || null,
+        suggestedConfidence: l.confidence || 50,
+      })),
+      degraded, inboxItemId: item.id,
     })
     return { ok: true, autoImported: false, item, gateReasons: gate.reasons }
   })
@@ -564,18 +614,21 @@ function register({ getMainWindow }) {
         score: item.label?.quality || 0, choice: item.label?.kind || '未知',
       })
     }
+    if (item) markIntakeResolved(id, false)
     return item
   })
 
-  // 批量入库：把选中的收件箱条目走捕获入库流水线
-  ipcMain.handle('inbox:import', async (_, themeId, items) => {
+  // 批量入库：把选中的收件箱条目走捕获入库流水线（override 在 IPC 层应用并记 trace）
+  ipcMain.handle('inbox:import', async (_, themeId, items, overrides) => {
     const s = settings()
+    const ovMap = overrides || {}
     const results = []
     for (const item of items) {
       const raw = item.text
         ? appendRaw({ kind: item.label?.kind || '独立媒体', label: item.label?.kind || '未注明', text: item.text })
         : { id: null }
 
+      const ov = ovMap[item.id] || {}
       for (const l of item.lemmas || []) {
         if (l.action === 'merge' && l.mergeInto) {
           addSource(l.mergeInto, {
@@ -589,13 +642,19 @@ function register({ getMainWindow }) {
           results.push({ title: l.title, action: 'merge' })
           continue
         }
+        // IPC 层应用 override
+        const origConfidence = l.confidence
+        const origParentId = l.parentId || null
+        const finalConfidence = ov.confidence != null ? ov.confidence : l.confidence
+        const finalParentId = ov.parentId != null ? ov.parentId : (l.parentId || null)
+        const hasOverride = ov.confidence != null || ov.parentId != null
         const node = addNode({
           themeId,
-          parentId: l.parentId || null,
+          parentId: finalParentId,
           kind: 'lemma',
           title: l.title,
           type: l.type,
-          confidence: l.confidence,
+          confidence: finalConfidence,
           tags: l.tags || [],
           sources: [{
             kind: l.sourceKind || item.label?.kind || '独立媒体',
@@ -609,10 +668,24 @@ function register({ getMainWindow }) {
           by: 'manual',
         })
         for (const c of l.conflicts || []) addConflict(node.id, c.id, c.reason)
+        promoteMatchingVerdicts(l.title, node.id, themeId)
+        // route trace：记录原始建议值和用户最终值
+        addTrace({
+          target: { type: 'node', id: node.id },
+          stage: 'route',
+          actor: { by: 'user', model: null, promptVersion: 'v1' },
+          input: { textHash: item.text ? hashText(item.text) : null, suggestedParentId: origParentId, suggestedConfidence: origConfidence },
+          output: { parentId: origParentId, confidence: origConfidence },
+          decision: { parentId: finalParentId, confidence: finalConfidence },
+          reason: hasOverride ? 'user-override' : 'user-confirmed',
+        })
         results.push({ title: l.title, action: 'new', id: node.id })
       }
       // 标记收件箱条目已入库
       resolveInboxItem(item.id, 'accept')
+      // 标记采集漏斗已确认
+      const hasAnyOverride = Object.keys(ov).length > 0 && (ov.confidence != null || ov.parentId != null)
+      markIntakeResolved(item.id, hasAnyOverride)
     }
     getMainWindow?.()?.webContents.send('db:changed')
     return { ok: true, results }
@@ -620,19 +693,23 @@ function register({ getMainWindow }) {
 
   ipcMain.handle('inbox:clear', () => clearInbox())
 
-  // 撤销自动归位：删除自动创建的节点 / 移除合并的来源，原文退回收件箱
-  ipcMain.handle('inbox:undoAutoImport', (_, batch) => {
-    for (const item of batch.imported || []) {
-      if (item.action === 'new' && item.id) {
-        removeNode(item.id)
-      } else if (item.action === 'merge' && item.id) {
-        const node = getNode(item.id)
+  // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch
+  ipcMain.handle('inbox:undoAutoImport', (_, intakeEventId) => {
+    const event = getIntakeEvent(intakeEventId)
+    if (!event || event.outcome !== 'auto') return { ok: false }
+    // 删除自动创建的节点 / 移除合并的来源
+    for (const l of event.lemmas || []) {
+      if (l.action === 'new' && l.nodeId) {
+        removeNode(l.nodeId)
+      } else if (l.action === 'merge' && l.nodeId) {
+        const node = getNode(l.nodeId)
         if (node && node.sources.length > 1) {
-          updateNode(item.id, { sources: node.sources.slice(0, -1) })
+          updateNode(l.nodeId, { sources: node.sources.slice(0, -1) })
         }
       }
     }
-    const cr = batch.captureResult
+    // 原文退回收件箱
+    const cr = event.captureSnapshot
     if (cr) {
       addInboxItem({
         text: cr.text || '', title: cr.title || '',
@@ -641,9 +718,20 @@ function register({ getMainWindow }) {
         noulMaxScore: cr.noulMaxScore || 0, provenance: cr.provenance || null,
       })
     }
+    markIntakeUndone(intakeEventId)
     getMainWindow?.()?.webContents.send('db:changed')
     return { ok: true }
   })
+
+  // 恢复撤销入口：重启后渲染层用这个拿回最近一次自动归位
+  ipcMain.handle('inbox:lastAutoImport', () => {
+    const event = lastAutoIntakeEvent()
+    if (!event) return null
+    return { id: event.id, count: (event.lemmas || []).length }
+  })
+
+  // 采集漏斗按天聚合
+  ipcMain.handle('intake:series', (_, sinceDays) => intakeSeries(sinceDays))
 
   // ---- 留痕层 trace ----
   ipcMain.handle('trace:all', () => allTraces())

@@ -16,6 +16,15 @@ export async function renderToday(mid) {
   const seq = ++renderSeq
   clear(mid)
 
+  // 恢复撤销入口（重启后仍可撤销）
+  if (!lastAutoImport) {
+    try {
+      const last = await m.inboxLastAutoImport()
+      if (seq !== renderSeq) return
+      if (last) lastAutoImport = { id: last.id, count: last.count }
+    } catch { /* 静默 */ }
+  }
+
   const [due, calib, inbox, conflicts] = await Promise.all([
     m.due(), m.calibration(), m.inboxList(), m.conflicts(),
   ])
@@ -23,8 +32,7 @@ export async function renderToday(mid) {
   inboxItems = inbox
   if (picked.size === 0 && inbox.length) picked = new Set(inbox.map((_, i) => i))
 
-  const stats = await m.stats()
-  if (seq !== renderSeq) return
+
   const themeNodes = state.themeId ? (await m.nodes(state.themeId)) : []
   if (seq !== renderSeq) return
 
@@ -44,8 +52,8 @@ export async function renderToday(mid) {
       h('button', {
         class: 'btn', style: { height: '26px', fontSize: '12px' },
         onclick: async () => {
-          if (lastAutoImport?.batch) {
-            await m.inboxUndoAutoImport(lastAutoImport.batch)
+          if (lastAutoImport?.id) {
+            await m.inboxUndoAutoImport(lastAutoImport.id)
             lastAutoImport = null
             await refresh()
             renderToday(mid)
@@ -135,22 +143,13 @@ export async function renderToday(mid) {
                 class: 'btn btn-primary', style: { height: '28px' },
                 onclick: async () => {
                   if (!state.themeId) { alert('先选择一个主题'); return }
-                  const chosen = [...picked].sort((a, b) => a - b).map((i) => {
-                    const item = inbox[i]
+                  const chosen = [...picked].sort((a, b) => a - b).map((i) => inbox[i])
+                  const ovMap = {}
+                  for (const item of chosen) {
                     const ov = overrides.get(item.id)
-                    if (ov && item.lemmas?.length) {
-                      return {
-                        ...item,
-                        lemmas: item.lemmas.map((l) => ({
-                          ...l,
-                          ...(ov.confidence != null ? { confidence: ov.confidence } : {}),
-                          ...(ov.parentId != null ? { parentId: ov.parentId } : {}),
-                        })),
-                      }
-                    }
-                    return item
-                  })
-                  await m.inboxImport(state.themeId, chosen)
+                    if (ov) ovMap[item.id] = ov
+                  }
+                  await m.inboxImport(state.themeId, chosen, ovMap)
                   picked.clear()
                   overrides.clear()
                   selectedInboxIdx = null
@@ -321,15 +320,8 @@ function renderInboxItem(item, i, mid, themeNodes) {
         onclick: async () => {
           if (!state.themeId) { alert('先选择一个主题'); return }
           const o = overrides.get(item.id) || {}
-          const single = {
-            ...item,
-            lemmas: item.lemmas.map((l) => ({
-              ...l,
-              ...(o.confidence != null ? { confidence: o.confidence } : {}),
-              ...(o.parentId != null ? { parentId: o.parentId } : {}),
-            })),
-          }
-          await m.inboxImport(state.themeId, [single])
+          const ovMap = Object.keys(o).length ? { [item.id]: o } : {}
+          await m.inboxImport(state.themeId, [item], ovMap)
           overrides.delete(item.id)
           picked.delete(i)
           selectedInboxIdx = null
@@ -517,7 +509,7 @@ export async function inboxPaste(text) {
   try {
     const res = await m.inboxCapture(text)
     if (res?.autoImported) {
-      lastAutoImport = { count: res.count, imported: res.imported, batch: res.batch }
+      lastAutoImport = { id: res.intakeEventId, count: res.count }
     } else {
       lastAutoImport = null
     }

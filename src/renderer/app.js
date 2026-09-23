@@ -1,9 +1,7 @@
 import { h, icon, clear, $ } from './lib/dom.js'
 import { renderToday, inboxPaste } from './views/today.js'
 import { renderLattice } from './views/lattice.js'
-import { renderSettle } from './views/settle.js'
 import { renderAudit } from './views/audit.js'
-import { renderPremise } from './views/premise.js'
 import { renderFeeds } from './views/feeds.js'
 import { renderVault } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
@@ -37,6 +35,7 @@ const VAULTS = [
   { id: 'cold', label: '冷库', icon: 'lattice' },
   { id: 'dead', label: '墓碑区', icon: 'trash' },
   { id: 'filtered', label: '误杀审计', icon: 'flag' },
+  { id: 'review', label: '复盘', icon: 'settle' },
   { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
   { id: 'feeds', label: '数据源', icon: 'export' },
 ]
@@ -325,6 +324,7 @@ function renderMid() {
   } else if (state.view === 'vault') {
     if (state.vaultKind === 'feeds') renderFeeds(mid)
     else if (state.vaultKind === 'filtered') renderAudit(mid)
+    else if (state.vaultKind === 'review') renderVault(mid, 'review')
     else renderVault(mid, state.vaultKind)
   }
   else if (state.view === 'settings') renderSettings(mid)
