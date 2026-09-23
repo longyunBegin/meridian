@@ -15,12 +15,14 @@ import {
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
+  addReading, readingsByIndicator, readingsByMetric, latestReading,
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 import { fetchFeed } from './feeds.js'
+import { fetchChannel, availableFetchers } from './fetchers.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 
@@ -753,6 +755,19 @@ function register({ getMainWindow }) {
   ipcMain.handle('channel:add', (_, ch) => addChannel(ch))
   ipcMain.handle('channel:update', (_, id, patch) => updateChannel(id, patch))
   ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
+  ipcMain.handle('channel:fetch', async (_, channelId) => {
+    const ch = allChannels().find((c) => c.id === channelId)
+    if (!ch) return { items: [], error: 'channel not found' }
+    const items = await fetchChannel(ch)
+    return { items, error: null }
+  })
+  ipcMain.handle('channel:fetchers', () => availableFetchers())
+
+  // ---- 读数层 ----
+  ipcMain.handle('reading:add', (_, input) => addReading(input))
+  ipcMain.handle('reading:byIndicator', (_, indicatorId) => readingsByIndicator(indicatorId))
+  ipcMain.handle('reading:byMetric', (_, metric) => readingsByMetric(metric))
+  ipcMain.handle('reading:latest', (_, metric) => latestReading(metric))
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

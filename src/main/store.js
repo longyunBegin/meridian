@@ -44,6 +44,7 @@ const blank = () => ({
   traces: [], // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
   channels: [], // 通道描述符：按内容类型选取数器
   intakeEvents: [], // 采集漏斗：每次捕获一条记录
+  readings: [], // 读数：结构化财务数字，只追加不覆盖
 })
 
 let db = null
@@ -70,6 +71,7 @@ function migrate(d) {
   d.traces = d.traces || []
   d.channels = d.channels || []
   d.intakeEvents = d.intakeEvents || []
+  d.readings = d.readings || []
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
@@ -885,6 +887,7 @@ export function stats() {
     premises: sharedPremises().length,
     feeds: db.feeds.filter((f) => f.enabled).length,
     inbox: db.inbox.filter((i) => i.status === 'pending').length,
+    readings: db.readings.length,
   }
 }
 
@@ -1030,7 +1033,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [] }
+  db = { version: 3, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -1275,4 +1278,58 @@ export function removeChannel(id) {
   const db = load()
   db.channels = db.channels.filter((c) => c.id !== id)
   persist()
+}
+// ------------------------------------------------------------------ 读数层
+
+/**
+ * 读数：结构化财务数字（收入、库存、capex 等），只追加不覆盖。
+ *
+ * 去重键 = (metric, start, end, accn)。
+ * 不能用 (metric, start, end)——10-K 会把上一年作比较期重列，
+ * 同一期间会被两个 filing 重复申报。实例：
+ *   2017-01-30 ~ 2018-01-28
+ *      filed=2019-02-21  form=10-K  accn=0001045810-19-000010  val=9,714,000,000
+ *      filed=2020-02-20  form=10-K  accn=0001045810-20-000036  val=9,714,000,000
+ * 用 (metric, start, end) 会随机丢掉两条中的一条。
+ *
+ * frame 字段覆盖率只有 18/28，不能当键。
+ */
+export function addReading(input) {
+  const db = load()
+  const dedupeKey = input.dedupeKey
+    || `${input.metric}|${input.source?.start || ''}|${input.source?.end || ''}|${input.source?.accn || ''}`
+  if (db.readings.some((r) => r.dedupeKey === dedupeKey)) {
+    return { added: false, dedupeKey }
+  }
+  const reading = {
+    id: uid(),
+    at: input.at || today(),
+    asOf: input.asOf || null,
+    indicatorId: input.indicatorId || null,
+    nodeId: input.nodeId || null,
+    metric: input.metric,
+    value: input.value,
+    unit: input.unit || null,
+    source: input.source || {},
+    basis: input.basis || 'reported',
+    channelId: input.channelId || null,
+    dedupeKey,
+  }
+  db.readings.push(reading)
+  persist()
+  return { added: true, reading }
+}
+
+export function readingsByIndicator(indicatorId) {
+  return load().readings.filter((r) => r.indicatorId === indicatorId)
+}
+
+export function readingsByMetric(metric) {
+  return load().readings.filter((r) => r.metric === metric)
+}
+
+export function latestReading(metric) {
+  const all = readingsByMetric(metric)
+  if (!all.length) return null
+  return all.reduce((a, b) => (a.at > b.at ? a : b))
 }

@@ -1242,5 +1242,135 @@ const plan3 = planPurge('user', preview3, true)
 ok('Fix4: 空集时 willDelete = false', !plan3.willDelete)
 ok('Fix4: 空集时 reason = empty', plan3.reason === 'empty')
 
+// ============================================================
+console.log('\n— R1: 取数器注册表 —')
+// ============================================================
+
+const { fetchChannel, availableFetchers } = await import('../src/main/fetchers.js')
+
+const avail = availableFetchers()
+ok('R1: availableFetchers 包含 rss', avail.includes('rss'))
+ok('R1: availableFetchers 包含 web', avail.includes('web'))
+ok('R1: availableFetchers 不含未实现的 tavily', !avail.includes('tavily'))
+ok('R1: availableFetchers 不含 null 值', avail.every((k) => k != null))
+
+// 未实现的 fetch 类型静默返回空
+const unkResult = await fetchChannel({ fetch: 'tavily', query: 'test', kind: '自媒体' })
+ok('R1: 未实现类型返回空数组', Array.isArray(unkResult) && unkResult.length === 0)
+
+// 未知 fetch 类型也静默返回空
+const unkResult2 = await fetchChannel({ fetch: 'nonexistent', query: 'test' })
+ok('R1: 未知类型返回空数组', Array.isArray(unkResult2) && unkResult2.length === 0)
+
+// web fetcher 对短文本返回空
+const shortResult = await fetchChannel({ fetch: 'web', query: 'about:blank', name: 'test', kind: '自媒体' })
+ok('R1: web fetcher 失败时返回空数组', Array.isArray(shortResult) && shortResult.length === 0)
+
+// ============================================================
+console.log('\n— R2: readings 读数集合 —')
+// ============================================================
+
+// 基本添加
+const r1 = store.addReading({
+  metric: 'nvda.revenue',
+  value: 9714000000,
+  unit: 'USD',
+  asOf: '2018-01-28',
+  source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-19-000010', url: 'https://sec.gov/...' },
+  basis: 'reported',
+})
+ok('R2: addReading 返回 added: true', r1.added === true)
+ok('R2: reading 有 id', r1.reading.id != null)
+ok('R2: reading 有 dedupeKey', r1.reading.dedupeKey != null)
+ok('R2: dedupeKey 格式正确', r1.reading.dedupeKey === 'nvda.revenue|2017-01-30|2018-01-28|0001045810-19-000010')
+
+// 幂等：同一 dedupeKey 再加一次
+const r2 = store.addReading({
+  metric: 'nvda.revenue',
+  value: 9714000000,
+  unit: 'USD',
+  asOf: '2018-01-28',
+  source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-19-000010' },
+})
+ok('R2: 重复 dedupeKey 返回 added: false', r2.added === false)
+
+// 同一期间不同 accn（10-K 比较期重列）→ 两条记录
+const r3 = store.addReading({
+  metric: 'nvda.revenue',
+  value: 9714000000,
+  unit: 'USD',
+  asOf: '2018-01-28',
+  source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-20-000036' },
+})
+ok('R2: 同期间不同 accn 是新记录', r3.added === true)
+ok('R2: 两条记录都在', store.readingsByMetric('nvda.revenue').length === 2)
+
+// 不同 metric
+const r4 = store.addReading({
+  metric: 'nvda.grossProfit',
+  value: 5000000000,
+  unit: 'USD',
+  asOf: '2024-01-28',
+  source: { kind: '财报 / 公告', start: '2023-01-30', end: '2024-01-28', accn: '0001045810-24-000001' },
+})
+ok('R2: 不同 metric 是新记录', r4.added === true)
+
+// readingsByMetric
+const revReadings = store.readingsByMetric('nvda.revenue')
+ok('R2: readingsByMetric 过滤正确', revReadings.length === 2 && revReadings.every((r) => r.metric === 'nvda.revenue'))
+
+// readingsByIndicator
+const r5 = store.addReading({
+  metric: 'aapl.revenue',
+  value: 391000000000,
+  unit: 'USD',
+  asOf: '2024-09-28',
+  indicatorId: 'ind-1',
+  source: { kind: '财报 / 公告', start: '2023-10-01', end: '2024-09-28', accn: '0000320193-24-000001' },
+})
+const indReadings = store.readingsByIndicator('ind-1')
+ok('R2: readingsByIndicator 过滤正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
+
+// latestReading 返回最新的
+const r6 = store.addReading({
+  metric: 'nvda.revenue',
+  value: 16675000000,
+  unit: 'USD',
+  asOf: '2026-01-25',
+  at: '2026-09-23',
+  source: { kind: '财报 / 公告', start: '2025-01-27', end: '2026-01-25', accn: '0001045810-26-000001' },
+})
+const latest = store.latestReading('nvda.revenue')
+ok('R2: latestReading 返回最新', latest != null && latest.value === 16675000000)
+ok('R2: 旧记录仍在', store.readingsByMetric('nvda.revenue').length === 3)
+
+// stats 包含 readings
+const stReadings = store.stats()
+ok('R2: stats 包含 readings 计数', typeof stReadings.readings === 'number' && stReadings.readings >= 4)
+
+// calibration 不含 readings 的影响
+const calibR = store.calibration()
+ok('R2: calibration 不受 readings 影响', !calibR.some((c) => c.metric != null && c.value != null))
+
+// 导出 → 导入 → readings 不丢
+const exportedR = store.exportAll({ withRaw: false })
+const parsedR = JSON.parse(exportedR)
+ok('R2: 导出包含 readings', Array.isArray(parsedR.readings) && parsedR.readings.length >= 4)
+
+// 老文件（无 readings 字段）导入后是空数组
+delete parsedR.readings
+const oldFileStrR = JSON.stringify(parsedR)
+store.importAll(oldFileStrR)
+ok('R2: 老文件导入后 readings 为空', store.stats().readings === 0)
+
+// 恢复数据
+store.importAll(exportedR)
+ok('R2: 重新导入后 readings 恢复', store.stats().readings >= 4)
+
+// 没有 updateReading / removeReading
+const storeExports = Object.keys(store)
+ok('R2: 没有 updateReading', !storeExports.includes('updateReading'))
+ok('R2: 没有 removeReading', !storeExports.includes('removeReading'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

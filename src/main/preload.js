@@ -94,6 +94,14 @@ contextBridge.exposeInMainWorld('meridian', {
   channelAdd: (ch) => ipcRenderer.invoke('channel:add', ch),
   channelUpdate: (id, patch) => ipcRenderer.invoke('channel:update', id, patch),
   channelRemove: (id) => ipcRenderer.invoke('channel:remove', id),
+  channelFetch: (id) => ipcRenderer.invoke('channel:fetch', id),
+  availableFetchers: () => ipcRenderer.invoke('channel:fetchers'),
+
+  // ---- 读数层
+  addReading: (input) => ipcRenderer.invoke('reading:add', input),
+  readingsByIndicator: (indicatorId) => ipcRenderer.invoke('reading:byIndicator', indicatorId),
+  readingsByMetric: (metric) => ipcRenderer.invoke('reading:byMetric', metric),
+  latestReading: (metric) => ipcRenderer.invoke('reading:latest', metric),
 
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),

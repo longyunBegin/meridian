@@ -68,6 +68,8 @@ export async function renderSettings(mid) {
   const feeds = await m.feeds()
   const deletedTs = await m.deletedThemes()
   const purgePreview = await m.purgeDead('all', { dryRun: true })
+  const channels = await m.channelList()
+  const fetchers = await m.availableFetchers()
 
   const toast = h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
   const flash = (msg, color = 'var(--text-2)') => {
@@ -207,11 +209,81 @@ export async function renderSettings(mid) {
       ),
     ),
 
+    // ---- 通道与取数
     h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '通道与取数'), h('em', {}, String(channels.length))),
       h('div', { class: 'sect-b' },
-        h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
+        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-3)', lineHeight: '1.6' } },
+          '通道描述符：按内容类型选取数器。已实现的取数器：' + fetchers.join('、') + '。'),
+        ...channels.map((ch) => h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, ch.name),
+            h('div', { class: 'q-meta' },
+              h('span', {}, `${ch.kind} · ${ch.fetch} · ${ch.enabled ? '启用' : '停用'}`),
+              fetchers.includes(ch.fetch) ? h('button', {
+                class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
+                onclick: async () => {
+                  flash(`正在拉取「${ch.name}」…`)
+                  const r = await m.channelFetch(ch.id)
+                  if (r.error) { flash(`拉取失败：${r.error}`, 'var(--red)'); return }
+                  flash(`拉取到 ${r.items.length} 条`)
+                },
+              }, '拉取') : h('span', { style: { marginLeft: '8px', color: 'var(--text-3)' } }, '（未实现）'),
+            ),
+          ),
+          h('div', { class: 'q-acts' },
+            h('select', {
+              class: 'txt', style: { width: 'auto' },
+              onchange: async (e) => { await m.channelUpdate(ch.id, { fetch: e.target.value }); flash(`已设 ${ch.name} → ${e.target.value}`) },
+            },
+              ...['manual', 'rss', 'web', 'edgarConcept', 'edgarFilings', 'cninfo', 'eastmoneyReport', 'jina', 'tavily', 'grok-x-search'].map((f) =>
+                h('option', { value: f, selected: ch.fetch === f }, f),
+              ),
+            ),
+            h('button', {
+              class: 'btn',
+              onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSettings(mid) },
+            }, ch.enabled ? '停用' : '启用'),
+            h('button', {
+              class: 'btn', style: { color: 'var(--red)' },
+              onclick: async () => { await m.channelRemove(ch.id); flash('已删除通道'); await renderSettings(mid) },
+            }, '删除'),
+          ),
+        )),
+        h('div', { class: 'field', style: { marginTop: '8px' } },
+          h('label', {}, '新增通道'),
+          h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+            ...(() => {
+              const inputs = {}
+              return [
+                h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '80px' }, oninput: (e) => inputs.name = e.target.value }),
+                h('input', { class: 'txt', placeholder: 'query (URL/CIK/ticker)', style: { flex: '1', minWidth: '80px' }, oninput: (e) => inputs.query = e.target.value }),
+                h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.fetch = e.target.value },
+                  h('option', { value: 'manual' }, 'manual'),
+                  h('option', { value: 'rss' }, 'rss'),
+                  h('option', { value: 'web' }, 'web'),
+                  h('option', { value: 'edgarConcept' }, 'edgarConcept'),
+                  h('option', { value: 'edgarFilings' }, 'edgarFilings'),
+                ),
+                h('button', {
+                  class: 'btn btn-primary',
+                  onclick: async () => {
+                    if (!inputs.name) { flash('请填名称', 'var(--red)'); return }
+                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch || 'manual', kind: '自媒体' })
+                    flash('已添加通道')
+                    await renderSettings(mid)
+                  },
+                }, '添加'),
+              ]
+            })(),
+          ),
+        ),
+      ),
+    ),
+
+    h('section', { class: 'sect' },
           `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +
-          `${stats.verdicts} 条裁决 · ${stats.conflicts} 待裁决冲突 · ${stats.due} 待结算`),
+          `${stats.verdicts} 条裁决 · ${stats.conflicts} 待裁决冲突 · ${stats.due} 待结算 · ${stats.readings} 读数`),
         h('p', { style: { margin: '0 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
           '判断在 meridian.json，原文在 raw.jsonl。原文可以随便清——清掉不影响任何一条命题，只是以后复盘不了当初读的是什么。'),
         h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
