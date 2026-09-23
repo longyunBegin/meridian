@@ -15,7 +15,7 @@ import {
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
   allChannels, addChannel, updateChannel, removeChannel,
-  addReading, readingsByIndicator, readingsByMetric, latestReading, allReadings, groupReadings,
+  addReading, allReadings,
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton } from './extract.js'
@@ -773,19 +773,7 @@ function register({ getMainWindow }) {
 
   // ---- 读数层 ----
   ipcMain.handle('reading:add', (_, input) => addReading(input))
-  ipcMain.handle('reading:byIndicator', (_, indicatorId) => readingsByIndicator(indicatorId))
-  ipcMain.handle('reading:byMetric', (_, metric) => readingsByMetric(metric))
-  ipcMain.handle('reading:latest', (_, metric) => latestReading(metric))
   ipcMain.handle('reading:all', () => allReadings())
-  ipcMain.handle('reading:group', (_, indicatorFilter) => {
-    const all = allReadings()
-    const filtered = indicatorFilter === 'unlinked'
-      ? all.filter((r) => !r.indicatorId)
-      : indicatorFilter
-      ? all.filter((r) => r.indicatorId === indicatorFilter)
-      : all
-    return groupReadings(filtered)
-  })
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

@@ -100,11 +100,7 @@ contextBridge.exposeInMainWorld('meridian', {
 
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),
-  readingsByIndicator: (indicatorId) => ipcRenderer.invoke('reading:byIndicator', indicatorId),
-  readingsByMetric: (metric) => ipcRenderer.invoke('reading:byMetric', metric),
-  latestReading: (metric) => ipcRenderer.invoke('reading:latest', metric),
   allReadings: () => ipcRenderer.invoke('reading:all'),
-  groupReadings: (indicatorFilter) => ipcRenderer.invoke('reading:group', indicatorFilter),
 
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),

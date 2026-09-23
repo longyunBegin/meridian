@@ -1,6 +1,7 @@
 import { h, icon, clear, add, $ } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
+import { groupReadings } from '../../shared/readings.js'
 
 const m = window.meridian
 
@@ -369,7 +370,12 @@ export async function renderReadings(mid) {
   }, label)
 
   async function refresh() {
-    const groups = await m.groupReadings(currentFilter)
+    const filtered = currentFilter === 'unlinked'
+      ? all.filter((r) => !r.indicatorId)
+      : currentFilter
+      ? all.filter((r) => r.indicatorId === currentFilter)
+      : all
+    const groups = groupReadings(filtered)
     const list = $('#readings-list')
     if (list) { clear(list); add(list, groups.map(metricCard)) }
   }
@@ -418,7 +424,7 @@ export async function renderReadings(mid) {
     ),
   )
 
-  const groups = await m.groupReadings(null)
+  const groups = groupReadings(all)
   mid.append(h('section', { class: 'sect' },
     h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
     filterBar,

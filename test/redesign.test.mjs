@@ -17,6 +17,7 @@ const stub = await import('./electron-stub.mjs')
 globalThis.__electron = stub
 
 const store = await import('../src/main/store.js')
+const { groupReadings } = await import('../src/shared/readings.js')
 const { register: registerIpc } = await import('../src/main/ipc.js')
 const labeler = await import('../src/main/labeler.js')
 const fetcher = await import('../src/main/fetcher.js')
@@ -1303,7 +1304,7 @@ const r3 = store.addReading({
   source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-20-000036' },
 })
 ok('R2: 同期间不同 accn 是新记录', r3.added === true)
-ok('R2: 两条记录都在', store.readingsByMetric('nvda.revenue').length === 2)
+ok('R2: 两条记录都在', store.allReadings().filter((r) => r.metric === 'nvda.revenue').length === 2)
 
 // 不同 metric
 const r4 = store.addReading({
@@ -1315,11 +1316,11 @@ const r4 = store.addReading({
 })
 ok('R2: 不同 metric 是新记录', r4.added === true)
 
-// readingsByMetric
-const revReadings = store.readingsByMetric('nvda.revenue')
-ok('R2: readingsByMetric 过滤正确', revReadings.length === 2 && revReadings.every((r) => r.metric === 'nvda.revenue'))
+// allReadings + 本地过滤
+const revReadings = store.allReadings().filter((r) => r.metric === 'nvda.revenue')
+ok('R2: allReadings 过滤 metric 正确', revReadings.length === 2 && revReadings.every((r) => r.metric === 'nvda.revenue'))
 
-// readingsByIndicator
+// indicator 过滤
 const r5 = store.addReading({
   metric: 'aapl.revenue',
   value: 391000000000,
@@ -1328,10 +1329,10 @@ const r5 = store.addReading({
   indicatorId: 'ind-1',
   source: { kind: '财报 / 公告', start: '2023-10-01', end: '2024-09-28', accn: '0000320193-24-000001' },
 })
-const indReadings = store.readingsByIndicator('ind-1')
-ok('R2: readingsByIndicator 过滤正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
+const indReadings = store.allReadings().filter((r) => r.indicatorId === 'ind-1')
+ok('R2: allReadings 过滤 indicator 正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
 
-// latestReading 返回最新的
+// latestReading 语义：groupReadings 的 latest 字段
 const r6 = store.addReading({
   metric: 'nvda.revenue',
   value: 16675000000,
@@ -1340,9 +1341,10 @@ const r6 = store.addReading({
   at: '2026-09-23',
   source: { kind: '财报 / 公告', start: '2025-01-27', end: '2026-01-25', accn: '0001045810-26-000001' },
 })
-const latest = store.latestReading('nvda.revenue')
-ok('R2: latestReading 返回最新', latest != null && latest.value === 16675000000)
-ok('R2: 旧记录仍在', store.readingsByMetric('nvda.revenue').length === 3)
+const revGroups = groupReadings(store.allReadings().filter((r) => r.metric === 'nvda.revenue'))
+const latest = revGroups[0].latest
+ok('R2: groupReadings latest 返回最新', latest != null && latest.value === 16675000000)
+ok('R2: 旧记录仍在', store.allReadings().filter((r) => r.metric === 'nvda.revenue').length === 3)
 
 // stats 包含 readings
 const stReadings = store.stats()
@@ -1367,16 +1369,19 @@ ok('R2: 老文件导入后 readings 为空', store.stats().readings === 0)
 store.importAll(exportedR)
 ok('R2: 重新导入后 readings 恢复', store.stats().readings >= 4)
 
-// 没有 updateReading / removeReading
+// 没有 updateReading / removeReading / 三个死函数
 const storeExports = Object.keys(store)
 ok('R2: 没有 updateReading', !storeExports.includes('updateReading'))
 ok('R2: 没有 removeReading', !storeExports.includes('removeReading'))
+ok('R2: 没有 readingsByMetric', !storeExports.includes('readingsByMetric'))
+ok('R2: 没有 readingsByIndicator', !storeExports.includes('readingsByIndicator'))
+ok('R2: 没有 latestReading', !storeExports.includes('latestReading'))
+ok('R2: 没有 groupReadings（已移至 shared）', !storeExports.includes('groupReadings'))
 
 // ============================================================
 console.log('\n— 读数展示: groupReadings 纯函数 —')
 // ============================================================
 
-const { groupReadings } = await import('../src/main/store.js')
 
 // 构造测试数据
 const testReadings = [
