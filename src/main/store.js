@@ -18,24 +18,30 @@ export const SOURCE_QUALITY = [
 ]
 const QUALITY = new Map(SOURCE_QUALITY)
 
-/** us-gaap 常用标签置顶——探活实测过的高频标签 */
+/** us-gaap 常用标签置顶——探活实测过的高频标签，带中文标签方便辨识 */
 export const COMMON_US_GAAP = [
-  'Revenues',
-  'RevenueFromContractWithCustomerExcludingAssessedTax',
-  'GrossProfit',
-  'OperatingIncomeLoss',
-  'NetIncomeLoss',
-  'EarningsPerShareBasic',
-  'CostOfRevenue',
-  'CostOfGoodsAndServicesSold',
-  'ResearchAndDevelopmentExpense',
-  'InventoryNet',
-  'PaymentsToAcquirePropertyPlantAndEquipment',
-  'NetCashProvidedByUsedInOperatingActivities',
-  'LongTermDebt',
-  'Assets',
-  'Liabilities',
-  'StockholdersEquity',
+  { tag: 'Revenues', label: '总收入' },
+  { tag: 'RevenueFromContractWithCustomerExcludingAssessedTax', label: '总收入（合同）' },
+  { tag: 'GrossProfit', label: '毛利' },
+  { tag: 'OperatingIncomeLoss', label: '营业利润' },
+  { tag: 'NetIncomeLoss', label: '净利润' },
+  { tag: 'EarningsPerShareBasic', label: '基本EPS' },
+  { tag: 'CostOfRevenue', label: '营业成本' },
+  { tag: 'CostOfGoodsAndServicesSold', label: '营业成本（商品）' },
+  { tag: 'ResearchAndDevelopmentExpense', label: '研发费用' },
+  { tag: 'InventoryNet', label: '存货' },
+  { tag: 'PaymentsToAcquirePropertyPlantAndEquipment', label: '资本支出' },
+  { tag: 'NetCashProvidedByUsedInOperatingActivities', label: '经营现金流' },
+  { tag: 'LongTermDebt', label: '长期借款' },
+  { tag: 'Assets', label: '总资产' },
+  { tag: 'Liabilities', label: '总负债' },
+  { tag: 'StockholdersEquity', label: '股东权益' },
+]
+
+/** 同义标签组：不同公司用不同 us-gaap 标签表达同一概念 */
+export const SYNONYM_GROUPS = [
+  ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+  ['CostOfRevenue', 'CostOfGoodsAndServicesSold'],
 ]
 
 /** 更新频率 → 结算日偏移（天） */
@@ -1259,6 +1265,8 @@ export function addChannel(ch) {
     interval: Math.max(15, Number(ch.interval) || 60),
     lastFetch: ch.lastFetch || null,
     lastCount: ch.lastCount ?? null,
+    lastOk: ch.lastOk ?? null,
+    lastError: ch.lastError || null,
     review: ch.review === true,
     enabled: ch.enabled !== false,
     createdAt: today(),
@@ -1314,7 +1322,7 @@ export function addReading(input) {
     id: uid(),
     at: input.at || today(),
     asOf: input.asOf || null,
-    indicatorId: input.indicatorId || null,
+
     nodeId: input.nodeId || null,
     metric: input.metric,
     value: input.value,

@@ -1320,17 +1320,17 @@ ok('R2: 不同 metric 是新记录', r4.added === true)
 const revReadings = store.allReadings().filter((r) => r.metric === 'nvda.revenue')
 ok('R2: allReadings 过滤 metric 正确', revReadings.length === 2 && revReadings.every((r) => r.metric === 'nvda.revenue'))
 
-// indicator 过滤
+// nodeId 过滤
 const r5 = store.addReading({
   metric: 'aapl.revenue',
   value: 391000000000,
   unit: 'USD',
   asOf: '2024-09-28',
-  indicatorId: 'ind-1',
+  nodeId: 'node-ind-1',
   source: { kind: '财报 / 公告', start: '2023-10-01', end: '2024-09-28', accn: '0000320193-24-000001' },
 })
-const indReadings = store.allReadings().filter((r) => r.indicatorId === 'ind-1')
-ok('R2: allReadings 过滤 indicator 正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
+const indReadings = store.allReadings().filter((r) => r.nodeId === 'node-ind-1')
+ok('R2: allReadings 过滤 nodeId 正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
 
 // latestReading 语义：groupReadings 的 latest 字段
 const r6 = store.addReading({
@@ -1764,6 +1764,14 @@ ok('O1: Revenues 在 NetIncomeLoss 前', revIdx < niIdx)
 const obscureIdx = parsedTags.findIndex((t) => t.tag === 'SomeObscureTag')
 const defIdx = parsedTags.findIndex((t) => t.tag === 'DeferredRevenue')
 ok('O1: 非常用按字母序 (DeferredRevenue < SomeObscureTag)', defIdx < obscureIdx)
+// F3: label 和 synonymGroup
+ok('O1: Revenues 有中文标签', parsedTags.find((t) => t.tag === 'Revenues')?.label === '总收入')
+ok('O1: NetIncomeLoss 有中文标签', parsedTags.find((t) => t.tag === 'NetIncomeLoss')?.label === '净利润')
+ok('O1: 非常用标签 label 为 null', parsedTags.find((t) => t.tag === 'SomeObscureTag')?.label === null)
+ok('O1: Revenues 有 synonymGroup', parsedTags.find((t) => t.tag === 'Revenues')?.synonymGroup === 0)
+ok('O1: NetIncomeLoss 无 synonymGroup', parsedTags.find((t) => t.tag === 'NetIncomeLoss')?.synonymGroup === null)
+// COMMON_US_GAAP 是对象数组
+ok('O1: COMMON_US_GAAP 是对象数组', COMMON_US_GAAP.every((c) => typeof c === 'object' && c.tag && c.label))
 // 空数据降级
 ok('O1: 空数据返回空数组', parseCompanyFacts(null).length === 0)
 ok('O1: 无 us-gaap 返回空数组', parseCompanyFacts({ facts: {} }).length === 0)
@@ -1818,9 +1826,8 @@ ok('O3: 通道已删除', !store.allChannels().some((c) => c.id === o3Ch.id))
 
 // --- O4: 清理 indicatorId 写入 ---
 ok('O4: fetchers.js 无 indicatorId', !fetchersSrc.includes('indicatorId'))
-// store.js addReading 里有 indicatorId 是旧代码兼容（schema 只加不改），不算新写
 const storeSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
-ok('O4: store.js 保留 indicatorId 兼容旧数据', storeSrc.includes('indicatorId'))
+ok('O4: store.js 无 indicatorId', !storeSrc.includes('indicatorId'))
 
 // --- O5: 空态提示加跳转 ---
 ok('O5: inspector.js 有 setView 导入', inspectorSrc.includes('setView'))
@@ -1831,6 +1838,65 @@ const pj63 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
 const pc63 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 const extractKeys63 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('v0.6.3 验收: preload 两份同步', JSON.stringify(extractKeys63(pj63)) === JSON.stringify(extractKeys63(pc63)))
+
+// ============================================================
+// v0.6.4: F1-F5 修订
+// ============================================================
+
+console.log('\n— v0.6.4: F1-F5 修订 —')
+
+const vaultSrcF = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const ipcSrcF = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+
+// --- F1: addReading 停用 indicatorId ---
+const f1Reading = store.addReading({
+  metric: 'f1.test',
+  value: 42,
+  unit: 'USD',
+  asOf: '2024-Q1',
+  indicatorId: 'should-not-persist',
+  source: { kind: '一手数据' },
+})
+ok('F1: addReading 不写 indicatorId', f1Reading.added && store.allReadings().find((r) => r.metric === 'f1.test').indicatorId === undefined)
+ok('F1: store.js 无 indicatorId 字符串', !storeSrc.includes('indicatorId'))
+
+// --- F2: 主题下拉默认值陷阱 ---
+ok('F2: vault.js inputs.themeId 初始化为 state.themeId', vaultSrcF.includes("themeId: state.themeId || null"))
+
+// --- F3: COMMON_US_GAAP 带中文标签 + 同义组 ---
+const { SYNONYM_GROUPS } = await import('../src/main/store.js')
+ok('F3: COMMON_US_GAAP 是对象数组', Array.isArray(COMMON_US_GAAP) && COMMON_US_GAAP.every((c) => typeof c === 'object' && c.tag && c.label))
+ok('F3: COMMON_US_GAAP 有中文标签', COMMON_US_GAAP.some((c) => c.label === '总收入'))
+ok('F3: SYNONYM_GROUPS 存在', Array.isArray(SYNONYM_GROUPS) && SYNONYM_GROUPS.length > 0)
+ok('F3: SYNONYM_GROUPS 每组是字符串数组', SYNONYM_GROUPS.every((g) => Array.isArray(g) && g.every((t) => typeof t === 'string')))
+ok('F3: parseCompanyFacts 返回 label', parsedTags.find((t) => t.tag === 'Revenues')?.label === '总收入')
+ok('F3: parseCompanyFacts 返回 synonymGroup', parsedTags.find((t) => t.tag === 'Revenues')?.synonymGroup === 0)
+ok('F3: vault.js 标签面板显示中文标签', vaultSrcF.includes('t.label') && vaultSrcF.includes('t.tag'))
+
+// --- F4: 手动读数挂指标 ---
+ok('F4: vault.js renderReadings 有关联指标下拉', vaultSrcF.includes('关联指标'))
+ok('F4: vault.js 有 observationNodes 过滤', vaultSrcF.includes("n.type === 'observation'"))
+ok('F4: vault.js 有 manual 通道查找', vaultSrcF.includes("c.fetch === 'manual'"))
+ok('F4: vault.js 有 channelAdd 手动录入', vaultSrcF.includes("name: '手动录入'"))
+ok('F4: vault.js 有 updateNode channelIds', vaultSrcF.includes('channelIds'))
+
+// --- F5: 通道列表显示拉取错误状态 ---
+ok('F5: store.js addChannel 有 lastOk', storeSrc.includes('lastOk'))
+ok('F5: store.js addChannel 有 lastError', storeSrc.includes('lastError'))
+ok('F5: ipc.js channel:fetch 写 lastError', ipcSrcF.includes('lastError'))
+ok('F5: ipc.js channel:fetch 写 lastOk', ipcSrcF.includes('lastOk'))
+ok('F5: vault.js 通道列表显示 lastError', vaultSrcF.includes('ch.lastError'))
+// 端到端：addChannel 带 lastError
+const f5Ch = store.addChannel({ name: 'F5 错误通道', fetch: 'rss', kind: '独立媒体', lastError: 'HTTP 500' })
+ok('F5: addChannel 存储 lastError', f5Ch.lastError === 'HTTP 500')
+const f5ChUpdated = store.updateChannel(f5Ch.id, { lastOk: '2026-09-23', lastError: null })
+ok('F5: updateChannel 清 lastError', f5ChUpdated.lastError === null && f5ChUpdated.lastOk === '2026-09-23')
+
+// --- v0.6.4 preload 两份同步 ---
+const pj64 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pc64 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const extractKeys64 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('v0.6.4 验收: preload 两份同步', JSON.stringify(extractKeys64(pj64)) === JSON.stringify(extractKeys64(pc64)))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

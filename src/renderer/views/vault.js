@@ -384,6 +384,8 @@ export async function renderReadings(mid) {
   }
 
   // 手动录入表单
+  const observationNodes = state.nodes.filter((n) =>
+    n.type === 'observation' && n.status !== 'dead' && n.themeId === state.themeId)
   const formInputs = {}
   const form = h('div', { class: 'q', style: { marginBottom: '10px' } },
     h('div', { class: 'q-body' },
@@ -401,10 +403,30 @@ export async function renderReadings(mid) {
             h('option', { value: '独立媒体' }, '独立媒体'),
             h('option', { value: '自媒体' }, '自媒体'),
           ),
+        ),
+        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } },
+          h('span', { style: { fontSize: '11px', color: 'var(--text-3)', whiteSpace: 'nowrap' } }, '关联指标'),
+          h('select', { class: 'txt', style: { flex: '1', minWidth: '120px' }, onchange: (e) => formInputs.nodeId = e.target.value || null },
+            h('option', { value: '' }, '不关联'),
+            ...observationNodes.map((n) => h('option', { value: n.id }, n.title)),
+          ),
           h('button', {
             class: 'btn btn-primary',
             onclick: async () => {
               if (!formInputs.metric || !formInputs.value) return
+              let channelId = null
+              if (formInputs.nodeId) {
+                let ch = channels.find((c) => c.fetch === 'manual' && c.themeId === state.themeId)
+                if (!ch) {
+                  ch = await m.channelAdd({ name: '手动录入', kind: '一手数据', fetch: 'manual', themeId: state.themeId })
+                  channels.push(ch)
+                }
+                channelId = ch.id
+                const node = state.nodes.find((n) => n.id === formInputs.nodeId)
+                if (node && !(node.channelIds || []).includes(ch.id)) {
+                  await m.updateNode(node.id, { channelIds: [...(node.channelIds || []), ch.id] })
+                }
+              }
               await m.addReading({
                 metric: formInputs.metric,
                 value: Number(formInputs.value),
@@ -412,6 +434,8 @@ export async function renderReadings(mid) {
                 asOf: formInputs.asOf || null,
                 source: { kind: formInputs.kind || '一手数据' },
                 basis: 'reported',
+                channelId,
+                nodeId: formInputs.nodeId || null,
               })
               await refresh()
             },
@@ -496,6 +520,7 @@ export async function renderSources(mid) {
               h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
               ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
+              ch.lastError ? h('span', { style: { marginLeft: '6px', color: 'var(--red)' } }, `· 错误：${ch.lastError}`) : null,
               fetchers.includes(ch.fetch) ? h('button', {
                 class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
                 onclick: async () => {
@@ -561,7 +586,7 @@ export async function renderSources(mid) {
         h('div', { class: 'field', style: { marginTop: '8px' } },
           h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'flex-end' } },
             ...(() => {
-              const inputs = { kind: '独立媒体', fetch: 'manual' }
+              const inputs = { kind: '独立媒体', fetch: 'manual', themeId: state.themeId || null }
               // metric 输入框引用，供标签选择回填
               let metricInput = null
               let metricRow = null
@@ -589,9 +614,10 @@ export async function renderSources(mid) {
                 function refreshList() {
                   clear(listBox)
                   const filtered = filterText
-                    ? tags.filter((t) => t.tag.toLowerCase().includes(filterText))
+                    ? tags.filter((t) => t.tag.toLowerCase().includes(filterText) || (t.label && t.label.includes(filterText)))
                     : tags
                   for (const t of filtered) {
+                    const display = t.label ? `${t.label}（${t.tag}）` : t.tag
                     const row = h('div', {
                       style: { padding: '3px 8px', cursor: t.periods > 0 ? 'pointer' : 'default', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #f0f0f0)' },
                       onclick: t.periods > 0 ? () => {
@@ -599,7 +625,7 @@ export async function renderSources(mid) {
                         clear(tagPanel)
                       } : null,
                     },
-                      h('span', { style: { color: t.periods > 0 ? 'var(--text-2)' : 'var(--text-3)', fontWeight: t.common ? '600' : '400' } }, t.tag),
+                      h('span', { style: { color: t.periods > 0 ? 'var(--text-2)' : 'var(--text-3)', fontWeight: t.common ? '600' : '400' } }, display),
                       h('span', { style: { color: 'var(--text-3)', fontSize: '10px' } }, String(t.periods)),
                     )
                     listBox.append(row)

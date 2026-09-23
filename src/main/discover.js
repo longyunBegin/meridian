@@ -6,7 +6,7 @@
  */
 
 import { resolveTicker, UA } from './fetchers.js'
-import { COMMON_US_GAAP } from './store.js'
+import { COMMON_US_GAAP, SYNONYM_GROUPS } from './store.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -14,15 +14,23 @@ const { app } = globalThis.__electron
 
 const FACTS_CACHE_TTL = 7 * 864e5 // 7 天
 
+const COMMON_TAGS = new Map(COMMON_US_GAAP.map((c) => [c.tag, c.label]))
+const COMMON_ORDER = new Map(COMMON_US_GAAP.map((c, i) => [c.tag, i]))
+// 反查：tag → 同义组索引
+const SYNONYM_INDEX = new Map()
+SYNONYM_GROUPS.forEach((group, i) => {
+  for (const tag of group) SYNONYM_INDEX.set(tag, i)
+})
+
 /**
  * companyfacts 响应 → 标签列表。纯函数，供测试用。
- * 每条：{ tag, periods, common }
+ * 每条：{ tag, label, periods, common, synonymGroup }
  * 常用标签置顶，其余按字母序。periods = 0 的置灰（公司不用该标签）。
+ * 同义标签标注 synonymGroup，UI 可据此归组显示。
  */
 export function parseCompanyFacts(data) {
   const usGaap = data?.facts?.['us-gaap']
   if (!usGaap || typeof usGaap !== 'object') return []
-  const commonSet = new Set(COMMON_US_GAAP)
   const tags = []
   for (const [tag, detail] of Object.entries(usGaap)) {
     const units = detail?.units || {}
@@ -30,18 +38,26 @@ export function parseCompanyFacts(data) {
     for (const recs of Object.values(units)) {
       if (Array.isArray(recs)) periods += recs.length
     }
-    tags.push({ tag, periods, common: commonSet.has(tag) })
+    const common = COMMON_TAGS.has(tag)
+    const synonymGroup = SYNONYM_INDEX.has(tag) ? SYNONYM_INDEX.get(tag) : null
+    tags.push({
+      tag,
+      label: COMMON_TAGS.get(tag) || null,
+      periods,
+      common,
+      synonymGroup,
+    })
   }
   // 常用置顶（按 COMMON_US_GAAP 中的顺序），其余按字母序
-  const commonOrder = new Map(COMMON_US_GAAP.map((t, i) => [t, i]))
   tags.sort((a, b) => {
-    if (a.common && b.common) return commonOrder.get(a.tag) - commonOrder.get(b.tag)
+    if (a.common && b.common) return COMMON_ORDER.get(a.tag) - COMMON_ORDER.get(b.tag)
     if (a.common) return -1
     if (b.common) return 1
     return a.tag.localeCompare(b.tag)
   })
   return tags
 }
+
 
 /**
  * 发现标签：ticker → CIK → companyfacts → 解析标签列表。

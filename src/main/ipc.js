@@ -671,7 +671,11 @@ function register({ getMainWindow }) {
     const ch = allChannels().find((c) => c.id === channelId)
     if (!ch) return { items: [], readings: null, error: 'channel not found' }
     const result = await fetchChannel(ch)
-    if (result.error) return result
+    if (result.error) {
+      updateChannel(channelId, { lastError: result.error, lastFetch: today() })
+      return result
+    }
+    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: today() })
     // Path B：有 items 需要走 processCapture 产命题
     if (result.items && result.items.length) {
       const themeId = ch.themeId || bestThemeContext()?.id || null
