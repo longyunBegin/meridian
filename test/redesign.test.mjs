@@ -1277,6 +1277,7 @@ const r1 = store.addReading({
   value: 9714000000,
   unit: 'USD',
   asOf: '2018-01-28',
+  at: '2026-09-20',
   source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-19-000010', url: 'https://sec.gov/...' },
   basis: 'reported',
 })
@@ -1301,6 +1302,7 @@ const r3 = store.addReading({
   value: 9714000000,
   unit: 'USD',
   asOf: '2018-01-28',
+  at: '2026-09-20',
   source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-20-000036' },
 })
 ok('R2: 同期间不同 accn 是新记录', r3.added === true)
@@ -1661,7 +1663,7 @@ ok('R7 导出导入: channelIds 不丢', exportedNode?.channelIds?.length === 2)
 const ifrTheme = store.addTheme('R7 反查测试')
 const ifrCh = store.addChannel({ name: 'EDGAR TSLA', fetch: 'edgarConcept', query: 'TSLA', kind: '财报 / 公告', themeId: ifrTheme.id })
 const ifrNode = store.addNode({ themeId: ifrTheme.id, kind: 'lemma', title: 'TSLA 收入', type: 'observation', channelIds: [ifrCh.id] })
-const ifrReading = store.addReading({ metric: 'tsla.revenue', value: 96773000000, unit: 'USD', channelId: ifrCh.id, source: { kind: '财报 / 公告', start: '2024-01-01', end: '2024-03-31', accn: '0001628280-24-020' } })
+const ifrReading = store.addReading({ metric: 'tsla.revenue', value: 96773000000, unit: 'USD', channelId: ifrCh.id, at: '2026-09-20', source: { kind: '财报 / 公告', start: '2024-01-01', end: '2024-03-31', accn: '0001628280-24-020' } })
 ok('R7 addReading: 返回 added', ifrReading.added === true)
 const inds = store.indicatorsForReading(ifrReading.reading)
 ok('R7 indicatorsForReading: 返回该指标', inds.length === 1 && inds[0].id === ifrNode.id)
@@ -2020,6 +2022,29 @@ const pjT = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
 const pcT = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 const extractKeysT = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('T12: preload 两份同步', JSON.stringify(extractKeysT(pjT)) === JSON.stringify(extractKeysT(pcT)))
+
+// ============================================================
+// latest tie-break 修复
+// ============================================================
+
+console.log('\n— latest tie-break 修复 —')
+
+// 同 at 的多条读数，latest 取后加的那条（groupReadings）
+store.addReading({ metric: 'tie.break', value: 1, at: '2026-09-24', source: { kind: '一手数据', accn: 't1' } })
+store.addReading({ metric: 'tie.break', value: 2, at: '2026-09-24', source: { kind: '一手数据', accn: 't2' } })
+const tieGroup = groupReadings(store.allReadings().filter((r) => r.metric === 'tie.break'))
+ok('tie-break: groupReadings 同 at 取后加的', tieGroup[0].latest.value === 2)
+
+// 同 at 的多条读数，latest 取后加的那条（latestReadingByChannel）
+const tieCh = store.addChannel({ name: 'tie-break 通道', fetch: 'manual', kind: '一手数据' })
+store.addReading({ metric: 'tie.break.ch', value: 100, at: '2026-09-24', channelId: tieCh.id, source: { kind: '一手数据', accn: 'tc1' } })
+store.addReading({ metric: 'tie.break.ch', value: 200, at: '2026-09-24', channelId: tieCh.id, source: { kind: '一手数据', accn: 'tc2' } })
+const tieLatest = store.latestReadingByChannel(tieCh.id)
+ok('tie-break: latestReadingByChannel 同 at 取后加的', tieLatest.value === 200)
+
+// 确认 src 里 latest 比较用 > （相等时取后加的 = reduce 返回 b）
+const readingsSrc = readFileSync2(join(ROOT2, 'src/shared/readings.js'), 'utf8')
+ok('tie-break: readings.js 用 > 取后加的', readingsSrc.includes('a.at > b.at'))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

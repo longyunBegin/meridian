@@ -1434,5 +1434,5 @@ export function latestReadingByChannel(channelId) {
   const readings = db.readings.filter((r) => r.channelId === channelId)
   if (!readings.length) return null
   return readings.reduce((latest, r) =>
-    (r.at || '') > (latest.at || '') ? r : latest, readings[0])
+    (r.at || '') >= (latest.at || '') ? r : latest, readings[0])
 }
