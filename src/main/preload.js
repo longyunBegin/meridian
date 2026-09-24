@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('meridian', {
   saveSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
 
   // ---- io
+  readClipboard: () => ipcRenderer.invoke('io:readClipboard'),
+  commonUsGaap: () => ipcRenderer.invoke('db:commonUsGaap'),
   exportAll: () => ipcRenderer.invoke('io:export'),
   importAll: (json) => ipcRenderer.invoke('io:import', json),
   openDataDir: () => ipcRenderer.invoke('io:openDataDir'),
@@ -68,6 +70,7 @@ contextBridge.exposeInMainWorld('meridian', {
   // ---- 收件箱
   inboxCapture: (text, channelMeta) => ipcRenderer.invoke('inbox:capture', text, channelMeta),
   inboxList: () => ipcRenderer.invoke('inbox:list'),
+  inboxIgnored: () => ipcRenderer.invoke('inbox:ignored'),
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
   inboxImport: (themeId, items, overrides) => ipcRenderer.invoke('inbox:import', themeId, items, overrides),
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
@@ -115,6 +118,5 @@ contextBridge.exposeInMainWorld('meridian', {
 
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),
-  onInboxFocus: (cb) => ipcRenderer.on('inbox:focus', () => cb()),
   onDueNotify: (cb) => ipcRenderer.on('due:notify', () => cb()),
 })

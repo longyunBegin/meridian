@@ -247,7 +247,7 @@ export function renderLattice(mid) {
           if (!theme) return
           const input = h('input', {
             type: 'text', value: theme.name,
-            style: { width: '220px', fontSize: 'var(--t-body)', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: '4px', outline: 'none' },
+            style: { width: '220px', fontSize: 'var(--t-body)', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: 'var(--r-sm)', outline: 'none' },
             onkeydown: async (e) => {
               if (e.key === 'Enter') {
                 const desc = input.value.trim()
@@ -481,33 +481,66 @@ function toggle(id, container) {
   paint(container)
 }
 
-// 行内编辑：双击标题直接改，不走右边栏
 function startEdit(row, node) {
   const titleEl = row.querySelector('.row-title')
   if (!titleEl || titleEl.dataset.editing === 'true') return
   titleEl.dataset.editing = 'true'
-  const input = h('input', {
-    class: 'txt row-edit',
-    value: node.title,
+  row.classList.add('row-editing')
+  let saving = false
+  const input = h('input', { class: 'txt row-edit', value: node.title, 'aria-label': '命题标题' })
+  const type = h('select', { class: 'sel', 'aria-label': '命题类型' },
+    ...Object.entries(TYPE_LABEL).map(([value, label]) => h('option', { value }, label)))
+  type.value = node.type
+  const confidence = h('input', { class: 'txt', type: 'number', min: 0, max: 100, value: node.confidence, 'aria-label': '置信度' })
+  const date = h('input', { class: 'txt', type: 'date', value: node.settlement?.date || '', 'aria-label': '结算日' })
+  const save = h('button', { class: 'btn row-edit-save', type: 'button', onclick: commit }, '保存')
+  const editor = h('span', {
+    class: 'row-editor', onclick: (e) => e.stopPropagation(),
     onkeydown: (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commit() }
-      if (e.key === 'Escape') { titleEl.dataset.editing = 'false'; titleEl.textContent = node.title }
+      e.stopPropagation()
+      if (e.key === 'Escape') { e.preventDefault(); cancel() }
+      if (e.key === 'Enter' && !e.isComposing && e.target.tagName !== 'SELECT') { e.preventDefault(); commit() }
     },
-    onblur: commit,
-  })
-  titleEl.textContent = ''
-  titleEl.append(input)
+  }, input,
+    node.kind === 'lemma' ? [
+      type,
+      h('label', {}, '置信度', confidence),
+      h('label', {}, '结算日', date),
+    ] : null,
+    save, h('button', { class: 'btn', type: 'button', onclick: cancel }, '取消'),
+  )
+  titleEl.replaceChildren(editor)
   input.focus()
   input.select()
 
-  async function commit() {
-    const v = input.value.trim()
+  function cancel() {
+    if (saving) return
     titleEl.dataset.editing = 'false'
-    if (v && v !== node.title) {
-      await m.updateNode(node.id, { title: v })
+    titleEl.textContent = node.title
+    row.classList.remove('row-editing')
+    row.focus()
+  }
+
+  async function commit() {
+    if (saving || !input.value.trim() || !input.checkValidity() || (node.kind === 'lemma' && (!confidence.checkValidity() || !date.checkValidity()))) return
+    saving = true
+    save.disabled = true
+    const patch = { title: input.value.trim() }
+    if (node.kind === 'lemma') {
+      patch.type = type.value
+      patch.confidence = Number(confidence.value)
+      patch.settlement = date.value === (node.settlement?.date || '')
+        ? node.settlement
+        : date.value ? { date: date.value, resolved: null, correct: null } : null
+    }
+    try {
+      await m.updateNode(node.id, patch)
       await refresh()
-    } else {
-      titleEl.textContent = node.title
+      document.querySelector(`.row[data-id="${node.id}"]`)?.focus()
+    } catch (e) {
+      toast('保存失败：' + e.message, 'var(--red)')
+      saving = false
+      save.disabled = false
     }
   }
 }
@@ -524,7 +557,7 @@ async function toggleCold(id) {
 }
 
 async function addChildHere(parentId) {
-  const node = m.getNode(parentId)
+  const node = await m.getNode(parentId)
   if (!node) return
   const child = await m.addNode({
     themeId: state.themeId,
@@ -536,7 +569,9 @@ async function addChildHere(parentId) {
   state.selectedId = child.id
   state.open.add(parentId)
   await refresh()
-  document.querySelector(`.row[data-id="${child.id}"]`)?.scrollIntoView({ block: 'nearest' })
+  const row = document.querySelector(`.row[data-id="${child.id}"]`)
+  row?.scrollIntoView({ block: 'nearest' })
+  if (row) startEdit(row, child)
 }
 
 /** ⏎ = 兄弟，Tab = 子层。树形和图共用一套——编辑动作不该因为换了视图就变。 */
@@ -556,14 +591,16 @@ export async function newNode(mode) {
   const node = await m.addNode({ themeId: state.themeId, confidence: 50, ...spec })
   state.selectedId = node.id
   await refresh()
-  document.querySelector(`.row[data-id="${node.id}"]`)?.scrollIntoView({ block: 'nearest' })
+  const row = document.querySelector(`.row[data-id="${node.id}"]`)
+  row?.scrollIntoView({ block: 'nearest' })
+  if (row) startEdit(row, node)
 }
 
 /** 树中回车建同级、Tab 建子层；图中回车回树编辑。两种形态共享移动和软删。 */
 export function wireKeys(container) {
   container.tabIndex = 0
   container.onkeydown = async (e) => {
-    if (e.target.tagName === 'INPUT' || e.target === 'TEXTAREA') return
+    if (e.target.closest('input, textarea, select, .row-editor, [contenteditable]')) return
     if (e.key === 'Enter') {
       e.preventDefault()
       if (state.shape === 'graph') {

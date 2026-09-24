@@ -28,6 +28,7 @@ function createMain() {
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     ...(isMac ? { trafficLightPosition: { x: 20, y: 18 } } : {}),
     ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' } : {}),
+    ...(process.platform === 'win32' ? { backgroundMaterial: 'mica' } : {}),
     backgroundColor: '#f5f5f7',
     show: false,
     webPreferences: {
@@ -99,17 +100,11 @@ app.whenReady().then(() => {
 
   const hk = settings().hotkey
   if (!globalShortcut.register(hk, () => {
-    // ⌘⇧V：读剪贴板 → 发到主窗口收件箱
-    const text = clipboard.readText().trim()
-    if (text && mainWin) {
-      mainWin.webContents.send('inbox:paste', text)
-    } else if (mainWin) {
-      // 剪贴板空时主窗口带到前台 + 聚焦收件箱输入框
-      if (mainWin.isMinimized()) mainWin.restore()
-      mainWin.show()
-      mainWin.focus()
-      mainWin.webContents.send('inbox:focus', true)
-    }
+    if (!mainWin) return
+    if (mainWin.isMinimized()) mainWin.restore()
+    mainWin.show()
+    mainWin.focus()
+    mainWin.webContents.send('inbox:paste', clipboard.readText().trim())
   })) {
     console.warn('[meridian] 全局快捷键注册失败：', hk)
   }

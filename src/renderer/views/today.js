@@ -7,7 +7,6 @@ const m = window.meridian
 let inboxItems = []
 let picked = new Set()
 let inboxLoading = false
-let inboxDraft = ''
 let renderSeq = 0
 let selectedInboxId = null
 const overrides = new Map()
@@ -38,8 +37,8 @@ export async function renderToday(mid) {
     } catch { /* 静默 */ }
   }
 
-  const [due, calib, inbox, conflicts] = await Promise.all([
-    m.due(), m.calibration(), m.inboxList(), m.conflicts(),
+  const [due, calib, inbox, conflicts, ignored] = await Promise.all([
+    m.due(), m.calibration(), m.inboxList(), m.conflicts(), m.inboxIgnored(),
   ])
   if (seq !== renderSeq || state.view !== 'today') return
   const previousIndex = inboxItems.findIndex((item) => item.id === selectedInboxId)
@@ -102,6 +101,7 @@ export async function renderToday(mid) {
     ),
 
     renderInboxWorkspace(themeNodes, allNodes),
+    renderIgnoredProposals(ignored, allNodes),
 
     // ---- 到期未结算
     h('section', { class: 'card', id: 'due-section' },
@@ -184,50 +184,38 @@ export async function renderToday(mid) {
   ))
 }
 
+function renderIgnoredProposals(items, nodes) {
+  if (!items.length) return null
+  return h('details', { class: 'card ignored-proposals' },
+    h('summary', {}, `已忽略的归位提议 · ${items.length} 条`),
+    ...items.map((item) => {
+      const promoted = nodes.find((node) => node.id === item.promotedTo)
+      return h('details', { class: 'sect', dataset: { id: item.id }, style: { marginTop: '12px' } },
+        h('summary', {}, item.title || '归位提议'),
+        h('div', { class: 'q-meta' }, `建议主题：${item.matchedTheme?.name || '未指定'} · 忽略于 ${item.ignoredAt}`),
+        h('div', { class: 'q-meta' }, `匹配标签：${(item.matchedTags || []).map((tag) => tag.name).join('、') || '无'}`),
+        h('p', { class: 'inbox-original-text' }, item.text || '没有附带原文。'),
+        ...(item.lemmas || []).map((lemma) => h('p', {}, lemma.title)),
+        item.promotedTo ? h('div', { class: 'q-meta' }, `后来入图：${promoted?.title || '目标已不存在'} · ${item.promotedAt || ''}`) : null,
+      )
+    }),
+  )
+}
+
 function renderInboxWorkspace(themeNodes, allNodes) {
   const items = inboxItems
-  const capture = () => {
-    const text = inboxDraft.trim()
-    if (!text || inboxLoading) return
-    inboxDraft = ''
-    inboxPaste(text)
-  }
-  const captureButton = h('button', {
-    class: 'btn inbox-capture', disabled: inboxLoading || !inboxDraft.trim(), onclick: capture,
-  }, icon('plus', 14), inboxLoading ? '处理中…' : '捕获')
-  const input = h('textarea', {
-    id: 'inbox-textarea', class: 'inbox-textarea', rows: 1,
-    'aria-label': '捕获原文', placeholder: '粘贴原文或链接，回车捕获 · Shift + 回车换行',
-    oninput: (e) => {
-      inboxDraft = e.target.value
-      captureButton.disabled = inboxLoading || !inboxDraft.trim()
-    },
-    onkeydown: (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); capture() }
-    },
-    ondragover: (e) => e.preventDefault(),
-    ondrop: (e) => {
-      e.preventDefault()
-      const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list')
-      if (!text?.trim()) return
-      input.value = inboxDraft = text.trim()
-      captureButton.disabled = inboxLoading
-      input.focus()
-    },
-  }, inboxDraft)
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
       h('h2', {}, '待确认'), h('p', {}, '核对信息，再归位到脉络'),
       h('span', { class: 'spacer' }), h('em', {}, `${items.length} 条待审阅`),
     ),
-    h('div', { class: 'inbox-input-wrap' }, input, captureButton),
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
       h('span', { class: 'hud-dot' }), '正在解析新内容，你可以继续审阅其他信息。') : null,
   )
   if (!items.length) {
     section.append(h('div', { class: 'inbox-empty-state' },
       icon('lattice', 28), h('strong', {}, '待确认已清空'),
-      h('p', {}, '新的信息会在这里等你审阅。粘贴一段原文，开始下一次判断。'),
+      h('p', {}, '复制原文或链接，点击侧栏「捕获」或按 ⌘⇧V。自己的判断可以直接在树里记录。'),
     ))
     return section
   }
@@ -292,7 +280,7 @@ function renderInboxWorkspace(themeNodes, allNodes) {
         toast(`${result.results.length} 条命题已入库`)
       } else {
         await m.inboxResolve(chosen[0].id, 'reject')
-        toast('已忽略这条信息')
+        toast(chosen[0].kind === 'route-proposal' ? '已忽略归位提议，可在下方展开查看。' : '已忽略这条信息')
       }
       for (const item of chosen) { picked.delete(item.id); overrides.delete(overrideKey(item.id, themeId)) }
     } catch (e) {
@@ -411,6 +399,10 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
       ),
     ),
     h('div', { class: 'inbox-detail-scroll' },
+      item.kind === 'route-proposal' ? h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, '系统建议归位'),
+        h('p', { class: 'inbox-detail-note' }, `主题：${item.matchedTheme?.name || '未指定'} · 标签：${(item.matchedTags || []).map((tag) => tag.name).join('、') || '无'}`),
+      ) : null,
       h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '原文'),
         h('p', { class: 'inbox-original-text' }, item.text || '这条信息没有附带原文。'),
@@ -586,7 +578,7 @@ function renderMiniGraph(themeNodes, item, onParentChange) {
     g.append(svgEl('text', {
       x: x + 6, y: y + 13, text: title,
       fill: isParent ? '#fff' : 'var(--text-2)',
-      style: 'font-size: var(--t-caption)', 'font-weight': '500',
+      style: 'font-size: var(--t-caption)', 'font-weight': '400',
     }))
     if (isParent) {
       g.append(svgEl('rect', {
@@ -626,8 +618,7 @@ export async function inboxPaste(text) {
     const res = await m.inboxCapture(text)
     lastAutoImport = res?.autoImported ? { id: res.intakeEventId, count: res.count } : null
   } catch (e) {
-    if (!inboxDraft) inboxDraft = text
-    toast('捕获失败：' + (e.message || '请重试'), 'var(--red)')
+    toast('捕获失败：' + (e.message || '请重试'), 'var(--red)', { label: '重试', onClick: () => inboxPaste(text) })
   } finally {
     inboxLoading = false
     if (state.view === 'today') await renderToday(mid)

@@ -1,8 +1,8 @@
-const { ipcMain, shell, app } = globalThis.__electron
+const { ipcMain, shell, app, clipboard } = globalThis.__electron
 import {
   load, addNode, updateNode, removeNode, restoreNode, purgeDead, repropagate, suggestParent, settleLemma, getNode,
   allThemes, addTheme, removeTheme, restoreTheme, renameTheme, deletedThemes, allNodes, rootNodes, childrenOf,
-  settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, dueSettlements,
+  settings, saveSettings, exportAll, importAll, SOURCE_QUALITY, COMMON_US_GAAP, dueSettlements,
   calibration, filterCalibration, falseKillAudit, propagationEvents, stats,
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
   falseKillByChannel,
@@ -10,7 +10,7 @@ import {
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
@@ -83,6 +83,7 @@ async function processCapture(text, themeId, channelMeta) {
     const fetched = await fetchUrl(text).catch(() => null)
     if (fetched && fetched.length > 50) {
       actualText = fetched
+      actualChannel = { ...actualChannel, fetchedAt: new Date().toISOString() }
     }
   }
 
@@ -253,7 +254,7 @@ function gateCheck(result) {
 /** 自动归位入库：通过闸门的信息直接进图谱，by:'source' 标记为搬运品 */
 function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   const raw = result.resolvedText
-    ? appendRaw({ kind: result.label.kind || '独立媒体', label: result.label.kind || '未注明', text: result.resolvedText, channel: result.resolvedChannel || null })
+    ? appendRaw({ kind: result.label.kind || '独立媒体', label: result.fromUrl || result.resolvedChannel?.url || result.resolvedChannel?.platform || `手工粘贴 · ${today()}`, text: result.resolvedText, channel: result.resolvedChannel || null })
     : { id: null }
 
   const sourceQuality = result.label.quality ?? 0.5
@@ -268,6 +269,7 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
         at: today(), rawId: raw.id,
         ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
         ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
+        ...(result.resolvedChannel?.fetchedAt ? { fetchedAt: result.resolvedChannel.fetchedAt } : {}),
       })
       imported.push({ title: l.title, action: 'merge', id: l.mergeInto })
       continue
@@ -283,6 +285,7 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
         at: today(), rawId: raw.id,
         ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
         ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
+        ...(result.resolvedChannel?.fetchedAt ? { fetchedAt: result.resolvedChannel.fetchedAt } : {}),
       }],
       settlement: l.settlement || null,
       by: 'source',
@@ -449,6 +452,8 @@ function register({ getMainWindow }) {
   ipcMain.handle('raw:clear', () => clearRaw())
   ipcMain.handle('io:export', () => exportAll())
   ipcMain.handle('io:import', (_, json) => importAll(json))
+  ipcMain.handle('io:readClipboard', () => clipboard.readText())
+  ipcMain.handle('db:commonUsGaap', () => COMMON_US_GAAP)
 
   ipcMain.handle('agent:process', (_, text, themeId) => processCapture(text, themeId))
 
@@ -503,7 +508,8 @@ function register({ getMainWindow }) {
           matchedTheme: rp.matchedTheme,
           matchedTags: rp.matchedTags,
           originChannel: rp.originChannel,
-          provenance: channel,
+          bestScore: rp.bestScore,
+          provenance: result.resolvedChannel || channel,
         })
         items.push(item)
       }
@@ -536,7 +542,7 @@ function register({ getMainWindow }) {
           title: firstSentence(result.resolvedText || text),
           label: result.label, lemmas: result.lemmas,
           rejected: result.rejected, noulCompared: result.noulCompared,
-          noulMaxScore: result.noulMaxScore, provenance: channel,
+          noulMaxScore: result.noulMaxScore, provenance: result.resolvedChannel || channel,
         },
       })
       getMainWindow?.()?.webContents.send('db:changed')
@@ -555,7 +561,7 @@ function register({ getMainWindow }) {
       rejected: result.rejected,
       noulCompared: result.noulCompared,
       noulMaxScore: result.noulMaxScore,
-      provenance: channel,
+      provenance: result.resolvedChannel || channel,
     })
     // 采集漏斗记录
     addIntakeEvent({
@@ -579,17 +585,12 @@ function register({ getMainWindow }) {
   })
 
   ipcMain.handle('inbox:list', () => allInbox())
+  ipcMain.handle('inbox:ignored', () => ignoredInbox())
 
   ipcMain.handle('inbox:resolve', (_, id, action) => {
+    // 分类和幂等性由 store 中的原记录决定，不信任客户端的建议元数据。
     const item = resolveInboxItem(id, action)
-    if (action === 'reject' && item) {
-      // 被拒绝的进墓碑区作抽取器负样本：记判断不记原文
-      addVerdict({
-        gate: 'user', reason: 'rejected', summary: item.title,
-        score: item.label?.quality || 0, choice: item.label?.kind || '未知',
-      })
-    }
-    if (item) markIntakeResolved(id, false)
+    if (item && (action === 'accept' || action === 'reject')) markIntakeResolved(id, false)
     return item
   })
 
@@ -600,7 +601,7 @@ function register({ getMainWindow }) {
     const results = []
     for (const item of items) {
       const raw = item.text
-        ? appendRaw({ kind: item.label?.kind || '独立媒体', label: item.label?.kind || '未注明', text: item.text })
+        ? appendRaw({ kind: item.label?.kind || '独立媒体', label: item.provenance?.url || item.provenance?.platform || `手工粘贴 · ${item.createdAt || today()}`, text: item.text, channel: item.provenance || null })
         : { id: null }
 
       const ov = ovMap[item.id] || {}
@@ -613,6 +614,7 @@ function register({ getMainWindow }) {
             rawId: raw.id,
             ...(item.provenance?.platform ? { platform: item.provenance.platform } : {}),
             ...(item.provenance?.url ? { url: item.provenance.url } : {}),
+            ...(item.provenance?.fetchedAt ? { fetchedAt: item.provenance.fetchedAt } : {}),
           })
           results.push({ title: l.title, action: 'merge' })
           continue
@@ -638,6 +640,7 @@ function register({ getMainWindow }) {
             rawId: raw.id,
             ...(item.provenance?.platform ? { platform: item.provenance.platform } : {}),
             ...(item.provenance?.url ? { url: item.provenance.url } : {}),
+            ...(item.provenance?.fetchedAt ? { fetchedAt: item.provenance.fetchedAt } : {}),
           }],
           settlement: l.settlement || null,
           by: 'manual',

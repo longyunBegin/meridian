@@ -108,7 +108,11 @@ Promise.all([
   app.setPath('userData', DATA)
 
   load()
+  const registeredHandlers = new Map()
+  const registerHandler = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = (channel, handler) => { registeredHandlers.set(channel, handler); registerHandler(channel, handler) }
   register({ resizeCapture: () => {} })
+  ipcMain.handle = registerHandler
 
   const inTheme = (t) => allNodes().filter((n) => n.themeId === t.id)
   const branchOf = (t, frag) => inTheme(t).find((n) => n.kind === 'branch' && n.title.includes(frag))
@@ -220,6 +224,58 @@ Promise.all([
     }),
     addInboxItem({ title: '只有线索，尚待补充证据', text: '', label: null, lemmas: [] }),
   ]
+
+  if (process.env.MERIDIAN_TREE_PREFLIGHT) {
+    createWindow()
+    await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree', select: opt.id } })
+    await sleep(500)
+    const treeEntry = await win.webContents.executeJavaScript(`(async () => {
+      const { state } = await import('./app.js')
+      const created = []
+      let inline = true
+      for (let i = 0; i < 3; i++) {
+        document.querySelector('.tree').dispatchEvent(new KeyboardEvent('keydown', { key: i ? 'Enter' : 'Tab', bubbles: true }))
+        await new Promise(resolve => setTimeout(resolve, 180))
+        const row = document.querySelector('.row[aria-selected="true"]')
+        const automatic = !!row.querySelector('.row-edit')
+        if (!automatic) row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        const title = row.querySelector('.row-edit')
+        title.value = '四步录入验收 ' + (i + 1)
+        const type = row.querySelector('select')
+        const confidence = row.querySelector('input[type="number"]')
+        const date = row.querySelector('input[type="date"]')
+        inline = inline && automatic && !!type && !!confidence && !!date
+        if (type && confidence && date) {
+          type.value = ['axiom', 'hypothesis', 'observation'][i]
+          confidence.value = String(65 + i)
+          date.value = '2026-12-31'
+          row.querySelector('.row-edit-save').click()
+        } else {
+          title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+          await new Promise(resolve => setTimeout(resolve, 150))
+          document.querySelectorAll('#inspect .seg button')[i].click()
+          await new Promise(resolve => setTimeout(resolve, 150))
+          const conf = document.querySelector('#inspect input[type="number"]')
+          conf.value = String(65 + i)
+          conf.dispatchEvent(new Event('change', { bubbles: true }))
+          await new Promise(resolve => setTimeout(resolve, 150))
+          const due = document.querySelector('#inspect input[type="date"]')
+          due.scrollIntoView({ block: 'nearest' })
+          due.value = '2026-12-31'
+          due.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        await new Promise(resolve => setTimeout(resolve, 200))
+        created.push(await window.meridian.getNode(state.selectedId))
+      }
+      return { inline, nodes: created.map(n => ({ title: n.title, type: n.type, confidence: n.confidence, date: n.settlement?.date })) }
+    })()`)
+    console.log('树内直接完成四步：', treeEntry.inline)
+    console.log(JSON.stringify(treeEntry.nodes))
+    check(treeEntry.nodes.length === 3 && treeEntry.nodes.every((node, i) => node.confidence === 65 + i && node.date === '2026-12-31'), '在树里完成三条命题的四项字段录入')
+    writeFileSync(join(OUT, '00-tree-entry.png'), (await win.webContents.capturePage()).toPNG())
+    app.exit(0)
+    return
+  }
 
   // ---------------------------------------------------------------- 拍摄
   console.log('\n截图输出到', OUT, '\n')
@@ -515,10 +571,7 @@ Promise.all([
   await sleep(100)
   check(await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-sel="true"]').dataset.id`) === pendingItems[1].id, '方向键在待确认列表中切换详情')
 
-  const draftPreserved = await win.webContents.executeJavaScript(`(async () => {
-    const input = document.querySelector('#inbox-textarea')
-    input.value = '尚未提交的原文草稿'
-    input.dispatchEvent(new Event('input', { bubbles: true }))
+  const selectionPreserved = await win.webContents.executeJavaScript(`(async () => {
     document.querySelector('.inbox-pick-all').click()
     const allPicked = document.querySelectorAll('.inbox-ck:checked').length === 4
     document.querySelector('.inbox-pick-all').click()
@@ -526,18 +579,22 @@ Promise.all([
     const { refresh } = await import('./app.js')
     await refresh()
     await new Promise(resolve => setTimeout(resolve, 200))
-    const retained = document.querySelector('#inbox-textarea').value === '尚未提交的原文草稿' &&
+    const retained = !document.querySelector('#inbox-section textarea') &&
       document.querySelector('.inbox-item[data-sel="true"]').dataset.id === '${pendingItems[1].id}'
     return allPicked && cleared && retained
   })()`)
-  check(draftPreserved, '全选/取消生效，刷新保留草稿与当前阅读条目')
+  check(selectionPreserved, '全选/取消生效，无输入框且刷新保留当前阅读条目')
 
+  let clipboardText = '剪贴板中的原文'
+  let receivedCapture = ''
+  ipcMain.removeHandler('io:readClipboard')
+  ipcMain.handle('io:readClipboard', () => clipboardText)
   let finishCapture
   ipcMain.removeHandler('inbox:capture')
-  ipcMain.handle('inbox:capture', () => new Promise(resolve => { finishCapture = resolve }))
-  await win.webContents.executeJavaScript(`document.querySelector('.inbox-capture').click()`)
+  ipcMain.handle('inbox:capture', (_, text) => new Promise(resolve => { receivedCapture = text; finishCapture = resolve }))
+  await win.webContents.executeJavaScript(`document.querySelector('#nav .nav-item').click()`)
   await sleep(200)
-  check(typeof finishCapture === 'function' && await win.webContents.executeJavaScript(`
+  check(receivedCapture === clipboardText && typeof finishCapture === 'function' && await win.webContents.executeJavaScript(`
     !!document.querySelector('.inbox-capture-status') && document.querySelectorAll('.inbox-item').length === 5
   `), '捕获进行中保留已有待确认列表')
   await win.webContents.executeJavaScript(`document.querySelectorAll('.inbox-body')[2].click()`)
@@ -560,24 +617,28 @@ Promise.all([
   await sleep(250)
 
   ipcMain.removeHandler('inbox:capture')
-  ipcMain.handle('inbox:capture', () => { throw new Error('模拟捕获失败') })
-  await win.webContents.executeJavaScript(`(() => {
-    const input = document.querySelector('#inbox-textarea')
-    input.value = '失败后不能丢失的原文'
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    document.querySelector('.inbox-capture').click()
-  })()`)
+  let failCapture = true
+  ipcMain.handle('inbox:capture', (_, text) => {
+    receivedCapture = text
+    if (failCapture) { failCapture = false; throw new Error('模拟捕获失败') }
+    return { ok: true, autoImported: false }
+  })
+  clipboardText = '失败后不能丢失的原文'
+  await win.webContents.executeJavaScript(`document.querySelector('#nav .nav-item').click()`)
   await sleep(250)
   check(await win.webContents.executeJavaScript(`
-    document.querySelector('#inbox-textarea').value === '失败后不能丢失的原文' &&
-    !document.querySelector('.inbox-capture').disabled &&
-    document.querySelectorAll('.inbox-item').length === 5
-  `), '捕获失败保留原文并恢复重试入口')
+    !!document.querySelector('.toast-error .toast-btn') && document.querySelectorAll('.inbox-item').length === 5
+  `), '捕获失败提供原文重试入口')
+  clipboardText = '另一个剪贴板内容'
+  await win.webContents.executeJavaScript(`document.querySelector('.toast-error .toast-btn').click()`)
+  await sleep(200)
+  check(receivedCapture === '失败后不能丢失的原文', '重试使用失败原文，不受剪贴板后续变化影响')
+  clipboardText = ''
+  await win.webContents.executeJavaScript(`document.querySelector('#nav .nav-item').click()`)
+  await sleep(200)
+  check(await win.webContents.executeJavaScript(`[...document.querySelectorAll('.toast')].some(el => el.textContent.includes('剪贴板是空的'))`), '空剪贴板提示且不发起捕获')
 
   await win.webContents.executeJavaScript(`(() => {
-    const input = document.querySelector('#inbox-textarea')
-    input.value = ''
-    input.dispatchEvent(new Event('input', { bubbles: true }))
     document.querySelectorAll('.toast').forEach(el => el.remove())
     document.querySelector('.inbox-body').click()
     const slider = document.querySelector('#inbox-confidence')
@@ -689,6 +750,136 @@ Promise.all([
   await sleep(400)
   check(await win.webContents.executeJavaScript(`document.querySelector('.app').dataset.view === 'lattice' && !!document.querySelector('.graph-wrap .node')`), '结算后跳转脉络不会被今日的异步渲染清空')
   check(todayErrors.length === 0, '今日交互无渲染器错误：' + todayErrors.join('; '))
+
+  ipcMain.removeHandler('inbox:capture')
+  ipcMain.handle('inbox:capture', registeredHandlers.get('inbox:capture'))
+  clipboardText = '剪贴板捕获验收：本周工业设备产量达到新的阶段高点。'
+  await win.webContents.executeJavaScript(`document.querySelector('#nav .nav-item').click()`)
+  await sleep(500)
+  check(allInbox().some(item => item.text === clipboardText), 'C1: 侧栏捕获通过真实流水线写入剪贴板内容')
+  const hotkeyText = '热键捕获验收：新材料产线计划在年底完成爬坡。'
+  win.webContents.send('inbox:paste', hotkeyText)
+  await sleep(500)
+  check(allInbox().some(item => item.text === hotkeyText), 'C1: 全局热键推送桥仍能捕获原文')
+  for (const item of allInbox()) await registeredHandlers.get('inbox:resolve')({}, item.id, 'reject')
+
+  const route = addInboxItem({
+    kind: 'route-proposal', title: '归位提议验收：碳化硅产能增长', text: '系统认为相关，但需要用户决定是否归位。',
+    matchedTheme: { id: ai.id, name: ai.name }, matchedTags: [{ name: '碳化硅', score: 0.8 }],
+    bestScore: 0.8, originChannel: { kind: '一手数据', platform: '本地验收' },
+    lemmas: [{ title: '碳化硅季度产能继续增长', type: 'observation', confidence: 60, parentId: opt.id }],
+  })
+  const verdictsBeforeIgnore = load().verdicts.length
+  await win.webContents.executeJavaScript(`(async () => {
+    const { refresh } = await import('./app.js')
+    await refresh()
+  })()`)
+  await sleep(250)
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-reject').click()`)
+  await sleep(250)
+  check(load().verdicts.length === verdictsBeforeIgnore && route.ignored && route.ignoredAt, 'C2: 忽略归位提议落库且 verdict 分母不变')
+  check(await win.webContents.executeJavaScript(`(() => {
+    const ignored = document.querySelector('.ignored-proposals')
+    ignored.open = true
+    ignored.querySelector('details').open = true
+    return ignored.textContent.includes('归位提议验收') && ignored.textContent.includes('碳化硅') && !document.querySelector('.inbox-item')
+  })()`), 'C2: 已忽略提议仍可在收件箱展开查看，不占待处理计数')
+  addNode({ themeId: ai.id, kind: 'lemma', title: '碳化硅季度产能继续增长' })
+  check(!!route.promotedTo, 'C2: 后续入图回填到提议记录')
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'filtered' } })
+  await sleep(300)
+  const auditUi = await win.webContents.executeJavaScript(`(async () => {
+    const stats = await window.meridian.falseKill(30)
+    const rows = [...document.querySelectorAll('.audit [data-gate]')]
+    const correct = rows.every(row => {
+      const expected = stats.byGate[row.dataset.gate]
+      const summary = row.querySelector('summary').textContent
+      return summary.includes(expected.total + ' 条') && summary.includes((expected.rate * 100).toFixed(1) + '%')
+    })
+    document.querySelectorAll('.audit details').forEach(el => { el.open = true })
+    return correct && rows.length >= 4 && !!document.querySelector('[data-gate="routeIgnored"]') &&
+      document.querySelector('.audit-q').textContent.includes('全部 ' + stats.allTotal)
+  })()`)
+  check(auditUi, 'C2: 审计各闸口独立比率与全部/近期口径一致')
+  await sleep(100)
+  writeFileSync(join(OUT, '24-audit-groups.png'), (await win.webContents.capturePage()).toPNG())
+
+  await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const ch = await m.channelAdd({ name: 'NVDA 总收入', fetch: 'manual', kind: '财报 / 公告', themeId: '${ai.id}' })
+    await m.addNode({ themeId: '${ai.id}', kind: 'lemma', type: 'observation', title: 'NVDA 数据中心营收及指引', channelIds: [ch.id] })
+    for (let i = 0; i < 12; i++) {
+      await m.addReading({
+        metric: 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax', value: 16675000000 + i,
+        unit: 'USD', asOf: (2020 + Math.floor(i / 2)) + '-12-31', basis: 'reported', channelId: ch.id,
+        source: { kind: '财报 / 公告', url: 'https://example.com/filing', accn: 'reading-test-' + i },
+      })
+    }
+  })()`)
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'readings' } })
+  await sleep(300)
+  const readingUi = await win.webContents.executeJavaScript(`(() => {
+    const group = document.querySelector('#readings-list > .sect')
+    const rows = [...group.querySelectorAll('.q')]
+    const text = group.textContent
+    return {
+      name: group.querySelector('h2').textContent,
+      metric: text.includes('nvda.RevenueFromContractWithCustomerExcludingAssessedTax'),
+      tracked: text.split('跟踪：').length - 1,
+      rows: rows.length,
+      twoLines: rows.every(row => row.querySelectorAll('.q-meta').length === 2),
+      latest: rows[0].textContent.includes('16,675,000,011') && getComputedStyle(rows[0]).borderLeftWidth === '3px',
+      hiddenFilters: !document.querySelector('#mid').textContent.includes('全部指标') && !document.querySelector('#mid').textContent.includes('全部通道'),
+    }
+  })()`)
+  check(readingUi.name === 'NVDA 总收入' && readingUi.metric && readingUi.tracked === 1, 'C6: 人类标题、机器附注及组级跟踪只显示一次')
+  writeFileSync(join(OUT, '25-readings-initial.png'), (await win.webContents.capturePage()).toPNG())
+  check(readingUi.rows === 10 && readingUi.twoLines && readingUi.latest, 'C6: 两行读数、最新蓝条和十条折叠保留 ' + JSON.stringify(readingUi))
+  check(readingUi.hiddenFilters, 'C6: 单指标/单通道隐藏整排筛选器')
+  check(await win.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('#readings-list .btn')].find(el => el.textContent.startsWith('+'))
+    button.click()
+    button.click()
+    return document.querySelectorAll('#readings-list .q').length === 12 && document.querySelectorAll('#readings-list .asof-group-start').length === 6
+  })()`), 'C6: 展开不重复，同数据期归组保留')
+  await sleep(100)
+  writeFileSync(join(OUT, '25-readings-compact.png'), (await win.webContents.capturePage()).toPNG())
+  await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const ch = await m.channelAdd({ name: '第二数据源', fetch: 'manual', kind: '一手数据', themeId: '${ai.id}' })
+    await m.addNode({ themeId: '${ai.id}', kind: 'lemma', type: 'observation', title: '第二指标', channelIds: [ch.id] })
+    await m.addReading({ metric: 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax', value: 42, channelId: ch.id, source: { accn: 'second-source' } })
+    await m.addReading({ metric: 'other.Revenues', value: 10, source: { accn: 'gaap-fallback' } })
+    await m.addReading({ metric: 'unknown.custom', value: 20, source: { accn: 'raw-fallback' } })
+  })()`)
+  await win.reload()
+  await sleep(350)
+  check(await win.webContents.executeJavaScript(`(() => {
+    const headings = [...document.querySelectorAll('#readings-list h2')].map(el => el.textContent)
+    const groups = [...document.querySelectorAll('#readings-list > .sect')]
+    const tracked = groups.find(el => el.textContent.includes('RevenueFromContract')).querySelector('.sect-h').textContent
+    return headings.includes('总收入') && headings.includes('unknown.custom') && tracked.includes('第二指标') && tracked.includes('NVDA 数据中心')
+  })()`), 'C6: 中文映射和原 metric 兜底，跨通道跟踪取并集')
+  check(await win.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('#mid > .page > .sect > .sect-b .btn')].find(el => el.textContent === '第二数据源')
+    button.click()
+    return button.getAttribute('aria-selected') === 'true' && document.querySelectorAll('#readings-list .q').length === 1
+  })()`), 'C6: 多通道筛选仍然工作')
+
+  await win.webContents.executeJavaScript(`localStorage.removeItem('meridian.shape')`)
+  await win.loadFile(RENDERER, { query: { view: 'lattice' } })
+  await sleep(250)
+  check(await win.webContents.executeJavaScript(`!!document.querySelector('.tree')`), 'C4: 未保存偏好默认树形')
+  await win.webContents.executeJavaScript(`document.querySelectorAll('.seg-shape button')[1].click()`)
+  win.close()
+  createWindow()
+  await win.loadFile(RENDERER, { query: { view: 'lattice' } })
+  await sleep(300)
+  check(await win.webContents.executeJavaScript(`!!document.querySelector('.graph-wrap')`), 'C4: 重建窗口后保留手动图形偏好')
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
+  await sleep(200)
+  check(await win.webContents.executeJavaScript(`!!document.querySelector('.tree') && localStorage.getItem('meridian.shape') === 'graph'`), 'C4: URL 覆盖本次形态但不篡改手动偏好')
+  check(todayErrors.length === 0, 'v0.7.1 验收无渲染器错误：' + todayErrors.join('; '))
 
   console.log('\n完成\n')
   app.exit(0)

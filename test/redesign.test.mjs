@@ -2666,8 +2666,8 @@ ok('B3: preload 无模板入口', !pj66.includes('addThemeFromTemplate') && !pc6
 
 // --- I1: 读数筛选指标维度 ---
 
-ok('I1: vault.js 有 indicatorBar', vaultSrc66.includes('indicatorBar'))
-ok('I1: vault.js 有 indicatorBtn', vaultSrc66.includes('indicatorBtn'))
+ok('I1: 读数保留独立指标筛选', vaultSrc66.includes("filterBar('全部指标', indicators.map"))
+ok('I1: 指标筛选显式更新选中状态', vaultSrc66.includes('currentIndicator = value') && vaultSrc66.includes("child.setAttribute('aria-selected'"))
 ok('I1: vault.js 有 全部指标', vaultSrc66.includes('全部指标'))
 ok('I1: vault.js 有 currentIndicator', vaultSrc66.includes('currentIndicator'))
 ok('I1: vault.js 指标筛选用 channelIds', vaultSrc66.includes('ind.channelIds'))
@@ -2941,7 +2941,7 @@ ok('R1: vault.js 无手动录入表单', !vaultSrcER.includes('手动记一条�
 ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期'))
 ok('R1: vault.js 有抓于', vaultSrcER.includes('抓于'))
 ok('R1: vault.js 有跟踪', vaultSrcER.includes('跟踪'))
-ok('R1: vault.js 有 trackedIndicators', vaultSrcER.includes('trackedIndicators'))
+ok('R1: 跟踪按整组通道集合计算', vaultSrcER.includes('const tracked = indicators.filter') && vaultSrcER.includes('channelIds.has(id)') && !vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard')).includes('跟踪'))
 ok('R1: vault.js 有 asof-group-start', vaultSrcER.includes('asof-group-start'))
 
 // R1 端到端：读数显示跟踪指标
@@ -3028,6 +3028,173 @@ ok('S5: 有 head 字阶', stylesSrcS45.includes('--t-head: 20px'))
 ok('S5: 有 hero 字阶', stylesSrcS45.includes('--t-hero: 28px'))
 ok('S5: CSS 无直接像素字号', !/font-size:\s*[\d.]+px/.test(stylesSrcS45))
 ok('S5: 渲染 JS 无直接像素字号', !/fontSize:\s*['"][\d.]+px/.test(rendererJsS45))
+
+// ============================================================
+console.log('\n— C2: 忽略归位建议与分组审计（离线行为）—')
+// 独立测试数据；不读取真实用户目录，也不调用模型或网络。
+const c2Snapshot = store.exportAll({ withRaw: false })
+store.importAll(JSON.stringify({ nodes: [], themes: [], inbox: [], verdicts: [] }))
+const c2Theme = store.addTheme('C2 suggested theme')
+const c2OtherTheme = store.addTheme('C2 unrelated theme')
+store.updateTheme(c2Theme.id, { tagLibrary: [{ id: 'c2-tag', name: 'zirconium', synonyms: [], threshold: 0.6 }] })
+store.addNode({ themeId: c2OtherTheme.id, kind: 'lemma', title: 'default capture context' })
+const c2Capture = await fire('inbox:capture', 'zirconium refinery output rises', { kind: '一手数据', platform: 'offline-test' })
+const c2Captured = c2Capture.routeProposals?.[0]
+ok('C2: capture 保留路由类型和主题', c2Captured?.kind === 'route-proposal' && c2Captured.matchedTheme.id === c2Theme.id)
+ok('C2: capture 保留标签、通道和 bestScore', c2Captured?.matchedTags[0].tagId === 'c2-tag' && c2Captured.originChannel.platform === 'offline-test' && c2Captured.bestScore === 1)
+// 以下用明确的 proposal 文本验证三条匹配路径。
+store.importAll(JSON.stringify({ nodes: [], themes: [c2Theme, c2OtherTheme], inbox: [], verdicts: [] }))
+const c2Propose = (fields = {}) => store.addInboxItem({
+  kind: 'route-proposal', title: 'unrelated headline', text: 'unrelated body',
+  matchedTheme: { id: c2Theme.id, name: c2Theme.name },
+  matchedTags: [{ name: 'zirconium', score: 0.8 }],
+  originChannel: { id: 'c2-channel', kind: '一手数据' }, bestScore: 0.8,
+  ...fields,
+})
+const c2New = c2Propose({ lemmas: [{ title: 'Zirconium refinery output rises' }] })
+ok('C2: addInboxItem 保留所有建议字段', c2New.kind === 'route-proposal' && c2New.matchedTheme.id === c2Theme.id && c2New.matchedTags[0].score === 0.8 && c2New.originChannel.id === 'c2-channel' && c2New.bestScore === 0.8)
+const c2Before = store.allVerdicts().length
+await fire('inbox:resolve', c2New.id, 'reject', { kind: 'ordinary' })
+const c2IgnoredAt = c2New.ignoredAt
+await fire('inbox:resolve', c2New.id, 'reject')
+ok('C2: 路由拒绝不写 verdict 且幂等', store.allVerdicts().length === c2Before && c2New.ignored === true && !!c2IgnoredAt && c2New.ignoredAt === c2IgnoredAt)
+ok('C2: ignored 不出现在活动队列/计数', store.allInbox().length === 0 && store.inboxCount() === 0 && store.stats().inbox === 0)
+ok('C2: ignored getter 与 IPC 返回保留记录', store.ignoredInbox()[0]?.id === c2New.id && (await fire('inbox:ignored'))[0]?.id === c2New.id)
+const c2Ordinary = store.addInboxItem({ title: 'ordinary rejection', label: { kind: '独立媒体', quality: 0.65 } })
+await fire('inbox:resolve', c2Ordinary.id, 'reject', { kind: 'route-proposal' })
+const c2ResolvedAt = c2Ordinary.resolvedAt
+await fire('inbox:resolve', c2Ordinary.id, 'reject')
+store.resolveInboxItem(c2Ordinary.id, 'reject')
+ok('C2: 普通拒绝只写一次 user verdict，不信任客户端类型', store.allVerdicts().length === c2Before + 1 && store.allVerdicts()[0].gate === 'user' && c2Ordinary.resolvedAt === c2ResolvedAt)
+ok('C2: 未知 id 不写 verdict', await fire('inbox:resolve', 'c2-missing', 'reject') === null && store.allVerdicts().length === c2Before + 1)
+store.addNode({ themeId: c2OtherTheme.id, title: 'Zirconium refinery output rises' })
+const c2Branch = store.addNode({ themeId: c2Theme.id, kind: 'branch', title: 'Zirconium refinery output rises' })
+store.updateNode(c2Branch.id, { title: 'Zirconium refinery output rises' })
+store.addSource(c2Branch.id, { kind: '一手数据' })
+ok('C2: 跨主题和 branch 占位均不回填', !c2New.promotedTo)
+const c2Node = store.addNode({ themeId: c2Theme.id, title: '  zirconium refinery output rises  ' })
+ok('C2: 新 lemma 以建议 lemmas 标题回填', c2New.promotedTo === c2Node.id && !!c2New.promotedAt)
+const c2PromotedAt = c2New.promotedAt
+store.addNode({ themeId: c2Theme.id, title: 'Zirconium refinery output rises' })
+store.addSource(c2Node.id, { kind: '一手数据' })
+ok('C2: 回填不覆盖首次目标和日期', c2New.promotedTo === c2Node.id && c2New.promotedAt === c2PromotedAt)
+const c2Rename = c2Propose({ text: 'sapphire shipments accelerate' })
+store.resolveInboxItem(c2Rename.id, 'reject')
+const c2RenameNode = store.addNode({ themeId: c2Theme.id, title: 'old unrelated wording' })
+store.updateNode(c2RenameNode.id, { title: 'sapphire shipments accelerate strongly' })
+ok('C2: rename 以 proposal text token 重合回填', c2Rename.promotedTo === c2RenameNode.id)
+const c2MergeNode = store.addNode({ themeId: c2Theme.id, title: 'cobalt battery demand' })
+const c2Merge = c2Propose({ title: 'cobalt battery demand', text: '', lemmas: [] })
+store.resolveInboxItem(c2Merge.id, 'reject')
+ok('C2: 忽略时不追溯已存在节点', !c2Merge.promotedTo)
+store.addSource(c2MergeNode.id, { kind: '一手数据', label: 'new evidence' })
+ok('C2: addSource merge 以 proposal title 回填', c2Merge.promotedTo === c2MergeNode.id && !!c2Merge.promotedAt)
+const c2Cross = c2Propose({ title: 'tungsten mine supply', text: '' })
+store.resolveInboxItem(c2Cross.id, 'reject')
+const c2CrossNode = store.addNode({ themeId: c2OtherTheme.id, title: 'unrelated' })
+store.updateNode(c2CrossNode.id, { title: 'tungsten mine supply' })
+store.addSource(c2CrossNode.id, { kind: '一手数据' })
+ok('C2: rename / merge 也不能跨主题回填', !c2Cross.promotedTo)
+const c2Pending = c2Propose({ title: 'platinum catalyst output', text: '' })
+store.addNode({ themeId: c2Theme.id, title: c2Pending.title })
+ok('C2: 未忽略的建议不回填', !c2Pending.promotedTo)
+const c2Empty = c2Propose({ title: '', text: '', lemmas: [] })
+store.resolveInboxItem(c2Empty.id, 'reject')
+store.addNode({ themeId: c2Theme.id, title: '' })
+ok('C2: 空标题不能回填', !c2Empty.promotedTo)
+store.resolveInboxItem(c2New.id, 'accept')
+store.clearInbox()
+ok('C2: clear 保留已接受的 ignored 和待处理建议', store.ignoredInbox().some((p) => p.id === c2New.id && p.status === 'accepted') && store.allInbox().some((p) => p.id === c2Pending.id))
+const c2RoundTrip = store.exportAll({ withRaw: false })
+store.importAll(c2RoundTrip)
+const c2Restored = store.ignoredInbox().find((p) => p.id === c2New.id)
+ok('C2: 导入导出保留忽略、回填和建议字段', c2Restored?.ignoredAt === c2IgnoredAt && c2Restored.promotedAt === c2PromotedAt && c2Restored.promotedTo === c2Node.id && c2Restored.bestScore === 0.8 && c2Restored.matchedTags.length === 1)
+await fire('inbox:resolve', c2New.id, 'reject')
+store.clearInbox()
+ok('C2: 导入后再次忽略/清理仍幂等', store.ignoredInbox().find((p) => p.id === c2New.id)?.ignoredAt === c2IgnoredAt && store.allVerdicts().length === 1)
+// 使用明确日期的独立夹具，验证窗口、未知 gate、悬空目标和各组分母。
+const c2Now = new Date().toISOString()
+const c2Old = new Date(Date.now() - 60 * 864e5).toISOString()
+store.importAll(JSON.stringify({
+  nodes: [c2Node], themes: [c2Theme],
+  verdicts: [
+    { id: 's1', gate: 'source', at: c2Now, promotedTo: c2Node.id },
+    { id: 's2', gate: 'source', at: c2Now },
+    { id: 'd1', gate: 'dedup', at: c2Now, promotedTo: 'deleted-node' },
+    { id: 'u1', gate: 'user', at: c2Now },
+    { id: 'o1', gate: 'unexpected', at: c2Now, promotedTo: 'deleted-node' },
+    { id: 'o2', gate: 'routeIgnored', at: c2Now },
+    { id: 'o3', gate: 'toString', at: c2Now },
+    { id: 'old', gate: 'source', at: c2Old, promotedTo: c2Node.id },
+  ],
+  inbox: [
+    { ...c2Restored, id: 'r1', ignoredAt: c2Now, createdAt: c2Old },
+    { ...c2Restored, id: 'r2', ignoredAt: c2Now, promotedTo: 'deleted-node' },
+    { ...c2Restored, id: 'r3', ignoredAt: c2Now, promotedTo: null },
+    { ...c2Restored, id: 'r-old', ignoredAt: c2Old, createdAt: c2Now },
+    { ...c2Restored, id: 'not-route', kind: 'ordinary', ignoredAt: c2Now },
+    { ...c2Restored, id: 'not-ignored', ignored: false, ignoredAt: c2Now },
+  ],
+}))
+const c2Audit = store.falseKillAudit(30)
+ok('C2: historical / recent 总数只含 verdict', c2Audit.allTotal === 8 && c2Audit.total === 7 && c2Audit.missed === 3 && c2Audit.rate === 3 / 7)
+ok('C2: 顶层 items 只含回填 verdict，悬空目标仍保留', c2Audit.items.length === 3 && c2Audit.items.every((x) => x.verdict && !x.proposal) && c2Audit.items.some((x) => x.node === null))
+for (const [gate, total, missed] of [['source', 2, 1], ['dedup', 1, 1], ['user', 1, 0], ['other', 3, 1], ['routeIgnored', 3, 2]]) {
+  const g = c2Audit.byGate[gate]
+  ok(`C2: ${gate} 独立分母/分子/比率与完整列表`, g.total === total && g.missed === missed && g.rate === missed / total && g.items.length === total)
+}
+ok('C2: routeIgnored 只来自 inbox，按 ignoredAt 而非 createdAt', c2Audit.byGate.routeIgnored.items.every((x) => x.proposal && !x.verdict && ['r1', 'r2', 'r3'].includes(x.proposal.id)))
+ok('C2: routeIgnored 悬空目标保留证据', c2Audit.byGate.routeIgnored.items.find((x) => x.proposal.id === 'r2')?.node === null)
+ok('C2: verdict 命名为 routeIgnored 也归 other', c2Audit.byGate.other.items.some((x) => x.verdict.id === 'o2'))
+store.importAll(JSON.stringify({ nodes: [] }))
+const c2EmptyAudit = store.falseKillAudit()
+ok('C2: 旧空数据无 NaN，所有组仍返回空数组', c2EmptyAudit.allTotal === 0 && c2EmptyAudit.rate === 0 && Object.values(c2EmptyAudit.byGate).every((g) => g.total === 0 && g.missed === 0 && g.rate === 0 && g.items.length === 0))
+store.importAll(c2Snapshot)
+
+console.log('\n— v0.7.1 捕获来源与展示契约 —')
+const cleanupSnapshot = store.exportAll({ withRaw: false })
+const cleanupFetch = globalThis.fetch
+try {
+  store.importAll(JSON.stringify({ nodes: [], themes: [], settings: { apiKey: '' }, inbox: [], verdicts: [] }))
+  const captureTheme = store.addTheme('手工捕获验收')
+  const capture = await fire('inbox:capture', '本期设备出货达到一百台，尚需人工核实。')
+  const imported = await fire('inbox:import', captureTheme.id, [capture.item])
+  const raw = store.getRaw(store.getNode(imported.results[0].id).sources[0].rawId)
+  ok('C1: 纯文本 raw label 标记手工粘贴及日期', raw.label === `手工粘贴 · ${store.today()}`)
+  ok('C1: 剪贴板读取桥可调用', typeof await fire('io:readClipboard') === 'string')
+  const url = 'https://example.com/cleanup-source'
+  globalThis.fetch = async (requested) => {
+    if (requested !== url) throw new Error('测试不允许外网请求')
+    return { ok: true, headers: { get: () => 'text/html' }, text: async () => '<article>' + '季度供应链开工率上升，企业披露设备投产进度并提醒短期风险。'.repeat(5) + '</article>' }
+  }
+  const fromUrl = await fire('inbox:capture', url)
+  ok('C1: URL 捕获保留平台、地址、抓取时间', fromUrl.item.provenance.url === url && fromUrl.item.provenance.platform === 'example.com' && !!fromUrl.item.provenance.fetchedAt)
+  const urlImport = await fire('inbox:import', captureTheme.id, [fromUrl.item])
+  const urlNode = store.getNode(urlImport.results[0].id)
+  ok('C1: URL raw label 使用原始地址', store.getRaw(urlNode.sources[0].rawId).label === url)
+  ok('C1: 入库来源继续保留 URL 与抓取时间', urlNode.sources[0].url === url && !!urlNode.sources[0].fetchedAt)
+  const gaapLabels = await fire('db:commonUsGaap')
+  ok('C6: 中文指标映射通过 IPC 提供', gaapLabels.some(({ tag, label }) => tag === 'Revenues' && label === '总收入'))
+} finally {
+  globalThis.fetch = cleanupFetch
+  store.importAll(cleanupSnapshot)
+}
+const cleanupToday = readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8')
+const cleanupMain = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
+const cleanupPreload = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const cleanupPreloadCjs = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+ok('C1: 两份 preload 完全同步', cleanupPreload === cleanupPreloadCjs)
+ok('C1: 输入框和拖拽清理干净', !/inbox-textarea|ondrop|ondragover|inboxDraft/.test(cleanupToday + stylesSrcS45))
+ok('C1: 输入聚焦推送全链路清理', !/inbox:focus|onInboxFocus/.test(cleanupMain + cleanupPreload + cleanupPreloadCjs + appSrcER))
+ok('C1: 侧栏按钮读取剪贴板且空态有提示', appSrcER.includes('m.readClipboard()') && appSrcER.includes('剪贴板是空的'))
+ok('C3: Windows 字体在 Mac 字体之后', stylesSrcS45.indexOf('Segoe UI') > stylesSrcS45.indexOf('Hiragino Sans GB') && stylesSrcS45.includes('Microsoft YaHei'))
+ok('C3: mica 仅用于 win32', cleanupMain.includes("process.platform === 'win32' ? { backgroundMaterial: 'mica' }"))
+ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree'") && appSrcER.includes("localStorage.setItem('meridian.shape', shape)"))
+ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
+ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:[^;]*\dpx/.test(stylesSrcS45) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))
+const cleanupReadingRow = vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard'))
+ok('C6: 每条只有两行 meta，跟踪不重复', (cleanupReadingRow.match(/class: 'q-meta/g) || []).length === 2 && !cleanupReadingRow.includes('跟踪'))
+ok('C6: 单项筛选整排隐藏', vaultSrcER.includes('if (options.length <= 1) return null'))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

@@ -304,66 +304,49 @@ function fmtValue(v) {
   return v.toLocaleString('en-US')
 }
 
-// R1: 反查——读数 channelId → 哪些指标的 channelIds 含它
-function trackedIndicators(reading, indicators) {
-  if (!reading.channelId) return []
-  return indicators.filter((n) => (n.channelIds || []).includes(reading.channelId))
-}
-
-function readingRow(r, isLatest, indicators) {
-  const tracked = trackedIndicators(r, indicators)
+function readingRow(r, isLatest) {
   return h('div', { class: 'q', style: isLatest ? { borderLeft: '3px solid var(--blue, #0071e3)' } : {} },
     h('div', { class: 'q-body' },
-      h('div', { class: 'q-text' },
-        h('span', { style: { fontWeight: isLatest ? '600' : '400' } }, fmtValue(r.value)),
-        r.unit ? h('span', { style: { color: 'var(--text-3)', marginLeft: '4px' } }, r.unit) : null,
-      ),
-      // R1: 数据期和抓于分两行——合起来才能回答「下注时能看到的数据是什么」
-      h('div', { class: 'q-meta' },
+      h('div', { class: 'q-meta reading-main', style: { display: 'flex', alignItems: 'baseline', gap: '6px' } },
+        h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text)', fontWeight: isLatest ? '600' : '400' } }, fmtValue(r.value)),
+        r.unit ? h('span', {}, r.unit) : null,
         h('span', {}, `数据期 ${r.asOf || '—'}`),
-        h('span', { style: { marginLeft: '6px' } }, `· ${r.basis || 'reported'}`),
+        h('span', {}, `· ${r.basis || 'reported'}`),
+        r.source?.url ? h('button', {
+          class: 'btn', style: { padding: '1px 6px', fontSize: 'var(--t-caption)' },
+          onclick: () => m.openExternal(r.source.url),
+        }, '来源') : null,
       ),
       h('div', { class: 'q-meta' },
         h('span', {}, `抓于 ${r.at || '—'}`),
         h('span', { style: { marginLeft: '6px' } }, `· ${r.source?.kind || '未知'}`),
-        r.source?.url ? h('button', {
-          class: 'btn', style: { marginLeft: '6px', padding: '1px 6px', fontSize: 'var(--t-caption)' },
-          onclick: () => m.openExternal(r.source.url),
-        }, '来源') : null,
       ),
-      // R1: 跟踪——这个读数在支撑哪条判断
-      tracked.length ? h('div', { class: 'q-meta' },
-        h('span', { style: { color: 'var(--text-3)' } }, `跟踪：${tracked.map((n) => n.title).join('、')}`),
-      ) : null,
     ),
   )
 }
 
-function metricCard(group, indicators) {
+function metricCard(group, indicators, channels, gaapLabels) {
+  const channelIds = new Set(group.items.map((r) => r.channelId).filter(Boolean))
+  const tracked = indicators.filter((n) => (n.channelIds || []).some((id) => channelIds.has(id)))
+  const channelName = group.items.map((r) => channels.find((c) => c.id === r.channelId)?.name).find((name) => name?.trim())
+  const title = channelName || gaapLabels.find(({ tag }) => group.metric.endsWith(tag))?.label || group.metric
   const isFolded = group.count > FOLD_THRESHOLD
   const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
   const hiddenCount = group.count - FOLD_THRESHOLD
-
-  // R1: 同 asOf 视觉归组——正常的重复申报不像数据错误
-  const asOfGroups = {}
-  for (const r of visible) {
+  const asOfGroups = new Map()
+  for (const r of group.items) {
     const key = r.asOf || '—'
-    if (!asOfGroups[key]) asOfGroups[key] = []
-    asOfGroups[key].push(r)
+    if (!asOfGroups.has(key)) asOfGroups.set(key, [])
+    asOfGroups.get(key).push(r)
   }
-  const asOfKeys = Object.keys(asOfGroups)
 
-  const body = h('div', { class: 'sect-b' },
-    ...visible.map((r, i) => {
-      const row = readingRow(r, i === 0, indicators)
-      // 同 asOf 多条：第一条加标注
-      const key = r.asOf || '—'
-      if (asOfGroups[key].length > 1 && asOfGroups[key][0] === r) {
-        row.classList.add('asof-group-start')
-      }
-      return row
-    }),
-  )
+  const renderRow = (r) => {
+    const row = readingRow(r, r === group.latest)
+    const samePeriod = asOfGroups.get(r.asOf || '—')
+    if (samePeriod.length > 1 && samePeriod[0] === r) row.classList.add('asof-group-start')
+    return row
+  }
+  const body = h('div', { class: 'sect-b' }, ...visible.map(renderRow))
 
   if (isFolded) {
     let expanded = false
@@ -373,7 +356,7 @@ function metricCard(group, indicators) {
         if (expanded) return
         expanded = true
         for (const r of group.items.slice(FOLD_THRESHOLD)) {
-          body.append(readingRow(r, false, indicators))
+          body.append(renderRow(r))
         }
         moreBtn.remove()
       },
@@ -383,7 +366,11 @@ function metricCard(group, indicators) {
 
   return h('section', { class: 'sect' },
     h('div', { class: 'sect-h' },
-      h('h2', {}, group.metric),
+      h('div', {},
+        h('h2', {}, title),
+        title !== group.metric ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, group.metric) : null,
+        tracked.length ? h('div', { class: 'q-meta' }, `跟踪：${tracked.map((n) => n.title).join('、')}`) : null,
+      ),
       h('em', {}, String(group.count)),
     ),
     body,
@@ -392,11 +379,16 @@ function metricCard(group, indicators) {
 
 export async function renderReadings(mid) {
   clear(mid)
-  const [all, channels] = await Promise.all([m.allReadings(), m.channelList()])
+  const [all, channels, nodes, gaapLabels] = await Promise.all([
+    m.allReadings(), m.channelList(), m.allNodes(), m.commonUsGaap(),
+  ])
+  if (state.view !== 'vault' || state.vaultKind !== 'readings') return
+  const page = h('div', { class: 'page' })
+  mid.append(page)
 
   // 空态
   if (!all.length) {
-    mid.append(h('section', { class: 'sect' },
+    page.append(h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '读数')),
       h('div', { class: 'sect-b' },
         h('div', { class: 'q' }, h('div', { class: 'q-body' },
@@ -408,66 +400,56 @@ export async function renderReadings(mid) {
     return
   }
 
-  // 筛选器：按指标 / 按通道
-  const channelIds = [...new Set(all.map((r) => r.channelId).filter(Boolean))]
-  const channelNames = {}
-  for (const id of channelIds) {
-    const ch = channels.find((c) => c.id === id)
-    channelNames[id] = ch ? ch.name : id
-  }
-
-  // 有通道的 observation 指标
-  const indicators = state.nodes.filter((n) =>
-    n.type === 'observation' && n.status !== 'dead' && (n.channelIds || []).length > 0)
+  const channelIds = new Set(all.map((r) => r.channelId).filter(Boolean))
+  const indicators = nodes.filter((n) =>
+    n.type === 'observation' && n.status !== 'dead' && (n.channelIds || []).some((id) => channelIds.has(id)))
 
   let currentFilter = null
   let currentIndicator = null
-  const filterBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } })
-  const indicatorBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } })
 
-  const filterBtn = (label, value, bar) => h('button', {
-    class: 'btn', style: { padding: '2px 10px' },
-    onclick: async () => { currentFilter = value; await refresh() },
-  }, label)
+  const filterBar = (label, options, select, marginBottom) => {
+    if (options.length <= 1) return null
+    const bar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom } })
+    for (const option of [{ label, value: null }, ...options]) {
+      const button = h('button', {
+        class: 'btn', style: { padding: '2px 10px' }, 'aria-selected': String(option.value === null),
+        onclick: () => {
+          for (const child of bar.children) child.setAttribute('aria-selected', String(child === button))
+          select(option.value)
+          refresh()
+        },
+      }, option.label)
+      bar.append(button)
+    }
+    return bar
+  }
 
-  const indicatorBtn = (label, value) => h('button', {
-    class: 'btn', style: { padding: '2px 10px' },
-    onclick: async () => { currentIndicator = value; await refresh() },
-  }, label)
-
-  async function refresh() {
+  function refresh() {
     let filtered = all
     if (currentIndicator) {
-      const ind = state.nodes.find((n) => n.id === currentIndicator)
+      const ind = indicators.find((n) => n.id === currentIndicator)
       if (ind) filtered = filtered.filter((r) => (ind.channelIds || []).includes(r.channelId))
     }
     if (currentFilter) {
       filtered = filtered.filter((r) => r.channelId === currentFilter)
     }
     const groups = groupReadings(filtered)
-    const list = $('#readings-list')
-    if (list) { clear(list); add(list, groups.map((g) => metricCard(g, indicators))) }
-  }
-
-  // 指标筛选排
-  indicatorBar.append(indicatorBtn('全部指标', null))
-  for (const ind of indicators) {
-    indicatorBar.append(indicatorBtn(ind.title, ind.id))
-  }
-
-  // 通道筛选排
-  filterBar.append(filterBtn('全部通道', null, filterBar))
-  for (const id of channelIds) {
-    filterBar.append(filterBtn(channelNames[id], id, filterBar))
+    const list = $('#readings-list', mid)
+    if (list) {
+      clear(list)
+      add(list, groups.map((g) => metricCard(g, indicators, channels, gaapLabels)))
+    }
   }
 
   const groups = groupReadings(all)
-  mid.append(h('section', { class: 'sect' },
+  page.append(h('section', { class: 'sect' },
     h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
-    indicatorBar,
-    filterBar,
+    filterBar('全部指标', indicators.map((n) => ({ label: n.title, value: n.id })),
+      (value) => { currentIndicator = value }, '10px'),
+    filterBar('全部通道', [...channelIds].map((id) => ({ label: channels.find((c) => c.id === id)?.name || id, value: id })),
+      (value) => { currentFilter = value }, '6px'),
     h('div', { id: 'readings-list' },
-      ...groups.map((g) => metricCard(g, indicators)),
+      ...groups.map((g) => metricCard(g, indicators, channels, gaapLabels)),
     ),
   ))
 }
@@ -607,7 +589,7 @@ export async function renderSources(mid) {
                 // 过滤框
                 let filterText = ''
                 const filterInput = h('input', { class: 'txt', placeholder: '过滤标签…', style: { width: '100%', marginBottom: '6px' }, oninput: (e) => { filterText = e.target.value.toLowerCase(); refreshList() } })
-                const listBox = h('div', { style: { maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border, #e0e0e0)', borderRadius: '4px' } })
+                const listBox = h('div', { style: { maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border, #e0e0e0)', borderRadius: 'var(--r-sm)' } })
                 function refreshList() {
                   clear(listBox)
                   const filtered = filterText

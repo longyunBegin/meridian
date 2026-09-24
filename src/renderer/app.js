@@ -11,7 +11,7 @@ const m = window.meridian
 
 export const state = {
   view: 'today',
-  shape: 'graph', // tree | graph —— 默认图，归位比编辑频繁
+  shape: localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree',
   vaultKind: 'cold',
   themeId: null,
   selectedId: null,
@@ -55,20 +55,7 @@ async function boot() {
   if (state.themeId) await loadNodes()
   render()
   m.onChanged(() => refresh())
-  m.onInboxPaste((text) => {
-    state.view = 'today'
-    document.querySelector('.app').dataset.view = 'today'
-    renderNav()
-    inboxPaste(text)
-  })
-  m.onInboxFocus(() => {
-    state.view = 'today'
-    document.querySelector('.app').dataset.view = 'today'
-    renderNav()
-    renderMid()
-    const ta = document.querySelector('#inbox-textarea')
-    if (ta) ta.focus()
-  })
+  m.onInboxPaste(captureText)
   m.onDueNotify(() => {
     state.view = 'today'
     document.querySelector('.app').dataset.view = 'today'
@@ -165,6 +152,7 @@ export function selectTheme(id) {
 
 /** 树形 ↔ 图。只换形态，主题和选中项都留着。 */
 export function setShape(shape) {
+  localStorage.setItem('meridian.shape', shape)
   if (state.shape === shape) return
   state.shape = shape
   render()
@@ -213,16 +201,21 @@ function render() {
   renderInspector()
 }
 
+async function captureText(text) {
+  setView('today')
+  if (text?.trim()) await inboxPaste(text.trim())
+  else toast('剪贴板是空的')
+}
+
 function renderNav() {
   const nav = $('#nav')
   clear(nav)
   nav.append(h('button', {
     class: 'nav-item',
-    title: 'Ctrl+Shift+V 粘贴到收件箱',
-    onclick: () => {
-      setView('today')
-      const ta = document.querySelector('#inbox-textarea')
-      if (ta) ta.focus()
+    title: '捕获剪贴板内容（⌘⇧V / Ctrl+Shift+V）',
+    onclick: async () => {
+      try { await captureText(await m.readClipboard()) }
+      catch (e) { toast('读取剪贴板失败：' + e.message, 'var(--red)') }
     },
   }, icon('plus', 15), '捕获', h('span', { style: { marginLeft: 'auto', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '⌘⇧V')))
   for (const v of NAV) {

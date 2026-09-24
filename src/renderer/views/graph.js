@@ -162,7 +162,7 @@ export function renderGraph(wrap) {
     const isLemma = n.kind === 'lemma'
     const isStage = !isLemma && (pos.get(n.id)?.depth ?? 0) === 0
     const size = isStage ? 13 : 12.5
-    const weight = isLemma ? 400 : 550
+    const weight = isLemma ? 400 : 600
     // 右侧固定占位：类型章 + 确信度细条 + 数值（命题另有来源章）
     const chrome = isLemma ? 94 : 52
     const lead = isStage ? 34 : 12 // 环节层多一个编号章

@@ -297,6 +297,7 @@ export function addNode(input) {
     ...(input.intakeId ? { intakeId: input.intakeId } : {}),
   }
   db.nodes.push(node)
+  promoteMatchingIgnoredRoutes(node)
   persist()
   return node
 }
@@ -347,6 +348,7 @@ export function updateNode(id, patch, { propagate = true } = {}) {
   if (patch.tickers !== undefined) node.tickers = normalizeTickers(patch.tickers)
   if (patch.channelIds !== undefined) node.channelIds = [...new Set(patch.channelIds)]
   node.updatedAt = today()
+  if (patch.title !== undefined) promoteMatchingIgnoredRoutes(node)
   persist()
   return node
 }
@@ -422,6 +424,7 @@ export function addSource(id, source) {
   node.sources = normalizeSources([...node.sources, source])
   const added = node.sources.length > before
   node.updatedAt = today()
+  if (added) promoteMatchingIgnoredRoutes(node)
   persist()
   return { added, count: node.sources.length }
 }
@@ -669,6 +672,30 @@ export function promoteMatchingVerdicts(nodeTitle, nodeId, themeId) {
   }
 }
 
+/** 用户忽略的归位建议单独回查，不改变自动过滤 verdict 的语义。由节点写入方持久化。 */
+function promoteMatchingIgnoredRoutes(node) {
+  if (node.kind !== 'lemma' || node.status === 'dead' || !node.themeId || !String(node.title || '').trim() || ['未命名命题', '新命题'].includes(node.title)) return
+  const norm = (s) => String(s || '').trim().toLowerCase()
+  const nodeTokens = new Set(tokenize(node.title))
+  const matches = (text) => {
+    if (!norm(text)) return false
+    if (norm(text) === norm(node.title)) return true
+    const tokens = tokenize(text)
+    if (!tokens.length || !nodeTokens.size) return false
+    let hit = 0
+    for (const t of nodeTokens) if (tokens.includes(t)) hit += t.length >= 2 ? 2 : 1
+    const denom = tokens.reduce((sum, t) => sum + (t.length >= 2 ? 2 : 1), 0)
+    return denom > 0 && hit / denom >= 0.6
+  }
+  for (const proposal of ignoredInbox()) {
+    if (proposal.promotedTo != null || proposal.matchedTheme?.id !== node.themeId) continue
+    const texts = [...(proposal.lemmas || []).map((l) => l.title), proposal.text, proposal.title]
+    if (!texts.some(matches)) continue
+    proposal.promotedTo = node.id
+    proposal.promotedAt = today()
+  }
+}
+
 // ------------------------------------------------------------------ conflicts
 
 export function addConflict(a, b, note) {
@@ -794,17 +821,28 @@ export function filterCalibration() {
 /** 误杀审计：本月被筛掉的总数，以及其中后来变成了重要命题的 */
 export function falseKillAudit(days = 30) {
   const cutoff = Date.now() - days * 864e5
-  const recent = db.verdicts.filter((v) => Date.parse(v.at) >= cutoff)
+  const verdicts = allVerdicts()
+  const recent = verdicts.filter((v) => Date.parse(v.at) >= cutoff)
   const killed = recent.filter((v) => v.promotedTo)
+  const group = (records, key) => {
+    const missed = records.filter((r) => r.promotedTo).length
+    return {
+      total: records.length, missed, rate: records.length ? missed / records.length : 0,
+      items: records.map((r) => ({ [key]: r, node: getNode(r.promotedTo) })),
+    }
+  }
+  const gates = ['source', 'dedup', 'user']
+  const byGate = Object.fromEntries(gates.map((gate) => [gate, group(recent.filter((v) => v.gate === gate), 'verdict')]))
+  byGate.other = group(recent.filter((v) => !gates.includes(v.gate)), 'verdict')
+  byGate.routeIgnored = group(ignoredInbox().filter((p) => Date.parse(p.ignoredAt) >= cutoff), 'proposal')
   return {
     window: days,
+    allTotal: verdicts.length,
     total: recent.length,
     missed: killed.length,
     rate: recent.length ? killed.length / recent.length : 0,
-    items: killed.map((v) => ({
-      verdict: v,
-      node: getNode(v.promotedTo),
-    })).filter((x) => x.node),
+    items: killed.map((v) => ({ verdict: v, node: getNode(v.promotedTo) })),
+    byGate,
   }
 }
 
@@ -1082,7 +1120,7 @@ export function stats() {
     conflicts: db.conflicts.filter((c) => !c.resolved).length,
     premises: sharedPremises().length,
     feeds: db.channels.filter((c) => c.enabled).length,
-    inbox: db.inbox.filter((i) => i.status === 'pending').length,
+    inbox: inboxCount(),
     readings: db.readings.length,
     researchNotes: db.researchNotes.length,
   }
@@ -1251,7 +1289,11 @@ export function importAll(json) {
  * 变成 1 次粘贴 + 1 次 round-trip + 1 次批量勾选。
  */
 export function allInbox() {
-  return load().inbox.filter((i) => i.status === 'pending')
+  return load().inbox.filter((i) => i.status === 'pending' && !i.ignored)
+}
+
+export function ignoredInbox() {
+  return load().inbox.filter((i) => i.kind === 'route-proposal' && i.ignored)
 }
 
 export function addInboxItem(item) {
@@ -1265,6 +1307,11 @@ export function addInboxItem(item) {
     noulCompared: item.noulCompared || 0,
     noulMaxScore: item.noulMaxScore || 0,
     provenance: item.provenance || null,
+    ...(item.kind ? { kind: item.kind } : {}),
+    ...(item.matchedTheme ? { matchedTheme: item.matchedTheme } : {}),
+    ...(item.matchedTags ? { matchedTags: item.matchedTags } : {}),
+    ...(item.originChannel !== undefined ? { originChannel: item.originChannel } : {}),
+    ...(item.bestScore != null ? { bestScore: item.bestScore } : {}),
     status: 'pending',
     createdAt: today(),
   }
@@ -1276,8 +1323,22 @@ export function addInboxItem(item) {
 export function resolveInboxItem(id, action) {
   const item = load().inbox.find((i) => i.id === id)
   if (!item) return null
-  item.status = action === 'accept' ? 'accepted' : 'rejected'
-  item.resolvedAt = today()
+  if (action !== 'accept' && action !== 'reject') return item
+  if (action === 'reject' && item.kind === 'route-proposal') {
+    if (item.ignored) return item
+    item.ignored = true
+    item.ignoredAt = item.ignoredAt || today()
+  } else {
+    if (item.status !== 'pending') return item
+    item.status = action === 'accept' ? 'accepted' : 'rejected'
+    item.resolvedAt = today()
+    if (action === 'reject') {
+      addVerdict({
+        gate: 'user', reason: 'rejected', summary: item.title,
+        score: item.label?.quality || 0, choice: item.label?.kind || '未知',
+      })
+    }
+  }
   persist()
   return item
 }
@@ -1285,13 +1346,13 @@ export function resolveInboxItem(id, action) {
 export function clearInbox() {
   const db = load()
   const before = db.inbox.length
-  db.inbox = db.inbox.filter((i) => i.status === 'pending')
+  db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored)
   persist()
   return before - db.inbox.length
 }
 
 export function inboxCount() {
-  return load().inbox.filter((i) => i.status === 'pending').length
+  return allInbox().length
 }
 // ============================================================
 // 采集漏斗 intakeEvents
