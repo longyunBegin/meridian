@@ -422,15 +422,11 @@ export function renderThemeCreator(opts = {}) {
 }
 
 function newThemePrompt() {
-  const slot = $('#theme-add-slot')
+  const list = $('#themes')
   // 切换：再点 [+] 收起
-  const existing = slot.querySelector('.theme-creator')
+  const existing = list.querySelector('.theme-creator')
   if (existing) { renderThemes(); return }
-  clear(slot)
-  slot.append(
-    h('button', { class: 'btn btn-icon', title: '收起', onclick: () => renderThemes() }, icon('plus', 13)),
-    renderThemeCreator({ compact: true, onDone: async () => { state.view = 'today'; await refresh() } }),
-  )
+  list.append(renderThemeCreator({ compact: true, onDone: async () => { state.view = 'today'; await refresh() } }))
 }
 
 async function exportJson() {
