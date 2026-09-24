@@ -20,7 +20,7 @@ globalThis.__electron = require('electron')
 const { app, BrowserWindow, ipcMain } = globalThis.__electron
 
 let load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel
-let settleLemma, allNodes, genericFallback, instantiate, register
+let settleLemma, allNodes, addInboxItem, allInbox, genericFallback, instantiate, register
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
@@ -50,7 +50,7 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#f5f5f7',
     webPreferences: {
-      preload: join(ROOT, 'src/main/preload.js'),
+      preload: join(ROOT, 'src/main/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -64,7 +64,7 @@ function createHudWindow() {
     width: 680, height: 430, show: false,
     frame: false, backgroundColor: 'rgba(0,0,0,0)',
     webPreferences: {
-      preload: join(ROOT, 'src/main/preload.js'),
+      preload: join(ROOT, 'src/main/preload.cjs'),
       contextIsolation: true, nodeIntegration: false,
     },
   })
@@ -94,7 +94,7 @@ Promise.all([
 ]).then(([store, templates, ipc]) => {
   ({
     load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel,
-    settleLemma, allNodes,
+    settleLemma, allNodes, addInboxItem, allInbox,
   } = store)
   genericFallback = templates.genericFallback
   instantiate = templates.instantiate
@@ -187,6 +187,39 @@ Promise.all([
       tags: ['半导体周期'], settlement: { date: '2026-12-31', resolved: null, correct: null },
     }],
   })
+
+  const pendingItems = [
+    addInboxItem({
+      title: '光模块订单能见度延长，供应链出现分化',
+      text: '北美云厂商新一轮采购已启动，头部光模块供应商的订单能见度延伸至明年二季度，部分产能已被提前锁定。\n\n与此同时，新进入者宣布硅光方案成本降低约 30%，预计 2027 年量产。短期交付确定性与长期技术替代，需要分开跟踪。',
+      label: { kind: '券商研报', quality: 0.8, via: 'llm' },
+      provenance: { platform: '产业调研纪要', url: 'https://example.com/research' },
+      lemmas: [
+        { title: '光模块订单能见度延伸至明年二季度', type: 'observation', confidence: 78, parentId: opt.id },
+        { title: '硅光新方案有望降低 30% 的成本', type: 'hypothesis', confidence: 60, parentId: opt.id },
+        { title: '头部客户提前锁定光模块产能', type: 'observation', confidence: 75, parentId: opt.id },
+      ],
+    }),
+    addInboxItem({
+      title: 'HBM 合约价继续上调，供给仍偏紧',
+      text: '最新渠道调研显示，HBM 合约价在上一季度基础上继续上调。产能爬坡速度与良率仍是需要核实的变量。',
+      label: { kind: '一手数据', quality: 0.9, via: 'channel' },
+      lemmas: [{ title: 'HBM 合约价继续上涨', type: 'observation', confidence: 82, parentId: gpu.id }],
+    }),
+    addInboxItem({
+      title: '铜连接替代方案进入验证阶段',
+      text: '一份新纪要再次提到三米内互联可以采用铜连接，成本低于光模块。此前已有相同方向的研究记录。',
+      label: { kind: '独立媒体', quality: 0.65, via: 'table' },
+      lemmas: [{ title: '铜连接在短距离内可替代光模块', type: 'hypothesis', confidence: 62, action: 'merge', mergeInto: l2.id, parentId: opt.id, conflicts: [{ id: l1.id, reason: '技术路线判断不同' }] }],
+    }),
+    addInboxItem({
+      title: '数据中心电力供给：长期跟踪记录',
+      text: Array.from({ length: 18 }, (_, i) => `第 ${i + 1} 次记录：数据中心并网排队时间仍然较长。需跟踪电网改造、审批进度和实际交付，避免把远期规划当作当期供给。`).join('\n\n') + '\n<未经核实的原文标记>',
+      label: { kind: '独立媒体', quality: 0.65 },
+      lemmas: [{ title: '电力并网约束影响交付节奏', type: 'hypothesis', confidence: 55, parentId: power.id }],
+    }),
+    addInboxItem({ title: '只有线索，尚待补充证据', text: '', label: null, lemmas: [] }),
+  ]
 
   // ---------------------------------------------------------------- 拍摄
   console.log('\n截图输出到', OUT, '\n')
@@ -343,6 +376,319 @@ Promise.all([
   check(themeCreation.notice, '无 key 显示降级提示')
   writeFileSync(join(OUT, '17-generic-fallback.png'), (await win.webContents.capturePage()).toPNG())
   console.log('  →', '17-generic-fallback.png')
+
+  win.show()
+  win.focus()
+  win.webContents.focus()
+  const tagLibraryErrors = []
+  win.webContents.on('console-message', (event) => {
+    if (event.level === 'error') tagLibraryErrors.push(event.message)
+  })
+  const tagLibraryLayout = await win.webContents.executeJavaScript(`
+    (async () => {
+      const { state, refresh } = await import('./app.js')
+      await window.meridian.themeUpdate(state.themeId, {
+        tagLibrary: Array.from({ length: 40 }, (_, i) => ({
+          id: 'tag-' + i, name: '测试标签 ' + (i + 1), synonyms: ['别名 ' + i],
+          threshold: 0.6, hits: 0, lastHitAt: null,
+        })),
+      })
+      await refresh()
+      const header = [...document.querySelectorAll('#mid .sect-h')].find(el => el.textContent.includes('标签库'))
+      header.click()
+      const body = header.parentElement.querySelector('.sect-b')
+      const tree = document.querySelector('.tree-wrap, .graph-debug')
+      return {
+        scrollable: body.scrollHeight > body.clientHeight && getComputedStyle(body).overflowY === 'auto',
+        treeVisible: tree.getBoundingClientRect().height > 150 && tree.getBoundingClientRect().bottom <= innerHeight,
+      }
+    })()
+  `)
+  await sleep(200)
+  writeFileSync(join(OUT, '18-tag-library.png'), (await win.webContents.capturePage()).toPNG())
+  check(tagLibraryLayout.scrollable, '标签库长列表可独立向下滚动')
+  check(tagLibraryLayout.treeVisible, '展开标签库不会挤掉下方树或图')
+
+  const scrollTarget = await win.webContents.executeJavaScript(`(() => {
+    const rect = document.querySelector('.tag-library-body').getBoundingClientRect()
+    return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }
+  })()`)
+  win.webContents.sendInputEvent({ type: 'mouseWheel', ...scrollTarget, deltaY: -5000, deltaX: 0 })
+  await sleep(200)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.tag-library-body').scrollTop > 0`), '鼠标滚轮可向下浏览标签')
+
+  await win.webContents.executeJavaScript(`document.querySelector('.tag-library-toggle').focus()`)
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' })
+  await sleep(100)
+  check(await win.webContents.executeJavaScript(`
+    document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'false' &&
+    document.querySelector('.tag-library-body').hidden &&
+    document.activeElement.matches('.tag-library-toggle')
+  `), '空格收起标签库且焦点不丢失')
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+  win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+  await sleep(100)
+  check(await win.webContents.executeJavaScript(`
+    document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'true' &&
+    !document.querySelector('.tag-library-body').hidden
+  `), '回车重新展开标签库')
+
+  const tagLibrarySave = await win.webContents.executeJavaScript(`
+    (async () => {
+      const { state } = await import('./app.js')
+      document.querySelector('.tag-library-body .q').click()
+      document.querySelector('.tag-library-body input').value = '修改后的标签'
+      document.querySelector('.tag-library-body .btn-primary').click()
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const saved = (await window.meridian.themes()).find(t => t.id === state.themeId).tagLibrary[0].name
+      return saved === '修改后的标签' &&
+        document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'true' &&
+        document.querySelector('.tag-library-body').textContent.includes('修改后的标签')
+    })()
+  `)
+  check(tagLibrarySave, '保存标签后刷新仍保持展开')
+
+  const themeSwitch = await win.webContents.executeJavaScript(`
+    (async () => {
+      const currentName = document.querySelector('.theme-item[aria-selected="true"] span:nth-child(2)').textContent
+      const otherTheme = [...document.querySelectorAll('.theme-item')].find(el => el.textContent.includes('AI 产业链'))
+      otherTheme.click()
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const separate = document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'false'
+      document.querySelector('.tag-library-toggle').click()
+      const empty = document.querySelector('.tag-library-body').textContent.includes('暂无标签库')
+      const originalTheme = [...document.querySelectorAll('.theme-item')].find(el => el.textContent.includes(currentName))
+      originalTheme.click()
+      await new Promise(resolve => setTimeout(resolve, 250))
+      return {
+        separate, empty,
+        retained: document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'true',
+      }
+    })()
+  `)
+  check(themeSwitch.separate && themeSwitch.retained, '切换主题分别保留标签库展开状态')
+  check(themeSwitch.empty, '空标签库也可展开并显示空态')
+
+  win.setSize(1000, 680)
+  await win.webContents.executeJavaScript(`(async () => {
+    const { setShape } = await import('./app.js')
+    setShape('tree')
+  })()`)
+  await sleep(200)
+  check(await win.webContents.executeJavaScript(`(() => {
+    const tree = document.querySelector('.tree-wrap').getBoundingClientRect()
+    const header = document.querySelector('.tag-library-toggle').getBoundingClientRect()
+    return tree.height > 150 && tree.bottom <= innerHeight && header.right <= innerWidth &&
+      document.querySelector('.tag-library-toggle').getAttribute('aria-expanded') === 'true'
+  })()`), '小窗口切回树形仍可展开标签库并查看树')
+  writeFileSync(join(OUT, '19-tag-library-tree.png'), (await win.webContents.capturePage()).toPNG())
+  check(tagLibraryErrors.length === 0, '标签库交互无渲染器错误：' + tagLibraryErrors.join('; '))
+
+  const todayErrors = []
+  win.webContents.on('console-message', (event) => {
+    if (event.level === 'error') todayErrors.push(event.message)
+  })
+  win.setSize(1280, 820)
+  await win.loadFile(RENDERER, { query: { view: 'today' } })
+  await sleep(500)
+  const inboxInitial = await win.webContents.executeJavaScript(`(() => {
+    const workspace = document.querySelector('.inbox-workspace').getBoundingClientRect()
+    const mid = document.querySelector('#mid').getBoundingClientRect()
+    return {
+      fullWidth: workspace.width > mid.width * 0.9,
+      selected: document.querySelector('.inbox-item[data-sel="true"]').dataset.id,
+      original: document.querySelector('.inbox-original-text').textContent,
+      count: document.querySelectorAll('.inbox-proposals li').length,
+      source: !!document.querySelector('.inbox-source-link'),
+      noBatchSelection: document.querySelector('.inbox-import-picked').disabled,
+    }
+  })()`)
+  check(inboxInitial.fullWidth && inboxInitial.selected === pendingItems[0].id, '今日铺满可用宽度并默认显示首条详情')
+  check(inboxInitial.original === pendingItems[0].text && inboxInitial.count === 3 && inboxInitial.source, '阅读面板展示完整原文、命题及来源入口')
+  check(inboxInitial.noBatchSelection, '阅读选中与批量勾选相互独立')
+
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-body').focus()`)
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' })
+  await sleep(100)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-sel="true"]').dataset.id`) === pendingItems[1].id, '方向键在待确认列表中切换详情')
+
+  const draftPreserved = await win.webContents.executeJavaScript(`(async () => {
+    const input = document.querySelector('#inbox-textarea')
+    input.value = '尚未提交的原文草稿'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector('.inbox-pick-all').click()
+    const allPicked = document.querySelectorAll('.inbox-ck:checked').length === 4
+    document.querySelector('.inbox-pick-all').click()
+    const cleared = document.querySelector('.inbox-import-picked').disabled
+    const { refresh } = await import('./app.js')
+    await refresh()
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const retained = document.querySelector('#inbox-textarea').value === '尚未提交的原文草稿' &&
+      document.querySelector('.inbox-item[data-sel="true"]').dataset.id === '${pendingItems[1].id}'
+    return allPicked && cleared && retained
+  })()`)
+  check(draftPreserved, '全选/取消生效，刷新保留草稿与当前阅读条目')
+
+  let finishCapture
+  ipcMain.removeHandler('inbox:capture')
+  ipcMain.handle('inbox:capture', () => new Promise(resolve => { finishCapture = resolve }))
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-capture').click()`)
+  await sleep(200)
+  check(typeof finishCapture === 'function' && await win.webContents.executeJavaScript(`
+    !!document.querySelector('.inbox-capture-status') && document.querySelectorAll('.inbox-item').length === 5
+  `), '捕获进行中保留已有待确认列表')
+  await win.webContents.executeJavaScript(`document.querySelectorAll('.inbox-body')[2].click()`)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-sel="true"]').dataset.id`) === pendingItems[2].id, '捕获进行中仍可阅读其他信息')
+  check(await win.webContents.executeJavaScript(`
+    !document.querySelector('#inbox-confidence') && !document.querySelector('#inbox-parent') &&
+    document.querySelector('.inbox-proposals').textContent.includes('保留原置信度与挂点')
+  `), '合并来源显示真实目标，不提供无效的置信度和挂点编辑')
+  await win.webContents.executeJavaScript(`(async () => {
+    const { setView } = await import('./app.js')
+    setView('settings')
+  })()`)
+  finishCapture({ ok: true, autoImported: false })
+  await sleep(250)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.app').dataset.view === 'settings' && !document.querySelector('#inbox-section')`), '后台捕获完成不会抢回当前页面')
+  await win.webContents.executeJavaScript(`(async () => {
+    const { setView } = await import('./app.js')
+    setView('today')
+  })()`)
+  await sleep(250)
+
+  ipcMain.removeHandler('inbox:capture')
+  ipcMain.handle('inbox:capture', () => { throw new Error('模拟捕获失败') })
+  await win.webContents.executeJavaScript(`(() => {
+    const input = document.querySelector('#inbox-textarea')
+    input.value = '失败后不能丢失的原文'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector('.inbox-capture').click()
+  })()`)
+  await sleep(250)
+  check(await win.webContents.executeJavaScript(`
+    document.querySelector('#inbox-textarea').value === '失败后不能丢失的原文' &&
+    !document.querySelector('.inbox-capture').disabled &&
+    document.querySelectorAll('.inbox-item').length === 5
+  `), '捕获失败保留原文并恢复重试入口')
+
+  await win.webContents.executeJavaScript(`(() => {
+    const input = document.querySelector('#inbox-textarea')
+    input.value = ''
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelectorAll('.toast').forEach(el => el.remove())
+    document.querySelector('.inbox-body').click()
+    const slider = document.querySelector('#inbox-confidence')
+    slider.value = '61'
+    slider.dispatchEvent(new Event('input', { bubbles: true }))
+    const parent = document.querySelector('#inbox-parent')
+    parent.value = '${gpu.id}'
+    parent.dispatchEvent(new Event('change', { bubbles: true }))
+    document.querySelector('.inbox-map').open = true
+    document.querySelector('.mini-node[data-id="${power.id}"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    document.querySelector('.inbox-detail-scroll').scrollTop = 10000
+  })()`)
+  check(await win.webContents.executeJavaScript(`
+    document.querySelector('.inbox-conf-val').value === '61' &&
+    document.querySelector('#inbox-parent').value === '${power.id}' &&
+    !!document.querySelector('.mini-node[data-parent="true"][data-id="${power.id}"]')
+  `), '置信度实时显示，图与下拉挂点双向同步')
+  const crossThemeRouting = await win.webContents.executeJavaScript(`(async () => {
+    const { state, refresh } = await import('./app.js')
+    const originalTheme = state.themeId
+    state.themeId = state.themes.find(theme => theme.id !== originalTheme).id
+    await refresh()
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const blocked = document.querySelector('.inbox-confirm').disabled && !document.querySelector('.inbox-route-warning').hidden
+    const parent = document.querySelector('#inbox-parent')
+    parent.value = ''
+    parent.dispatchEvent(new Event('change', { bubbles: true }))
+    const canChooseRoot = !document.querySelector('.inbox-confirm').disabled
+    state.themeId = originalTheme
+    await refresh()
+    await new Promise(resolve => setTimeout(resolve, 200))
+    return blocked && canChooseRoot && document.querySelector('#inbox-parent').value === '${power.id}' &&
+      document.querySelector('.inbox-conf-val').value === '61'
+  })()`)
+  check(crossThemeRouting, '切换主题隔离编辑值，不能把信息挂到其他主题的节点')
+  await win.webContents.executeJavaScript(`
+    document.querySelector('.inbox-map').open = true
+    document.querySelector('.inbox-detail-scroll').scrollTop = 10000
+  `)
+  await sleep(150)
+  writeFileSync(join(OUT, '20-today-routing.png'), (await win.webContents.capturePage()).toPNG())
+
+  for (const width of [1000, 900, 840]) {
+    win.setSize(width, 740)
+    await sleep(100)
+    const layout = await win.webContents.executeJavaScript(`(() => {
+      const page = document.querySelector('.today-page')
+      const detail = document.querySelector('.inbox-detail').getBoundingClientRect()
+      const footer = document.querySelector('.inbox-detail-actions').getBoundingClientRect()
+      return {
+        pageWidth: page.clientWidth, scrollWidth: page.scrollWidth, detailWidth: detail.width,
+        footerBottom: footer.bottom, detailBottom: detail.bottom,
+        readingHeight: document.querySelector('.inbox-detail-scroll').clientHeight,
+      }
+    })()`)
+    writeFileSync(join(OUT, '21-today-' + width + '.png'), (await win.webContents.capturePage()).toPNG())
+    check(layout.scrollWidth <= layout.pageWidth + 1 && layout.detailWidth > 280 &&
+      layout.footerBottom <= layout.detailBottom + 1 && layout.readingHeight > 80,
+    '今日在 ' + width + 'px 窗口无横向溢出且操作栏可见 ' + JSON.stringify(layout))
+  }
+  win.setSize(1280, 820)
+  const nativeTheme = globalThis.__electron.nativeTheme
+  const previousTheme = nativeTheme.themeSource
+  nativeTheme.themeSource = 'dark'
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-detail-scroll').scrollTop = 0`)
+  await sleep(200)
+  writeFileSync(join(OUT, '22-today-dark.png'), (await win.webContents.capturePage()).toPNG())
+  nativeTheme.themeSource = previousTheme
+
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-confirm').click()`)
+  await sleep(300)
+  const confirmed = allNodes().filter(node => pendingItems[0].lemmas.some(lemma => lemma.title === node.title))
+  check(confirmed.length === 3 && confirmed.every(node => node.parentId === power.id && node.confidence === 61), '单条确认保留全部命题并应用置信度/挂点调整')
+  check(!allInbox().some(item => item.id === pendingItems[0].id), '确认后条目从待确认队列移除')
+  check(await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-sel="true"]').dataset.id`) === pendingItems[1].id, '处理完成自动选择下一条')
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-reject').click()`)
+  await sleep(250)
+  check(!allInbox().some(item => item.id === pendingItems[1].id), '忽略条目仍走原有拒绝流程')
+
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-id="${pendingItems[3].id}"] .inbox-body').click()`)
+  check(await win.webContents.executeJavaScript(`(() => {
+    const body = document.querySelector('.inbox-detail-scroll')
+    const original = document.querySelector('.inbox-original-text')
+    return body.scrollHeight > body.clientHeight && original.textContent.includes('第 18 次记录') &&
+      original.textContent.includes('<未经核实的原文标记>') && original.children.length === 0
+  })()`), '长原文独立滚动，文本标记不会作为 HTML 执行')
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-id="${pendingItems[4].id}"] .inbox-body').click()`)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.inbox-confirm').disabled && document.querySelector('.inbox-detail-note').textContent.includes('未提取')`), '没有命题的条目展示说明且不能空入库')
+  await win.webContents.executeJavaScript(`
+    document.querySelector('.inbox-pick-all').click()
+    document.querySelector('.inbox-import-picked').click()
+  `)
+  await sleep(300)
+  check(allInbox().length === 1 && allInbox()[0].id === pendingItems[4].id, '批量入库只处理勾选且可入库的条目')
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-reject').click()`)
+  await sleep(250)
+  check(allInbox().length === 0 && await win.webContents.executeJavaScript(`!!document.querySelector('.inbox-empty-state') && !document.querySelector('.inbox-detail')`), '全部处理后显示完整空态而非空白阅读栏')
+  writeFileSync(join(OUT, '23-today-empty.png'), (await win.webContents.capturePage()).toPNG())
+  addNode({
+    themeId: ai.id, parentId: opt.id, kind: 'lemma', title: '今日结算跳转验收', confidence: 60,
+    settlement: { date: new Date().toISOString().slice(0, 10), resolved: null, correct: null },
+  })
+  await win.webContents.executeJavaScript(`(async () => {
+    const { refresh } = await import('./app.js')
+    await refresh()
+  })()`)
+  await sleep(200)
+  await win.webContents.executeJavaScript(`document.querySelector('#due-section .btn-hit').click()`)
+  await sleep(400)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.app').dataset.view === 'lattice' && !!document.querySelector('.graph-wrap .node')`), '结算后跳转脉络不会被今日的异步渲染清空')
+  check(todayErrors.length === 0, '今日交互无渲染器错误：' + todayErrors.join('; '))
 
   console.log('\n完成\n')
   app.exit(0)

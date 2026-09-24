@@ -145,6 +145,29 @@ const blank = () => ({
 let db = null
 let saveTimer = null
 
+function normalizeScaffold(scaffold) {
+  if (!scaffold || typeof scaffold !== 'object') return null
+  const answer = Array.isArray(scaffold.answer)
+    ? scaffold.answer.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+    : scaffold.answer ? [String(scaffold.answer).trim()].filter(Boolean) : []
+  const indicators = Array.isArray(scaffold.indicators)
+    ? scaffold.indicators
+      .map((i) => typeof i === 'string'
+        ? { name: i.trim(), cadence: '季度' }
+        : { name: String(i?.name || '').trim(), cadence: String(i?.cadence || '季度') })
+      .filter((i) => i.name)
+    : []
+  return {
+    answer,
+    indicators,
+    falsifier: scaffold.falsifier ? String(scaffold.falsifier).trim() : null,
+  }
+}
+
+function normalizeTagLibrary(tagLibrary) {
+  return Array.isArray(tagLibrary) ? tagLibrary : []
+}
+
 export function load() {
   if (db) return db
   const file = DATA_FILE()
@@ -171,7 +194,7 @@ function migrate(d) {
   d.researchNotes = d.researchNotes || []
   for (const t of d.themes || []) {
     t.tags = Array.isArray(t.tags) ? t.tags : []
-    t.tagLibrary = Array.isArray(t.tagLibrary) ? t.tagLibrary : []
+    t.tagLibrary = normalizeTagLibrary(t.tagLibrary)
   }
   for (const c of d.channels || []) {
     c.tags = Array.isArray(c.tags) ? c.tags : []
@@ -182,7 +205,7 @@ function migrate(d) {
     n.tags = Array.isArray(n.tags) ? n.tags : []
     n.tickers = Array.isArray(n.tickers) ? n.tickers : []
     n.status = n.status || 'live'
-    n.scaffold = n.scaffold || null
+    n.scaffold = normalizeScaffold(n.scaffold)
     n.by = n.by || 'manual'
     n.stableId = n.stableId || n.id
     n.channelIds = Array.isArray(n.channelIds) ? n.channelIds : []
@@ -264,7 +287,7 @@ export function addNode(input) {
     tickers: normalizeTickers(input.tickers || []),
     status: input.status || 'live', // live | cold | dead
     settlement: input.settlement || null,
-    scaffold: input.scaffold || null,
+    scaffold: normalizeScaffold(input.scaffold),
     history: [{ t, confidence: clamp(input.confidence ?? 50), by: input.by || 'manual' }],
     by: input.by || 'manual',
     stableId: input.stableId || uid(),
@@ -486,8 +509,8 @@ export function updateTheme(id, patch) {
   const theme = db.themes.find((t) => t.id === id)
   if (!theme) return null
   if (patch.name !== undefined) theme.name = String(patch.name).trim()
-  if (patch.tags !== undefined) theme.tags = [...new Set(patch.tags.filter((t) => typeof t === 'string'))]
-  if (patch.tagLibrary !== undefined) theme.tagLibrary = patch.tagLibrary
+  if (patch.tags !== undefined) theme.tags = [...new Set((Array.isArray(patch.tags) ? patch.tags : []).filter((t) => typeof t === 'string'))]
+  if (patch.tagLibrary !== undefined) theme.tagLibrary = normalizeTagLibrary(patch.tagLibrary)
   persist()
   return theme
 }

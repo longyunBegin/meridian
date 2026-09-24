@@ -24,6 +24,12 @@ const USER = (text, branches) =>
   `原文：\n"""\n${text.slice(0, 6000)}\n"""\n\n` +
   (branches?.length ? `已有的产业链环节（归位时参考）：${branches.join('、')}\n\n` : '')
 
+const LLM_TIMEOUT_MS = 15000
+
+function errorReason(e) {
+  return e?.name === 'TimeoutError' ? 'timeout' : (e.message || String(e))
+}
+
 export async function extractLemmas(settings, text, branchHints = []) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
@@ -141,18 +147,24 @@ export async function generateThemeTags(settings, description) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
 
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: THEME_TAGS_SYSTEM },
-        { role: 'user', content: String(description).slice(0, 500) },
-      ],
-    }),
-  })
+  let res
+  try {
+    res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: THEME_TAGS_SYSTEM },
+          { role: 'user', content: String(description).slice(0, 500) },
+        ],
+      }),
+    })
+  } catch (e) {
+    return { ok: false, reason: errorReason(e) }
+  }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
   const body = await res.json()
@@ -196,18 +208,24 @@ export async function generateTagLibrary(settings, description, branchTitles = [
   if (!apiKey) return { ok: false, reason: 'no-key' }
 
   const userContent = `主题：${description}\n环节树标题：${branchTitles.join('、') || '（无）'}`
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: TAG_LIBRARY_SYSTEM },
-        { role: 'user', content: userContent.slice(0, 1000) },
-      ],
-    }),
-  })
+  let res
+  try {
+    res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: TAG_LIBRARY_SYSTEM },
+          { role: 'user', content: userContent.slice(0, 1000) },
+        ],
+      }),
+    })
+  } catch (e) {
+    return { ok: false, reason: errorReason(e) }
+  }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
   const body = await res.json()
@@ -269,6 +287,7 @@ export async function pickChannelsFromLibrary(settings, description, library) {
     res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       body: JSON.stringify({
         model,
         temperature: 0.1,
@@ -279,7 +298,7 @@ export async function pickChannelsFromLibrary(settings, description, library) {
       }),
     })
   } catch (e) {
-    return { ok: false, reason: e.message || String(e), channels: [] }
+    return { ok: false, reason: errorReason(e), channels: [] }
   }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, channels: [] }
@@ -324,22 +343,34 @@ function normalizeCadence(c) {
   return VALID_CADENCES.includes(s) ? s : '季度'
 }
 
+function normalizeAnswers(answer) {
+  if (Array.isArray(answer)) return answer.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()).slice(0, 6)
+  const text = String(answer || '').trim().slice(0, 200)
+  return text ? [text] : []
+}
+
 export async function generateSkeleton(settings, description) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
 
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: 'system', content: SKELETON_SYSTEM },
-        { role: 'user', content: String(description).slice(0, 2000) },
-      ],
-    }),
-  })
+  let res
+  try {
+    res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: SKELETON_SYSTEM },
+          { role: 'user', content: String(description).slice(0, 2000) },
+        ],
+      }),
+    })
+  } catch (e) {
+    return { ok: false, reason: errorReason(e) }
+  }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
   const body = await res.json()
@@ -365,7 +396,7 @@ function parseSkeleton(raw) {
       propagation: Math.max(0, Math.min(1, Number(node.propagation) || 0.5)),
       stableId: Math.random().toString(36).slice(2, 10),
       scaffold: node.scaffold ? {
-        answer: String(node.scaffold.answer || '').trim().slice(0, 200) || null,
+        answer: normalizeAnswers(node.scaffold.answer),
         indicators: Array.isArray(node.scaffold.indicators)
           ? node.scaffold.indicators
             .map((i) => typeof i === 'string'

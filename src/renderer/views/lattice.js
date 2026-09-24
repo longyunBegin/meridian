@@ -10,27 +10,45 @@ const INDENT = 15
 const PAD = 20
 /** 导轨落在父行箭号的圆心上：内容起点 - 8（号宽 16 的一半） */
 const railX = (depth) => PAD + (depth - 1) * INDENT - 8
+const expandedTagLibraries = new Set()
 
 function renderTagLibraryBand(theme) {
   if (!theme) return h('div')
-  const lib = theme.tagLibrary || []
+  const lib = Array.isArray(theme.tagLibrary) ? theme.tagLibrary : []
   const total = lib.length
   const unmatched = lib.filter((t) => !t.hits).length
   const recentCutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
   const recentHits = lib.filter((t) => t.lastHitAt && t.lastHitAt >= recentCutoff).length
-  let expanded = false
+  let expanded = expandedTagLibraries.has(theme.id)
   let organizeMode = false
 
-  const band = h('div', { class: 'sect', style: { marginBottom: '0' } })
-  const header = h('div', { class: 'sect-h', style: { cursor: 'pointer' },
-    onclick: () => { expanded = !expanded; render() },
-  }, h('h2', {}, '标签库'), h('em', {}, `${total} 个 · ${unmatched} 个未命中 · 近 7 天命中 ${recentHits}`), h('span', { style: { marginLeft: 'auto', color: 'var(--text-3)' } }, '▾'))
+  const body = h('div', {
+    class: 'sect-b tag-library-body', id: `tag-library-${theme.id}`,
+    role: 'region', 'aria-label': '标签库内容', tabindex: '0',
+  })
+  const toggleLabel = h('span')
+  const header = h('button', {
+    type: 'button', class: 'sect-h tag-library-toggle',
+    'aria-controls': body.id,
+    onclick: () => {
+      expanded = !expanded
+      if (expanded) expandedTagLibraries.add(theme.id)
+      else expandedTagLibraries.delete(theme.id)
+      render()
+    },
+  },
+    h('span', { class: 'tag-library-title' }, '标签库'),
+    h('em', {}, `${total} 个 · ${unmatched} 个未命中 · 近 7 天命中 ${recentHits}`),
+    h('span', { class: 'tag-library-action' }, toggleLabel, icon('chevron', 12)),
+  )
+  const band = h('div', { class: 'sect tag-library' }, header, body)
 
   function render() {
-    clear(band)
-    band.append(header)
+    header.setAttribute('aria-expanded', String(expanded))
+    toggleLabel.textContent = expanded ? '收起' : '展开'
+    body.hidden = !expanded
+    clear(body)
     if (!expanded) return
-    const body = h('div', { class: 'sect-b' })
     if (!total) {
       body.append(h('p', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', padding: '6px 0' } }, '暂无标签库'))
     } else if (organizeMode) {
@@ -39,7 +57,6 @@ function renderTagLibraryBand(theme) {
       renderList(body)
     }
     renderThemeOps(body)
-    band.append(body)
   }
 
   function renderList(body) {

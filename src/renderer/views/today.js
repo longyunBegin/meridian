@@ -1,18 +1,31 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
-import { confColor, confColorContinuous, nodePath } from './shared.js'
+import { confColor, nodePath } from './shared.js'
 
 const m = window.meridian
 
 let inboxItems = []
 let picked = new Set()
 let inboxLoading = false
+let inboxDraft = ''
 let renderSeq = 0
-let selectedInboxIdx = null
+let selectedInboxId = null
 const overrides = new Map()
+const resolving = new Set()
 let lastAutoImport = null
+const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
+
+function hasValidInboxRoute(item, themeNodes) {
+  const ov = overrides.get(overrideKey(item.id)) || {}
+  return (item.lemmas || []).every((lemma) => {
+    if (lemma.action === 'merge') return true
+    const parentId = ov.parentId ?? lemma.parentId
+    return !parentId || themeNodes.some((node) => node.id === parentId && node.status !== 'dead')
+  })
+}
 
 export async function renderToday(mid) {
+  if (state.view !== 'today') return
   const seq = ++renderSeq
   clear(mid)
 
@@ -28,13 +41,17 @@ export async function renderToday(mid) {
   const [due, calib, inbox, conflicts] = await Promise.all([
     m.due(), m.calibration(), m.inboxList(), m.conflicts(),
   ])
-  if (seq !== renderSeq) return
+  if (seq !== renderSeq || state.view !== 'today') return
+  const previousIndex = inboxItems.findIndex((item) => item.id === selectedInboxId)
   inboxItems = inbox
-  if (picked.size === 0 && inbox.length) picked = new Set(inbox.map((_, i) => i))
+  const ids = new Set(inbox.map((item) => item.id))
+  picked = new Set([...picked].filter((id) => ids.has(id)))
+  for (const key of overrides.keys()) if (!ids.has(key.slice(key.indexOf(':') + 1))) overrides.delete(key)
+  if (!ids.has(selectedInboxId)) selectedInboxId = inbox[Math.max(0, Math.min(previousIndex, inbox.length - 1))]?.id || null
 
-
-  const themeNodes = state.themeId ? (await m.nodes(state.themeId)) : []
-  if (seq !== renderSeq) return
+  const allNodes = await m.allNodes()
+  if (seq !== renderSeq || state.view !== 'today') return
+  const themeNodes = allNodes.filter((node) => node.themeId === state.themeId)
 
   mid.append(h('div', { class: 'page today-page' },
     h('div', { class: 'page-head' },
@@ -84,90 +101,7 @@ export async function renderToday(mid) {
       ),
     ),
 
-    // ---- 收件箱：输入框 + 左栏列表 + 右栏常驻图
-    h('section', { class: 'card', id: 'inbox-section' },
-      h('div', { class: 'card-h' },
-        h('h2', {}, '待确认'),
-        h('span', { class: 'spacer' }),
-        h('em', {}, `${inbox.length} 条`),
-      ),
-      h('div', { class: 'inbox-input-wrap' },
-        h('textarea', {
-          id: 'inbox-textarea',
-          class: 'inbox-textarea',
-          placeholder: '粘贴原文或 URL，或直接输入你的判断',
-          rows: 2,
-          onkeydown: (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              const ta = e.target
-              const val = ta.value.trim()
-              if (!val) return
-              ta.value = ''
-              inboxPaste(val)
-            }
-          },
-          ondragover: (e) => { e.preventDefault() },
-          ondrop: (e) => {
-            e.preventDefault()
-            const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list')
-            if (text?.trim()) {
-              e.target.value = text.trim()
-              e.target.focus()
-            }
-          },
-        }),
-      ),
-      h('div', { class: 'sect-b' },
-        inboxLoading ? h('div', { class: 'feeds-loading' }, h('span', { class: 'hud-dot' }), '正在打标…') : null,
-        !inboxLoading && inbox.length === 0 ? h('div', { class: 'q' }, h('div', { class: 'q-body' },
-          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '收件箱空了。按 ⌘⇧V 粘贴内容，打标后这里等你看一眼。'),
-        )) : null,
-        !inboxLoading && inbox.length > 0 ? h('div', { class: 'inbox-split' },
-          // 左栏：待确认列表
-          h('div', { class: 'inbox-list' },
-            ...inbox.map((item, i) => renderInboxItem(item, i, mid, themeNodes)),
-            // 批量入库栏
-            h('div', { class: 'inbox-import-bar' },
-              h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)' } }, `已选 ${picked.size} / ${inbox.length} 条`),
-              h('span', { style: { flex: 1 } }),
-              h('button', {
-                class: 'btn', style: { height: '28px' },
-                onclick: () => { picked = new Set(inbox.map((_, i) => i)); renderToday(mid) },
-              }, '全选'),
-              h('button', {
-                class: 'btn', style: { height: '28px' },
-                onclick: () => { picked.clear(); renderToday(mid) },
-              }, '取消'),
-              h('button', {
-                class: 'btn btn-primary', style: { height: '28px' },
-                onclick: async () => {
-                  if (!state.themeId) { toast('先选择一个主题', 'var(--red)'); return }
-                  const chosen = [...picked].sort((a, b) => a - b).map((i) => inbox[i])
-                  const ovMap = {}
-                  for (const item of chosen) {
-                    const ov = overrides.get(item.id)
-                    if (ov) ovMap[item.id] = ov
-                  }
-                  await m.inboxImport(state.themeId, chosen, ovMap)
-                  picked.clear()
-                  overrides.clear()
-                  selectedInboxIdx = null
-                  await refresh()
-                  renderToday(mid)
-                },
-              }, icon('plus', 13), `全部入库`),
-            ),
-          ),
-          // 右栏：常驻图
-          h('div', { class: 'inbox-graph' },
-            selectedInboxIdx != null && inbox[selectedInboxIdx]
-              ? renderMiniGraph(themeNodes, inbox[selectedInboxIdx], mid)
-              : h('div', { class: 'inbox-graph-empty' }, h('span', {}, '点一条待确认项'), h('span', {}, '图上点亮建议挂点')),
-          ),
-        ) : null,
-      ),
-    ),
+    renderInboxWorkspace(themeNodes, allNodes),
 
     // ---- 到期未结算
     h('section', { class: 'card', id: 'due-section' },
@@ -250,89 +184,277 @@ export async function renderToday(mid) {
   ))
 }
 
-function renderInboxItem(item, i, mid, themeNodes) {
-  const on = picked.has(i)
-  const selected = selectedInboxIdx === i
-  const label = item.label || {}
-  const color = confColorContinuous((label.quality || 0.5) * 100)
+function renderInboxWorkspace(themeNodes, allNodes) {
+  const items = inboxItems
+  const capture = () => {
+    const text = inboxDraft.trim()
+    if (!text || inboxLoading) return
+    inboxDraft = ''
+    inboxPaste(text)
+  }
+  const captureButton = h('button', {
+    class: 'btn inbox-capture', disabled: inboxLoading || !inboxDraft.trim(), onclick: capture,
+  }, icon('plus', 14), inboxLoading ? '处理中…' : '捕获')
+  const input = h('textarea', {
+    id: 'inbox-textarea', class: 'inbox-textarea', rows: 1,
+    'aria-label': '捕获原文', placeholder: '粘贴原文或链接，回车捕获 · Shift + 回车换行',
+    oninput: (e) => {
+      inboxDraft = e.target.value
+      captureButton.disabled = inboxLoading || !inboxDraft.trim()
+    },
+    onkeydown: (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); capture() }
+    },
+    ondragover: (e) => e.preventDefault(),
+    ondrop: (e) => {
+      e.preventDefault()
+      const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list')
+      if (!text?.trim()) return
+      input.value = inboxDraft = text.trim()
+      captureButton.disabled = inboxLoading
+      input.focus()
+    },
+  }, inboxDraft)
+  const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
+    h('div', { class: 'card-h inbox-workspace-head' },
+      h('h2', {}, '待确认'), h('p', {}, '核对信息，再归位到脉络'),
+      h('span', { class: 'spacer' }), h('em', {}, `${items.length} 条待审阅`),
+    ),
+    h('div', { class: 'inbox-input-wrap' }, input, captureButton),
+    inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
+      h('span', { class: 'hud-dot' }), '正在解析新内容，你可以继续审阅其他信息。') : null,
+  )
+  if (!items.length) {
+    section.append(h('div', { class: 'inbox-empty-state' },
+      icon('lattice', 28), h('strong', {}, '待确认已清空'),
+      h('p', {}, '新的信息会在这里等你审阅。粘贴一段原文，开始下一次判断。'),
+    ))
+    return section
+  }
+
+  const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
+  const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
+  const count = h('span')
+  const pickAll = h('button', {
+    class: 'btn inbox-pick-all',
+    onclick: () => {
+      const available = items.filter((item) => item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes))
+      const allPicked = available.every((item) => picked.has(item.id))
+      for (const item of available) allPicked ? picked.delete(item.id) : picked.add(item.id)
+      updateBatch()
+    },
+  })
+  const importPicked = h('button', {
+    class: 'btn btn-primary inbox-import-picked',
+    onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'accept'),
+  }, '入库所选')
+
+  function updateBatch() {
+    for (const item of items) if (!hasValidInboxRoute(item, themeNodes)) picked.delete(item.id)
+    const available = items.filter((item) => item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes))
+    pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
+    pickAll.disabled = !available.length
+    count.textContent = `已选 ${picked.size} 条`
+    importPicked.disabled = !state.themeId || !picked.size || items.some((item) => picked.has(item.id) && resolving.has(item.id))
+    for (const row of list.children) {
+      const item = items.find((entry) => entry.id === row.dataset.id)
+      row.dataset.on = String(picked.has(item.id))
+      row.querySelector('.inbox-ck').checked = picked.has(item.id)
+      row.querySelector('.inbox-ck').disabled = !item.lemmas?.length || resolving.has(item.id) || !hasValidInboxRoute(item, themeNodes)
+    }
+  }
+
+  function select(id) {
+    selectedInboxId = id
+    for (const row of list.children) {
+      const selected = row.dataset.id === id
+      row.dataset.sel = String(selected)
+      row.querySelector('.inbox-body').setAttribute('aria-pressed', String(selected))
+    }
+    renderInboxDetail(detail, items.find((item) => item.id === id), themeNodes, allNodes, resolve, updateBatch)
+  }
+
+  async function resolve(chosen, action) {
+    if (!chosen.length || chosen.some((item) => resolving.has(item.id))) return
+    const themeId = state.themeId
+    if (action === 'accept' && !themeId) { toast('先选择一个主题', 'var(--red)'); return }
+    if (action === 'accept' && chosen.some((item) => !hasValidInboxRoute(item, themeNodes))) {
+      toast('请先为所选信息选择当前主题下的目标环节。', 'var(--red)')
+      return
+    }
+    for (const item of chosen) resolving.add(item.id)
+    updateBatch()
+    select(selectedInboxId)
+    try {
+      if (action === 'accept') {
+        const ovMap = Object.fromEntries(chosen.map((item) => [item.id, overrides.get(overrideKey(item.id, themeId)) || {}]))
+        const result = await m.inboxImport(themeId, chosen, ovMap)
+        toast(`${result.results.length} 条命题已入库`)
+      } else {
+        await m.inboxResolve(chosen[0].id, 'reject')
+        toast('已忽略这条信息')
+      }
+      for (const item of chosen) { picked.delete(item.id); overrides.delete(overrideKey(item.id, themeId)) }
+    } catch (e) {
+      toast('处理失败：' + (e.message || '请重试'), 'var(--red)')
+    } finally {
+      for (const item of chosen) resolving.delete(item.id)
+      await refresh()
+    }
+  }
+
+  for (const item of items) {
+    list.append(renderInboxItem(item, () => select(item.id), (checked) => {
+      checked ? picked.add(item.id) : picked.delete(item.id)
+      updateBatch()
+    }, (direction) => {
+      const next = items[Math.max(0, Math.min(items.length - 1, items.indexOf(item) + direction))]
+      select(next.id)
+      const row = [...list.children].find((el) => el.dataset.id === next.id)
+      row.querySelector('.inbox-body').focus({ preventScroll: true })
+      row.scrollIntoView({ block: 'nearest' })
+    }))
+  }
+  section.append(h('div', { class: 'inbox-split' },
+    h('div', { class: 'inbox-list-pane' },
+      h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
+      list,
+      h('div', { class: 'inbox-import-bar' }, count, importPicked),
+    ),
+    detail,
+  ))
+  updateBatch()
+  select(selectedInboxId)
+  return section
+}
+
+function renderInboxItem(item, onSelect, onPick, onNavigate) {
   const lemmas = item.lemmas || []
-  const hasConflict = lemmas.some((l) => l.conflicts?.length)
-  const hasDup = lemmas.some((l) => l.action === 'merge')
-  const ov = overrides.get(item.id) || {}
-  const conf = ov.confidence != null ? ov.confidence : (lemmas[0]?.confidence ?? 50)
-  const parentId = ov.parentId || lemmas[0]?.parentId || null
-  const parentLabel = parentId ? (themeNodes.find((n) => n.id === parentId)?.title || lemmas[0]?.parentLabel) : lemmas[0]?.parentLabel
-
-  return h('div', { class: 'inbox-item', dataset: { on: String(on), sel: String(selected) } },
-    // 勾选框
+  const title = item.title || lemmas[0]?.title || '未命名信息'
+  return h('div', { class: 'inbox-item', dataset: { id: item.id } },
+    h('input', {
+      type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
+      disabled: !lemmas.length || resolving.has(item.id),
+      onchange: (e) => onPick(e.target.checked),
+    }),
     h('button', {
-      class: 'inbox-ck',
-      onclick: () => { on ? picked.delete(i) : picked.add(i); renderToday(mid) },
-    }, h('span', { class: 'ck', dataset: { on: String(on) } })),
-
-    h('div', { class: 'inbox-body', onclick: () => { selectedInboxIdx = selected ? null : i; renderToday(mid) } },
-      // 标题
-      h('div', { class: 'inbox-title' }, item.title || lemmas[0]?.title || '(无标题)'),
-
-      // 打标信息行
-      h('div', { class: 'inbox-meta' },
-        h('span', { class: 'feed-badge', style: { color, background: `${color}1a` } }, label.kind || '未标'),
-        h('span', { class: 'inbox-quality' },
-          h('span', { class: 'bar', style: { width: '40px' } },
-            h('i', { style: { width: `${(label.quality || 0) * 100}%`, background: color } })),
-          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } },
-            label.quality?.toFixed(2) || '—'),
-        ),
-        hasDup ? h('span', { class: 'feed-dup' }, '重复') : h('span', { class: 'feed-new' }, '新'),
-        hasConflict ? h('span', { class: 'cf' }, '冲突') : null,
-        h('span', { class: 'feed-via' }, label.via === 'jev' ? 'Jev' : label.via === 'channel' ? '通道' : label.via === 'llm' ? 'LLM' : '查表'),
-        parentLabel ? h('span', { class: 'inbox-parent', dataset: { ov: String(ov.parentId != null) } }, `→ ${parentLabel}`) : null,
+      class: 'inbox-body', 'aria-controls': 'inbox-detail', onclick: onSelect,
+      onkeydown: (e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+        e.preventDefault()
+        onNavigate(e.key === 'ArrowDown' ? 1 : -1)
+      },
+    },
+      h('span', { class: 'inbox-item-source' },
+        h('span', {}, item.label?.kind || '未标注来源'), h('time', {}, item.createdAt?.slice(5) || ''),
       ),
+      h('span', { class: 'inbox-title' }, title),
+      h('span', { class: 'inbox-excerpt' }, item.text || lemmas[0]?.title || '暂无原文'),
+      h('span', { class: 'inbox-meta' },
+        h('span', {}, `${lemmas.length} 条命题`),
+        lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
+        lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
+        resolving.has(item.id) ? h('span', {}, '处理中…') : null,
+      ),
+    ),
+  )
+}
 
-      // 命题预览
-      lemmas.length > 1 ? h('div', { class: 'inbox-lemmas' },
-        ...lemmas.slice(0, 3).map((l) => h('div', { class: 'inbox-lemma' },
-          h('span', { class: 'dot', style: { background: confColor(l.confidence), width: '4px', height: '4px' } }),
-          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)' } }, l.title),
-        )),
-        lemmas.length > 3 ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', padding: '2px 0 0 10px' } }, `+${lemmas.length - 3} 条`) : null,
-      ) : null,
-
-      // 内联裁决：置信度滑块
-      selected ? h('div', { class: 'inbox-inline' },
-        h('span', { class: 'inbox-inline-label' }, '置信度'),
-        h('input', {
-          class: 'prop-slider inbox-conf-slider', type: 'range', min: 0, max: 100, value: conf,
-          oninput: (e) => {
-            const v = Number(e.target.value)
-            const o = overrides.get(item.id) || {}
-            overrides.set(item.id, { ...o, confidence: v })
-          },
-        }),
-        h('span', { class: 'inbox-conf-val', style: { color: confColorContinuous(conf) } }, String(Math.round(conf))),
+function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRouteChange) {
+  clear(panel)
+  const lemmas = item.lemmas || []
+  const editable = lemmas.some((lemma) => lemma.action !== 'merge')
+  const label = item.label || {}
+  const ov = overrides.get(overrideKey(item.id)) || {}
+  const busy = resolving.has(item.id)
+  const theme = state.themes.find((t) => t.id === state.themeId)
+  const conf = ov.confidence ?? lemmas[0]?.confidence ?? 50
+  const sourceUrl = item.provenance?.url
+  const confirm = h('button', {
+    class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
+    onclick: () => onResolve([item], 'accept'),
+  }, editable ? '确认入库' : '合并来源')
+  const routeNote = h('p', { class: 'inbox-detail-note inbox-route-warning', hidden: hasValidInboxRoute(item, themeNodes) },
+    '建议挂点不属于当前主题，请重新选择目标环节。')
+  const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
+  const parentSelect = h('select', {
+    class: 'inbox-parent-select', id: 'inbox-parent', disabled: busy || !theme,
+    onchange: () => {
+      overrides.set(overrideKey(item.id), { ...overrides.get(overrideKey(item.id)), parentId: parentSelect.value })
+      clear(graph)
+      graph.append(renderMiniGraph(themeNodes, item, changeParent))
+      confirm.disabled = busy || !theme
+      routeNote.hidden = true
+      onRouteChange()
+    },
+  }, h('option', { value: '__unavailable__', disabled: true }, '请选择当前主题的环节'),
+  h('option', { value: '' }, '主题根级'),
+  ...themeNodes.filter((node) => node.status !== 'dead').map((node) =>
+    h('option', { value: node.id }, nodePath(themeNodes, node.id) || node.title)))
+  parentSelect.value = hasValidInboxRoute(item, themeNodes) ? (ov.parentId ?? lemmas.find((lemma) => lemma.action !== 'merge')?.parentId ?? '') : '__unavailable__'
+  const changeParent = (id) => {
+    if (busy) return
+    parentSelect.value = id
+    parentSelect.dispatchEvent(new Event('change'))
+  }
+  const graph = h('div', { class: 'inbox-graph' }, renderMiniGraph(themeNodes, item, changeParent))
+  panel.append(
+    h('header', { class: 'inbox-detail-head' },
+      h('div', { class: 'inbox-detail-kicker' }, item.provenance?.platform || label.kind || '待审阅信息', ' · ', item.createdAt || ''),
+      h('h3', { class: 'inbox-detail-title', id: 'inbox-detail-title', title: item.title || lemmas[0]?.title || '未命名信息' }, item.title || lemmas[0]?.title || '未命名信息'),
+      h('div', { class: 'inbox-detail-meta' },
+        h('span', {}, label.kind || '未标注来源'),
+        typeof label.quality === 'number' ? h('span', {}, `来源质量 ${Math.round(label.quality * 100)}%`) : null,
+        /^https?:\/\//i.test(sourceUrl || '') ? h('button', {
+          class: 'btn inbox-source-link', onclick: () => m.openExternal(sourceUrl),
+        }, icon('export', 12), '查看来源') : null,
+      ),
+    ),
+    h('div', { class: 'inbox-detail-scroll' },
+      h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, '原文'),
+        h('p', { class: 'inbox-original-text' }, item.text || '这条信息没有附带原文。'),
+      ),
+      h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, `提取的命题 · ${lemmas.length}`),
+        lemmas.length ? h('ol', { class: 'inbox-proposals' },
+          ...lemmas.map((lemma) => h('li', {},
+            h('span', {}, lemma.title),
+            h('div', { class: 'inbox-proposal-meta' },
+              h('span', {}, lemma.action === 'merge'
+                ? `合并到「${allNodes.find((node) => node.id === lemma.mergeInto)?.title || '已有命题'}」`
+                : '新增命题'),
+              h('span', {}, lemma.action === 'merge' ? '保留原置信度与挂点' : `建议置信度 ${Math.round(lemma.confidence ?? 50)}`),
+              lemma.conflicts?.length ? h('span', { class: 'cf' }, `${lemma.conflicts.length} 项冲突`) : null,
+            ),
+          )),
+        ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的命题。你可以忽略，或补充原文后重新捕获。'),
+      ),
+      editable ? h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, '确认归位'),
+        h('p', { class: 'inbox-route-theme' }, theme ? `主题 · ${theme.name}` : '先在侧栏选择一个主题，再确认入库。'),
+        routeNote,
+        h('div', { class: 'inbox-routing' }, h('label', { for: 'inbox-parent' }, '目标环节'), parentSelect),
+        h('div', { class: 'inbox-confidence' },
+          h('label', { for: 'inbox-confidence' }, '置信度'),
+          h('input', {
+            id: 'inbox-confidence', class: 'prop-slider inbox-conf-slider', type: 'range',
+            min: 0, max: 100, value: conf, disabled: busy,
+            oninput: (e) => {
+              const value = Number(e.target.value)
+              overrides.set(overrideKey(item.id), { ...overrides.get(overrideKey(item.id)), confidence: value })
+              confValue.value = String(value)
+            },
+          }), confValue,
+        ),
+        lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增命题；未调整时保留各自建议。') : null,
+        h('details', { class: 'inbox-map' }, h('summary', {}, '查看归位图'), graph),
       ) : null,
     ),
-
-    // 右侧操作：接受 / 拒绝
-    h('div', { class: 'inbox-actions' },
-      h('button', {
-        class: 'btn btn-primary', style: { height: '24px' },
-        onclick: async () => {
-          if (!state.themeId) { toast('先选择一个主题', 'var(--red)'); return }
-          const o = overrides.get(item.id) || {}
-          const ovMap = Object.keys(o).length ? { [item.id]: o } : {}
-          await m.inboxImport(state.themeId, [item], ovMap)
-          overrides.delete(item.id)
-          picked.delete(i)
-          selectedInboxIdx = null
-          await refresh()
-          renderToday(mid)
-        },
-      }, icon('plus', 12)),
-      h('button', {
-        class: 'btn', style: { height: '24px', color: 'var(--red)' },
-        onclick: async () => { await m.inboxResolve(item.id, 'reject'); picked.delete(i); if (selectedInboxIdx === i) selectedInboxIdx = null; await refresh(); renderToday(mid) },
-      }, icon('trash', 12)),
+    h('footer', { class: 'inbox-detail-actions' },
+      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : `${lemmas.length} 条命题待核对`),
+      h('button', { class: 'btn inbox-reject', disabled: busy, onclick: () => onResolve([item], 'reject') }, '忽略'),
+      confirm,
     ),
   )
 }
@@ -380,11 +502,12 @@ function miniLayout(nodes) {
   return { pos, kids, roots }
 }
 
-function renderMiniGraph(themeNodes, item, mid) {
+function renderMiniGraph(themeNodes, item, onParentChange) {
+  themeNodes = themeNodes.filter((node) => node.status !== 'dead')
   if (!themeNodes.length) return h('div', { class: 'inbox-graph-empty' }, h('span', {}, '主题还没有环节'))
 
-  const ov = overrides.get(item.id) || {}
-  const suggestedParent = ov.parentId || item.lemmas?.[0]?.parentId || null
+  const ov = overrides.get(overrideKey(item.id)) || {}
+  const suggestedParent = ov.parentId ?? item.lemmas?.find((lemma) => lemma.action !== 'merge')?.parentId ?? null
 
   const downstream = new Set()
   if (suggestedParent) {
@@ -415,7 +538,7 @@ function renderMiniGraph(themeNodes, item, mid) {
   const X = (id) => (pos.get(id)?.depth ?? 0) * COLW + 10
   const Y = (id) => (pos.get(id)?.y ?? 0) * ROW + 10
 
-  const svg = svgEl('svg', { class: 'mini-graph', width: '100%', height: '100%', viewBox: `0 0 ${svgW} ${svgH}` })
+  const svg = svgEl('svg', { class: 'mini-graph', width: '100%', height: svgH, style: `min-width: ${svgW}px`, viewBox: `0 0 ${svgW} ${svgH}` })
 
   // 边
   for (const n of themeNodes) {
@@ -445,15 +568,17 @@ function renderMiniGraph(themeNodes, item, mid) {
       class: 'mini-node',
       dataset: { id: n.id, parent: String(isParent), down: String(isDown) },
       opacity: highlight.size && !isOn ? '0.35' : '1',
-      onclick: () => {
-        const o = overrides.get(item.id) || {}
-        overrides.set(item.id, { ...o, parentId: n.id })
-        renderToday(mid)
+      role: 'button', tabindex: '0', 'aria-label': `归位到 ${n.title}`,
+      onclick: () => onParentChange(n.id),
+      onkeydown: (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        onParentChange(n.id)
       },
     })
     g.append(svgEl('rect', {
       x, y, width: NODE_W, height: NODE_H, rx: 5,
-      fill: isParent ? 'var(--accent)' : isDown ? 'var(--surface-2)' : 'var(--surface-solid)',
+      fill: isParent ? 'var(--accent)' : isDown ? 'var(--accent-soft)' : 'var(--surface-solid)',
       stroke: isParent ? 'none' : isOn ? 'var(--accent)' : 'var(--hairline)',
       'stroke-width': isParent ? '0' : isOn ? '1' : '0.5',
     }))
@@ -461,7 +586,7 @@ function renderMiniGraph(themeNodes, item, mid) {
     g.append(svgEl('text', {
       x: x + 6, y: y + 13, text: title,
       fill: isParent ? '#fff' : 'var(--text-2)',
-      'font-size': '10', 'font-weight': '500',
+      style: 'font-size: var(--t-caption)', 'font-weight': '500',
     }))
     if (isParent) {
       g.append(svgEl('rect', {
@@ -494,27 +619,17 @@ function scrollTo(mid, id) {
 export async function inboxPaste(text) {
   const mid = document.getElementById('mid')
   if (!mid) return
-
-  // 立即显示 loading，不等异步数据
-  clear(mid)
-  mid.append(h('div', { class: 'page today-page' },
-    h('div', { class: 'page-head' },
-      h('h1', {}, '今日'),
-      h('p', {}, '现在该做什么——不是你拥有什么。'),
-    ),
-    h('div', { class: 'feeds-loading', style: { padding: '40px' } },
-      h('span', { class: 'hud-dot' }), '正在打标…'),
-  ))
-
+  if (inboxLoading) { toast('上一条内容仍在解析，请稍后再捕获。'); return }
+  inboxLoading = true
+  if (state.view === 'today') renderToday(mid)
   try {
     const res = await m.inboxCapture(text)
-    if (res?.autoImported) {
-      lastAutoImport = { id: res.intakeEventId, count: res.count }
-    } else {
-      lastAutoImport = null
-    }
-  } catch { /* 静默失败 */ }
-
-  // 捕获完成后重新渲染（renderSeq 会取消上面未完成的 renderToday 调用）
-  renderToday(mid)
+    lastAutoImport = res?.autoImported ? { id: res.intakeEventId, count: res.count } : null
+  } catch (e) {
+    if (!inboxDraft) inboxDraft = text
+    toast('捕获失败：' + (e.message || '请重试'), 'var(--red)')
+  } finally {
+    inboxLoading = false
+    if (state.view === 'today') await renderToday(mid)
+  }
 }

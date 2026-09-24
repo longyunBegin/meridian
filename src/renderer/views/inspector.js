@@ -303,9 +303,11 @@ async function researchPanel(node) {
  * 只读，不加勾选状态——它的作用是提醒你该想什么，不是待办清单。
  */
 function scaffoldSection(sc, answered = 0) {
+  const answers = Array.isArray(sc.answer) ? sc.answer : (sc.answer ? [String(sc.answer)] : [])
+  const indicators = Array.isArray(sc.indicators) ? sc.indicators : []
   const bullets = (items) => h('ul', {
     style: { margin: '0', padding: '0 0 0 14px', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' },
-  }, ...(items || []).map((t, i) => h('li', {
+  }, ...items.map((t, i) => h('li', {
     style: { position: 'relative', fontSize: 'var(--t-body)', color: i < answered ? 'var(--text-3)' : 'var(--text-2)', lineHeight: '1.55' },
   }, h('span', {
     style: {
@@ -315,11 +317,11 @@ function scaffoldSection(sc, answered = 0) {
   }), t)))
 
   return h('div', { class: 'insp-section' },
-    h('div', { class: 'insp-h' }, '这一层要回答', sc.answer?.length ? h('b', {}, `${answered} / ${sc.answer.length}`) : null),
-    bullets(sc.answer),
+    h('div', { class: 'insp-h' }, '这一层要回答', answers.length ? h('b', {}, `${answered} / ${answers.length}`) : null),
+    bullets(answers),
 
-    sc.indicators?.length ? h('div', { class: 'insp-h', style: { marginTop: '16px' } }, '要跟踪') : null,
-    ...(sc.indicators || []).map((ind) => h('div', { class: 'field', style: { minHeight: '22px' } },
+    indicators.length ? h('div', { class: 'insp-h', style: { marginTop: '16px' } }, '要跟踪') : null,
+    ...indicators.map((ind) => h('div', { class: 'field', style: { minHeight: '22px' } },
       h('span', {
         style: { flex: '1', minWidth: '0', fontSize: 'var(--t-body)', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
         title: ind.name,
@@ -380,7 +382,9 @@ export function renderInspectorLattice(aside) {
     const segs = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
       propSlider, propOut,
     )
-    const answers = node.scaffold?.answer?.length || 0
+    const answers = Array.isArray(node.scaffold?.answer)
+      ? node.scaffold.answer.length
+      : node.scaffold?.answer ? 1 : 0
     const spawnBtn = node.scaffold
       ? h('button', {
           class: 'btn', style: { marginTop: '10px' },

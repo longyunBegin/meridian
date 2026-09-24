@@ -31,7 +31,7 @@ function createMain() {
     backgroundColor: '#f5f5f7',
     show: false,
     webPreferences: {
-      preload: join(HERE, isMac ? 'preload.js' : 'preload.cjs'),
+      preload: join(HERE, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -59,8 +59,13 @@ app.whenReady().then(() => {
   if (isMac) {
     const { session } = globalThis.__electron
     const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-    session.defaultSession.webRequest.onHeadersReceived((_d, cb) => {
-      cb({ responseHeaders: { 'Content-Security-Policy': [CSP] } })
+    session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+      cb({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [CSP],
+        },
+      })
     })
   }
   load()

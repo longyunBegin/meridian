@@ -271,6 +271,28 @@ async function renderReview(mid) {
       ),
     ),
   ))
+
+  if (vsData.settledCount > 0) {
+    mid.append(h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '你 vs 机构'), h('em', {}, `近 90 天 · ${vsData.settledCount} 条已结算命题`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '你的命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
+          ),
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '机构观点命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
+          ),
+        ),
+      ),
+    ))
+  }
 }
 
 // ------------------------------------------------------------------ 读数展示
@@ -448,29 +470,6 @@ export async function renderReadings(mid) {
       ...groups.map((g) => metricCard(g, indicators)),
     ),
   ))
-
-  // 你 vs 机构
-  if (vsData.settledCount > 0) {
-    mid.append(h('section', { class: 'card' },
-      h('div', { class: 'card-h' }, h('h2', {}, '你 vs 机构'), h('em', {}, `近 90 天 · ${vsData.settledCount} 条已结算命题`)),
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'review-funnel' },
-          h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
-            h('div', { class: 'review-metric-label' }, '你的命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
-          ),
-          h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
-            h('div', { class: 'review-metric-label' }, '机构观点命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
-          ),
-        ),
-      ),
-    ))
-  }
 }
 
 // ============================================================

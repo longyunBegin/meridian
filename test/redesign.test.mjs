@@ -255,7 +255,7 @@ ok('骨架节点 by = model', skNodes.every((n) => n.by === 'model'))
 ok('骨架根节点 1 个', store.rootNodes(theme2.id).length === 1, `实际 ${store.rootNodes(theme2.id).length}`)
 ok('骨架子节点 2 个', store.childrenOf(skNodes[0].id).length === 2, `实际 ${store.childrenOf(skNodes[0].id).length}`)
 ok('骨架节点带 stableId', skNodes.every((n) => typeof n.stableId === 'string'))
-ok('骨架节点带 scaffold', skNodes[0].scaffold?.answer === '芯片设计能力如何')
+ok('骨架节点带 scaffold', skNodes[0].scaffold?.answer?.[0] === '芯片设计能力如何')
 ok('骨架节点带 propagation', skNodes[0].propagation === 0.6)
 
 // ============================================================
@@ -2740,7 +2740,7 @@ const pcTL = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 // --- T1: tagLibrary schema ---
 
 ok('T1: store.js 有 tagLibrary', storeSrcTL.includes('tagLibrary'))
-ok('T1: migrate 补 tagLibrary', storeSrcTL.includes('t.tagLibrary = Array.isArray(t.tagLibrary)'))
+ok('T1: migrate 补 tagLibrary', storeSrcTL.includes('t.tagLibrary = normalizeTagLibrary(t.tagLibrary)'))
 ok('T1: addTheme 给 tagLibrary: []', storeSrcTL.includes('tagLibrary: [], createdAt'))
 ok('T1: updateTheme 白名单 tagLibrary', storeSrcTL.includes('patch.tagLibrary !== undefined'))
 ok('T1: extract.js 有 generateTagLibrary', extractSrcTL.includes('export async function generateTagLibrary'))
