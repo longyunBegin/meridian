@@ -266,8 +266,9 @@ function renderThemes() {
           } }, '保存'),
           h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', color: 'var(--red)' }, onclick: async () => {
             await m.removeTheme(t.id)
-            if (state.themeId === t.id) selectTheme(state.themes[0]?.id || null)
+            // 先更新 state.themes，再选下一个——否则 state.themes 还含已删主题
             await refresh()
+            if (state.themeId === t.id) selectTheme(state.themes[0]?.id || null)
             const tEl = document.createElement('div')
             tEl.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg-2,#333);color:var(--text-2);padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;gap:8px'
             tEl.append(document.createTextNode(`已删除主题「${t.name}」`))

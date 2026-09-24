@@ -371,7 +371,7 @@ export function renderLattice(mid) {
 
   if (isGraph) {
     const wrap = h('div', { class: 'graph-wrap' })
-    mid.append(head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'graph-debug' }, wrap))
+    for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'graph-debug' }, wrap)]) if (el) mid.append(el)
     try {
       renderGraph(wrap)
     } catch (e) {
@@ -384,7 +384,7 @@ export function renderLattice(mid) {
   }
 
   const tree = h('div', { class: 'tree' })
-  mid.append(head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'tree-wrap' }, tree))
+  for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'tree-wrap' }, tree)]) if (el) mid.append(el)
   paint(tree)
   wireKeys(tree)
 }
