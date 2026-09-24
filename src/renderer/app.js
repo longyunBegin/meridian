@@ -378,6 +378,7 @@ export function renderThemeCreator(opts = {}) {
 
   // 模板列表 + 空白主题
   const actions = h('div', { class: 'empty-actions' },
+    h('div', { style: { fontSize: '11px', color: 'var(--text-3)', margin: '4px 0 2px', width: '100%' } }, '从模板'),
     ...state.templates.map((t) => h('button', {
       class: 'btn', style: { height: '34px', justifyContent: 'space-between', padding: '0 12px' },
       onclick: async () => {
