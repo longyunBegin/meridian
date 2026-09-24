@@ -144,6 +144,7 @@ export function selectTheme(id) {
   state.selectedId = null
   state.open.clear()
   state.query = ''
+  state.view = 'lattice'
 
   refresh()
 }
