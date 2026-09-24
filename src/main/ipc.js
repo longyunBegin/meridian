@@ -691,30 +691,65 @@ function register({ getMainWindow }) {
     return updated
   })
   ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
-  ipcMain.handle('channel:fetch', async (_, channelId) => {
+
+  /** 通道拉取的分流逻辑——handler 和轮询器都调它，不复制粘贴 */
+  async function runChannelFetch(channelId) {
     const ch = allChannels().find((c) => c.id === channelId)
     if (!ch) return { items: [], readings: null, error: 'channel not found' }
     const result = await fetchChannel(ch)
     if (result.error) {
-      updateChannel(channelId, { lastError: result.error, lastFetch: today() })
+      updateChannel(channelId, { lastError: result.error, lastFetch: today(), failCount: (ch.failCount || 0) + 1 })
       return result
     }
-    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: today() })
+    const count = (result.readings?.added || 0) + (result.items?.length || 0)
+    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: today(), lastCount: count, failCount: 0 })
     // Path B：有 items 需要走 processCapture 产命题
     if (result.items && result.items.length) {
       const themeId = ch.themeId || bestThemeContext()?.id || null
       for (const item of result.items) {
-        if (themeId) {
-          await processCapture(item.text, themeId, {
-            kind: item.kind || ch.kind,
-            platform: item.platform || null,
-            url: item.url || null,
+        if (!themeId) continue
+        const cap = await processCapture(item.text, themeId, {
+          kind: item.kind || ch.kind,
+          platform: item.platform || null,
+          url: item.url || null,
+          channelId: ch.id,
+        })
+        // review: true → 强制进收件箱等人裁决
+        if (ch.review) {
+          addInboxItem({
+            text: item.text,
+            title: firstSentence(item.text),
+            label: cap.label,
+            lemmas: cap.lemmas,
+            rejected: cap.rejected,
+            noulCompared: cap.noulCompared,
+            noulMaxScore: cap.noulMaxScore,
+            provenance: { platform: item.platform || null, url: item.url || null, channelId: ch.id },
+          })
+          continue
+        }
+        // review: false → 走闸门
+        const gate = gateCheck(cap)
+        if (gate.pass && cap.lemmas.length > 0) {
+          autoImport(cap, themeId, gate.reasons, uid(), uid())
+        } else {
+          addInboxItem({
+            text: item.text,
+            title: firstSentence(item.text),
+            label: cap.label,
+            lemmas: cap.lemmas,
+            rejected: cap.rejected,
+            noulCompared: cap.noulCompared,
+            noulMaxScore: cap.noulMaxScore,
+            provenance: { platform: item.platform || null, url: item.url || null, channelId: ch.id },
           })
         }
       }
     }
     return result
-  })
+  }
+
+  ipcMain.handle('channel:fetch', (_, channelId) => runChannelFetch(channelId))
   ipcMain.handle('channel:fetchers', () => availableFetchers())
 
   // ---- EDGAR 标签发现（仅手动触发）----
@@ -760,6 +795,8 @@ function register({ getMainWindow }) {
     getMainWindow?.()?.webContents.send('db:changed')
     return { ok: true, count: created.length }
   })
+
+  return { runChannelFetch }
 }
 
 

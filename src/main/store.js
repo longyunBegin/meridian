@@ -168,7 +168,10 @@ function migrate(d) {
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
   for (const t of d.themes || []) t.tags = Array.isArray(t.tags) ? t.tags : []
-  for (const c of d.channels || []) c.tags = Array.isArray(c.tags) ? c.tags : []
+  for (const c of d.channels || []) {
+    c.tags = Array.isArray(c.tags) ? c.tags : []
+    c.failCount = c.failCount ?? 0
+  }
   for (const n of d.nodes || []) {
     n.sources = Array.isArray(n.sources) ? n.sources : (n.source ? [n.source] : [])
     n.tags = Array.isArray(n.tags) ? n.tags : []
@@ -1347,6 +1350,7 @@ export function addChannel(ch) {
     lastOk: ch.lastOk ?? null,
     lastError: ch.lastError || null,
     tags: [...new Set((ch.tags || []).filter((t) => typeof t === 'string'))],
+    failCount: ch.failCount ?? 0,
     review: ch.review === true,
     enabled: ch.enabled !== false,
     createdAt: today(),

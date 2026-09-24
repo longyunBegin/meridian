@@ -50,7 +50,8 @@ function createMain() {
 
 import { register } from './ipc.js'
 import { startScheduler } from './scheduler.js'
-import { dueSettlements } from './store.js'
+import { dueSettlements, allChannels } from './store.js'
+import { availableFetchers } from './fetchers.js'
 
 // ---------------------------------------------------------------- boot
 
@@ -64,9 +65,9 @@ app.whenReady().then(() => {
   }
   load()
   createMain()
-  register({ getMainWindow: () => mainWin })
+  const { runChannelFetch } = register({ getMainWindow: () => mainWin })
 
-  // 到期结算通知
+  // 到期结算通知 + 通道轮询
   startScheduler({
     due: () => dueSettlements(),
     notify: (n, onClick) => {
@@ -86,6 +87,9 @@ app.whenReady().then(() => {
         mainWin.webContents.send('due:notify')
       }
     },
+    channels: () => allChannels(),
+    runChannel: async (ch) => { await runChannelFetch(ch.id) },
+    fetchers: () => availableFetchers(),
   })
 
   const hk = settings().hotkey

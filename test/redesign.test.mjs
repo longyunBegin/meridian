@@ -2046,5 +2046,146 @@ ok('tie-break: latestReadingByChannel 同 at 取后加的', tieLatest.value === 
 const readingsSrc = readFileSync2(join(ROOT2, 'src/shared/readings.js'), 'utf8')
 ok('tie-break: readings.js 用 > 取后加的', readingsSrc.includes('a.at > b.at'))
 
+// ============================================================
+// R5: 轮询器 — dueChannels + runChannelFetch + failCount + review
+// ============================================================
+
+console.log('\n— R5: 轮询器 —')
+
+const { dueChannels } = await import('../src/main/scheduler.js')
+
+// --- dueChannels 纯函数全分支 ---
+
+const NOW = Date.parse('2026-09-24T12:00:00Z')
+const FETCHERS = ['rss', 'edgarConcept']
+
+// 1) 停用 → 不拉
+const chDisabled = { id: 'd1', enabled: false, fetch: 'rss', interval: 60, lastFetch: null }
+ok('R5: 停用通道不 due', dueChannels([chDisabled], NOW, new Map(), FETCHERS).length === 0)
+
+// 2) manual → 不拉
+const chManual = { id: 'm1', enabled: true, fetch: 'manual', interval: 60, lastFetch: null }
+ok('R5: manual 通道不 due', dueChannels([chManual], NOW, new Map(), FETCHERS).length === 0)
+
+// 3) 未实现 fetcher → 不拉
+const chUnknown = { id: 'u1', enabled: true, fetch: 'grok-x-search', interval: 60, lastFetch: null }
+ok('R5: 未实现 fetcher 不 due', dueChannels([chUnknown], NOW, new Map(), FETCHERS).length === 0)
+
+// 4) 启用 + 已实现 + 从未拉取 → due
+const chFresh = { id: 'f1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null }
+ok('R5: 从未拉取的通道 due', dueChannels([chFresh], NOW, new Map(), FETCHERS).length === 1)
+
+// 5) 间隔未到 → 不 due
+const chRecent = { id: 'r1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 10 * 60000).toISOString() }
+ok('R5: 间隔未到不 due', dueChannels([chRecent], NOW, new Map(), FETCHERS).length === 0)
+
+// 6) 间隔已到 → due
+const chStale = { id: 's1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
+ok('R5: 间隔已到 due', dueChannels([chStale], NOW, new Map(), FETCHERS).length === 1)
+
+// 7) failCount 退避：失败 1 次 → 退避 2 倍 interval
+const fails1 = new Map([['b1', 1]])
+const chBackoff = { id: 'b1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
+ok('R5: 失败 1 次退避中不 due', dueChannels([chBackoff], NOW, fails1, FETCHERS).length === 0)
+
+// 8) failCount 退避已过 → due
+const chBackoffPassed = { id: 'b1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 200 * 60000).toISOString() }
+ok('R5: 退避已过 due', dueChannels([chBackoffPassed], NOW, fails1, FETCHERS).length === 1)
+
+// 9) failCount = 0 → 无退避（等同 Map 里没有）
+const fails0 = new Map([['z1', 0]])
+const chNoBackoff = { id: 'z1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
+ok('R5: failCount=0 无退避 due', dueChannels([chNoBackoff], NOW, fails0, FETCHERS).length === 1)
+
+// 10) 混合：多通道只筛出 due 的
+const mixChannels = [
+  { id: 'mix1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },           // due
+  { id: 'mix2', enabled: false, fetch: 'rss', interval: 60, lastFetch: null },          // not due
+  { id: 'mix3', enabled: true, fetch: 'manual', interval: 60, lastFetch: null },        // not due
+  { id: 'mix4', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 10 * 60000).toISOString() }, // not due
+]
+ok('R5: 混合只筛出 1 个 due', dueChannels(mixChannels, NOW, new Map(), FETCHERS).length === 1)
+ok('R5: 混合筛出的是 mix1', dueChannels(mixChannels, NOW, new Map(), FETCHERS)[0].id === 'mix1')
+
+// --- failCount 持久化 ---
+
+// 新通道 failCount 默认 0
+const fcCh = store.addChannel({ name: 'R5-failCount', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/feed' })
+ok('R5: 新通道 failCount=0', fcCh.failCount === 0)
+
+// 手动 updateChannel 设 failCount
+store.updateChannel(fcCh.id, { failCount: 3 })
+ok('R5: updateChannel 设 failCount', store.allChannels().find((c) => c.id === fcCh.id).failCount === 3)
+
+// 归零
+store.updateChannel(fcCh.id, { failCount: 0 })
+ok('R5: failCount 可归零', store.allChannels().find((c) => c.id === fcCh.id).failCount === 0)
+
+// --- review 字段 ---
+
+// 新通道 review 默认 false
+const rvCh = store.addChannel({ name: 'R5-review', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/feed2' })
+ok('R5: 新通道 review=false', rvCh.review === false)
+
+// 切换 review
+store.updateChannel(rvCh.id, { review: true })
+ok('R5: review 可切 true', store.allChannels().find((c) => c.id === rvCh.id).review === true)
+
+store.updateChannel(rvCh.id, { review: false })
+ok('R5: review 可切回 false', store.allChannels().find((c) => c.id === rvCh.id).review === false)
+
+// --- runChannelFetch 行为：review=true 绕过闸门进收件箱 ---
+
+// 先建一个 review 通道 + 主题
+const rvTheme = store.addTheme('R5-review-主题')
+const rvChannel = store.addChannel({ name: 'R5-review-通道', fetch: 'rss', kind: '一手数据', query: 'http://example.com/rv', themeId: rvTheme.id, review: true, enabled: true })
+ok('R5: review 通道建好', rvChannel.review === true)
+
+// 手动通过 IPC 触发 channel:fetch（fetcher 会失败，但能验证 runChannelFetch 不崩）
+const fetchResult = await fire('channel:fetch', rvChannel.id)
+ok('R5: runChannelFetch 返回结果', fetchResult != null)
+
+// --- runChannelFetch 对不存在的通道 ---
+const noCh = await fire('channel:fetch', 'nonexistent-id')
+ok('R5: 不存在的通道返回 error', noCh?.error === 'channel not found')
+
+// --- scheduler.js 只有一个 setInterval ---
+const schedulerFullSrc = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
+const setIntervalCount = (schedulerFullSrc.match(/setInterval/g) || []).length
+ok('R5: scheduler.js 只有一个 setInterval', setIntervalCount === 1, `实际 ${setIntervalCount}`)
+
+// --- startScheduler 接受 channels/runChannel/fetchers ---
+ok('R5: startScheduler 有 channels 参数', schedulerFullSrc.includes('channels'))
+ok('R5: startScheduler 有 runChannel 参数', schedulerFullSrc.includes('runChannel'))
+ok('R5: startScheduler 有 fetchers 参数', schedulerFullSrc.includes('fetchers'))
+ok('R5: startScheduler 调 dueChannels', schedulerFullSrc.includes('dueChannels('))
+
+// --- ipc.js runChannelFetch 抽出 ---
+const ipcFullSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+ok('R5: ipc.js 有 runChannelFetch 函数', ipcFullSrc.includes('async function runChannelFetch'))
+ok('R5: ipc.js channel:fetch 委托 runChannelFetch', ipcFullSrc.includes("runChannelFetch(channelId)"))
+ok('R5: ipc.js register 返回 runChannelFetch', ipcFullSrc.includes('return { runChannelFetch }'))
+ok('R5: ipc.js review 绕过闸门', ipcFullSrc.includes('ch.review'))
+ok('R5: ipc.js failCount 失败 +1', ipcFullSrc.includes('failCount: (ch.failCount || 0) + 1'))
+ok('R5: ipc.js failCount 成功归零', ipcFullSrc.includes('failCount: 0'))
+
+// --- main.js 接线 ---
+const mainFullSrc = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
+ok('R5: main.js 解构 runChannelFetch', mainFullSrc.includes('runChannelFetch'))
+ok('R5: main.js 传 channels 给 startScheduler', mainFullSrc.includes('channels:'))
+ok('R5: main.js 传 runChannel 给 startScheduler', mainFullSrc.includes('runChannel:'))
+ok('R5: main.js 传 fetchers 给 startScheduler', mainFullSrc.includes('fetchers:'))
+
+// --- store.js failCount 持久化 ---
+const storeFullSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+ok('R5: store.js addChannel 有 failCount', storeFullSrc.includes('failCount: ch.failCount ?? 0'))
+ok('R5: store.js migrate 有 failCount', storeFullSrc.includes('c.failCount = c.failCount ?? 0'))
+ok('R5: store.js addChannel 有 review', storeFullSrc.includes('review: ch.review === true'))
+
+// --- vault.js review toggle ---
+const vaultFullSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+ok('R5: vault.js 有 review toggle 按钮', vaultFullSrc.includes("review: !ch.review"))
+ok('R5: vault.js 有复审按钮文字', vaultFullSrc.includes('复审'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

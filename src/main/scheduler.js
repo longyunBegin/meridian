@@ -34,31 +34,67 @@ export function buildNotification(items) {
 }
 
 /**
+ * 筛出该拉取的通道。纯函数，无 I/O。
+ * @param {Array} channels 全部通道
+ * @param {number} now Date.now()
+ * @param {Map} failCounts channelId → 连续失败次数
+ * @param {Array} fetchers 已实现的取数器列表
+ */
+export function dueChannels(channels, now, failCounts = new Map(), fetchers = []) {
+  return channels.filter((c) => {
+    if (!c.enabled) return false
+    if (c.fetch === 'manual') return false
+    if (!fetchers.includes(c.fetch)) return false
+    const fails = failCounts.get(c.id) || 0
+    const backoff = fails > 0 ? Math.min(60, c.interval) * Math.pow(2, Math.min(fails, 5)) : 0
+    const wait = c.interval * 60000 + backoff * 60000
+    const last = c.lastFetch ? Date.parse(c.lastFetch) : 0
+    return now - last >= wait
+  })
+}
+
+/**
  * 启动定时器。
  * @param {object} opts
  * @param {function} opts.due - 返回到期命题列表
  * @param {function} opts.notify - (notification) => void，发通知
  * @param {function} opts.badge - (count) => void，设角标
  * @param {function} opts.onClick - () => void，通知点击回调
+ * @param {function} [opts.channels] - () => 通道列表（轮询用）
+ * @param {function} [opts.runChannel] - async (ch) => void，拉取单个通道
+ * @param {function} [opts.fetchers] - () => 已实现取数器列表
  * @returns {function} stop 函数
  */
-export function startScheduler({ due, notify, badge, onClick }) {
+export function startScheduler({ due, notify, badge, onClick, channels, runChannel, fetchers }) {
   const notified = new Set()
+  const failCounts = new Map()
 
   const tick = () => {
+    // 到期结算
     const items = due() || []
     if (badge) badge(items.length)
 
-    if (items.length === 0) return
-    if (isQuietHours()) return
+    if (items.length > 0 && !isQuietHours()) {
+      const fresh = dueToNotify(items, notified)
+      if (fresh.length > 0) {
+        for (const d of fresh) notified.add(d.id)
+        const n = buildNotification(fresh)
+        if (n && notify) notify(n, onClick)
+      }
+    }
 
-    const fresh = dueToNotify(items, notified)
-    if (fresh.length === 0) return
-
-    for (const d of fresh) notified.add(d.id)
-
-    const n = buildNotification(fresh)
-    if (n && notify) notify(n, onClick)
+    // 通道轮询
+    if (channels && runChannel && !isQuietHours()) {
+      const all = channels() || []
+      const avail = fetchers ? fetchers() : []
+      const due_ = dueChannels(all, Date.now(), failCounts, avail)
+      for (const ch of due_) {
+        runChannel(ch).catch(() => {
+          const c = (failCounts.get(ch.id) || 0) + 1
+          failCounts.set(ch.id, c)
+        })
+      }
+    }
   }
 
   tick()

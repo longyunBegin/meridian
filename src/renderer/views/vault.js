@@ -517,9 +517,11 @@ export async function renderSources(mid) {
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, ch.name),
             h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
+              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}${ch.review ? ' · 复审' : ''}`),
               ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
+              ch.lastCount != null ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 拉到 ${ch.lastCount} 条`) : null,
+              ch.failCount > 0 ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 连续失败 ${ch.failCount}`) : null,
               ch.lastError ? h('span', { style: { marginLeft: '6px', color: 'var(--red)' } }, `· 错误：${ch.lastError}`) : null,
               fetchers.includes(ch.fetch) ? h('button', {
                 class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
@@ -564,6 +566,10 @@ export async function renderSources(mid) {
               class: 'btn',
               onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
             }, ch.enabled ? '停用' : '启用'),
+            h('button', {
+              class: 'btn',
+              onclick: async () => { await m.channelUpdate(ch.id, { review: !ch.review }); await renderSources(mid) },
+            }, ch.review ? '免复审' : '复审'),
             h('button', {
               class: 'btn', style: { color: 'var(--red)' },
               onclick: async () => { await m.channelRemove(ch.id); showFlash('已删除通道'); await renderSources(mid) },
