@@ -24,7 +24,7 @@ import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags }
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 
-import { fetchChannel, availableFetchers } from './fetchers.js'
+import { fetchChannel, availableFetchers, METRIC_FETCHERS } from './fetchers.js'
 import { discoverTags, deriveChannelTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { proposeChannelLinks } from './propose.js'
@@ -367,6 +367,7 @@ function register({ getMainWindow }) {
     for (const ch of channelPack(templateId)) {
       addChannel({
         name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+        metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
         cadence: ch.cadence, themeId: theme.id,
         enabled: !ch.needsKey,
       })
@@ -402,6 +403,7 @@ function register({ getMainWindow }) {
       for (const ch of channelPack(packId)) {
         addChannel({
           name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+          metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
           cadence: ch.cadence, themeId: theme.id,
           enabled: !ch.needsKey,
         })
@@ -753,6 +755,7 @@ function register({ getMainWindow }) {
 
   ipcMain.handle('channel:fetch', (_, channelId) => runChannelFetch(channelId))
   ipcMain.handle('channel:fetchers', () => availableFetchers())
+  ipcMain.handle('channel:metricFetchers', () => METRIC_FETCHERS)
 
   // ---- EDGAR 标签发现（仅手动触发）----
   ipcMain.handle('edgar:discoverTags', async (_, ticker) => {

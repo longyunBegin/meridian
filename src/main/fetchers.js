@@ -365,6 +365,8 @@ export async function fetchChannel(channel) {
 }
 
 /** 列出所有已注册的 fetch 类型（供 UI 显示哪些可用） */
+export const METRIC_FETCHERS = ['edgarConcept', 'defillamaProtocol', 'defillamaStablecoins', 'blockchainChart']
+
 export function availableFetchers() {
   return Object.keys(FETCHERS).filter((k) => FETCHERS[k] != null)
 }

@@ -281,6 +281,12 @@ select { font: inherit; color: inherit; }
 /* 主题色块：7×7px 圆角方，一眼区分主题 */
 .sw { width: 7px; height: 7px; border-radius: 2px; flex: none; }
 .theme-item .count { margin-left: auto; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.theme-wrap { display: flex; align-items: center; gap: 2px; position: relative; }
+.theme-wrap .theme-item { flex: 1; }
+.theme-menu-btn { display: none; padding: 2px 6px; font-size: 14px; color: var(--text-3); background: none; border: none; cursor: pointer; border-radius: var(--r-sm); }
+.theme-wrap:hover .theme-menu-btn { display: flex; }
+.theme-menu-btn:hover { background: var(--hover); color: var(--text); }
+.theme-edit-row { display: flex; align-items: center; gap: 4px; padding: 2px 8px; }
 
 .side-foot { margin-top: auto; padding: 10px; display: flex; flex-direction: column; gap: 2px; }
 /* 数据操作和设置分家：前者是工具，后者是配置 */

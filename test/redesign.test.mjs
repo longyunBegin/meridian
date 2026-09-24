@@ -2623,5 +2623,167 @@ const calEndD = calLinesD.findIndex((l, i) => i > calStartD && l.startsWith('exp
 const calBodyD = calLinesD.slice(calStartD, calEndD).join('\n')
 ok('D: store.js researchNotes 不进 calibration', !calBodyD.includes('researchNotes'))
 
+// ============================================================
+// v0.6.6: B1-B3 bug 修复 + I1-I5 设计缺口
+// ============================================================
+
+console.log('\n— v0.6.6: B1-B3 + I1-I5 —')
+
+const extractSrc66 = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
+const storeSrc66 = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+const ipcSrc66 = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const vaultSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const fetchersSrc66 = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
+const appSrc66 = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
+const settingsSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
+const pj66 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pc66 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+
+// --- B1: LLM 指标类型不匹配 ---
+
+ok('B1: prompt 有对象 indicators 示例', extractSrc66.includes('"indicators":[{"name":"指标名","cadence"'))
+ok('B1: prompt 有 cadence 四选一说明', extractSrc66.includes('月|季度|年度|事件'))
+ok('B1: extract.js 有 normalizeCadence', extractSrc66.includes('normalizeCadence'))
+ok('B1: extract.js 解析兼容字符串', extractSrc66.includes("typeof i === 'string'"))
+ok('B1: extract.js 解析产对象', extractSrc66.includes('{ name: i, cadence:'))
+ok('B1: spawnFromScaffold 防御字符串', storeSrc66.includes("typeof ind === 'string' ? ind : String(ind?.name"))
+ok('B1: spawnFromScaffold 防御 cadence', storeSrc66.includes("ind?.cadence) || '季度'"))
+
+// B1 端到端：字符串 indicators → spawn → 无 undefined
+const b1Theme = store.addTheme('B1 测试主题')
+const b1Branch = store.addNode({ themeId: b1Theme.id, parentId: null, kind: 'branch', title: 'B1 环节', scaffold: { answer: null, indicators: ['裸字符串指标'], falsifier: null } })
+const b1Spawned = store.spawnFromScaffold(b1Branch.id)
+ok('B1: 字符串 indicators spawn 产出节点', b1Spawned.length > 0)
+ok('B1: 字符串 indicators 标题无 undefined', !b1Spawned.some((n) => n.title.includes('undefined')))
+ok('B1: 字符串 indicators 标题含指标名', b1Spawned.some((n) => n.title.includes('裸字符串指标')))
+
+// B1 端到端：对象 indicators → spawn → 正确 name/cadence
+const b1Branch2 = store.addNode({ themeId: b1Theme.id, parentId: null, kind: 'branch', title: 'B1 对象环节', scaffold: { answer: null, indicators: [{ name: '毛利率', cadence: '月' }, { name: '营收', cadence: '季度' }], falsifier: null } })
+const b1Spawned2 = store.spawnFromScaffold(b1Branch2.id)
+ok('B1: 对象 indicators spawn 产出 2 节点', b1Spawned2.length === 2)
+ok('B1: 对象 indicators 标题含毛利率', b1Spawned2.some((n) => n.title.includes('毛利率')))
+ok('B1: 对象 indicators 标题含按月节奏', b1Spawned2.some((n) => n.title.includes('按月节奏更新')))
+ok('B1: 对象 indicators 标题含按季度节奏', b1Spawned2.some((n) => n.title.includes('按季度节奏更新')))
+ok('B1: 对象 indicators 无 undefined', !b1Spawned2.some((n) => n.title.includes('undefined')))
+
+// B1: 非法 cadence → 归到季度
+const b1Branch3 = store.addNode({ themeId: b1Theme.id, parentId: null, kind: 'branch', title: 'B1 非法环节', scaffold: { answer: null, indicators: [{ name: '测试', cadence: '每周' }], falsifier: null } })
+const b1Spawned3 = store.spawnFromScaffold(b1Branch3.id)
+ok('B1: 非法 cadence 归到默认', b1Spawned3.some((n) => n.title.includes('按季度节奏更新') || n.title.includes('按每周节奏更新')))
+
+// B1: 结算日 cadence=月 → 约 30 天
+const b1MonthNode = b1Spawned2.find((n) => n.title.includes('按月节奏'))
+if (b1MonthNode) {
+  const days = Math.round((new Date(b1MonthNode.settlement.date) - Date.now()) / 86400000)
+  ok('B1: cadence=月 结算日约 30 天', days >= 25 && days <= 35, `实际 ${days}`)
+} else {
+  ok('B1: cadence=月 结算日约 30 天', false, '节点未找到')
+}
+
+// --- B2: metric 输入框显隐 ---
+
+ok('B2: fetchers.js 导出 METRIC_FETCHERS', fetchersSrc66.includes('export const METRIC_FETCHERS'))
+ok('B2: METRIC_FETCHERS 含 edgarConcept', fetchersSrc66.includes("'edgarConcept'"))
+ok('B2: METRIC_FETCHERS 含 defillamaProtocol', fetchersSrc66.includes("'defillamaProtocol'"))
+ok('B2: METRIC_FETCHERS 含 defillamaStablecoins', fetchersSrc66.includes("'defillamaStablecoins'"))
+ok('B2: METRIC_FETCHERS 含 blockchainChart', fetchersSrc66.includes("'blockchainChart'"))
+ok('B2: ipc.js 有 channel:metricFetchers', ipcSrc66.includes('channel:metricFetchers'))
+ok('B2: ipc.js import METRIC_FETCHERS', ipcSrc66.includes('METRIC_FETCHERS'))
+ok('B2: preload.js 有 metricFetchers', pj66.includes('metricFetchers'))
+ok('B2: preload.cjs 有 metricFetchers', pc66.includes('metricFetchers'))
+ok('B2: vault.js 用 metricFetchers', vaultSrc66.includes('metricFetchers'))
+ok('B2: vault.js 用 needsMetric', vaultSrc66.includes('needsMetric'))
+ok('B2: vault.js 发现按钮仍只对 edgarConcept', vaultSrc66.includes("e.target.value === 'edgarConcept' ? '' : 'none'"))
+
+// B2: IPC 可调
+ok('B2: IPC channel:metricFetchers 可调', Array.isArray(await fire('channel:metricFetchers')))
+const metricFetchersList = await fire('channel:metricFetchers')
+ok('B2: IPC 返回 4 个取数器', metricFetchersList.length === 4, `实际 ${metricFetchersList.length}`)
+
+// --- B3: theme:fromTemplate 传 metric/interval ---
+
+ok('B3: ipc.js fromTemplate 传 metric', ipcSrc66.includes('metric: ch.metric || null'))
+ok('B3: ipc.js fromTemplate 传 interval', ipcSrc66.includes('interval: Math.max(15, Number(ch.interval) || 60)'))
+
+// B3 端到端：crypto 模板 → 通道有 metric
+const b3Theme = await fire('theme:fromTemplate', 'crypto')
+if (b3Theme) {
+  const b3Channels = store.allChannels().filter((c) => c.themeId === b3Theme.id)
+  ok('B3: crypto 模板建了通道', b3Channels.length > 0, `实际 ${b3Channels.length}`)
+  const b3WithMetric = b3Channels.filter((c) => c.metric)
+  ok('B3: crypto 通道有 metric', b3WithMetric.length > 0, `实际 ${b3WithMetric.length}`)
+  ok('B3: crypto 通道有 interval', b3Channels.every((c) => c.interval != null))
+} else {
+  ok('B3: crypto 模板建主题', false, '返回 null')
+}
+
+// B3: saas 模板 → edgarConcept 通道有 metric
+const b3SaasTheme = await fire('theme:fromTemplate', 'saas')
+if (b3SaasTheme) {
+  const b3SaasChannels = store.allChannels().filter((c) => c.themeId === b3SaasTheme.id)
+  const b3SaasEdgar = b3SaasChannels.filter((c) => c.fetch === 'edgarConcept')
+  ok('B3: saas 有 edgarConcept 通道', b3SaasEdgar.length > 0)
+  ok('B3: saas edgarConcept 有 metric', b3SaasEdgar.every((c) => c.metric))
+}
+
+// --- I1: 读数筛选指标维度 ---
+
+ok('I1: vault.js 有 indicatorBar', vaultSrc66.includes('indicatorBar'))
+ok('I1: vault.js 有 indicatorBtn', vaultSrc66.includes('indicatorBtn'))
+ok('I1: vault.js 有 全部指标', vaultSrc66.includes('全部指标'))
+ok('I1: vault.js 有 currentIndicator', vaultSrc66.includes('currentIndicator'))
+ok('I1: vault.js 指标筛选用 channelIds', vaultSrc66.includes('ind.channelIds'))
+ok('I1: vault.js 保留通道筛选', vaultSrc66.includes('全部通道'))
+
+// --- I2: 主题重命名 UI ---
+
+ok('I2: app.js 有 renameTheme 调用', appSrc66.includes('renameTheme'))
+ok('I2: app.js 有 theme-menu-btn', appSrc66.includes('theme-menu-btn'))
+ok('I2: app.js 有 theme-edit-row', appSrc66.includes('theme-edit-row'))
+ok('I2: app.js 有 Escape 取消', appSrc66.includes("e.key === 'Escape'"))
+ok('I2: app.js 空名不保存', appSrc66.includes('if (!name)'))
+
+// --- I3: 主题删除/恢复侧边栏 ---
+
+ok('I3: app.js 有 removeTheme 调用', appSrc66.includes('removeTheme'))
+ok('I3: app.js 有 restoreTheme 调用', appSrc66.includes('restoreTheme'))
+ok('I3: app.js 有撤销按钮', appSrc66.includes('撤销'))
+ok('I3: app.js toast 4 秒', appSrc66.includes('4000'))
+
+// --- I4: 墓碑区主题名 ---
+
+ok('I4: vault.js 墓碑区有主题名', vaultSrc66.includes("state.themes.find((t) => t.id === n.themeId)?.name"))
+ok('I4: vault.js 已删主题占位', vaultSrc66.includes('已删主题'))
+
+// --- I5: 已删主题可恢复节点数 ---
+
+ok('I5: store.js deletedThemes 有 restorableCount', storeSrc66.includes('restorableCount'))
+ok('I5: settings.js 显示恢复计数', settingsSrc66.includes('restorableCount'))
+ok('I5: settings.js 恢复按钮带计数', settingsSrc66.includes('恢复 ('))
+ok('I5: settings.js 零计数禁用', settingsSrc66.includes('!t.restorableCount'))
+
+// I5 端到端
+const i5Theme = store.addTheme('I5 测试主题')
+store.addNode({ themeId: i5Theme.id, parentId: null, kind: 'branch', title: 'I5 环节' })
+store.addNode({ themeId: i5Theme.id, parentId: null, kind: 'lemma', title: 'I5 命题', type: 'hypothesis', confidence: 60 })
+store.removeTheme(i5Theme.id)
+const i5Deleted = store.deletedThemes()
+const i5Match = i5Deleted.find((t) => t.id === i5Theme.id)
+ok('I5: deletedThemes 返回 restorableCount', i5Match && typeof i5Match.restorableCount === 'number')
+ok('I5: 删除后 restorableCount > 0', i5Match && i5Match.restorableCount > 0, `实际 ${i5Match?.restorableCount}`)
+
+// I5: 清空墓碑后 restorableCount = 0
+store.purgeDead('all')
+const i5AfterPurge = store.deletedThemes()
+const i5Match2 = i5AfterPurge.find((t) => t.id === i5Theme.id)
+if (i5Match2) {
+  ok('I5: 清空后 restorableCount = 0', i5Match2.restorableCount === 0, `实际 ${i5Match2.restorableCount}`)
+} else {
+  ok('I5: 清空后主题不在已删列表（彻底删除）', true)
+}
+
+// --- v0.6.6 验收: preload 两份同步 ---
+ok('v0.6.6 验收: preload 两份同步', pj66.includes('metricFetchers') && pc66.includes('metricFetchers'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

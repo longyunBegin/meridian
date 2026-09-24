@@ -233,13 +233,16 @@ export async function renderSettings(mid) {
         ...deletedTs.map((t) => h('div', { class: 'q' },
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, t.name),
-            h('div', { class: 'q-meta' }, h('span', {}, `删于 ${t.deletedAt}`)),
+            h('div', { class: 'q-meta' }, h('span', {}, `删于 ${t.deletedAt}`), h('span', {}, `· ${t.restorableCount || 0} 个可恢复节点`)),
           ),
           h('div', { class: 'q-acts' },
             h('button', {
               class: 'btn',
-              onclick: async () => { await m.restoreTheme(t.id); flash(`已恢复主题「${t.name}」`, 'var(--green)'); await renderSettings(mid) },
-            }, '恢复'),
+              disabled: !t.restorableCount,
+              style: t.restorableCount ? {} : { opacity: '0.5', cursor: 'not-allowed' },
+              title: t.restorableCount ? '' : '无可恢复节点（墓碑区已清空）',
+              onclick: async () => { if (!t.restorableCount) return; await m.restoreTheme(t.id); flash(`已恢复主题「${t.name}」`, 'var(--green)'); await renderSettings(mid) },
+            }, `恢复 (${t.restorableCount || 0})`),
             h('button', {
               class: 'btn', style: { color: 'var(--red)' },
               onclick: async () => {

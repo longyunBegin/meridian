@@ -448,7 +448,13 @@ export function repropagate(id) {
 // ------------------------------------------------------------------ themes
 
 export function allThemes() { return load().themes.filter((t) => !t.deletedAt) }
-export function deletedThemes() { return load().themes.filter((t) => t.deletedAt) }
+export function deletedThemes() {
+  const db = load()
+  return db.themes.filter((t) => t.deletedAt).map((t) => ({
+    ...t,
+    restorableCount: db.nodes.filter((n) => n.themeId === t.id && n.status === 'dead' && n.deletedAt).length,
+  }))
+}
 
 export function bestThemeContext() {
   const db = load()
@@ -809,12 +815,15 @@ export function spawnFromScaffold(branchId) {
     }))
   }
   for (const ind of branch.scaffold.indicators || []) {
-    const days = CADENCE_DAYS[ind.cadence] ?? 60
+    const name = typeof ind === 'string' ? ind : String(ind?.name || '').trim()
+    if (!name) continue
+    const cadence = (typeof ind === 'object' && ind?.cadence) || '季度'
+    const days = CADENCE_DAYS[cadence] ?? 60
     created.push(addNode({
       themeId: branch.themeId,
       parentId: branchId,
       kind: 'lemma',
-      title: `${ind.name}：按${ind.cadence}节奏更新，本期读数待填`,
+      title: `${name}：按${cadence}节奏更新，本期读数待填`,
       type: 'observation',
       confidence: 50,
       settlement: { date: addDays(days), resolved: null, correct: null },

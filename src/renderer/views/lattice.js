@@ -20,36 +20,19 @@ export function renderLattice(mid) {
     h('h1', {}, theme ? theme.name : ''),
     h('div', { class: 'spacer' }),
     // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动
-    (() => {
-      const btn = h('button', {
-        class: 'btn regenerate-btn', title: '重新生成骨架',
-        onclick: () => {
-          if (!theme) return
-          const input = h('input', {
-            type: 'text', value: theme.name,
-            style: { width: '220px', fontSize: '13px', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: '4px', outline: 'none' },
-            onkeydown: async (e) => {
-              if (e.key === 'Enter') {
-                const desc = input.value.trim()
-                if (!desc) return
-                input.replaceWith(btn)
-                const r = await m.generateSkeleton(desc)
-                if (r.ok) {
-                  await m.instantiateSkeleton(state.themeId, r.skeleton)
-                  await refresh()
-                }
-              } else if (e.key === 'Escape') {
-                input.replaceWith(btn)
-              }
-            },
-          })
-          btn.replaceWith(input)
-          input.focus()
-          input.select()
-        },
-      }, icon('lattice', 12), '重新生成')
-      return btn
-    })(),
+    h('button', {
+      class: 'btn regenerate-btn', title: '重新生成骨架',
+      onclick: async () => {
+        if (!theme) return
+        const desc = prompt('描述要跟踪的产业链，模型将重新生成骨架：', theme.name)
+        if (!desc) return
+        const r = await m.generateSkeleton(desc)
+        if (r.ok) {
+          await m.instantiateSkeleton(state.themeId, r.skeleton)
+          await refresh()
+        }
+      },
+    }, icon('lattice', 12), '重新生成'),
     h('div', { class: 'seg seg-shape' },
       h('button', {
         'aria-selected': isGraph ? 'false' : 'true',

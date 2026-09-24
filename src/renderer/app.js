@@ -234,11 +234,65 @@ function renderThemes() {
   }
   for (const t of state.themes) {
     const count = lemmaCount(t.id)
-    wrap.append(h('button', {
+    const itemBtn = h('button', {
       class: 'theme-item',
       'aria-selected': state.themeId === t.id ? 'true' : 'false',
       onclick: () => selectTheme(t.id),
-    }, h('span', { class: 'sw', style: { background: themeColor(t.id) } }), h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null))
+    }, h('span', { class: 'sw', style: { background: themeColor(t.id) } }), h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null)
+
+    const menuBtn = h('button', {
+      class: 'theme-menu-btn', title: '重命名 / 删除',
+      onclick: () => {
+        const input = h('input', {
+          class: 'txt', value: t.name, style: { flex: '1', minWidth: '60px', fontSize: '12px', padding: '2px 6px' },
+          onkeydown: async (e) => {
+            if (e.key === 'Enter') {
+              const name = input.value.trim()
+              if (!name) { input.value = t.name; return }
+              await m.renameTheme(t.id, name)
+              await refresh()
+            } else if (e.key === 'Escape') {
+              row.replaceWith(itemWrap)
+            }
+          },
+        })
+        const row = h('div', { class: 'theme-edit-row' },
+          input,
+          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: async () => {
+            const name = input.value.trim()
+            if (!name) return
+            await m.renameTheme(t.id, name)
+            await refresh()
+          } }, '保存'),
+          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', color: 'var(--red)' }, onclick: async () => {
+            await m.removeTheme(t.id)
+            if (state.themeId === t.id) selectTheme(state.themes[0]?.id || null)
+            await refresh()
+            const tEl = document.createElement('div')
+            tEl.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg-2,#333);color:var(--text-2);padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;gap:8px'
+            tEl.append(document.createTextNode(`已删除主题「${t.name}」`))
+            const undoBtn = document.createElement('button')
+            undoBtn.textContent = '撤销'
+            undoBtn.style.cssText = 'padding:2px 8px;font-size:11px;cursor:pointer'
+            undoBtn.onclick = async () => {
+              await m.restoreTheme(t.id)
+              await refresh()
+              tEl.remove()
+              toast('已恢复', 'var(--text-2)')
+            }
+            tEl.append(undoBtn)
+            document.body.append(tEl)
+            setTimeout(() => tEl.remove(), 4000)
+          } }, '删除'),
+        )
+        itemWrap.replaceWith(row)
+        input.focus()
+        input.select()
+      },
+    }, '⋯')
+
+    const itemWrap = h('div', { class: 'theme-wrap' }, itemBtn, menuBtn)
+    wrap.append(itemWrap)
   }
 
   const slot = $('#theme-add-slot')

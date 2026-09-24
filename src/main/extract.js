@@ -185,13 +185,20 @@ const SKELETON_SYSTEM = `你是一个产业链分析专家。根据用户的描�
 
 硬规则：
 1. 产出 JSON，不要 markdown 代码块，不要解释。
-2. 结构：{"roots":[{"title":"环节名","propagation":0.5,"scaffold":{"answer":"要回答的核心问题","indicators":["指标1"],"falsifier":"证伪信号"},"children":[...]}]}
+2. 结构：{"roots":[{"title":"环节名","propagation":0.5,"scaffold":{"answer":"要回答的核心问题","indicators":[{"name":"指标名","cadence":"月|季度|年度|事件"}],"falsifier":"证伪信号"},"children":[...]}]}
 3. 每条边带传导权重 propagation（0-1），上游 → 下游，权重越大传导越强。
 4. 通常 3-5 层深度，每层 2-5 个环节。
-5. scaffold.answer 是该环节要回答的核心问题，indicators 是按周期跟踪的指标，falsifier 是证伪信号。
+5. scaffold.answer 是该环节要回答的核心问题，indicators 是按周期跟踪的指标数组（每项是 {name, cadence} 对象，cadence 只能是 月 / 季度 / 年度 / 事件 四选一），falsifier 是证伪信号。
 6. 环节名称简洁（4-12 字），是产业环节不是公司名。
 
 只输出 JSON：`
+
+const VALID_CADENCES = ['周', '月', '季度', '半年', '年度', '事件']
+
+function normalizeCadence(c) {
+  const s = String(c || '').trim()
+  return VALID_CADENCES.includes(s) ? s : '季度'
+}
 
 export async function generateSkeleton(settings, description) {
   const { baseUrl, apiKey, model } = settings
@@ -236,7 +243,12 @@ function parseSkeleton(raw) {
       scaffold: node.scaffold ? {
         answer: String(node.scaffold.answer || '').trim().slice(0, 200) || null,
         indicators: Array.isArray(node.scaffold.indicators)
-          ? node.scaffold.indicators.filter((i) => typeof i === 'string').slice(0, 5)
+          ? node.scaffold.indicators
+            .map((i) => typeof i === 'string'
+              ? { name: i, cadence: '季度' }
+              : { name: String(i?.name || '').trim().slice(0, 60), cadence: normalizeCadence(i?.cadence) })
+            .filter((i) => i.name)
+            .slice(0, 5)
           : [],
         falsifier: String(node.scaffold.falsifier || '').trim().slice(0, 200) || null,
       } : null,

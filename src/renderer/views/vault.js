@@ -52,6 +52,7 @@ export async function renderVault(mid, kind) {
                   h('span', {}, TYPE_LABEL[n.type]),
                   h('span', {}, `· 置信度 ${Math.round(n.confidence)}`),
                   h('span', {}, `· ${nodePath(state.nodes, n.id) || '未归档'}`),
+                  h('span', {}, `· ${state.themes.find((t) => t.id === n.themeId)?.name || '已删主题'}`),
                   n.deletedAt ? h('span', { style: { color: 'var(--text-3)' } }, `· 删于 ${n.deletedAt}`) : null,
                 ),
               ),
@@ -354,7 +355,7 @@ export async function renderReadings(mid) {
     return
   }
 
-  // 筛选器：全部 / 按 channelId 筛选
+  // 筛选器：按指标 / 按通道
   const channelIds = [...new Set(all.map((r) => r.channelId).filter(Boolean))]
   const channelNames = {}
   for (const id of channelIds) {
@@ -362,26 +363,49 @@ export async function renderReadings(mid) {
     channelNames[id] = ch ? ch.name : id
   }
 
-  let currentFilter = null
-  const filterBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } })
+  // 有通道的 observation 指标
+  const indicators = state.nodes.filter((n) =>
+    n.type === 'observation' && n.status !== 'dead' && (n.channelIds || []).length > 0)
 
-  const filterBtn = (label, value) => h('button', {
+  let currentFilter = null
+  let currentIndicator = null
+  const filterBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' } })
+  const indicatorBar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' } })
+
+  const filterBtn = (label, value, bar) => h('button', {
     class: 'btn', style: { padding: '2px 10px' },
     onclick: async () => { currentFilter = value; await refresh() },
   }, label)
 
+  const indicatorBtn = (label, value) => h('button', {
+    class: 'btn', style: { padding: '2px 10px' },
+    onclick: async () => { currentIndicator = value; await refresh() },
+  }, label)
+
   async function refresh() {
-    const filtered = currentFilter
-      ? all.filter((r) => r.channelId === currentFilter)
-      : all
+    let filtered = all
+    if (currentIndicator) {
+      const ind = state.nodes.find((n) => n.id === currentIndicator)
+      if (ind) filtered = filtered.filter((r) => (ind.channelIds || []).includes(r.channelId))
+    }
+    if (currentFilter) {
+      filtered = filtered.filter((r) => r.channelId === currentFilter)
+    }
     const groups = groupReadings(filtered)
     const list = $('#readings-list')
     if (list) { clear(list); add(list, groups.map(metricCard)) }
   }
 
-  filterBar.append(filterBtn('全部', null))
+  // 指标筛选排
+  indicatorBar.append(indicatorBtn('全部指标', null))
+  for (const ind of indicators) {
+    indicatorBar.append(indicatorBtn(ind.title, ind.id))
+  }
+
+  // 通道筛选排
+  filterBar.append(filterBtn('全部通道', null, filterBar))
   for (const id of channelIds) {
-    filterBar.append(filterBtn(channelNames[id], id))
+    filterBar.append(filterBtn(channelNames[id], id, filterBar))
   }
 
   // 手动录入表单
@@ -449,6 +473,7 @@ export async function renderReadings(mid) {
   const groups = groupReadings(all)
   mid.append(h('section', { class: 'sect' },
     h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
+    indicatorBar,
     filterBar,
     form,
     h('div', { id: 'readings-list' },
@@ -518,30 +543,9 @@ export async function renderReadings(mid) {
                 h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
                 h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
               ),
-    ),
-
-    // 你 vs 机构
-    vsData.settledCount > 0 ? h('section', { class: 'card' },
-      h('div', { class: 'card-h' }, h('h2', {}, '你 vs 机构'), h('em', {}, `近 90 天 · ${vsData.settledCount} 条已结算命题`)),
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'review-funnel' },
-          h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
-            h('div', { class: 'review-metric-label' }, '你的命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
-          ),
-          h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
-            h('div', { class: 'review-metric-label' }, '机构观点命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
-          ),
-        ),
-      ),
-    ) : null,
-  ))
-}
+            ),
+          ))
+        }
       }
     }
 
@@ -572,6 +576,29 @@ export async function renderReadings(mid) {
     ))
     renderGaps()
   }
+
+  // 你 vs 机构
+  if (vsData.settledCount > 0) {
+    mid.append(h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '你 vs 机构'), h('em', {}, `近 90 天 · ${vsData.settledCount} 条已结算命题`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '你的命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
+          ),
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '机构观点命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
+          ),
+        ),
+      ),
+    ))
+  }
 }
 
 // ============================================================
@@ -591,7 +618,7 @@ const EDGAR_FETCHES = new Set(['edgarConcept', 'edgarFilings'])
 
 export async function renderSources(mid) {
   clear(mid)
-  const [channels, fetchers] = await Promise.all([m.channelList(), m.availableFetchers()])
+  const [channels, fetchers, metricFetchers] = await Promise.all([m.channelList(), m.availableFetchers(), m.metricFetchers()])
 
   const flash = h('span', { style: { fontSize: '12px', color: 'var(--text-3)', marginLeft: '8px' } }, '')
   const showFlash = (msg, color = 'var(--text-2)') => {
@@ -750,16 +777,16 @@ export async function renderSources(mid) {
                   h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => {
                     inputs.fetch = e.target.value
-                    const isEdgar = e.target.value === 'edgarConcept'
-                    metricRow.style.display = isEdgar ? '' : 'none'
-                    discoverBtn.style.display = isEdgar ? '' : 'none'
-                    if (!isEdgar) { inputs.metric = ''; if (metricInput) metricInput.value = '' }
+                    const needsMetric = metricFetchers.includes(e.target.value)
+                    metricRow.style.display = needsMetric ? '' : 'none'
+                    discoverBtn.style.display = e.target.value === 'edgarConcept' ? '' : 'none'
+                    if (!needsMetric) { inputs.metric = ''; if (metricInput) metricInput.value = '' }
                   } },
                     ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
                   ),
                 ),
                 (metricRow = h('div', { style: { display: 'none', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric (us-gaap 标签)'),
+                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric'),
                   h('div', { style: { display: 'flex', gap: '4px', alignItems: 'flex-end' } },
                     (metricInput = h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value })),
                     discoverBtn,
@@ -786,7 +813,7 @@ export async function renderSources(mid) {
                   class: 'btn btn-primary',
                   onclick: async () => {
                     if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
-                    if (inputs.fetch === 'edgarConcept' && !inputs.metric?.trim()) { showFlash('edgarConcept 必须填 us-gaap 标签', 'var(--red)'); return }
+                    if (metricFetchers.includes(inputs.fetch) && !inputs.metric?.trim()) { showFlash('该取数器必须填 metric', 'var(--red)'); return }
                     await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
                     showFlash('已添加通道')
                     await renderSources(mid)
