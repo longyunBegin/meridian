@@ -404,6 +404,15 @@ function register({ getMainWindow }) {
     return theme
   })
 
+  // 按描述匹配最接近的出厂模板（降级时用）
+  function matchTemplateId(description) {
+    const d = description.toLowerCase()
+    if (/crypto|虚拟货币|加密|比特币|以太坊|blockchain|区块链|defi|nft|token|矿机|算力|稳定币/.test(d)) return 'crypto'
+    if (/saas|软件|订阅|cloud|云服务|arr|mrr|churn|留存|经营/.test(d)) return 'saas'
+    if (/ai|人工智能|llm|大模型|gpu|芯片|算力|光模块|半导体|silicon|inference|training/.test(d)) return 'ai-chain'
+    return null
+  }
+
   // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 打标签 → 返回
   // scaffoldTheme 是共用核心：setupNew 和 scaffoldExisting 都调它
   async function scaffoldTheme(themeId, description, s) {
@@ -423,8 +432,8 @@ function register({ getMainWindow }) {
       }
       for (const root of r.skeleton.roots || []) walk(root, null)
     } else {
-      // 无 key 降级：用静态模板
-      const tpl = templateFind('ai-chain')
+      // 无 key 降级：按描述匹配最接近的模板
+      const tpl = templateFind(matchTemplateId(description) || 'ai-chain')
       if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId }))
     }
     // 按描述匹配通道包，匹配不到不配任何通道——比塞一套不相关的通道诚实
