@@ -417,7 +417,7 @@ function register({ getMainWindow }) {
         })
         for (const c of node.children || []) walk(c, n.id)
       }
-      for (const root of r.skeleton) walk(root, null)
+      for (const root of r.skeleton.roots || []) walk(root, null)
     } else {
       // 无 key 降级：用静态模板
       const tpl = templateFind('ai-chain')
