@@ -26,6 +26,7 @@ import { list as templateList, find as templateFind, instantiate, channelPack } 
 import { fetchChannel, availableFetchers } from './fetchers.js'
 import { discoverTags, deriveChannelTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
+import { proposeChannelLinks } from './propose.js'
 import { createHash } from 'node:crypto'
 
 function hashText(text) {
@@ -758,6 +759,15 @@ function register({ getMainWindow }) {
       return await discoverTags(ticker)
     } catch (e) {
       return { tags: [], error: e.message || String(e), entityName: null }
+    }
+  })
+
+  // ---- LLM 提议指针 ----
+  ipcMain.handle('llm:proposeLinks', async (_, themeId) => {
+    try {
+      return await proposeChannelLinks(settings(), themeId)
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) }
     }
   })
 

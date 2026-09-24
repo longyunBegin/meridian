@@ -460,20 +460,95 @@ export async function renderReadings(mid) {
     n.type === 'observation' && n.status !== 'dead' &&
     (!n.channelIds || n.channelIds.length === 0))
   if (gaps.length) {
-    mid.append(h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '未关联指标'), h('em', {}, String(gaps.length))),
-      h('div', { class: 'sect-b' },
-        ...gaps.map((n) => h('div', { class: 'q' },
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, n.title),
-            h('div', { class: 'q-meta' },
-              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
-              h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
+    // 会话内状态：提议 + 已忽略（不进 DB）
+    let proposalsMap = new Map()
+    const ignored = new Set()
+
+    const gapsBody = h('div', { class: 'sect-b' })
+
+    function renderGaps() {
+      clear(gapsBody)
+      const visible = gaps.filter((n) => !ignored.has(n.id))
+      for (const n of visible) {
+        const proposal = proposalsMap.get(n.id)
+        if (proposal && proposal.channelIds.length > 0) {
+          const chNames = proposal.channelIds
+            .map((id) => channels.find((c) => c.id === id)?.name || id)
+            .join(' · ')
+          gapsBody.append(h('div', { class: 'q' },
+            h('div', { class: 'q-body' },
+              h('div', { class: 'q-text' }, n.title),
+              h('div', { class: 'q-meta' },
+                h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
+              ),
+              h('div', { style: { marginTop: '6px' } },
+                h('span', { style: { fontSize: '12px', color: 'var(--text-3)' } }, `建议挂 ${proposal.channelIds.length} 个通道`),
+                h('span', { style: { marginLeft: '8px' } }, chNames),
+              ),
+              proposal.reason
+                ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' } }, proposal.reason)
+                : null,
             ),
-          ),
-        )),
+            h('div', { class: 'q-acts' },
+              h('button', {
+                class: 'btn btn-primary',
+                onclick: async () => {
+                  await m.updateNode(n.id, { channelIds: proposal.channelIds })
+                  ignored.add(n.id)
+                  proposalsMap.delete(n.id)
+                  renderGaps()
+                },
+              }, '采用'),
+              h('button', {
+                class: 'btn',
+                onclick: () => {
+                  ignored.add(n.id)
+                  proposalsMap.delete(n.id)
+                  renderGaps()
+                },
+              }, '忽略'),
+            ),
+          ))
+        } else {
+          gapsBody.append(h('div', { class: 'q' },
+            h('div', { class: 'q-body' },
+              h('div', { class: 'q-text' }, n.title),
+              h('div', { class: 'q-meta' },
+                h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
+                h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
+              ),
+            ),
+          ))
+        }
+      }
+    }
+
+    const analyzeBtn = h('button', {
+      class: 'btn',
+      onclick: async () => {
+        analyzeBtn.textContent = '分析中…'
+        analyzeBtn.disabled = true
+        const result = await m.proposeLinks(state.themeId)
+        analyzeBtn.textContent = '分析未接线的指标'
+        analyzeBtn.disabled = false
+        if (!result.ok) {
+          toast(result.error === 'no-key' ? '未配置 API key' : `分析失败：${result.error}`, 'var(--red)')
+          return
+        }
+        proposalsMap = new Map(result.proposals.map((p) => [p.indicatorId, p]))
+        renderGaps()
+      },
+    }, '分析未接线的指标')
+
+    mid.append(h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' },
+        h('h2', {}, '未关联指标'),
+        h('em', {}, String(gaps.length)),
+        analyzeBtn,
       ),
+      gapsBody,
     ))
+    renderGaps()
   }
 }
 

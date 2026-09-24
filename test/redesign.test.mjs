@@ -1720,9 +1720,9 @@ ok('R7 验收: inspector.js 无 总量', !inspectorSrc.includes('总量'))
 ok('R7 验收: inspector.js 无 合计', !inspectorSrc.includes('合计'))
 
 // 新代码不写 indicatorId（store.js addReading 里有 indicatorId 是旧代码，不算新写）
-// 检查 inspector.js 和 vault.js 不含 indicatorId 写入
+// 检查 inspector.js 不含 indicatorId；vault.js 不创建含 indicatorId 属性的对象（读取 p.indicatorId 不算写）
 ok('R7 验收: inspector.js 无 indicatorId 写入', !inspectorSrc.includes('indicatorId'))
-ok('R7 验收: vault.js 无 indicatorId 写入', !vaultSrcR7.includes('indicatorId'))
+ok('R7 验收: vault.js 不写 indicatorId 属性', !vaultSrcR7.includes('indicatorId:') && !vaultSrcR7.match(/\{\s*indicatorId\s*[,:}]/))
 
 // preload 两份同步
 const pjR7 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
@@ -2186,6 +2186,270 @@ ok('R5: store.js addChannel 有 review', storeFullSrc.includes('review: ch.revie
 const vaultFullSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 ok('R5: vault.js 有 review toggle 按钮', vaultFullSrc.includes("review: !ch.review"))
 ok('R5: vault.js 有复审按钮文字', vaultFullSrc.includes('复审'))
+
+// ============================================================
+// B: LLM 提议指针
+// ============================================================
+
+console.log('\n— B: LLM 提议指针 —')
+
+const { sanitize, proposeChannelLinks } = await import('../src/main/propose.js')
+
+// --- sanitize 纯函数全分支 ---
+
+const validInd = new Set(['n1', 'n2', 'n3'])
+const validCh = new Set(['ch_a', 'ch_b', 'ch_c'])
+
+// 合法提议保留
+const bS1 = sanitize(
+  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_b'], reason: 'ok' }],
+  validInd, validCh)
+ok('B: sanitize 合法提议保留', bS1.length === 1 && bS1[0].channelIds.length === 2)
+
+// 非法 indicatorId → 整条丢弃
+const bS2 = sanitize(
+  [{ indicatorId: 'n_bad', channelIds: ['ch_a'], reason: 'x' }],
+  validInd, validCh)
+ok('B: sanitize 非法 indicatorId 丢弃', bS2.length === 0)
+
+// 任一 channelId 非法 → 整条丢弃（不是过滤后保留）
+const bS3 = sanitize(
+  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_hallucinated'], reason: 'x' }],
+  validInd, validCh)
+ok('B: sanitize 任一非法 channelId 整条丢弃', bS3.length === 0)
+
+// 重复 channelId → 去重
+const bS4 = sanitize(
+  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_a', 'ch_b'], reason: 'x' }],
+  validInd, validCh)
+ok('B: sanitize 重复 channelId 去重', bS4.length === 1 && bS4[0].channelIds.length === 2)
+
+// channelIds 为空数组 → 保留（合法的「无建议」）
+const bS5 = sanitize(
+  [{ indicatorId: 'n1', channelIds: [], reason: '无匹配' }],
+  validInd, validCh)
+ok('B: sanitize 空 channelIds 保留', bS5.length === 1 && bS5[0].channelIds.length === 0)
+
+// reason 非字符串 → 空字符串
+const bS6 = sanitize(
+  [{ indicatorId: 'n1', channelIds: ['ch_a'], reason: null }],
+  validInd, validCh)
+ok('B: sanitize reason 非字符串转空', bS6[0].reason === '')
+
+// channelIds 非数组 → 丢弃
+const bS7 = sanitize(
+  [{ indicatorId: 'n1', channelIds: 'ch_a', reason: 'x' }],
+  validInd, validCh)
+ok('B: sanitize channelIds 非数组丢弃', bS7.length === 0)
+
+// 混合：合法和非法并存
+const bS8 = sanitize(
+  [
+    { indicatorId: 'n1', channelIds: ['ch_a'], reason: 'ok' },
+    { indicatorId: 'n_bad', channelIds: ['ch_a'], reason: 'bad' },
+    { indicatorId: 'n2', channelIds: ['ch_b', 'ch_hallucinated'], reason: 'mixed' },
+    { indicatorId: 'n3', channelIds: [], reason: 'empty' },
+  ],
+  validInd, validCh)
+ok('B: sanitize 混合只留合法', bS8.length === 2)
+ok('B: sanitize 混合留 n1 和 n3', bS8[0].indicatorId === 'n1' && bS8[1].indicatorId === 'n3')
+
+// --- proposeChannelLinks 无 key 降级 ---
+
+const bNoKeyResult = await proposeChannelLinks({ apiKey: '', baseUrl: 'x', model: 'x' }, 'any')
+ok('B: 无 key 返回 ok: false', bNoKeyResult.ok === false)
+ok('B: 无 key 返回 no-key', bNoKeyResult.error === 'no-key')
+
+// --- proposeChannelLinks 主题不存在 ---
+
+const noThemeResult = await proposeChannelLinks({ apiKey: 'test-key', baseUrl: 'x', model: 'x' }, 'nonexistent-theme')
+ok('B: 主题不存在返回 ok: false', noThemeResult.ok === false)
+ok('B: 主题不存在返回 error', noThemeResult.error === 'theme not found')
+
+// --- 端到端：stub LLM 返回提议 ---
+
+// 建主题 + 指标 + 通道
+const bTheme = store.addTheme('B-提议测试主题')
+store.updateTheme(bTheme.id, { tags: ['锂电', '回收', '美股'] })
+
+// 未接线指标
+const bInd1 = store.addNode({
+  themeId: bTheme.id, parentId: null, kind: 'lemma',
+  title: '废旧电池采购量：按月度节奏更新，本期读数待填',
+  type: 'observation', confidence: 50,
+})
+const bInd2 = store.addNode({
+  themeId: bTheme.id, parentId: null, kind: 'lemma',
+  title: '回收产能利用率：按季度节奏更新，本期读数待填',
+  type: 'observation', confidence: 50,
+})
+// 已接线指标（不应出现在提议输入里）
+const bInd3 = store.addNode({
+  themeId: bTheme.id, parentId: null, kind: 'lemma',
+  title: '已接线指标：按季度节奏更新，本期读数待填',
+  type: 'observation', confidence: 50,
+  channelIds: ['ch_existing'],
+})
+
+// 通道
+const bCh1 = store.addChannel({ name: 'ALB 总收入', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'ALB', metric: 'Revenues', tags: ['锂电', '财报'] })
+const bCh2 = store.addChannel({ name: 'LTHM 毛利', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'LTHM', metric: 'GrossProfit', tags: ['锂电', '财报'] })
+
+// stub fetch
+const originalFetch = globalThis.fetch
+let capturedUserContent = null
+globalThis.fetch = async (url, opts) => {
+  const body = JSON.parse(opts.body)
+  capturedUserContent = body.messages.find((m) => m.role === 'user')?.content
+  return {
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            proposals: [
+              { indicatorId: bInd1.id, channelIds: [bCh1.id, bCh2.id], reason: '回收原料价格由上游锂盐厂的收入和毛利反映' },
+              { indicatorId: bInd2.id, channelIds: [], reason: '产能利用率无公开结构化数据源，只能手填' },
+              { indicatorId: bInd3.id, channelIds: [bCh1.id], reason: '已接线的不应出现' },
+              { indicatorId: 'n_hallucinated', channelIds: [bCh1.id], reason: '幻觉指标' },
+              { indicatorId: bInd1.id, channelIds: ['ch_hallucinated'], reason: '幻觉通道' },
+            ],
+          }),
+        },
+      }],
+    }),
+  }
+}
+
+try {
+  const proposeResult = await proposeChannelLinks(
+    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
+    bTheme.id)
+
+  ok('B: 端到端返回 ok', proposeResult.ok === true)
+  ok('B: 端到端返回提议数组', Array.isArray(proposeResult.proposals))
+
+  // 已接线的 bInd3 不应出现在结果里（sanitize 过滤了非法 indicatorId）
+  const indIds = proposeResult.proposals.map((p) => p.indicatorId)
+  ok('B: 已接线指标不被提议', !indIds.includes(bInd3.id))
+  ok('B: 幻觉指标被丢弃', !indIds.includes('n_hallucinated'))
+
+  // bInd1 应该有一条合法提议
+  const p1 = proposeResult.proposals.find((p) => p.indicatorId === bInd1.id)
+  ok('B: bInd1 有提议', p1 != null)
+  ok('B: bInd1 提议 2 个通道', p1?.channelIds.length === 2)
+  ok('B: bInd1 提议含 bCh1', p1?.channelIds.includes(bCh1.id))
+  ok('B: bInd1 提议含 bCh2', p1?.channelIds.includes(bCh2.id))
+  ok('B: bInd1 reason 正确', p1?.reason === '回收原料价格由上游锂盐厂的收入和毛利反映')
+
+  // bInd2 应该有空通道提议
+  const p2 = proposeResult.proposals.find((p) => p.indicatorId === bInd2.id)
+  ok('B: bInd2 有空通道提议', p2 != null && p2.channelIds.length === 0)
+  ok('B: bInd2 reason 说明缺什么', p2?.reason.includes('手填'))
+
+  // 幻觉通道的提议被整条丢弃
+  const hallucinatedCh = proposeResult.proposals.find((p) =>
+    p.indicatorId === bInd1.id && p.channelIds.includes('ch_hallucinated'))
+  ok('B: 幻觉通道提议被丢弃', hallucinatedCh == null)
+
+  // LLM 输入包含未接线指标但不包含已接线的
+  ok('B: LLM 输入含未接线指标', capturedUserContent.includes(bInd1.id))
+  ok('B: LLM 输入不含已接线指标', !capturedUserContent.includes(bInd3.id))
+  ok('B: LLM 输入含主题 tags', capturedUserContent.includes('锂电'))
+  ok('B: LLM 输入含通道 tags', capturedUserContent.includes('财报'))
+
+  // 模拟「采用」→ 写入 channelIds
+  await store.updateNode(bInd1.id, { channelIds: p1.channelIds })
+  const updated = store.allNodes().find((n) => n.id === bInd1.id)
+  ok('B: 采用后 channelIds 写入', updated.channelIds.length === 2)
+  ok('B: 采用后 channelIds 含 bCh1', updated.channelIds.includes(bCh1.id))
+  ok('B: 采用后 channelIds 含 bCh2', updated.channelIds.includes(bCh2.id))
+
+  // 采用后该指标不再是缺口
+  const stillGap = !updated.channelIds || updated.channelIds.length === 0
+  ok('B: 采用后不再是缺口', stillGap === false)
+
+  // 模拟「忽略」→ channelIds 仍为空
+  await store.updateNode(bInd2.id, { channelIds: [] })
+  const ignored = store.allNodes().find((n) => n.id === bInd2.id)
+  ok('B: 忽略后 channelIds 仍为空', (!ignored.channelIds || ignored.channelIds.length === 0))
+} finally {
+  globalThis.fetch = originalFetch
+}
+
+// --- LLM 失败不阻塞 ---
+
+globalThis.fetch = async () => { throw new Error('network error') }
+try {
+  const failResult = await proposeChannelLinks(
+    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
+    bTheme.id)
+  ok('B: LLM 失败返回 ok: false', failResult.ok === false)
+  ok('B: LLM 失败有 error', typeof failResult.error === 'string')
+} finally {
+  globalThis.fetch = originalFetch
+}
+
+// --- HTTP 错误不阻塞 ---
+
+globalThis.fetch = async () => ({ ok: false, status: 500 })
+try {
+  const httpFailResult = await proposeChannelLinks(
+    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
+    bTheme.id)
+  ok('B: HTTP 错误返回 ok: false', httpFailResult.ok === false)
+  ok('B: HTTP 错误含状态码', httpFailResult.error.includes('500'))
+} finally {
+  globalThis.fetch = originalFetch
+}
+
+// --- IPC handler ---
+
+const ipcResult = await fire('llm:proposeLinks', bTheme.id)
+ok('B: IPC llm:proposeLinks 可调', ipcResult != null)
+ok('B: IPC 无 key 返回 ok: false', ipcResult.ok === false)
+
+// --- 无未接线指标 → 空提议 ---
+
+const noGapTheme = store.addTheme('B-无缺口主题')
+store.addNode({
+  themeId: noGapTheme.id, parentId: null, kind: 'lemma',
+  title: '已接线的：按季度节奏更新', type: 'observation', confidence: 50,
+  channelIds: ['ch_x'],
+})
+const noGapResult = await proposeChannelLinks(
+  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, noGapTheme.id)
+ok('B: 无未接线指标返回空提议', noGapResult.ok === true && noGapResult.proposals.length === 0)
+
+// --- 不新增节点字段 ---
+
+const proposeSrc = readFileSync2(join(ROOT2, 'src/main/propose.js'), 'utf8')
+ok('B: propose.js 无 suggestedChannelIds', !proposeSrc.includes('suggestedChannelIds'))
+ok('B: propose.js 无 proposedChannelIds', !proposeSrc.includes('proposedChannelIds'))
+ok('B: store.js 无 suggestedChannelIds', !readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8').includes('suggestedChannelIds'))
+
+// --- preload 两份同步 ---
+
+const pjB = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcB = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+ok('B: preload.js 有 proposeLinks', pjB.includes('proposeLinks'))
+ok('B: preload.cjs 有 proposeLinks', pcB.includes('proposeLinks'))
+const extractKeysB = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('B: preload 两份同步', JSON.stringify(extractKeysB(pjB)) === JSON.stringify(extractKeysB(pcB)))
+
+// --- IPC handler 注册 ---
+
+const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
+ok('B: ipc.js import proposeChannelLinks', ipcBSrc.includes('proposeChannelLinks'))
+
+// --- vault.js 缺口列表按钮 ---
+
+const vaultBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+ok('B: vault.js 有分析按钮', vaultBSrc.includes('分析未接线的指标'))
+ok('B: vault.js 有采用按钮', vaultBSrc.includes('采用'))
+ok('B: vault.js 有忽略按钮', vaultBSrc.includes('忽略'))
+ok('B: vault.js 有 proposeLinks 调用', vaultBSrc.includes('proposeLinks'))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

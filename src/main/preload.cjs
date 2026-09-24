@@ -94,6 +94,9 @@ contextBridge.exposeInMainWorld('meridian', {
   // ---- EDGAR 标签发现
   discoverTags: (ticker) => ipcRenderer.invoke('edgar:discoverTags', ticker),
 
+  // ---- LLM 提议指针
+  proposeLinks: (themeId) => ipcRenderer.invoke('llm:proposeLinks', themeId),
+
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),
   allReadings: () => ipcRenderer.invoke('reading:all'),
