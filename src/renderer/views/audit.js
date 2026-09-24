@@ -8,9 +8,13 @@ const m = window.meridian
  * 这个界面一天只允许出现一次，且只能回答「是 / 否」——
  * 做成可浏览的列表，用户就会开始整理它，然后产品变回笔记软件。
  */
+const GATE_LABELS = { extract: '抽取阶段', source: '来源质量闸', dedup: '去重闸', user: '用户拒绝' }
+const REASON_LABELS = { 'off-topic': '离题', 'duplicate': '重复', 'low-quality': '低质', 'rejected': '用户拒绝' }
+
 export async function renderAudit(mid) {
   clear(mid)
-  const a = await m.falseKill(30)
+  const [a, channels] = await Promise.all([m.falseKill(30), m.channelList()])
+  const chName = (id) => channels.find((c) => c.id === id)?.kind || id || '未知通道'
   const themeNodes = state.themeId ? await m.nodes(state.themeId) : []
 
   const reveal = h('div', { class: 'reveal', id: 'audit-reveal' })
@@ -45,14 +49,55 @@ export async function renderAudit(mid) {
   )
 
   if (a.missed > 0) {
-    mount(reveal, 
-      ...a.items.map(({ verdict, node }) => h('div', { class: 'item' },
-        h('span', { style: { color: 'var(--orange)', marginTop: '3px' } }, '●'),
-        h('div', {},
-          h('b', {}, node.title),
-          h('span', {}, `当时判为${verdict.reason === 'duplicate' ? '重复' : '低质'} · ${verdict.choice || '未知来源'} Score ${verdict.score} · 筛于 ${verdict.at}`),
-        ),
-      )),
+    mount(reveal,
+      ...a.items.map(({ verdict, node }) => {
+        const detail = h('div', { class: 'audit-detail' },
+          h('div', { class: 'audit-chain' },
+            h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '闸门'),
+              h('span', {}, GATE_LABELS[verdict.gate] || verdict.gate)),
+            h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '原因'),
+              h('span', {}, REASON_LABELS[verdict.reason] || verdict.reason)),
+            h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '质量分'),
+              h('span', {}, String(verdict.score))),
+            verdict.choice ? h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '来源'),
+              h('span', {}, verdict.choice)) : null,
+            verdict.channelId ? h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '通道'),
+              h('span', {}, chName(verdict.channelId))) : null,
+            verdict.summary ? h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '摘要'),
+              h('span', { class: 'audit-chain-summary' }, verdict.summary)) : null,
+            h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '筛掉'),
+              h('span', {}, verdict.at)),
+            h('div', { class: 'audit-chain-row' },
+              h('span', { class: 'audit-chain-k' }, '后来成为'),
+              h('span', {}, `${node.title}（创建于 ${node.createdAt || '?'}）`)),
+          ),
+        )
+        const chev = icon('chevron', 14)
+        chev.classList.add('audit-chevron')
+        const item = h('div', { class: 'item audit-item', tabindex: '0' },
+          h('span', { style: { color: 'var(--orange)', marginTop: '3px' } }, '●'),
+          h('div', {},
+            h('b', {}, node.title),
+            h('span', {}, `当时判为${REASON_LABELS[verdict.reason] || verdict.reason} · ${verdict.choice || '未知来源'} Score ${verdict.score} · 筛于 ${verdict.at}`),
+          ),
+          chev,
+        )
+        const toggle = () => {
+          const on = item.classList.toggle('expanded')
+          if (on && !detail.isConnected) item.after(detail)
+          else if (!on && detail.isConnected) detail.remove()
+        }
+        item.addEventListener('click', toggle)
+        item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } })
+        return item
+      }),
       advice(a),
     )
   }
