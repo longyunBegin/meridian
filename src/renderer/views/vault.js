@@ -32,7 +32,7 @@ export async function renderVault(mid, kind) {
   if (kind === 'conflicts') return renderConflicts(mid, meta)
 
 
-  const nodes = (await m.nodes(state.themeId)).filter((n) =>
+  const nodes = (await m.allNodes()).filter((n) =>
     kind === 'cold' ? n.status === 'cold' : n.status === 'dead')
 
   mid.append(h('div', { class: 'page' },
@@ -79,7 +79,7 @@ export async function renderVault(mid, kind) {
 
 async function renderConflicts(mid, meta) {
   const conflicts = await m.conflicts()
-  const all = state.themeId ? await m.nodes(state.themeId) : []
+  const all = await m.allNodes()
   const byId = new Map(all.map((n) => [n.id, n]))
 
   mid.append(h('div', { class: 'page' },

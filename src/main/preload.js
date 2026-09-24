@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('meridian', {
   // ---- 读
   stats: () => ipcRenderer.invoke('db:stats'),
   nodes: (themeId) => ipcRenderer.invoke('db:nodes', themeId),
+  allNodes: () => ipcRenderer.invoke('db:allNodes'),
   getNode: (id) => ipcRenderer.invoke('db:getNode', id),
   themes: () => ipcRenderer.invoke('theme:all'),
   templates: () => ipcRenderer.invoke('theme:templates'),

@@ -348,6 +348,7 @@ function tokenOverlap(a, b) {
 function register({ getMainWindow }) {
   ipcMain.handle('db:stats', () => stats())
   ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
+  ipcMain.handle('db:allNodes', () => allNodes())
   ipcMain.handle('db:getNode', (_, id) => getNode(id))
   ipcMain.handle('db:due', () => dueSettlements())
   ipcMain.handle('db:calibration', () => calibration())
