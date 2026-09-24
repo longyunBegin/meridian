@@ -348,33 +348,39 @@ export function renderThemeCreator(opts = {}) {
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
 
   // 一句话描述
+  const statusEl = h('span', { style: { fontSize: '11px', color: 'var(--text-3)', marginLeft: '6px' } })
+  const submitDesc = async (desc) => {
+    if (!desc) return
+    statusEl.textContent = '生成骨架中…'
+    const submitBtn = wrap.querySelector('.btn-primary')
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '生成中…' }
+    try {
+      const theme = await m.setupNewTheme(desc)
+      state.themeId = theme.id
+      state.view = 'lattice'
+      await refresh()
+    } catch (e) {
+      statusEl.textContent = '失败：' + (e.message || '未知错误')
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '开始跟踪' }
+    }
+  }
   const descBox = h('div', { class: 'skeleton-gen' },
     h('input', {
       class: 'txt skeleton-input', placeholder: '描述你要跟踪的产业链，如「AI 产业链」',
       id: 'skeleton-desc',
       onkeydown: async (e) => {
-        if (e.key === 'Enter') {
-          const desc = e.target.value.trim()
-          if (!desc) return
-          e.target.disabled = true
-          const theme = await m.setupNewTheme(desc)
-          state.themeId = theme.id
-          await onDone()
-        }
+        if (e.key === 'Enter') { e.target.disabled = true; await submitDesc(e.target.value.trim()) }
       },
     }),
     h('button', {
       class: 'btn btn-primary', style: { height: '34px' },
       onclick: async () => {
         const input = document.getElementById('skeleton-desc')
-        const desc = input?.value.trim()
-        if (!desc) return
-        input.disabled = true
-        const theme = await m.setupNewTheme(desc)
-        state.themeId = theme.id
-        await onDone()
+        if (input) input.disabled = true
+        await submitDesc(input?.value.trim())
       },
     }, icon('plus', 13), '开始跟踪'),
+    statusEl,
   )
 
   // 模板列表 + 空白主题
@@ -383,9 +389,15 @@ export function renderThemeCreator(opts = {}) {
     ...state.templates.map((t) => h('button', {
       class: 'btn', style: { height: '34px', justifyContent: 'space-between', padding: '0 12px' },
       onclick: async () => {
-        const theme = await m.addThemeFromTemplate(t.id)
-        state.themeId = theme.id
-        await onDone()
+        statusEl.textContent = `从模板「${t.name}」创建中…`
+        try {
+          const theme = await m.addThemeFromTemplate(t.id)
+          state.themeId = theme.id
+          state.view = 'lattice'
+          await refresh()
+        } catch (e) {
+          statusEl.textContent = '失败：' + (e.message || '未知错误')
+        }
       },
     }, h('b', { style: { fontWeight: '600', color: 'var(--text)' } }, t.name),
       h('span', { style: { fontSize: '11px', color: 'var(--text-3)' } }, `${t.count} 环节`)),

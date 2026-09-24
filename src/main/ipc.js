@@ -407,7 +407,11 @@ function register({ getMainWindow }) {
   // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 打标签 → 返回
   // scaffoldTheme 是共用核心：setupNew 和 scaffoldExisting 都调它
   async function scaffoldTheme(themeId, description, s) {
-    const r = await generateSkeleton(s, description)
+    // 骨架和主题标签并行——标签只依赖 description，不依赖骨架
+    const [r, tagResult] = await Promise.all([
+      generateSkeleton(s, description),
+      generateThemeTags(s, description),
+    ])
     if (r.ok) {
       const walk = (node, parentId) => {
         const n = addNode({
@@ -436,10 +440,8 @@ function register({ getMainWindow }) {
         })
       }
     }
-    // 主题打标签（降级：无 key → tags: []，不阻塞）
-    const tagResult = await generateThemeTags(s, description)
     if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
-    // 生成标签库（降级：无 key → tagLibrary: []，不阻塞）
+    // 标签库依赖骨架 titles，必须骨架之后
     const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
     const tlResult = await generateTagLibrary(s, description, titles)
     if (tlResult.ok) updateTheme(themeId, { tagLibrary: tlResult.tagLibrary })
