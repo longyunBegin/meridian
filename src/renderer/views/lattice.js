@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, selectNode, setShape } from '../app.js'
-import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
+import { confColor, confColorContinuous, TYPE_LABEL, todayStr, nodePath } from './shared.js'
 import { renderGraph } from './graph.js'
 
 const m = window.meridian
@@ -168,6 +168,153 @@ function renderTagLibraryBand(theme) {
   return band
 }
 
+/** 空白主题补生成骨架入口（E3） */
+function renderSkeletonPrompt(theme) {
+  if (!theme) return null
+  const hasBranch = state.nodes.some((n) => n.kind === 'branch')
+  if (hasBranch) return null
+  const box = h('div', { class: 'sect', style: { marginBottom: '0' } },
+    h('div', { class: 'sect-b' },
+      h('p', { style: { margin: '0 0 8px', fontSize: '12px', color: 'var(--text-3)' } }, '这个主题还没有骨架。'),
+      h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+        (() => {
+          const input = h('input', {
+            class: 'txt', placeholder: '一句话描述生成骨架 + 标签库',
+            style: { flex: '1', minWidth: '180px' },
+            onkeydown: async (e) => {
+              if (e.key === 'Enter') {
+                const desc = input.value.trim()
+                if (!desc) return
+                input.disabled = true
+                await m.scaffoldExisting(theme.id, desc)
+                await refresh()
+              }
+            },
+          })
+          return h('div', { style: { display: 'flex', gap: '4px', flex: '1', minWidth: '180px' } },
+            input,
+            h('button', {
+              class: 'btn btn-primary', style: { padding: '2px 10px' },
+              onclick: async () => {
+                const desc = input.value.trim()
+                if (!desc) return
+                input.disabled = true
+                await m.scaffoldExisting(theme.id, desc)
+                await refresh()
+              },
+            }, '生成'),
+          )
+        })(),
+        h('button', {
+          class: 'btn', style: { padding: '2px 10px' },
+          onclick: async () => {
+            // 从模板补生成：用模板 instantiate + 生成标签库
+            const templates = await m.templates()
+            if (!templates.length) return
+            // 选第一个模板（简化：侧边栏已有模板选择，这里给快速入口）
+            const tpl = templates[0]
+            const theme2 = await m.addThemeFromTemplate(tpl.id)
+            // 不建新主题，而是把模板内容灌进当前主题
+            // 实际走 scaffoldExisting 用模板名做描述
+            await m.scaffoldExisting(theme.id, tpl.name)
+            await refresh()
+          },
+        }, '从模板…'),
+      ),
+    ),
+  )
+  return box
+}
+
+/** R3: 缺口列表——未关联指标 + 分析按钮，放在标签库带正下方 */
+function renderGapList(theme) {
+  if (!theme) return null
+  const gaps = state.nodes.filter((n) =>
+    n.type === 'observation' && n.status !== 'dead' &&
+    (!n.channelIds || n.channelIds.length === 0))
+  if (!gaps.length) return null
+
+  let proposalsMap = new Map()
+  const ignored = new Set()
+  const band = h('div', { class: 'sect', style: { marginBottom: '0' } })
+  const header = h('div', { class: 'sect-h' },
+    h('h2', {}, '未关联指标'),
+    h('em', {}, String(gaps.length)),
+  )
+  const body = h('div', { class: 'sect-b' })
+
+  function renderBody() {
+    clear(body)
+    const visible = gaps.filter((n) => !ignored.has(n.id))
+    for (const n of visible) {
+      const proposal = proposalsMap.get(n.id)
+      if (proposal && proposal.channelIds.length > 0) {
+        body.append(h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, n.title),
+            h('div', { class: 'q-meta' },
+              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
+            ),
+            h('div', { style: { marginTop: '6px' } },
+              h('span', { style: { fontSize: '12px', color: 'var(--text-3)' } }, `建议挂 ${proposal.channelIds.length} 个通道`),
+            ),
+            proposal.reason
+              ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' } }, proposal.reason)
+              : null,
+          ),
+          h('div', { class: 'q-acts' },
+            h('button', {
+              class: 'btn btn-primary',
+              onclick: async () => {
+                await m.updateNode(n.id, { channelIds: proposal.channelIds })
+                ignored.add(n.id)
+                proposalsMap.delete(n.id)
+                renderBody()
+              },
+            }, '采用'),
+            h('button', {
+              class: 'btn',
+              onclick: () => { ignored.add(n.id); proposalsMap.delete(n.id); renderBody() },
+            }, '忽略'),
+          ),
+        ))
+      } else {
+        body.append(h('div', { class: 'q' },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text' }, n.title),
+            h('div', { class: 'q-meta' },
+              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
+              h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
+            ),
+          ),
+        ))
+      }
+    }
+  }
+
+  const analyzeBtn = h('button', {
+    class: 'btn', style: { marginLeft: 'auto' },
+    onclick: async () => {
+      analyzeBtn.textContent = '分析中…'
+      analyzeBtn.disabled = true
+      const result = await m.proposeLinks(theme.id)
+      analyzeBtn.textContent = '分析'
+      analyzeBtn.disabled = false
+      if (!result.ok) {
+        toast(result.error === 'no-key' ? '未配置 API key' : `分析失败：${result.error}`, 'var(--red)')
+        return
+      }
+      proposalsMap = new Map(result.proposals.map((p) => [p.indicatorId, p]))
+      renderBody()
+    },
+  }, '分析')
+
+  header.append(analyzeBtn)
+  band.append(header, body)
+  renderBody()
+  return band
+}
+
 export function renderLattice(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
   const isGraph = state.shape === 'graph'
@@ -224,7 +371,7 @@ export function renderLattice(mid) {
 
   if (isGraph) {
     const wrap = h('div', { class: 'graph-wrap' })
-    mid.append(head, renderTagLibraryBand(theme), h('div', { class: 'graph-debug' }, wrap))
+    mid.append(head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'graph-debug' }, wrap))
     try {
       renderGraph(wrap)
     } catch (e) {
@@ -237,7 +384,7 @@ export function renderLattice(mid) {
   }
 
   const tree = h('div', { class: 'tree' })
-  mid.append(head, renderTagLibraryBand(theme), h('div', { class: 'tree-wrap' }, tree))
+  mid.append(head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'tree-wrap' }, tree))
   paint(tree)
   wireKeys(tree)
 }

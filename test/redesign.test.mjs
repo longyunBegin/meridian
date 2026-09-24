@@ -1875,12 +1875,13 @@ ok('F3: parseCompanyFacts 返回 label', parsedTags.find((t) => t.tag === 'Reven
 ok('F3: parseCompanyFacts 返回 synonymGroup', parsedTags.find((t) => t.tag === 'Revenues')?.synonymGroup === 0)
 ok('F3: vault.js 标签面板显示中文标签', vaultSrcF.includes('t.label') && vaultSrcF.includes('t.tag'))
 
-// --- F4: 手动读数挂指标 ---
-ok('F4: vault.js renderReadings 有关联指标下拉', vaultSrcF.includes('关联指标'))
-ok('F4: vault.js 有 observationNodes 过滤', vaultSrcF.includes("n.type === 'observation'"))
-ok('F4: vault.js 有 manual 通道查找', vaultSrcF.includes("c.fetch === 'manual'"))
-ok('F4: vault.js 有 channelAdd 手动录入', vaultSrcF.includes("name: '手动录入'"))
-ok('F4: vault.js 有 updateNode channelIds', vaultSrcF.includes('channelIds'))
+// --- F4: 手动读数挂指标（R2: 已从 vault.js 搬到 inspector.js）---
+const inspectorSrcF4 = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+ok('F4: inspector.js 有手填读数按钮', inspectorSrcF4.includes('手填一条读数'))
+ok('F4: inspector.js 有 manual 通道查找', inspectorSrcF4.includes("c.fetch === 'manual'"))
+ok('F4: inspector.js 有 channelAdd 手动录入', inspectorSrcF4.includes("name: '手动录入'"))
+ok('F4: inspector.js 有 updateNode channelIds', inspectorSrcF4.includes('channelIds'))
+ok('F4: vault.js 无手动录入表单', !vaultSrcF.includes('手动记一条读数'))
 
 // --- F5: 通道列表显示拉取错误状态 ---
 ok('F5: store.js addChannel 有 lastOk', storeSrc.includes('lastOk'))
@@ -2443,13 +2444,15 @@ const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
 ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
 ok('B: ipc.js import proposeChannelLinks', ipcBSrc.includes('proposeChannelLinks'))
 
-// --- vault.js 缺口列表按钮 ---
+// --- lattice.js 缺口列表按钮（R3: 已从 vault.js 搬到 lattice.js）---
 
 const vaultBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-ok('B: vault.js 有分析按钮', vaultBSrc.includes('分析未接线的指标'))
-ok('B: vault.js 有采用按钮', vaultBSrc.includes('采用'))
-ok('B: vault.js 有忽略按钮', vaultBSrc.includes('忽略'))
-ok('B: vault.js 有 proposeLinks 调用', vaultBSrc.includes('proposeLinks'))
+const latticeBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+ok('B: lattice.js 有分析按钮', latticeBSrc.includes('分析'))
+ok('B: lattice.js 有采用按钮', latticeBSrc.includes('采用'))
+ok('B: lattice.js 有忽略按钮', latticeBSrc.includes('忽略'))
+ok('B: lattice.js 有 proposeLinks 调用', latticeBSrc.includes('proposeLinks'))
+ok('B: vault.js 无缺口列表', !vaultBSrc.includes('未关联指标'))
 
 // ============================================================
 // C+D: 通道包补全 + 研究观点记录
@@ -2946,6 +2949,111 @@ ok('TL: preload 两份同步', pjTL.includes('updateTagLibraryTag') === pcTL.inc
 
 ok('TL: IPC tagLibrary:updateTag 可调', await fire('theme:tagLibrary:updateTag', tlTheme.id, 'tl_a', { name: '改过' }) != null)
 ok('TL: IPC tagLibrary:deleteTags 可调', typeof await fire('theme:tagLibrary:deleteTags', tlTheme.id, []) === 'number')
+
+// ============================================================
+// 主题入口与读数拆分（E + R）
+// ============================================================
+
+console.log('\n— 主题入口与读数拆分 —')
+
+const appSrcER = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
+const vaultSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const latticeSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+const inspectorSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+const ipcSrcER = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const pjER = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcER = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+
+// --- E1: 三路菜单 ---
+
+ok('E1: app.js 有 renderThemeCreator', appSrcER.includes('function renderThemeCreator'))
+ok('E1: app.js 有 setupNewTheme 调用', appSrcER.includes('setupNewTheme'))
+ok('E1: app.js 有 addThemeFromTemplate 调用', appSrcER.includes('addThemeFromTemplate'))
+ok('E1: app.js 有 addTheme 空白主题', appSrcER.includes('addTheme'))
+ok('E1: app.js 有空白主题明示', appSrcER.includes('只有名称'))
+
+// --- E2: 空态复用 ---
+
+ok('E2: emptyState 调 renderThemeCreator', appSrcER.includes('renderThemeCreator()'))
+// skeleton-desc 只在 app.js 的 renderThemeCreator 中定义（不复制到其他文件）
+ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !latticeSrcER.includes('skeleton-desc') && !vaultSrcER.includes('skeleton-desc') && !inspectorSrcER.includes('skeleton-desc'))
+
+// --- E3: 空白主题补生成骨架 ---
+
+ok('E3: lattice.js 有 renderSkeletonPrompt', latticeSrcER.includes('function renderSkeletonPrompt'))
+ok('E3: lattice.js 有骨架提示', latticeSrcER.includes('还没有骨架'))
+ok('E3: lattice.js 有 scaffoldExisting 调用', latticeSrcER.includes('scaffoldExisting'))
+ok('E3: ipc.js 有 scaffoldTheme 共用函数', ipcSrcER.includes('async function scaffoldTheme'))
+ok('E3: ipc.js 有 theme:scaffoldExisting', ipcSrcER.includes('theme:scaffoldExisting'))
+ok('E3: ipc.js setupNew 调 scaffoldTheme', ipcSrcER.includes('await scaffoldTheme(theme.id, description, s)'))
+ok('E3: preload.js 有 scaffoldExisting', pjER.includes('scaffoldExisting'))
+ok('E3: preload.cjs 有 scaffoldExisting', pcER.includes('scaffoldExisting'))
+ok('E3: preload 两份同步', pjER.includes('scaffoldExisting') === pcER.includes('scaffoldExisting'))
+
+// E3 端到端：空白主题补生成
+const e3Theme = store.addTheme('E3 空白主题')
+const e3BeforeNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).length
+ok('E3: 空白主题无节点', e3BeforeNodes === 0)
+const e3Result = await fire('theme:scaffoldExisting', e3Theme.id, 'AI 算力供应链')
+ok('E3: scaffoldExisting 返回 ok', e3Result?.ok === true)
+const e3AfterNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).length
+ok('E3: 补生成后有节点', e3AfterNodes > 0, `实际 ${e3AfterNodes}`)
+const e3ThemeAfter = store.allThemes().find((t) => t.id === e3Theme.id)
+ok('E3: 补生成后有标签库', Array.isArray(e3ThemeAfter?.tagLibrary))
+
+// --- R1: 读数视图只读 + 三审计字段 ---
+
+ok('R1: vault.js 无手动录入表单', !vaultSrcER.includes('手动记一条读数'))
+ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期'))
+ok('R1: vault.js 有抓于', vaultSrcER.includes('抓于'))
+ok('R1: vault.js 有跟踪', vaultSrcER.includes('跟踪'))
+ok('R1: vault.js 有 trackedIndicators', vaultSrcER.includes('trackedIndicators'))
+ok('R1: vault.js 有 asof-group-start', vaultSrcER.includes('asof-group-start'))
+
+// R1 端到端：读数显示跟踪指标
+const r1Theme = store.addTheme('R1 测试主题')
+const r1Node = store.addNode({ themeId: r1Theme.id, parentId: null, kind: 'branch', title: 'R1 环节' })
+const r1Ind = store.addNode({ themeId: r1Theme.id, parentId: r1Node.id, kind: 'lemma', title: 'R1 指标', type: 'observation', confidence: 50 })
+const r1Ch = store.addChannel({ name: 'R1 通道', fetch: 'manual', kind: '一手数据', themeId: r1Theme.id })
+store.updateNode(r1Ind.id, { channelIds: [r1Ch.id] })
+store.addReading({ metric: 'r1.test', value: 42, unit: 'USD', asOf: '2024-Q1', channelId: r1Ch.id, source: { kind: '一手数据' } })
+const r1Inds = store.indicatorsForReading({ channelId: r1Ch.id })
+ok('R1: indicatorsForReading 返回指标', r1Inds.length > 0 && r1Inds[0].title === 'R1 指标')
+
+// --- R2: 手填读数在检视面板 ---
+
+ok('R2: inspector.js 有手填一条读数', inspectorSrcER.includes('手填一条读数'))
+ok('R2: inspector.js 有 manual 通道', inspectorSrcER.includes("c.fetch === 'manual'"))
+ok('R2: inspector.js 有 channelAdd', inspectorSrcER.includes('channelAdd'))
+ok('R2: inspector.js 有 addReading', inspectorSrcER.includes('addReading'))
+ok('R2: vault.js 无 addReading 调用', !vaultSrcER.includes('addReading'))
+
+// --- R3: 缺口列表在脉络视图 ---
+
+ok('R3: lattice.js 有 renderGapList', latticeSrcER.includes('function renderGapList'))
+ok('R3: lattice.js 有未关联指标', latticeSrcER.includes('未关联指标'))
+ok('R3: lattice.js 有 proposeLinks', latticeSrcER.includes('proposeLinks'))
+ok('R3: lattice.js 有采用按钮', latticeSrcER.includes('采用'))
+ok('R3: lattice.js 有忽略按钮', latticeSrcER.includes('忽略'))
+ok('R3: vault.js 无未关联指标', !vaultSrcER.includes('未关联指标'))
+ok('R3: vault.js 无 proposeLinks', !vaultSrcER.includes('proposeLinks'))
+
+// --- R4: 无「未关联」筛选项 ---
+
+ok('R4: vault.js 无未关联筛选', !vaultSrcER.includes("'未关联'"))
+
+// --- 验收清单 ---
+
+// 1. 读数视图无表单
+ok('验收: vault.js 无 addReading', !vaultSrcER.includes('addReading'))
+ok('验收: vault.js 无 手动记一条', !vaultSrcER.includes('手动记一条'))
+
+// 2. 旧数据兼容：有 indicatorId 的旧读数正常显示
+const oldReading = store.addReading({ metric: 'old.test', value: 1, indicatorId: 'old-ind', source: { kind: '一手数据' } })
+ok('验收: 旧读数有 indicatorId 不影响 addReading', oldReading.added === true)
+
+// 3. scaffoldTheme 不写 indicatorId
+ok('验收: ipc.js scaffoldTheme 无 indicatorId', !ipcSrcER.includes('indicatorId'))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

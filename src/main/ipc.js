@@ -405,15 +405,13 @@ function register({ getMainWindow }) {
   })
 
   // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 打标签 → 返回
-  ipcMain.handle('theme:setupNew', async (_, description) => {
-    const theme = addTheme(description)
-    const s = settings()
+  // scaffoldTheme 是共用核心：setupNew 和 scaffoldExisting 都调它
+  async function scaffoldTheme(themeId, description, s) {
     const r = await generateSkeleton(s, description)
     if (r.ok) {
-      // 模型生成骨架
       const walk = (node, parentId) => {
         const n = addNode({
-          themeId: theme.id, parentId, kind: 'branch', title: node.title,
+          themeId, parentId, kind: 'branch', title: node.title,
           propagation: node.propagation || 0.6, by: 'model',
           stableId: node.id, scaffold: node.scaffold || null,
         })
@@ -423,7 +421,7 @@ function register({ getMainWindow }) {
     } else {
       // 无 key 降级：用静态模板
       const tpl = templateFind('ai-chain')
-      if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
+      if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId }))
     }
     // 按描述匹配通道包，匹配不到不配任何通道——比塞一套不相关的通道诚实
     const AI_KEYWORDS = /AI|人工智能|LLM|大模型|GPU|芯片|算力|光模块|半导体|silicon|photonics|inference|training|token|cloud|云/
@@ -433,19 +431,32 @@ function register({ getMainWindow }) {
         addChannel({
           name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
           metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
-          cadence: ch.cadence, themeId: theme.id,
+          cadence: ch.cadence, themeId,
           enabled: !ch.needsKey,
         })
       }
     }
     // 主题打标签（降级：无 key → tags: []，不阻塞）
     const tagResult = await generateThemeTags(s, description)
-    if (tagResult.ok && tagResult.tags.length) updateTheme(theme.id, { tags: tagResult.tags })
+    if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
     // 生成标签库（降级：无 key → tagLibrary: []，不阻塞）
-    const titles = allNodes().filter((n) => n.themeId === theme.id && n.kind === 'branch').map((n) => n.title)
+    const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
     const tlResult = await generateTagLibrary(s, description, titles)
-    if (tlResult.ok) updateTheme(theme.id, { tagLibrary: tlResult.tagLibrary })
+    if (tlResult.ok) updateTheme(themeId, { tagLibrary: tlResult.tagLibrary })
+  }
+
+  ipcMain.handle('theme:setupNew', async (_, description) => {
+    const theme = addTheme(description)
+    const s = settings()
+    await scaffoldTheme(theme.id, description, s)
     return theme
+  })
+
+  // 空白主题补生成骨架 + 标签库（E3）
+  ipcMain.handle('theme:scaffoldExisting', async (_, themeId, description) => {
+    const s = settings()
+    await scaffoldTheme(themeId, description, s)
+    return { ok: true }
   })
 
   ipcMain.handle('settings:get', () => ({ ...settings(), sourceQuality: SOURCE_QUALITY }))

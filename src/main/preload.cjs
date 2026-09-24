@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('meridian', {
   addTheme: (name) => ipcRenderer.invoke('theme:add', name),
   addThemeFromTemplate: (templateId) => ipcRenderer.invoke('theme:fromTemplate', templateId),
   setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
+  scaffoldExisting: (themeId, description) => ipcRenderer.invoke('theme:scaffoldExisting', themeId, description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
   restoreTheme: (id) => ipcRenderer.invoke('theme:restore', id),
   deletedThemes: () => ipcRenderer.invoke('theme:deleted'),

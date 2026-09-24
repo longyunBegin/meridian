@@ -282,34 +282,65 @@ function fmtValue(v) {
   return v.toLocaleString('en-US')
 }
 
-function readingRow(r, isLatest) {
+// R1: 反查——读数 channelId → 哪些指标的 channelIds 含它
+function trackedIndicators(reading, indicators) {
+  if (!reading.channelId) return []
+  return indicators.filter((n) => (n.channelIds || []).includes(reading.channelId))
+}
+
+function readingRow(r, isLatest, indicators) {
+  const tracked = trackedIndicators(r, indicators)
   return h('div', { class: 'q', style: isLatest ? { borderLeft: '3px solid var(--blue, #0071e3)' } : {} },
     h('div', { class: 'q-body' },
       h('div', { class: 'q-text' },
         h('span', { style: { fontWeight: isLatest ? '600' : '400' } }, fmtValue(r.value)),
         r.unit ? h('span', { style: { color: 'var(--text-3)', marginLeft: '4px' } }, r.unit) : null,
       ),
+      // R1: 数据期和抓于分两行——合起来才能回答「下注时能看到的数据是什么」
       h('div', { class: 'q-meta' },
-        h('span', {}, r.asOf || '—'),
+        h('span', {}, `数据期 ${r.asOf || '—'}`),
         h('span', { style: { marginLeft: '6px' } }, `· ${r.basis || 'reported'}`),
+      ),
+      h('div', { class: 'q-meta' },
+        h('span', {}, `抓于 ${r.at || '—'}`),
         h('span', { style: { marginLeft: '6px' } }, `· ${r.source?.kind || '未知'}`),
-        h('span', { style: { marginLeft: '6px' } }, `· 抓取于 ${r.at}`),
         r.source?.url ? h('button', {
           class: 'btn', style: { marginLeft: '6px', padding: '1px 6px', fontSize: '11px' },
           onclick: () => m.openExternal(r.source.url),
         }, '来源') : null,
       ),
+      // R1: 跟踪——这个读数在支撑哪条判断
+      tracked.length ? h('div', { class: 'q-meta' },
+        h('span', { style: { color: 'var(--text-3)' } }, `跟踪：${tracked.map((n) => n.title).join('、')}`),
+      ) : null,
     ),
   )
 }
 
-function metricCard(group) {
+function metricCard(group, indicators) {
   const isFolded = group.count > FOLD_THRESHOLD
   const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
   const hiddenCount = group.count - FOLD_THRESHOLD
 
+  // R1: 同 asOf 视觉归组——正常的重复申报不像数据错误
+  const asOfGroups = {}
+  for (const r of visible) {
+    const key = r.asOf || '—'
+    if (!asOfGroups[key]) asOfGroups[key] = []
+    asOfGroups[key].push(r)
+  }
+  const asOfKeys = Object.keys(asOfGroups)
+
   const body = h('div', { class: 'sect-b' },
-    ...visible.map((r, i) => readingRow(r, i === 0)),
+    ...visible.map((r, i) => {
+      const row = readingRow(r, i === 0, indicators)
+      // 同 asOf 多条：第一条加标注
+      const key = r.asOf || '—'
+      if (asOfGroups[key].length > 1 && asOfGroups[key][0] === r) {
+        row.classList.add('asof-group-start')
+      }
+      return row
+    }),
   )
 
   if (isFolded) {
@@ -320,7 +351,7 @@ function metricCard(group) {
         if (expanded) return
         expanded = true
         for (const r of group.items.slice(FOLD_THRESHOLD)) {
-          body.append(readingRow(r, false))
+          body.append(readingRow(r, false, indicators))
         }
         moreBtn.remove()
       },
@@ -393,7 +424,7 @@ export async function renderReadings(mid) {
     }
     const groups = groupReadings(filtered)
     const list = $('#readings-list')
-    if (list) { clear(list); add(list, groups.map(metricCard)) }
+    if (list) { clear(list); add(list, groups.map((g) => metricCard(g, indicators))) }
   }
 
   // 指标筛选排
@@ -408,174 +439,15 @@ export async function renderReadings(mid) {
     filterBar.append(filterBtn(channelNames[id], id, filterBar))
   }
 
-  // 手动录入表单
-  const observationNodes = state.nodes.filter((n) =>
-    n.type === 'observation' && n.status !== 'dead' && n.themeId === state.themeId)
-  const formInputs = {}
-  const form = h('div', { class: 'q', style: { marginBottom: '10px' } },
-    h('div', { class: 'q-body' },
-      h('div', { class: 'q-text' }, '手动记一条读数'),
-      h('div', { class: 'q-meta', style: { flexDirection: 'column', alignItems: 'stretch', gap: '6px' } },
-        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-          h('input', { class: 'txt', placeholder: 'metric（如 nvda.revenue）', style: { flex: '1', minWidth: '120px' }, oninput: (e) => formInputs.metric = e.target.value }),
-          h('input', { class: 'txt', placeholder: 'value', style: { width: '120px' }, oninput: (e) => formInputs.value = e.target.value }),
-          h('input', { class: 'txt', placeholder: 'unit', style: { width: '80px' }, oninput: (e) => formInputs.unit = e.target.value }),
-          h('input', { class: 'txt', placeholder: 'asOf（如 2024-Q3）', style: { width: '120px' }, oninput: (e) => formInputs.asOf = e.target.value }),
-          h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => formInputs.kind = e.target.value },
-            h('option', { value: '财报 / 公告' }, '财报 / 公告'),
-            h('option', { value: '一手数据' }, '一手数据'),
-            h('option', { value: '券商研报' }, '券商研报'),
-            h('option', { value: '独立媒体' }, '独立媒体'),
-            h('option', { value: '自媒体' }, '自媒体'),
-          ),
-        ),
-        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' } },
-          h('span', { style: { fontSize: '11px', color: 'var(--text-3)', whiteSpace: 'nowrap' } }, '关联指标'),
-          h('select', { class: 'txt', style: { flex: '1', minWidth: '120px' }, onchange: (e) => formInputs.nodeId = e.target.value || null },
-            h('option', { value: '' }, '不关联'),
-            ...observationNodes.map((n) => h('option', { value: n.id }, n.title)),
-          ),
-          h('button', {
-            class: 'btn btn-primary',
-            onclick: async () => {
-              if (!formInputs.metric || !formInputs.value) return
-              let channelId = null
-              if (formInputs.nodeId) {
-                let ch = channels.find((c) => c.fetch === 'manual' && c.themeId === state.themeId)
-                if (!ch) {
-                  ch = await m.channelAdd({ name: '手动录入', kind: '一手数据', fetch: 'manual', themeId: state.themeId })
-                  channels.push(ch)
-                }
-                channelId = ch.id
-                const node = state.nodes.find((n) => n.id === formInputs.nodeId)
-                if (node && !(node.channelIds || []).includes(ch.id)) {
-                  await m.updateNode(node.id, { channelIds: [...(node.channelIds || []), ch.id] })
-                }
-              }
-              await m.addReading({
-                metric: formInputs.metric,
-                value: Number(formInputs.value),
-                unit: formInputs.unit || null,
-                asOf: formInputs.asOf || null,
-                source: { kind: formInputs.kind || '一手数据' },
-                basis: 'reported',
-                channelId,
-                nodeId: formInputs.nodeId || null,
-              })
-              await refresh()
-            },
-          }, '保存'),
-        ),
-      ),
-    ),
-  )
-
   const groups = groupReadings(all)
   mid.append(h('section', { class: 'sect' },
     h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
     indicatorBar,
     filterBar,
-    form,
     h('div', { id: 'readings-list' },
-      ...groups.map(metricCard),
+      ...groups.map((g) => metricCard(g, indicators)),
     ),
   ))
-
-  // 缺口列表：没有挂通道的 observation 指标
-  const gaps = state.nodes.filter((n) =>
-    n.type === 'observation' && n.status !== 'dead' &&
-    (!n.channelIds || n.channelIds.length === 0))
-  if (gaps.length) {
-    // 会话内状态：提议 + 已忽略（不进 DB）
-    let proposalsMap = new Map()
-    const ignored = new Set()
-
-    const gapsBody = h('div', { class: 'sect-b' })
-
-    function renderGaps() {
-      clear(gapsBody)
-      const visible = gaps.filter((n) => !ignored.has(n.id))
-      for (const n of visible) {
-        const proposal = proposalsMap.get(n.id)
-        if (proposal && proposal.channelIds.length > 0) {
-          const chNames = proposal.channelIds
-            .map((id) => channels.find((c) => c.id === id)?.name || id)
-            .join(' · ')
-          gapsBody.append(h('div', { class: 'q' },
-            h('div', { class: 'q-body' },
-              h('div', { class: 'q-text' }, n.title),
-              h('div', { class: 'q-meta' },
-                h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
-              ),
-              h('div', { style: { marginTop: '6px' } },
-                h('span', { style: { fontSize: '12px', color: 'var(--text-3)' } }, `建议挂 ${proposal.channelIds.length} 个通道`),
-                h('span', { style: { marginLeft: '8px' } }, chNames),
-              ),
-              proposal.reason
-                ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' } }, proposal.reason)
-                : null,
-            ),
-            h('div', { class: 'q-acts' },
-              h('button', {
-                class: 'btn btn-primary',
-                onclick: async () => {
-                  await m.updateNode(n.id, { channelIds: proposal.channelIds })
-                  ignored.add(n.id)
-                  proposalsMap.delete(n.id)
-                  renderGaps()
-                },
-              }, '采用'),
-              h('button', {
-                class: 'btn',
-                onclick: () => {
-                  ignored.add(n.id)
-                  proposalsMap.delete(n.id)
-                  renderGaps()
-                },
-              }, '忽略'),
-            ),
-          ))
-        } else {
-          gapsBody.append(h('div', { class: 'q' },
-            h('div', { class: 'q-body' },
-              h('div', { class: 'q-text' }, n.title),
-              h('div', { class: 'q-meta' },
-                h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
-                h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
-              ),
-            ),
-          ))
-        }
-      }
-    }
-
-    const analyzeBtn = h('button', {
-      class: 'btn',
-      onclick: async () => {
-        analyzeBtn.textContent = '分析中…'
-        analyzeBtn.disabled = true
-        const result = await m.proposeLinks(state.themeId)
-        analyzeBtn.textContent = '分析未接线的指标'
-        analyzeBtn.disabled = false
-        if (!result.ok) {
-          toast(result.error === 'no-key' ? '未配置 API key' : `分析失败：${result.error}`, 'var(--red)')
-          return
-        }
-        proposalsMap = new Map(result.proposals.map((p) => [p.indicatorId, p]))
-        renderGaps()
-      },
-    }, '分析未接线的指标')
-
-    mid.append(h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' },
-        h('h2', {}, '未关联指标'),
-        h('em', {}, String(gaps.length)),
-        analyzeBtn,
-      ),
-      gapsBody,
-    ))
-    renderGaps()
-  }
 
   // 你 vs 机构
   if (vsData.settledCount > 0) {

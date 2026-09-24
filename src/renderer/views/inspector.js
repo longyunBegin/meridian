@@ -39,6 +39,61 @@ async function sourcePanel(node) {
       ))
     } else {
       box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
+      // R2: 手填一条读数——正确时机是「你正在看那个空指标的时候」
+      const formInputs = {}
+      let formVisible = false
+      const formBox = h('div', { style: { marginTop: '6px' } })
+      const toggleBtn = h('button', {
+        class: 'btn', style: { marginTop: '4px', padding: '2px 8px', fontSize: '11px' },
+        onclick: () => {
+          formVisible = !formVisible
+          clear(formBox)
+          if (!formVisible) return
+          formBox.append(
+            h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px' } },
+              h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '100px' }, oninput: (e) => formInputs.metric = e.target.value }),
+              h('input', { class: 'txt', placeholder: 'value', style: { width: '90px' }, oninput: (e) => formInputs.value = e.target.value }),
+              h('input', { class: 'txt', placeholder: 'unit', style: { width: '60px' }, oninput: (e) => formInputs.unit = e.target.value }),
+            ),
+            h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' } },
+              h('input', { class: 'txt', placeholder: 'asOf（如 2024-Q3）', style: { flex: '1', minWidth: '100px' }, oninput: (e) => formInputs.asOf = e.target.value }),
+              h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => formInputs.kind = e.target.value },
+                h('option', { value: '财报 / 公告' }, '财报 / 公告'),
+                h('option', { value: '一手数据' }, '一手数据'),
+                h('option', { value: '券商研报' }, '券商研报'),
+                h('option', { value: '独立媒体' }, '独立媒体'),
+                h('option', { value: '自媒体' }, '自媒体'),
+              ),
+              h('button', {
+                class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: '11px' },
+                onclick: async () => {
+                  if (!formInputs.metric || !formInputs.value) return
+                  // 复用 F4 逻辑：自动建/复用主题级手动通道 + 挂到指标
+                  let ch = channels.find((c) => c.fetch === 'manual' && c.themeId === node.themeId)
+                  if (!ch) {
+                    ch = await m.channelAdd({ name: '手动录入', kind: '一手数据', fetch: 'manual', themeId: node.themeId })
+                    channels.push(ch)
+                  }
+                  if (!(node.channelIds || []).includes(ch.id)) {
+                    await m.updateNode(node.id, { channelIds: [...(node.channelIds || []), ch.id] })
+                  }
+                  await m.addReading({
+                    metric: formInputs.metric,
+                    value: Number(formInputs.value),
+                    unit: formInputs.unit || null,
+                    asOf: formInputs.asOf || null,
+                    source: { kind: formInputs.kind || '一手数据' },
+                    basis: 'reported',
+                    channelId: ch.id,
+                  })
+                  await refresh()
+                },
+              }, '保存'),
+            ),
+          )
+        },
+      }, '手填一条读数')
+      box.append(toggleBtn, formBox)
     }
 
     // 挂通道下拉（按标签相关性排序，themeId 次级）
