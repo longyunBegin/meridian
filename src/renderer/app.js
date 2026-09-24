@@ -271,11 +271,11 @@ function renderThemes() {
             await refresh()
             if (state.themeId === t.id) selectTheme(state.themes[0]?.id || null)
             const tEl = document.createElement('div')
-            tEl.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg-2,#333);color:var(--text-2);padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;gap:8px'
+            tEl.className = 'toast'
             tEl.append(document.createTextNode(`已删除主题「${t.name}」`))
             const undoBtn = document.createElement('button')
             undoBtn.textContent = '撤销'
-            undoBtn.style.cssText = 'padding:2px 8px;font-size:11px;cursor:pointer'
+            undoBtn.className = 'toast-btn'
             undoBtn.onclick = async () => {
               await m.restoreTheme(t.id)
               await refresh()

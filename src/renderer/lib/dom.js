@@ -50,7 +50,7 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)]
 /** 临时浮层提示，3 秒后自动消失。替代 alert()。 */
 export function toast(msg, color = 'var(--text-2)') {
   const el = document.createElement('div')
-  el.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:${color === 'var(--red)' ? 'var(--red)' : 'var(--bg-2, #333)'};color:${color === 'var(--red)' ? 'white' : color};padding:8px 16px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.15)`
+  el.className = 'toast' + (color === 'var(--red)' ? ' toast-error' : '')
   el.textContent = msg
   document.body.append(el)
   setTimeout(() => el.remove(), 3000)
