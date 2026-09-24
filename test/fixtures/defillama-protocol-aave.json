@@ -1,0 +1,11 @@
+{
+  "id": "aave",
+  "name": "Aave",
+  "tvl": [
+    { "date": 1790208000, "total": 18000000000 },
+    { "date": 1790294400, "total": 18500000000 },
+    { "date": 1790380800, "total": 19220218848 }
+  ],
+  "chain": "Ethereum",
+  "symbol": "AAVE"
+}

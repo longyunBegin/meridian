@@ -17,6 +17,7 @@ import {
   allChannels, addChannel, updateChannel, removeChannel,
   addReading, allReadings, indicatorsForReading, latestReadingByChannel,
   updateTheme, rankChannelsByTags, kindToTags, sicToTags,
+  addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags } from './extract.js'
@@ -776,6 +777,13 @@ function register({ getMainWindow }) {
   ipcMain.handle('reading:all', () => allReadings())
   ipcMain.handle('reading:indicatorsFor', (_, reading) => indicatorsForReading(reading))
   ipcMain.handle('reading:latestByChannel', (_, channelId) => latestReadingByChannel(channelId))
+
+  // ---- 研究观点 ----
+  ipcMain.handle('research:add', (_, input) => addResearchNote(input))
+  ipcMain.handle('research:all', () => allResearchNotes())
+  ipcMain.handle('research:byNode', (_, nodeId) => researchNotesByNode(nodeId))
+  ipcMain.handle('research:hitRate', (_, notes, correct) => researchHitRate(notes, correct))
+  ipcMain.handle('research:vsInstitution', (_, days) => vsInstitution(days || 90))
 
   // ---- 模型生成骨架（step 4）----
   ipcMain.handle('theme:generateSkeleton', async (_, description) => {

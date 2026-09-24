@@ -123,6 +123,86 @@ async function sourcePanel(node) {
   return box
 }
 
+/** 研究观点面板：录入机构观点 → 列表 → 结算后对比 */
+async function researchPanel(node) {
+  const box = h('div', { class: 'insp-section' })
+  box.append(h('div', { class: 'insp-h' }, '研究观点'),
+    h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载中…'))
+  try {
+    const notes = await m.researchByNode(node.id)
+    clear(box)
+    box.append(h('div', { class: 'insp-h' }, '研究观点',
+      h('span', { style: { fontWeight: '400', color: 'var(--text-3)' } }, notes.length ? `${notes.length} 条` : '')))
+
+    // 录入表单
+    const formInputs = {}
+    const form = h('div', { class: 'field', style: { flexDirection: 'column', gap: '4px' } },
+      h('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } },
+        h('input', { class: 'txt', placeholder: '机构', style: { flex: '1', minWidth: '80px' }, oninput: (e) => formInputs.org = e.target.value }),
+        h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => formInputs.stance = e.target.value },
+          h('option', { value: 'bullish' }, '看涨'),
+          h('option', { value: 'bearish' }, '看跌'),
+          h('option', { value: 'neutral' }, '中性'),
+        ),
+        h('input', { class: 'txt', type: 'date', style: { width: '120px' }, oninput: (e) => formInputs.publishedAt = e.target.value }),
+      ),
+      h('input', { class: 'txt', placeholder: '一句话观点', style: { width: '100%' }, oninput: (e) => formInputs.title = e.target.value }),
+      h('div', { style: { display: 'flex', gap: '4px' } },
+        h('input', { class: 'txt', placeholder: '链接（可空）', style: { flex: '1' }, oninput: (e) => formInputs.url = e.target.value }),
+        h('button', {
+          class: 'btn btn-primary',
+          onclick: async () => {
+            if (!formInputs.org || !formInputs.title) return
+            await m.addResearch({
+              org: formInputs.org,
+              stance: formInputs.stance || 'neutral',
+              publishedAt: formInputs.publishedAt || null,
+              title: formInputs.title,
+              url: formInputs.url || null,
+              nodeId: node.id,
+            })
+            refresh()
+          },
+        }, '记录'),
+      ),
+    )
+    box.append(form)
+
+    // 观点列表
+    if (notes.length) {
+      const settled = node.settlement?.correct != null
+      for (const n of notes) {
+        const stanceLabel = { bullish: '看涨', bearish: '看跌', neutral: '中性' }[n.stance] || n.stance
+        let compare = null
+        if (settled) {
+          const correct = node.settlement.correct
+          if (n.stance === 'neutral') {
+            compare = '中性不计入'
+          } else if (correct) {
+            compare = n.stance === 'bullish' ? '← 和你一致' : '← 不一致'
+          } else {
+            compare = n.stance === 'bearish' ? '← 和你一致' : '← 不一致'
+          }
+        }
+        box.append(h('div', { class: 'q', style: { padding: '4px 0' } },
+          h('div', { class: 'q-body' },
+            h('div', { class: 'q-text', style: { fontSize: '12px' } }, `${n.org} · ${stanceLabel} · ${n.publishedAt || n.at}`),
+            h('div', { class: 'q-meta' },
+              h('span', { style: { fontSize: '11px' } }, n.title),
+              compare ? h('span', { style: { marginLeft: '6px', fontSize: '11px', color: compare.includes('一致') ? 'var(--accent)' : 'var(--text-3)' } }, compare) : null,
+            ),
+          ),
+        ))
+      }
+    }
+  } catch {
+    clear(box)
+    box.append(h('div', { class: 'insp-h' }, '研究观点'),
+      h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载失败'))
+  }
+  return box
+}
+
 /**
  * 环节上的研究台：
  *   要回答什么问题 → 跟踪什么指标 → 什么信号出现说明这一层错了
@@ -468,6 +548,7 @@ export function renderInspectorLattice(aside) {
         '命题上挂涉及的标的，可反查这条产业链位置影响哪些票。不输出买卖建议、评分、目标价。'),
     ),
     (() => { const sp = h('div'); sourcePanel(node).then((el) => { sp.replaceWith(el) }); return sp })(),
+    (() => { const rp = h('div'); researchPanel(node).then((el) => { rp.replaceWith(el) }); return rp })(),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '苏格拉底追问'),
       socraticBtn,

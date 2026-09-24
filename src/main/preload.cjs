@@ -103,6 +103,13 @@ contextBridge.exposeInMainWorld('meridian', {
   indicatorsForReading: (reading) => ipcRenderer.invoke('reading:indicatorsFor', reading),
   latestReadingByChannel: (channelId) => ipcRenderer.invoke('reading:latestByChannel', channelId),
 
+  // ---- 研究观点
+  addResearch: (input) => ipcRenderer.invoke('research:add', input),
+  allResearch: () => ipcRenderer.invoke('research:all'),
+  researchByNode: (nodeId) => ipcRenderer.invoke('research:byNode', nodeId),
+  researchHitRate: (notes, correct) => ipcRenderer.invoke('research:hitRate', notes, correct),
+  vsInstitution: (days) => ipcRenderer.invoke('research:vsInstitution', days),
+
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),
   onInboxFocus: (cb) => ipcRenderer.on('inbox:focus', () => cb()),

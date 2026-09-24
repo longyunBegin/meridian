@@ -1,0 +1,22 @@
+{
+  "peggedAssets": [
+    {
+      "id": "1",
+      "name": "Tether",
+      "symbol": "USDT",
+      "circulating": { "peggedUSD": 120000000000 }
+    },
+    {
+      "id": "2",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "circulating": { "peggedUSD": 35000000000 }
+    },
+    {
+      "id": "3",
+      "name": "Dai",
+      "symbol": "DAI",
+      "circulating": { "peggedUSD": 5000000000 }
+    }
+  ]
+}

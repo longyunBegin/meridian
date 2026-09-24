@@ -406,6 +406,25 @@
       { "name": "Hugging Face Blog", "kind": "一手数据", "fetch": "rss", "query": "https://huggingface.co/blog/feed.xml", "cadence": "周", "needsKey": false },
       { "name": "Tavily · AI 新闻", "kind": "独立媒体", "fetch": "tavily", "query": "AI infrastructure OR LLM OR GPU supply chain", "cadence": "日", "needsKey": true },
       { "name": "X · AI 产业链", "kind": "自媒体", "fetch": "grok-x-search", "query": "1.6T optical module OR silicon photonics OR AI supply chain", "cadence": "日", "needsKey": true }
+    ],
+    "saas": [
+      { "name": "CRM 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "CRM", "cadence": "季度", "needsKey": false },
+      { "name": "NOW 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "NOW", "cadence": "季度", "needsKey": false },
+      { "name": "WDAY 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "WDAY", "cadence": "季度", "needsKey": false },
+      { "name": "DDOG 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "DDOG", "cadence": "季度", "needsKey": false },
+      { "name": "SNOW 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "SNOW", "cadence": "季度", "needsKey": false },
+      { "name": "MDB 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "MDB", "cadence": "季度", "needsKey": false },
+      { "name": "NET 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "NET", "cadence": "季度", "needsKey": false },
+      { "name": "毛利率 · CRM", "kind": "财报 / 公告", "fetch": "edgarConcept", "query": "CRM", "metric": "GrossProfit", "cadence": "季度", "needsKey": false },
+      { "name": "毛利率 · NOW", "kind": "财报 / 公告", "fetch": "edgarConcept", "query": "NOW", "metric": "GrossProfit", "cadence": "季度", "needsKey": false },
+      { "name": "SaaS 财报季 RSS", "kind": "独立媒体", "fetch": "rss", "query": "https://www.saas.fm/feed", "cadence": "周", "needsKey": false }
+    ],
+    "crypto": [
+      { "name": "稳定币总量", "kind": "一手数据", "fetch": "defillamaStablecoins", "metric": "total", "cadence": "日", "needsKey": false },
+      { "name": "Aave TVL", "kind": "一手数据", "fetch": "defillamaProtocol", "query": "aave", "metric": "tvl", "cadence": "日", "needsKey": false },
+      { "name": "以太坊手续费", "kind": "一手数据", "fetch": "defillamaProtocol", "query": "ethereum", "metric": "fees", "cadence": "日", "needsKey": false },
+      { "name": "全网算力", "kind": "一手数据", "fetch": "blockchainChart", "metric": "hash-rate", "cadence": "日", "needsKey": false },
+      { "name": "活跃地址", "kind": "一手数据", "fetch": "blockchainChart", "metric": "n-unique-addresses", "cadence": "日", "needsKey": false }
     ]
   }
 }

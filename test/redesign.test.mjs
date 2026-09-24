@@ -2451,5 +2451,177 @@ ok('B: vault.js 有采用按钮', vaultBSrc.includes('采用'))
 ok('B: vault.js 有忽略按钮', vaultBSrc.includes('忽略'))
 ok('B: vault.js 有 proposeLinks 调用', vaultBSrc.includes('proposeLinks'))
 
+// ============================================================
+// C+D: 通道包补全 + 研究观点记录
+// ============================================================
+
+console.log('\n— C+D: 通道包补全 + 研究观点 —')
+
+const { channelPack } = await import('../src/main/templates.js')
+
+// --- C1: saas 通道包 ---
+const saasPack = channelPack('saas')
+ok('C1: saas 通道包非空', saasPack.length > 0)
+ok('C1: saas 有 edgarFilings', saasPack.some((c) => c.fetch === 'edgarFilings'))
+ok('C1: saas 有 edgarConcept', saasPack.some((c) => c.fetch === 'edgarConcept'))
+ok('C1: saas 覆盖 ≥5 家公司', new Set(saasPack.filter((c) => c.fetch === 'edgarFilings').map((c) => c.query)).size >= 5)
+
+// --- C2: crypto 通道包 ---
+const cryptoPack = channelPack('crypto')
+ok('C2: crypto 通道包非空', cryptoPack.length > 0)
+ok('C2: crypto 有 defillamaProtocol', cryptoPack.some((c) => c.fetch === 'defillamaProtocol'))
+ok('C2: crypto 有 defillamaStablecoins', cryptoPack.some((c) => c.fetch === 'defillamaStablecoins'))
+ok('C2: crypto 有 blockchainChart', cryptoPack.some((c) => c.fetch === 'blockchainChart'))
+ok('C2: crypto 全免费无 key', cryptoPack.every((c) => c.needsKey === false))
+
+// --- C2: 新取数器注册 ---
+const availCD = (await import('../src/main/fetchers.js')).availableFetchers()
+ok('C2: availableFetchers 含 defillamaProtocol', availCD.includes('defillamaProtocol'))
+ok('C2: availableFetchers 含 defillamaStablecoins', availCD.includes('defillamaStablecoins'))
+ok('C2: availableFetchers 含 blockchainChart', availCD.includes('blockchainChart'))
+
+// --- C2: fixture 测试 ---
+const defiProtocolFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/defillama-protocol-aave.json'), 'utf8'))
+ok('C2: defillama fixture 有 tvl 数组', Array.isArray(defiProtocolFixture.tvl) && defiProtocolFixture.tvl.length > 0)
+ok('C2: defillama fixture tvl 最后一条有 total', defiProtocolFixture.tvl[defiProtocolFixture.tvl.length - 1].total > 0)
+
+const defiStableFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/defillama-stablecoins.json'), 'utf8'))
+ok('C2: stablecoins fixture 有 peggedAssets', Array.isArray(defiStableFixture.peggedAssets) && defiStableFixture.peggedAssets.length > 0)
+
+const bcHashrateFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/blockchain-hashrate.json'), 'utf8'))
+ok('C2: blockchain fixture 有 values 数组', Array.isArray(bcHashrateFixture.values) && bcHashrateFixture.values.length > 0)
+
+// --- C2: metric 命名同构 ---
+const fetchersSrcCD = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
+ok('C2: metric 命名 defillama.{slug}.{metric}', fetchersSrcCD.includes('defillama.${slug}.${metric}'))
+ok('C2: metric 命名 blockchain.{metric}', fetchersSrcCD.includes('blockchain.${metric}'))
+
+// --- C2: Unix 时间戳转日期 ---
+ok('C2: fetchers.js 有 unixToDate', fetchersSrcCD.includes('unixToDate'))
+
+// --- D1: researchNotes 集合 ---
+
+ok('D1: blank 有 researchNotes', store.allResearchNotes().length === 0 || Array.isArray(store.allResearchNotes()))
+ok('D1: stats 有 researchNotes', typeof store.stats().researchNotes === 'number')
+
+// addResearchNote
+const dTheme = store.addTheme('D-研究观点测试')
+const dNode = store.addNode({ themeId: dTheme.id, parentId: null, kind: 'lemma', title: 'D测试命题', type: 'observation', confidence: 60 })
+const rn1 = store.addResearchNote({ org: '中信证券', stance: 'bullish', publishedAt: '2026-09-15', title: '1.6T 光模块超预期', nodeId: dNode.id })
+ok('D1: addResearchNote 返回 note', rn1?.id != null)
+ok('D1: note 有 org', rn1.org === '中信证券')
+ok('D1: note 有 stance', rn1.stance === 'bullish')
+ok('D1: note 有 nodeId', rn1.nodeId === dNode.id)
+
+const rn2 = store.addResearchNote({ org: 'Morgan Stanley', stance: 'neutral', publishedAt: '2026-09-20', title: '维持中性', nodeId: dNode.id })
+const rn3 = store.addResearchNote({ org: '高盛', stance: 'bearish', publishedAt: '2026-09-18', title: '估值过高', nodeId: dNode.id })
+
+// allResearchNotes
+ok('D1: allResearchNotes 有 3 条', store.allResearchNotes().length >= 3)
+
+// researchNotesByNode
+const byNode = store.researchNotesByNode(dNode.id)
+ok('D1: researchNotesByNode 返回 3 条', byNode.length === 3)
+ok('D1: researchNotesByNode 含中信', byNode.some((n) => n.org === '中信证券'))
+
+// --- D1: researchHitRate 纯函数 ---
+
+const hitRate = store.researchHitRate(byNode, true)
+ok('D1: hitRate total=2（不含 neutral）', hitRate.total === 2)
+ok('D1: hitRate hits=1（bullish 命中）', hitRate.hits === 1)
+ok('D1: hitRate rate=0.5', hitRate.rate === 0.5)
+
+const hitRateWrong = store.researchHitRate(byNode, false)
+ok('D1: hitRate 错时 hits=1（bearish 命中）', hitRateWrong.hits === 1)
+ok('D1: hitRate 错时 rate=0.5', hitRateWrong.rate === 0.5)
+
+// neutral only → total=0, rate=null
+const neutralOnly = store.researchHitRate([{ stance: 'neutral' }], true)
+ok('D1: hitRate 全 neutral 时 total=0', neutralOnly.total === 0)
+ok('D1: hitRate 全 neutral 时 rate=null', neutralOnly.rate === null)
+
+// correct=null → rate=null
+const noSettle = store.researchHitRate(byNode, null)
+ok('D1: hitRate 未结算时 rate=null', noSettle.rate === null)
+
+// --- D1: vsInstitution ---
+
+store.settleLemma(dNode.id, true)
+const vs = store.vsInstitution(90)
+ok('D1: vsInstitution 返回对象', vs != null)
+ok('D1: vsInstitution 有 userRate', vs.userRate != null)
+ok('D1: vsInstitution 有 orgRate', vs.orgRate != null)
+ok('D1: vsInstitution settledCount > 0', vs.settledCount > 0)
+ok('D1: vsInstitution userHits=1（结算为对）', vs.userHits >= 1)
+
+// --- D1: 红线 — researchNotes 不产生 node ---
+const nodeCountBefore = store.allNodes().length
+store.addResearchNote({ org: 'test', stance: 'bullish', title: '不应产生 node', nodeId: dNode.id })
+ok('D1: researchNotes 不产生 node', store.allNodes().length === nodeCountBefore)
+
+// --- D1: 导出导入 ---
+
+const exportData = JSON.parse(store.exportAll())
+ok('D1: 导出包含 researchNotes', Array.isArray(exportData.researchNotes))
+ok('D1: 导出 researchNotes 非空', exportData.researchNotes.length > 0)
+
+// --- D1: 旧数据兼容（无 researchNotes 的导入）---
+const oldDataD = { ...exportData, researchNotes: undefined }
+delete oldDataD.researchNotes
+store.importAll(JSON.stringify(oldDataD))
+ok('D1: 旧数据导入后 researchNotes 为空数组', Array.isArray(store.allResearchNotes()) && store.allResearchNotes().length === 0)
+
+// 重新导入完整数据
+store.importAll(JSON.stringify(exportData))
+ok('D1: 重新导入后 researchNotes 恢复', store.allResearchNotes().length > 0)
+
+// --- D: IPC handler ---
+
+ok('D: IPC research:add 可调', await fire('research:add', { org: 'test', stance: 'bullish', title: 'IPC test', nodeId: dNode.id }) != null)
+ok('D: IPC research:all 可调', Array.isArray(await fire('research:all')))
+ok('D: IPC research:byNode 可调', Array.isArray(await fire('research:byNode', dNode.id)))
+ok('D: IPC research:vsInstitution 可调', await fire('research:vsInstitution', 90) != null)
+
+// --- D: preload 同步 ---
+
+const pjD = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcD = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+ok('D: preload.js 有 addResearch', pjD.includes('addResearch'))
+ok('D: preload.cjs 有 addResearch', pcD.includes('addResearch'))
+ok('D: preload.js 有 vsInstitution', pjD.includes('vsInstitution'))
+ok('D: preload.cjs 有 vsInstitution', pcD.includes('vsInstitution'))
+const extractKeysD = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('D: preload 两份同步', JSON.stringify(extractKeysD(pjD)) === JSON.stringify(extractKeysD(pcD)))
+
+// --- D: inspector.js 有研究观点区 ---
+
+const inspectorSrcD = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+ok('D: inspector.js 有 researchPanel', inspectorSrcD.includes('researchPanel'))
+ok('D: inspector.js 有研究观点标题', inspectorSrcD.includes('研究观点'))
+
+// --- D: vault.js 有你 vs 机构 ---
+
+const vaultSrcD = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+ok('D: vault.js 有 vsInstitution', vaultSrcD.includes('vsInstitution'))
+ok('D: vault.js 有 你 vs 机构', vaultSrcD.includes('你 vs 机构'))
+
+// --- D: 无加权/汇总/总量/合计 ---
+
+ok('D: inspector.js 无加权', !inspectorSrcD.includes('加权'))
+ok('D: inspector.js 无汇总', !inspectorSrcD.includes('汇总'))
+ok('D: inspector.js 无总量', !inspectorSrcD.includes('总量'))
+ok('D: inspector.js 无合计', !inspectorSrcD.includes('合计'))
+
+// --- D: store.js 红线 — researchNotes 不进 calibration/verdicts ---
+
+const storeSrcD = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+ok('D: store.js 有 researchHitRate', storeSrcD.includes('researchHitRate'))
+ok('D: store.js 有 vsInstitution', storeSrcD.includes('vsInstitution'))
+const calLinesD = storeSrcD.split('\n')
+const calStartD = calLinesD.findIndex((l) => l.includes('export function calibration()'))
+const calEndD = calLinesD.findIndex((l, i) => i > calStartD && l.startsWith('export function'))
+const calBodyD = calLinesD.slice(calStartD, calEndD).join('\n')
+ok('D: store.js researchNotes 不进 calibration', !calBodyD.includes('researchNotes'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

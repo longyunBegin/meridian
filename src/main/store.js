@@ -139,6 +139,7 @@ const blank = () => ({
   channels: [], // 通道描述符：按内容类型选取数器
   intakeEvents: [], // 采集漏斗：每次捕获一条记录
   readings: [], // 读数：结构化财务数字，只追加不覆盖
+  researchNotes: [], // 研究观点：外部机构对命题的判断，不产生 node、不进校准
 })
 
 let db = null
@@ -167,6 +168,7 @@ function migrate(d) {
   d.channels = d.channels || []
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
+  d.researchNotes = d.researchNotes || []
   for (const t of d.themes || []) t.tags = Array.isArray(t.tags) ? t.tags : []
   for (const c of d.channels || []) {
     c.tags = Array.isArray(c.tags) ? c.tags : []
@@ -974,6 +976,7 @@ export function stats() {
     feeds: db.channels.filter((c) => c.enabled).length,
     inbox: db.inbox.filter((i) => i.status === 'pending').length,
     readings: db.readings.length,
+    researchNotes: db.researchNotes.length,
   }
 }
 
@@ -1119,7 +1122,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [] }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [] }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -1439,4 +1442,92 @@ export function latestReadingByChannel(channelId) {
   if (!readings.length) return null
   return readings.reduce((latest, r) =>
     (r.at || '') >= (latest.at || '') ? r : latest, readings[0])
+}
+// ------------------------------------------------------------------ 研究观点
+
+/**
+ * 研究观点：外部机构对某条命题的判断。
+ * 不产生 node、不进 calibration()、不进 verdicts——是外部基准，不是你的判断。
+ */
+export function addResearchNote(input) {
+  const db = load()
+  const note = {
+    id: uid(),
+    at: input.at || today(),
+    org: input.org || '',
+    publishedAt: input.publishedAt || null,
+    stance: input.stance || 'neutral',
+    title: input.title || '',
+    summary: input.summary || null,
+    url: input.url || null,
+    nodeId: input.nodeId || null,
+    metric: input.metric || null,
+    basis: input.basis || 'reported',
+  }
+  db.researchNotes.push(note)
+  persist()
+  return note
+}
+
+export function allResearchNotes() {
+  return load().researchNotes
+}
+
+export function researchNotesByNode(nodeId) {
+  return load().researchNotes.filter((n) => n.nodeId === nodeId)
+}
+
+/**
+ * 计算机构观点命中率。纯函数。
+ * 命题结算为「对」→ bullish 命中，bearish 未中，neutral 不计入
+ * 结算为「错」→ bearish 命中，bullish 未中，neutral 不计入
+ * @param {Array} notes 该命题挂的研究观点
+ * @param {boolean|null} correct 结算结果
+ * @returns {{ hits, total, rate }} total 不含 neutral
+ */
+export function researchHitRate(notes, correct) {
+  const directional = (notes || []).filter((n) => n.stance === 'bullish' || n.stance === 'bearish')
+  if (!directional.length || correct == null) return { hits: 0, total: 0, rate: null }
+  const hits = directional.filter((n) =>
+    correct ? n.stance === 'bullish' : n.stance === 'bearish').length
+  return { hits, total: directional.length, rate: hits / directional.length }
+}
+
+/**
+ * 你 vs 机构：近 N 天已结算命题的命中率对比。
+ * @param {number} days 回看天数
+ * @returns {{ userHits, userTotal, userRate, orgHits, orgTotal, orgRate, settledCount }}
+ */
+export function vsInstitution(days = 90) {
+  const db = load()
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+  const settled = db.nodes.filter((n) =>
+    n.kind === 'lemma' &&
+    n.settlement?.resolved &&
+    n.settlement?.correct != null &&
+    (n.settlement.resolved || '') >= cutoff)
+
+  let userHits = 0
+  let orgHits = 0
+  let orgTotal = 0
+
+  for (const n of settled) {
+    if (n.settlement.correct) userHits++
+    const notes = db.researchNotes.filter((rn) => rn.nodeId === n.id)
+    const directional = notes.filter((rn) => rn.stance === 'bullish' || rn.stance === 'bearish')
+    for (const rn of directional) {
+      orgTotal++
+      if (n.settlement.correct ? rn.stance === 'bullish' : rn.stance === 'bearish') orgHits++
+    }
+  }
+
+  return {
+    userHits,
+    userTotal: settled.length,
+    userRate: settled.length ? userHits / settled.length : null,
+    orgHits,
+    orgTotal,
+    orgRate: orgTotal ? orgHits / orgTotal : null,
+    settledCount: settled.length,
+  }
 }

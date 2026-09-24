@@ -195,6 +195,106 @@ async function fetchEdgarFilings(channel) {
   return { items, readings: null, error: null }
 }
 
+// ----------------------------------------------------------------- DefiLlama / Blockchain.com
+
+/** Unix 秒 → YYYY-MM-DD */
+function unixToDate(unix) {
+  if (!unix || typeof unix !== 'number') return null
+  return new Date(unix * 1000).toISOString().slice(0, 10)
+}
+
+/**
+ * DefiLlama 协议数据：TVL、手续费收入。
+ * query = 协议 slug（如 aave），metric = tvl / fees
+ * 产一条 reading，metric 命名 defillama.{slug}.{metric}
+ */
+async function fetchDefiLlamaProtocol(channel) {
+  const slug = channel.query
+  if (!slug) return { items: [], readings: { ok: false, error: '通道缺少 query (协议 slug)' }, error: null }
+  const metric = channel.metric || 'tvl'
+  const metricName = `defillama.${slug}.${metric}`
+
+  if (metric === 'fees') {
+    const res = await fetch(`https://api.llama.fi/overview/fees/${slug}`, { signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return { items: [], readings: { ok: false, error: `HTTP ${res.status}` }, error: null }
+    const data = await res.json()
+    const value = data?.total24h ?? data?.totalDataChart?.slice(-1)?.[0]?.[1]
+    if (value == null) return { items: [], readings: { ok: false, error: '响应缺少 total24h' }, error: null }
+    const asOf = unixToDate(data?.totalDataChart?.slice(-1)?.[0]?.[0]) || new Date().toISOString().slice(0, 10)
+    const result = addReading({
+      metric: metricName, value, unit: 'USD', asOf,
+      source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: `https://defillama.com/protocol/${slug}` },
+      basis: 'reported', channelId: channel.id,
+    })
+    return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+  }
+
+  // tvl
+  const res = await fetch(`https://api.llama.fi/protocol/${slug}`, { signal: AbortSignal.timeout(15000) })
+  if (!res.ok) return { items: [], readings: { ok: false, error: `HTTP ${res.status}` }, error: null }
+  const data = await res.json()
+  const tvlHistory = data?.tvl
+  if (!Array.isArray(tvlHistory) || !tvlHistory.length) return { items: [], readings: { ok: false, error: '响应缺少 tvl 数组' }, error: null }
+  const latest = tvlHistory[tvlHistory.length - 1]
+  const result = addReading({
+    metric: metricName, value: latest.total, unit: 'USD', asOf: unixToDate(latest.date),
+    source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: `https://defillama.com/protocol/${slug}` },
+    basis: 'reported', channelId: channel.id,
+  })
+  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+}
+
+/**
+ * DefiLlama 稳定币总量。
+ * query 留空或具体稳定币 id，metric = total / circulating
+ * 产一条 reading，metric 命名 defillama.stablecoins.{metric}
+ */
+async function fetchDefiLlamaStablecoins(channel) {
+  const metric = channel.metric || 'total'
+  const metricName = `defillama.stablecoins.${metric}`
+  const res = await fetch('https://stablecoins.llama.fi/stablecoins', { signal: AbortSignal.timeout(15000) })
+  if (!res.ok) return { items: [], readings: { ok: false, error: `HTTP ${res.status}` }, error: null }
+  const data = await res.json()
+  const coins = data?.peggedAssets
+  if (!Array.isArray(coins) || !coins.length) return { items: [], readings: { ok: false, error: '响应缺少 peggedAssets' }, error: null }
+
+  let value
+  if (metric === 'circulating') {
+    value = coins.reduce((s, c) => s + (c?.circulating?.peggedUSD || 0), 0)
+  } else {
+    value = coins.reduce((s, c) => s + (c?.circulating?.peggedUSD || 0), 0)
+  }
+  const result = addReading({
+    metric: metricName, value, unit: 'USD', asOf: new Date().toISOString().slice(0, 10),
+    source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: 'https://defillama.com/stablecoins' },
+    basis: 'reported', channelId: channel.id,
+  })
+  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+}
+
+/**
+ * Blockchain.com 图表数据：算力、活跃地址、难度。
+ * query 留空，metric = hash-rate / n-unique-addresses / difficulty
+ * 产一条 reading，metric 命名 blockchain.{metric}
+ */
+async function fetchBlockchainChart(channel) {
+  const metric = channel.metric
+  if (!metric) return { items: [], readings: { ok: false, error: '通道缺少 metric' }, error: null }
+  const metricName = `blockchain.${metric}`
+  const res = await fetch(`https://api.blockchain.info/charts/${metric}?timespan=30days&format=json`, { signal: AbortSignal.timeout(15000) })
+  if (!res.ok) return { items: [], readings: { ok: false, error: `HTTP ${res.status}` }, error: null }
+  const data = await res.json()
+  const points = data?.values
+  if (!Array.isArray(points) || !points.length) return { items: [], readings: { ok: false, error: '响应缺少 values 数组' }, error: null }
+  const latest = points[points.length - 1]
+  const result = addReading({
+    metric: metricName, value: latest.y, unit: metric === 'hash-rate' ? 'TH/s' : null, asOf: unixToDate(latest.x),
+    source: { kind: channel.kind || '一手数据', platform: 'Blockchain.com', url: `https://www.blockchain.com/explorer/charts/${metric}` },
+    basis: 'reported', channelId: channel.id,
+  })
+  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+}
+
 const FETCHERS = {
   rss: async (channel) => {
     const items = await fetchFeed(channel.query)
@@ -231,6 +331,10 @@ const FETCHERS = {
 
   edgarConcept: fetchEdgarConcept,
   edgarFilings: fetchEdgarFilings,
+
+  defillamaProtocol: fetchDefiLlamaProtocol,
+  defillamaStablecoins: fetchDefiLlamaStablecoins,
+  blockchainChart: fetchBlockchainChart,
 
   // 以下未实现，静默返回空
   tavily: null,

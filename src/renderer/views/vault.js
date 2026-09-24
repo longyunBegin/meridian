@@ -129,12 +129,13 @@ function side(n, label) {
 async function renderReview(mid) {
   clear(mid)
 
-  const [series, filterCalib, verdicts, byChannel, channels] = await Promise.all([
+  const [series, filterCalib, verdicts, byChannel, channels, vsData] = await Promise.all([
     m.intakeSeries(30),
     m.filterCalibration(),
     m.verdicts(),
     m.falseKillByChannel(30),
     m.channelList(),
+    m.vsInstitution(90),
   ])
   const chName = (id) => channels.find((c) => c.id === id)?.kind || id
 
@@ -517,9 +518,30 @@ export async function renderReadings(mid) {
                 h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
                 h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
               ),
-            ),
-          ))
-        }
+    ),
+
+    // 你 vs 机构
+    vsData.settledCount > 0 ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, '你 vs 机构'), h('em', {}, `近 90 天 · ${vsData.settledCount} 条已结算命题`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '你的命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
+          ),
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num', style: { color: '' } },
+              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-label' }, '机构观点命中率'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
+          ),
+        ),
+      ),
+    ) : null,
+  ))
+}
       }
     }
 
