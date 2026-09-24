@@ -2785,5 +2785,167 @@ if (i5Match2) {
 // --- v0.6.6 验收: preload 两份同步 ---
 ok('v0.6.6 验收: preload 两份同步', pj66.includes('metricFetchers') && pc66.includes('metricFetchers'))
 
+// ============================================================
+// 主题标签库与语义归位
+// ============================================================
+
+console.log('\n— 标签库与语义归位 —')
+
+const extractSrcTL = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
+const storeSrcTL = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+const ipcSrcTL = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const vaultSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+const pjTL = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcTL = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+
+// --- T1: tagLibrary schema ---
+
+ok('T1: store.js 有 tagLibrary', storeSrcTL.includes('tagLibrary'))
+ok('T1: migrate 补 tagLibrary', storeSrcTL.includes('t.tagLibrary = Array.isArray(t.tagLibrary)'))
+ok('T1: addTheme 给 tagLibrary: []', storeSrcTL.includes('tagLibrary: [], createdAt'))
+ok('T1: updateTheme 白名单 tagLibrary', storeSrcTL.includes('patch.tagLibrary !== undefined'))
+ok('T1: extract.js 有 generateTagLibrary', extractSrcTL.includes('export async function generateTagLibrary'))
+ok('T1: extract.js 有 TAG_LIBRARY_SYSTEM', extractSrcTL.includes('TAG_LIBRARY_SYSTEM'))
+ok('T1: extract.js threshold clamp', extractSrcTL.includes('Math.max(0.4, Math.min(0.85'))
+
+// T1: 迁移 — 旧数据导入后 tagLibrary 为空数组
+const tlTheme = store.addTheme('标签库测试主题')
+ok('T1: addTheme 有 tagLibrary', Array.isArray(tlTheme.tagLibrary) && tlTheme.tagLibrary.length === 0)
+
+// T1: updateTheme tagLibrary
+store.updateTheme(tlTheme.id, { tagLibrary: [{ id: 'tl_1', name: '测试标签', synonyms: ['test'], threshold: 0.6, hits: 0, lastHitAt: null }] })
+const tlThemeAfter = store.allThemes().find((t) => t.id === tlTheme.id)
+ok('T1: updateTheme tagLibrary 生效', tlThemeAfter.tagLibrary.length === 1)
+ok('T1: tagLibrary 有 id', tlThemeAfter.tagLibrary[0].id === 'tl_1')
+
+// T1: 导出导入不丢
+const tlExport = JSON.parse(store.exportAll())
+ok('T1: 导出含 tagLibrary', Array.isArray(tlExport.themes.find((t) => t.id === tlTheme.id)?.tagLibrary))
+store.importAll(JSON.stringify({ ...tlExport, themes: tlExport.themes.map((t) => ({ ...t, tagLibrary: undefined })) }))
+const tlAfterImport = store.allThemes().find((t) => t.id === tlTheme.id)
+ok('T1: 旧数据导入 tagLibrary 为空数组', Array.isArray(tlAfterImport.tagLibrary) && tlAfterImport.tagLibrary.length === 0)
+
+// --- T2: matchTagLibrary 纯函数 ---
+
+ok('T2: store.js 有 matchTagLibrary', storeSrcTL.includes('export function matchTagLibrary'))
+ok('T2: store.js 有 crossThemeMatch', storeSrcTL.includes('export function crossThemeMatch'))
+ok('T2: store.js 有 recordTagHits', storeSrcTL.includes('export function recordTagHits'))
+
+// T2: 空词库 → []
+ok('T2: 空词库返回 []', store.matchTagLibrary('text', []).length === 0)
+ok('T2: null 词库返回 []', store.matchTagLibrary('text', null).length === 0)
+
+// T2: 命中 3/5 词 → score = 0.6
+const tlLib = [
+  { id: 'tl_a', name: '稳定币', synonyms: ['stablecoin', 'USDT', 'USDC', 'pegged'], threshold: 0.6, hits: 0, lastHitAt: null },
+  { id: 'tl_b', name: '算力', synonyms: ['hash rate', 'mining'], threshold: 0.6, hits: 0, lastHitAt: null },
+]
+const tlMatch1 = store.matchTagLibrary('稳定币 stablecoin USDT', tlLib)
+ok('T2: 命中 3/5 词有结果', tlMatch1.length > 0)
+ok('T2: 命中 3/5 score=0.6', tlMatch1[0].score === 0.6, `实际 ${tlMatch1[0].score}`)
+
+// T2: 命中 0 词 → 不出现
+const tlMatch2 = store.matchTagLibrary('完全无关的内容xyz', tlLib)
+ok('T2: 命中 0 词不出现', tlMatch2.length === 0)
+
+// T2: 中英双语分别命中
+const tlMatch3 = store.matchTagLibrary('stablecoin market cap', tlLib)
+ok('T2: 英文命中', tlMatch3.some((m) => m.name === '稳定币'))
+const tlMatch4 = store.matchTagLibrary('稳定币发行量', tlLib)
+ok('T2: 中文命中', tlMatch4.some((m) => m.name === '稳定币'))
+
+// T2: 按分数降序
+const tlMatch5 = store.matchTagLibrary('稳定币 stablecoin USDT USDC pegged 算力 hash rate', tlLib)
+ok('T2: 按分数降序', tlMatch5[0].score >= tlMatch5[tlMatch5.length - 1].score)
+
+// --- T2: 跨主题匹配 ---
+
+// 恢复 tagLibrary
+store.updateTheme(tlTheme.id, { tagLibrary: tlLib })
+const tlTheme2 = store.addTheme('标签库测试主题2')
+store.updateTheme(tlTheme2.id, { tagLibrary: [{ id: 'tl_c', name: '轨道', synonyms: ['rail', 'metro'], threshold: 0.6, hits: 0, lastHitAt: null }] })
+const crossMatches = store.crossThemeMatch('稳定币 stablecoin USDT')
+ok('T2: 跨主题匹配返回数组', Array.isArray(crossMatches))
+ok('T2: 跨主题匹配命中主题1', crossMatches.some((m) => m.themeId === tlTheme.id))
+ok('T2: 跨主题匹配不命中主题2', !crossMatches.some((m) => m.themeId === tlTheme2.id))
+
+// --- T2: hits 回写 ---
+
+store.recordTagHits(tlTheme.id, ['tl_a'])
+const tlAfterHit = store.allThemes().find((t) => t.id === tlTheme.id)
+const tlTagA = tlAfterHit.tagLibrary.find((t) => t.id === 'tl_a')
+ok('T2: hits 回写递增', tlTagA.hits === 1)
+ok('T2: lastHitAt 有值', tlTagA.lastHitAt != null)
+
+// --- T2: updateTagLibraryTag / deleteTagLibraryTags ---
+
+const tlUpdatedTag = store.updateTagLibraryTag(tlTheme.id, 'tl_a', { name: '稳定币改', threshold: 0.8 })
+ok('T2: updateTagLibraryTag 改名', tlUpdatedTag.name === '稳定币改')
+ok('T2: updateTagLibraryTag threshold clamp', tlUpdatedTag.threshold === 0.8)
+
+const tlDeleted = store.deleteTagLibraryTags(tlTheme.id, ['tl_b'])
+ok('T2: deleteTagLibraryTags 删了 1 个', tlDeleted === 1)
+const tlAfterDelete = store.allThemes().find((t) => t.id === tlTheme.id)
+ok('T2: deleteTagLibraryTags 后剩 1 个', tlAfterDelete.tagLibrary.length === 1)
+
+// --- T3: processCapture 接入匹配 + 提议归位 ---
+
+ok('T3: ipc.js 有 crossThemeMatch', ipcSrcTL.includes('crossThemeMatch'))
+ok('T3: ipc.js 有 routeProposals', ipcSrcTL.includes('routeProposals'))
+ok('T3: ipc.js 有 route-proposal', ipcSrcTL.includes("'route-proposal'"))
+ok('T3: ipc.js 有 recordTagHits', ipcSrcTL.includes('recordTagHits'))
+ok('T3: ipc.js theme:setupNew 调 generateTagLibrary', ipcSrcTL.includes('generateTagLibrary'))
+ok('T3: ipc.js theme:fromTemplate 调 generateTagLibrary', ipcSrcTL.includes('generateTagLibrary'))
+
+// --- T4: 标签库可视化 ---
+
+ok('T4: lattice.js 有 renderTagLibraryBand', latticeSrcTL.includes('function renderTagLibraryBand'))
+ok('T4: lattice.js 有 标签库', latticeSrcTL.includes('标签库'))
+ok('T4: lattice.js 有 整理', latticeSrcTL.includes('整理'))
+ok('T4: lattice.js 有 全选命中 0', latticeSrcTL.includes('全选命中 0'))
+ok('T4: lattice.js 有 删除所选', latticeSrcTL.includes('删除所选'))
+ok('T4: lattice.js 无 prompt(', !latticeSrcTL.includes('prompt('))
+
+// T4: 无禁用词
+ok('T4: lattice.js 无加权', !latticeSrcTL.includes('加权'))
+ok('T4: lattice.js 无汇总', !latticeSrcTL.includes('汇总'))
+ok('T4: lattice.js 无总量', !latticeSrcTL.includes('总量'))
+ok('T4: lattice.js 无合计', !latticeSrcTL.includes('合计'))
+
+// --- T5: 主题级操作合并 ---
+
+ok('T5: lattice.js 有 主题名', latticeSrcTL.includes('主题名'))
+ok('T5: lattice.js 有 主题标签', latticeSrcTL.includes('主题标签'))
+ok('T5: lattice.js 有 删除主题', latticeSrcTL.includes('删除主题'))
+ok('T5: lattice.js 有 renameTheme', latticeSrcTL.includes('renameTheme'))
+ok('T5: lattice.js 有 removeTheme', latticeSrcTL.includes('removeTheme'))
+
+// --- T6: 画树不生成新环节 ---
+
+ok('T6: ipc.js 无 生成新环节', !ipcSrcTL.includes('生成新环节'))
+
+// --- 领域中立（只检查新增的标签库代码，不查存量 SIC 映射/prompt 示例）---
+
+const tagLibPrompt = extractSrcTL.match(/TAG_LIBRARY_SYSTEM = `[\s\S]*?`/)?.[0] || ''
+ok('领域中立: TAG_LIBRARY_SYSTEM 无硬编码行业词', !tagLibPrompt.match(/光模块|半导体|hyperscaler|AI 产业/))
+ok('领域中立: matchTagLibrary 无硬编码行业词', !storeSrcTL.match(/function matchTagLibrary[\s\S]*?^}/m)?.[0]?.match(/光模块|半导体|hyperscaler/))
+ok('领域中立: lattice.js 无硬编码行业词', !latticeSrcTL.match(/光模块|半导体|hyperscaler/))
+
+// --- IPC + preload ---
+
+ok('TL: ipc.js 有 tagLibrary:updateTag', ipcSrcTL.includes('tagLibrary:updateTag'))
+ok('TL: ipc.js 有 tagLibrary:deleteTags', ipcSrcTL.includes('tagLibrary:deleteTags'))
+ok('TL: preload.js 有 updateTagLibraryTag', pjTL.includes('updateTagLibraryTag'))
+ok('TL: preload.cjs 有 updateTagLibraryTag', pcTL.includes('updateTagLibraryTag'))
+ok('TL: preload.js 有 deleteTagLibraryTags', pjTL.includes('deleteTagLibraryTags'))
+ok('TL: preload.cjs 有 deleteTagLibraryTags', pcTL.includes('deleteTagLibraryTags'))
+ok('TL: preload 两份同步', pjTL.includes('updateTagLibraryTag') === pcTL.includes('updateTagLibraryTag'))
+
+// --- IPC 可调 ---
+
+ok('TL: IPC tagLibrary:updateTag 可调', await fire('theme:tagLibrary:updateTag', tlTheme.id, 'tl_a', { name: '改过' }) != null)
+ok('TL: IPC tagLibrary:deleteTags 可调', typeof await fire('theme:tagLibrary:deleteTags', tlTheme.id, []) === 'number')
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

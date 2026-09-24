@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('meridian', {
   deletedThemes: () => ipcRenderer.invoke('theme:deleted'),
   renameTheme: (id, name) => ipcRenderer.invoke('theme:rename', id, name),
   themeUpdate: (id, patch) => ipcRenderer.invoke('theme:update', id, patch),
+  updateTagLibraryTag: (themeId, tagId, patch) => ipcRenderer.invoke('theme:tagLibrary:updateTag', themeId, tagId, patch),
+  deleteTagLibraryTags: (themeId, tagIds) => ipcRenderer.invoke('theme:tagLibrary:deleteTags', themeId, tagIds),
   saveSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
 
   // ---- io

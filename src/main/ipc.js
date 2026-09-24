@@ -18,9 +18,10 @@ import {
   addReading, allReadings, indicatorsForReading, latestReadingByChannel,
   updateTheme, rankChannelsByTags, kindToTags, sicToTags,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
+  matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid,
 } from './store.js'
-import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary } from './extract.js'
 import { labelSource } from './labeler.js'
 import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
 
@@ -86,6 +87,26 @@ async function processCapture(text, themeId, channelMeta) {
   }
 
   const label = await labelSource(settings(), actualText, actualChannel)
+
+  // 标签库跨主题匹配
+  const tagMatches = crossThemeMatch(actualText)
+  const routeProposals = []
+  for (const m of tagMatches) {
+    const tag = allThemes().find((t) => t.id === m.themeId)?.tagLibrary?.find((t) => t.id === m.tagId)
+    const threshold = tag?.threshold ?? 0.6
+    if (m.score >= threshold && m.themeId !== themeId) {
+      routeProposals.push({
+        type: 'route-proposal',
+        text: actualText,
+        matchedTheme: { id: m.themeId, name: m.themeName },
+        matchedTags: [{ name: m.name, score: m.score, tagId: m.tagId }],
+        bestScore: m.score,
+        originChannel: actualChannel || null,
+        at: today(),
+      })
+      recordTagHits(m.themeId, [m.tagId])
+    }
+  }
 
   // 留痕：打标阶段
   addTrace({
@@ -210,6 +231,7 @@ async function processCapture(text, themeId, channelMeta) {
     resolvedText: actualText,
     resolvedChannel: actualChannel,
     fromUrl,
+    routeProposals,
   }
 }
 
@@ -356,8 +378,10 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:restore', (_, id) => restoreTheme(id))
   ipcMain.handle('theme:rename', (_, id, name) => renameTheme(id, name))
   ipcMain.handle('theme:update', (_, id, patch) => updateTheme(id, patch))
+  ipcMain.handle('theme:tagLibrary:updateTag', (_, themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
+  ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
   ipcMain.handle('theme:templates', () => templateList())
-  ipcMain.handle('theme:fromTemplate', (_, templateId) => {
+  ipcMain.handle('theme:fromTemplate', async (_, templateId) => {
     const tpl = templateFind(templateId)
     if (!tpl) return null
     const theme = addTheme(tpl.name)
@@ -372,6 +396,11 @@ function register({ getMainWindow }) {
         enabled: !ch.needsKey,
       })
     }
+    // 生成标签库（降级不阻塞）
+    const s = settings()
+    const titles = allNodes().filter((n) => n.themeId === theme.id && n.kind === 'branch').map((n) => n.title)
+    const tlResult = await generateTagLibrary(s, tpl.name, titles)
+    if (tlResult.ok) updateTheme(theme.id, { tagLibrary: tlResult.tagLibrary })
     return theme
   })
 
@@ -412,6 +441,10 @@ function register({ getMainWindow }) {
     // 主题打标签（降级：无 key → tags: []，不阻塞）
     const tagResult = await generateThemeTags(s, description)
     if (tagResult.ok && tagResult.tags.length) updateTheme(theme.id, { tags: tagResult.tags })
+    // 生成标签库（降级：无 key → tagLibrary: []，不阻塞）
+    const titles = allNodes().filter((n) => n.themeId === theme.id && n.kind === 'branch').map((n) => n.title)
+    const tlResult = await generateTagLibrary(s, description, titles)
+    if (tlResult.ok) updateTheme(theme.id, { tagLibrary: tlResult.tagLibrary })
     return theme
   })
 
@@ -467,6 +500,26 @@ function register({ getMainWindow }) {
     const textHash = hashText(result.resolvedText || text)
     const channel = result.resolvedChannel || channelMeta || null
     const degraded = result.degraded || false
+
+    // 标签库匹配 → 提议归位（进收件箱，不静默建节点）
+    if (result.routeProposals?.length) {
+      const items = []
+      for (const rp of result.routeProposals) {
+        const item = addInboxItem({
+          text: rp.text,
+          title: firstSentence(rp.text),
+          label: result.label,
+          lemmas: result.lemmas,
+          kind: 'route-proposal',
+          matchedTheme: rp.matchedTheme,
+          matchedTags: rp.matchedTags,
+          originChannel: rp.originChannel,
+          provenance: channel,
+        })
+        items.push(item)
+      }
+      return { ok: true, autoImported: false, routeProposals: items, gateReasons: ['route-proposal'] }
+    }
 
     if (gate.pass && defaultThemeId && result.lemmas.length > 0) {
       const batchId = uid()

@@ -175,7 +175,72 @@ function parseThemeTags(raw) {
   } catch { return [] }
 }
 
-// ----------------------------------------------------------------- skeleton
+// ----------------------------------------------------------------- tag library
+
+const TAG_LIBRARY_SYSTEM = `你是一个领域分析专家。根据主题描述和环节树，生成该主题的专属标签库。
+
+硬规则：
+1. 产出 JSON 数组，不要 markdown 代码块，不要解释。
+2. 每个标签是 {"name":"名称","synonyms":["同义词1","同义词2"],"threshold":0.6}
+3. 8-15 个标签，不多不少。
+4. name 是 2-8 字名词，是领域概念不是公司名。
+5. synonyms 必须包含中英双语（3-6 个），覆盖常见说法。
+6. threshold 默认 0.6，概念越窄阈值越高（具体产品名 0.7，宽泛概念 0.5），范围 [0.4, 0.85]。
+7. 不要生成环节名本身（那是树，不是标签）。
+8. 不要假设领域——任何主题都用同一套机制。
+
+只输出 JSON 数组：`
+
+export async function generateTagLibrary(settings, description, branchTitles = []) {
+  const { baseUrl, apiKey, model } = settings
+  if (!apiKey) return { ok: false, reason: 'no-key' }
+
+  const userContent = `主题：${description}\n环节树标题：${branchTitles.join('、') || '（无）'}`
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: TAG_LIBRARY_SYSTEM },
+        { role: 'user', content: userContent.slice(0, 1000) },
+      ],
+    }),
+  })
+
+  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const body = await res.json()
+  const raw = body?.choices?.[0]?.message?.content
+  if (!raw) return { ok: false, reason: 'empty' }
+
+  const lib = parseTagLibrary(raw)
+  if (!lib.length) return { ok: false, reason: 'unparsable' }
+  return { ok: true, tagLibrary: lib }
+}
+
+function parseTagLibrary(raw) {
+  const start = raw.indexOf('[')
+  const end = raw.lastIndexOf(']')
+  if (start < 0 || end <= start) return []
+  try {
+    const arr = JSON.parse(raw.slice(start, end + 1))
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter((t) => t && typeof t.name === 'string' && t.name.trim())
+      .slice(0, 15)
+      .map((t) => ({
+        id: 'tl_' + Math.random().toString(36).slice(2, 10),
+        name: String(t.name).trim().slice(0, 30),
+        synonyms: Array.isArray(t.synonyms)
+          ? t.synonyms.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 10)
+          : [],
+        threshold: Math.max(0.4, Math.min(0.85, Number(t.threshold) || 0.6)),
+        hits: 0,
+        lastHitAt: null,
+      }))
+  } catch { return [] }
+}
 
 /**
  * 模型生成骨架：输入一句话描述 → 产出环节树 + 传导权重 + scaffold。

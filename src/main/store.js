@@ -169,7 +169,10 @@ function migrate(d) {
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
   d.researchNotes = d.researchNotes || []
-  for (const t of d.themes || []) t.tags = Array.isArray(t.tags) ? t.tags : []
+  for (const t of d.themes || []) {
+    t.tags = Array.isArray(t.tags) ? t.tags : []
+    t.tagLibrary = Array.isArray(t.tagLibrary) ? t.tagLibrary : []
+  }
   for (const c of d.channels || []) {
     c.tags = Array.isArray(c.tags) ? c.tags : []
     c.failCount = c.failCount ?? 0
@@ -473,17 +476,18 @@ export function bestThemeContext() {
   return best
 }
 export function addTheme(name) {
-  const theme = { id: uid(), name: String(name || '').trim(), tags: [], createdAt: today() }
+  const theme = { id: uid(), name: String(name || '').trim(), tags: [], tagLibrary: [], createdAt: today() }
   db.themes.push(theme)
   persist()
   return theme
 }
-/** 更新主题字段（目前支持 name / tags） */
+/** 更新主题字段（支持 name / tags / tagLibrary） */
 export function updateTheme(id, patch) {
   const theme = db.themes.find((t) => t.id === id)
   if (!theme) return null
   if (patch.name !== undefined) theme.name = String(patch.name).trim()
   if (patch.tags !== undefined) theme.tags = [...new Set(patch.tags.filter((t) => typeof t === 'string'))]
+  if (patch.tagLibrary !== undefined) theme.tagLibrary = patch.tagLibrary
   persist()
   return theme
 }
@@ -511,6 +515,78 @@ export function renameTheme(id, name) {
   const theme = db.themes.find((t) => t.id === id)
   if (theme) theme.name = String(name || '').trim()
   persist()
+}
+
+// ------------------------------------------------------------------ 标签库
+
+
+/** 标签库匹配纯函数：子串覆盖比例打分 */
+export function matchTagLibrary(text, tagLibrary) {
+  if (!tagLibrary?.length) return []
+  const haystack = String(text || '').toLowerCase()
+  return tagLibrary
+    .map((tag) => {
+      const terms = [tag.name, ...(tag.synonyms || [])]
+      let hit = 0
+      let total = 0
+      for (const t of terms) {
+        total++
+        if (haystack.includes(String(t).toLowerCase())) hit++
+      }
+      const score = total ? hit / total : 0
+      return { tagId: tag.id, name: tag.name, score: round1(score), terms: hit, total }
+    })
+    .filter((r) => r.score > 0 && r.terms >= 1)
+    .sort((a, b) => b.score - a.score)
+}
+
+/** 跨主题匹配：返回所有主题的匹配结果 */
+export function crossThemeMatch(text) {
+  const db = load()
+  const results = []
+  for (const t of db.themes.filter((t) => !t.deletedAt)) {
+    for (const m of matchTagLibrary(text, t.tagLibrary || [])) {
+      results.push({ themeId: t.id, themeName: t.name, ...m })
+    }
+  }
+  return results.sort((a, b) => b.score - a.score)
+}
+
+/** 命中回写：hits++ / lastHitAt = today() */
+export function recordTagHits(themeId, tagIds) {
+  const theme = db.themes.find((t) => t.id === themeId)
+  if (!theme) return
+  const now = today()
+  for (const tag of theme.tagLibrary || []) {
+    if (tagIds.includes(tag.id)) {
+      tag.hits = (tag.hits || 0) + 1
+      tag.lastHitAt = now
+    }
+  }
+  persist()
+}
+
+/** 更新标签库中单个标签 */
+export function updateTagLibraryTag(themeId, tagId, patch) {
+  const theme = db.themes.find((t) => t.id === themeId)
+  if (!theme) return null
+  const tag = (theme.tagLibrary || []).find((t) => t.id === tagId)
+  if (!tag) return null
+  if (patch.name !== undefined) tag.name = String(patch.name).trim().slice(0, 30)
+  if (patch.synonyms !== undefined) tag.synonyms = patch.synonyms.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 10)
+  if (patch.threshold !== undefined) tag.threshold = Math.max(0.4, Math.min(0.85, Number(patch.threshold) || 0.6))
+  persist()
+  return tag
+}
+
+/** 批量删除标签库中的标签 */
+export function deleteTagLibraryTags(themeId, tagIds) {
+  const theme = db.themes.find((t) => t.id === themeId)
+  if (!theme) return 0
+  const before = theme.tagLibrary.length
+  theme.tagLibrary = theme.tagLibrary.filter((t) => !tagIds.includes(t.id))
+  persist()
+  return before - theme.tagLibrary.length
 }
 
 // ------------------------------------------------------------------ verdicts
