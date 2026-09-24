@@ -201,7 +201,7 @@ async function renderReview(mid) {
               h('i', { style: { width: `${pct(b.autoImported, b.captured)}%`, background: 'var(--accent)' } }),
               h('i', { style: { width: `${pct(b.toInbox, b.captured)}%`, background: 'var(--orange)' } }),
             ),
-            h('span', { style: { fontSize: '10px', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } }, String(b.captured)),
+            h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } }, String(b.captured)),
           )),
         ),
       ),
@@ -305,7 +305,7 @@ function readingRow(r, isLatest, indicators) {
         h('span', {}, `抓于 ${r.at || '—'}`),
         h('span', { style: { marginLeft: '6px' } }, `· ${r.source?.kind || '未知'}`),
         r.source?.url ? h('button', {
-          class: 'btn', style: { marginLeft: '6px', padding: '1px 6px', fontSize: '11px' },
+          class: 'btn', style: { marginLeft: '6px', padding: '1px 6px', fontSize: 'var(--t-caption)' },
           onclick: () => m.openExternal(r.source.url),
         }, '来源') : null,
       ),
@@ -492,7 +492,7 @@ export async function renderSources(mid) {
   clear(mid)
   const [channels, fetchers, metricFetchers] = await Promise.all([m.channelList(), m.availableFetchers(), m.metricFetchers()])
 
-  const flash = h('span', { style: { fontSize: '12px', color: 'var(--text-3)', marginLeft: '8px' } }, '')
+  const flash = h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', marginLeft: '8px' } }, '')
   const showFlash = (msg, color = 'var(--text-2)') => {
     flash.textContent = msg
     flash.style.color = color
@@ -513,7 +513,7 @@ export async function renderSources(mid) {
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, ch.name),
             h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}${ch.review ? ' · 复审' : ''}`),
+              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
               ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
               ch.lastCount != null ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 拉到 ${ch.lastCount} 条`) : null,
@@ -563,10 +563,6 @@ export async function renderSources(mid) {
               onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
             }, ch.enabled ? '停用' : '启用'),
             h('button', {
-              class: 'btn',
-              onclick: async () => { await m.channelUpdate(ch.id, { review: !ch.review }); await renderSources(mid) },
-            }, ch.review ? '免复审' : '复审'),
-            h('button', {
               class: 'btn', style: { color: 'var(--red)' },
               onclick: async () => { await m.channelRemove(ch.id); showFlash('已删除通道'); await renderSources(mid) },
             }, '删除'),
@@ -594,7 +590,7 @@ export async function renderSources(mid) {
               let metricRow = null
               // 发现标签按钮（仅 EDGAR 类型显示）
               const discoverBtn = h('button', {
-                class: 'btn', style: { display: 'none', padding: '4px 8px', fontSize: '11px' },
+                class: 'btn', style: { display: 'none', padding: '4px 8px', fontSize: 'var(--t-caption)' },
                 onclick: async () => {
                   if (!inputs.query) { showFlash('请先填 query (ticker)', 'var(--red)'); return }
                   showFlash(`正在发现标签…`)
@@ -608,7 +604,7 @@ export async function renderSources(mid) {
               const tagPanel = h('div', { style: { marginTop: '8px', width: '100%' } })
               function renderTagPanel(tags, inputEl) {
                 clear(tagPanel)
-                if (!tags.length) { tagPanel.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '没有标签')); return }
+                if (!tags.length) { tagPanel.append(h('p', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '没有标签')); return }
                 // 过滤框
                 let filterText = ''
                 const filterInput = h('input', { class: 'txt', placeholder: '过滤标签…', style: { width: '100%', marginBottom: '6px' }, oninput: (e) => { filterText = e.target.value.toLowerCase(); refreshList() } })
@@ -621,14 +617,14 @@ export async function renderSources(mid) {
                   for (const t of filtered) {
                     const display = t.label ? `${t.label}（${t.tag}）` : t.tag
                     const row = h('div', {
-                      style: { padding: '3px 8px', cursor: t.periods > 0 ? 'pointer' : 'default', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #f0f0f0)' },
+                      style: { padding: '3px 8px', cursor: t.periods > 0 ? 'pointer' : 'default', fontSize: 'var(--t-caption)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #f0f0f0)' },
                       onclick: t.periods > 0 ? () => {
                         if (inputEl) { inputEl.value = t.tag; inputs.metric = t.tag }
                         clear(tagPanel)
                       } : null,
                     },
                       h('span', { style: { color: t.periods > 0 ? 'var(--text-2)' : 'var(--text-3)', fontWeight: t.common ? '600' : '400' } }, display),
-                      h('span', { style: { color: 'var(--text-3)', fontSize: '10px' } }, String(t.periods)),
+                      h('span', { style: { color: 'var(--text-3)', fontSize: 'var(--t-caption)' } }, String(t.periods)),
                     )
                     listBox.append(row)
                   }
@@ -638,15 +634,15 @@ export async function renderSources(mid) {
               }
               return [
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '名称'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '名称'),
                   h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.name = e.target.value }),
                 ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
                   h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
                 ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '取数器'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '取数器'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => {
                     inputs.fetch = e.target.value
                     const needsMetric = metricFetchers.includes(e.target.value)
@@ -658,24 +654,24 @@ export async function renderSources(mid) {
                   ),
                 ),
                 (metricRow = h('div', { style: { display: 'none', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, 'metric'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, 'metric'),
                   h('div', { style: { display: 'flex', gap: '4px', alignItems: 'flex-end' } },
                     (metricInput = h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value })),
                     discoverBtn,
                   ),
                 )),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '来源类型'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '来源类型'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
                     ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
                   ),
                 ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '间隔 (分钟)'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '间隔 (分钟)'),
                   h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
                 ),
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '所属主题'),
+                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '所属主题'),
                   h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.themeId = e.target.value || null },
                     h('option', { value: '' }, '全局（所有主题可用）'),
                     ...state.themes.map((t) => h('option', { value: t.id, selected: t.id === state.themeId }, t.name)),

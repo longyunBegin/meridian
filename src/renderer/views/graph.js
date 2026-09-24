@@ -17,39 +17,11 @@
  * 用 SVG 不用 Canvas：节点量级是几十到低几百；SVG 在 retina 上能画真正的
  * 0.5px 发丝线、能用 CSS 变量跟着深浅色模式走、命中测试免费。
  */
-import { h, icon } from '../lib/dom.js'
+import { h } from '../lib/dom.js'
 import { state, refresh, selectNode } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 
 const m = window.meridian
-
-async function confirmDelete(id) {
-  if (!confirm('删除这条及它的全部子树？')) return
-  await m.removeNode(id)
-  if (state.selectedId === id) state.selectedId = null
-  await refresh()
-}
-
-async function toggleCold(id) {
-  const node = state.nodes.find((n) => n.id === id)
-  if (!node) return
-  await m.updateNode(id, { status: node.status === 'cold' ? 'live' : 'cold' })
-  await refresh()
-}
-
-async function addChildHere(parentId) {
-  const node = m.getNode(parentId)
-  if (!node) return
-  const child = await m.addNode({
-    themeId: state.themeId,
-    parentId,
-    kind: 'lemma',
-    title: '未命名命题',
-    confidence: 50,
-  })
-  state.selectedId = child.id
-  await refresh()
-}
 
 const NS = 'http://www.w3.org/2000/svg'
 
@@ -66,13 +38,6 @@ export function pulseFrom(id) { pulseFn?.(id) }
 const ROW = 42 // 纵向行距
 const PAD = 44 // 父子节点间的水平间隙
 const MAXW = 270 // 节点最宽。再宽列距就撑不开，适应窗口时整图会缩得太小
-
-/** SF Symbol 风格图标路径，以 (0,0) 为中心 */
-const ICONS = {
-  plus: 'M0 -4.5v9M-4.5 0h9',
-  trash: 'M-4.5 -3h9 M-3 -3v-1.5h6v1.5 M-3.5 -3l.5 8h6l.5 -8',
-  snow: 'M0 -4.5v9M-3.9 -2.25l7.8 4.5M3.9 -2.25l-7.8 4.5',
-}
 
 /** SVG 元素助手。h() 建的是 HTML 节点，SVG 必须走 createElementNS。 */
 function s(tag, attrs = {}, ...kids) {
@@ -176,7 +141,7 @@ export function renderGraph(wrap) {
   if (!nodes.length) {
     focusFn = null
     wrap.append(h('div', { class: 'graph-empty' },
-      h('p', {}, '这个主题还没有环节。回车新建，或先去设置页从骨架起步。'),
+      h('p', {}, '这个主题还没有环节。切到树形新建，或先生成骨架。'),
     ))
     return
   }
@@ -393,31 +358,6 @@ export function renderGraph(wrap) {
         g.append(s('rect', { class: 'node-stl', x: x + 3, y: y + 5, width: 2.5, height: b.h - 10, rx: 1.25, fill: stlColor }))
       }
     }
-
-    // 悬停操作——苹果风格药丸，默认隐藏，hover 节点时渐现
-    const actItems = b.isLemma
-      ? [
-          { icon: 'snow', title: n.status === 'cold' ? '移出冷库' : '移入冷库', fn: () => toggleCold(n.id) },
-          { icon: 'trash', title: '删除', fn: () => confirmDelete(n.id) },
-        ]
-      : [
-          { icon: 'plus', title: '加子命题', fn: () => addChildHere(n.id) },
-          { icon: 'trash', title: '删除', fn: () => confirmDelete(n.id) },
-        ]
-    const actSize = 22
-    const actGap = 2
-    const actW = actItems.length * actSize + (actItems.length - 1) * actGap + 6
-    const acts = s('g', { class: 'node-acts', transform: `translate(${x + b.w - actW - 5},${y + b.h / 2 - 12})` })
-    acts.append(s('rect', { class: 'node-acts-bg', x: 0, y: 0, width: actW, height: 24, rx: 12 }))
-    actItems.forEach((a, i) => {
-      const cx = 3 + i * (actSize + actGap) + actSize / 2
-      const btn = s('g', { class: 'node-act', transform: `translate(${cx}, 12)` })
-      btn.append(s('circle', { class: 'node-act-hit', r: 10 }))
-      btn.append(s('path', { class: `node-act-ic ic-${a.icon}`, d: ICONS[a.icon] }))
-      btn.addEventListener('click', (e) => { e.stopPropagation(); a.fn() })
-      acts.append(btn)
-    })
-    g.append(acts)
 
     let cursor = x + PADL
     if (b.isStage) {

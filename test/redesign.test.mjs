@@ -1626,7 +1626,8 @@ ok('R7 packId: 非 AI 描述 → 0 通道', nonAiChannels.length === 0, `实际 
 
 const aiTheme = await fire('theme:setupNew', 'AI 产业链')
 const aiChannels = store.allChannels().filter((c) => c.themeId === aiTheme.id)
-ok('R7 packId: AI 描述 → 有通道', aiChannels.length > 0, `实际 ${aiChannels.length}`)
+ok('R7 无 key: AI 描述也不猜通道', aiChannels.length === 0, `实际 ${aiChannels.length}`)
+ok('R7 无 key: 返回降级标记', aiTheme.degraded === true)
 
 // --- 3.2 指针机制：channelIds ---
 const ptrTheme = store.addTheme('R7 指针测试')
@@ -1927,21 +1928,13 @@ delete t1OldData.themes[0].tags
 store.importAll(JSON.stringify(t1OldData))
 ok('T1: 旧主题导入后 tags 为空数组', Array.isArray(store.allThemes()[0].tags) && store.allThemes()[0].tags.length === 0)
 
-// --- T2: 静态模板标签 ---
-for (const tpl of templatesJson.templates) {
-  ok(`T2: 模板 ${tpl.id} 有 tags`, Array.isArray(tpl.tags) && tpl.tags.length > 0)
-}
-ok('T2: ai-chain 含半导体', templatesJson.templates.find((t) => t.id === 'ai-chain').tags.includes('半导体'))
-ok('T2: ai-chain 含 AI', templatesJson.templates.find((t) => t.id === 'ai-chain').tags.includes('AI'))
-ok('T2: crypto 含虚拟货币', templatesJson.templates.find((t) => t.id === 'crypto').tags.includes('虚拟货币'))
-ok('T2: saas 含 SaaS', templatesJson.templates.find((t) => t.id === 'saas').tags.includes('SaaS'))
-// fromTemplate 设 tags
-const t2Theme = store.addTheme('T2 临时')
-store.removeTheme(t2Theme.id)
-// 模拟 fromTemplate：建主题 + 设 tags
-const t2FromTpl = store.addTheme('AI 产业链')
-updateTheme(t2FromTpl.id, { tags: templatesJson.templates.find((t) => t.id === 'ai-chain').tags })
-ok('T2: fromTemplate 主题有 tags', store.allThemes().find((t) => t.id === t2FromTpl.id)?.tags.includes('半导体'))
+// --- T2: 通用骨架与验证通道库 ---
+ok('T2: selectable templates 已删除', !Array.isArray(templatesJson.templates))
+ok('T2: 通用骨架是上中下游', templatesJson.genericFallback.nodes.map((node) => node.path).join(',') === '上游,中游,下游')
+ok('T2: 通用骨架领域中立', !JSON.stringify(templatesJson.genericFallback).match(/AI|光模块|半导体|GPU/i))
+ok('T2: 通道库非空', Array.isArray(templatesJson.channelLibrary) && templatesJson.channelLibrary.length > 0)
+ok('T2: 通道库 id 唯一', new Set(templatesJson.channelLibrary.map((channel) => channel.id)).size === templatesJson.channelLibrary.length)
+ok('T2: 通道库保留 tags', templatesJson.channelLibrary.every((channel) => Array.isArray(channel.tags) && channel.tags.length > 0))
 
 // --- T3: channels.tags ---
 const t3Ch = store.addChannel({ name: 'T3 通道', fetch: 'rss', kind: '独立媒体', tags: ['AI', '学术'] })
@@ -2048,7 +2041,7 @@ const readingsSrc = readFileSync2(join(ROOT2, 'src/shared/readings.js'), 'utf8')
 ok('tie-break: readings.js 用 > 取后加的', readingsSrc.includes('a.at > b.at'))
 
 // ============================================================
-// R5: 轮询器 — dueChannels + runChannelFetch + failCount + review
+// R5: 轮询器 — dueChannels + runChannelFetch + failCount
 // ============================================================
 
 console.log('\n— R5: 轮询器 —')
@@ -2166,7 +2159,7 @@ const ipcFullSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
 ok('R5: ipc.js 有 runChannelFetch 函数', ipcFullSrc.includes('async function runChannelFetch'))
 ok('R5: ipc.js channel:fetch 委托 runChannelFetch', ipcFullSrc.includes("runChannelFetch(channelId)"))
 ok('R5: ipc.js register 返回 runChannelFetch', ipcFullSrc.includes('return { runChannelFetch }'))
-ok('R5: ipc.js review 绕过闸门', ipcFullSrc.includes('ch.review'))
+ok('R5: ipc.js 不再按 review 分流', !ipcFullSrc.includes('ch.review'))
 ok('R5: ipc.js failCount 失败 +1', ipcFullSrc.includes('failCount: (ch.failCount || 0) + 1'))
 ok('R5: ipc.js failCount 成功归零', ipcFullSrc.includes('failCount: 0'))
 
@@ -2185,8 +2178,8 @@ ok('R5: store.js addChannel 有 review', storeFullSrc.includes('review: ch.revie
 
 // --- vault.js review toggle ---
 const vaultFullSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-ok('R5: vault.js 有 review toggle 按钮', vaultFullSrc.includes("review: !ch.review"))
-ok('R5: vault.js 有复审按钮文字', vaultFullSrc.includes('复审'))
+ok('R5: vault.js 无 review toggle', !vaultFullSrc.includes("review: !ch.review"))
+ok('R5: vault.js 不显示复审状态', !vaultFullSrc.includes('免复审'))
 
 // ============================================================
 // B: LLM 提议指针
@@ -2255,66 +2248,44 @@ const bS8 = sanitize(
 ok('B: sanitize 混合只留合法', bS8.length === 2)
 ok('B: sanitize 混合留 n1 和 n3', bS8[0].indicatorId === 'n1' && bS8[1].indicatorId === 'n3')
 
-// --- proposeChannelLinks 无 key 降级 ---
+// --- proposeChannelLinks 无 key降级与边界校验 ---
 
-const bNoKeyResult = await proposeChannelLinks({ apiKey: '', baseUrl: 'x', model: 'x' }, 'any')
+const bNoKeyResult = await proposeChannelLinks({ apiKey: '', baseUrl: 'x', model: 'x' }, null, [])
 ok('B: 无 key 返回 ok: false', bNoKeyResult.ok === false)
 ok('B: 无 key 返回 no-key', bNoKeyResult.error === 'no-key')
 
-// --- proposeChannelLinks 主题不存在 ---
+const noIndicatorResult = await proposeChannelLinks(
+  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, null, [])
+ok('B: 指标不存在返回 ok: false', noIndicatorResult.ok === false)
+ok('B: 指标不存在返回 error', noIndicatorResult.error === 'indicator not found')
 
-const noThemeResult = await proposeChannelLinks({ apiKey: 'test-key', baseUrl: 'x', model: 'x' }, 'nonexistent-theme')
-ok('B: 主题不存在返回 ok: false', noThemeResult.ok === false)
-ok('B: 主题不存在返回 error', noThemeResult.error === 'theme not found')
+// --- 端到端：单指标提议 ---
 
-// --- 端到端：stub LLM 返回提议 ---
-
-// 建主题 + 指标 + 通道
 const bTheme = store.addTheme('B-提议测试主题')
-store.updateTheme(bTheme.id, { tags: ['锂电', '回收', '美股'] })
-
-// 未接线指标
 const bInd1 = store.addNode({
   themeId: bTheme.id, parentId: null, kind: 'lemma',
   title: '废旧电池采购量：按月度节奏更新，本期读数待填',
-  type: 'observation', confidence: 50,
+  type: 'observation', confidence: 50, tags: ['锂电', '回收'],
 })
-const bInd2 = store.addNode({
-  themeId: bTheme.id, parentId: null, kind: 'lemma',
-  title: '回收产能利用率：按季度节奏更新，本期读数待填',
-  type: 'observation', confidence: 50,
-})
-// 已接线指标（不应出现在提议输入里）
-const bInd3 = store.addNode({
-  themeId: bTheme.id, parentId: null, kind: 'lemma',
-  title: '已接线指标：按季度节奏更新，本期读数待填',
-  type: 'observation', confidence: 50,
-  channelIds: ['ch_existing'],
-})
-
-// 通道
 const bCh1 = store.addChannel({ name: 'ALB 总收入', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'ALB', metric: 'Revenues', tags: ['锂电', '财报'] })
 const bCh2 = store.addChannel({ name: 'LTHM 毛利', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'LTHM', metric: 'GrossProfit', tags: ['锂电', '财报'] })
 
-// stub fetch
 const originalFetch = globalThis.fetch
 let capturedUserContent = null
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body)
-  capturedUserContent = body.messages.find((m) => m.role === 'user')?.content
+  capturedUserContent = body.messages.find((message) => message.role === 'user')?.content
   return {
     ok: true,
     json: async () => ({
       choices: [{
         message: {
           content: JSON.stringify({
-            proposals: [
-              { indicatorId: bInd1.id, channelIds: [bCh1.id, bCh2.id], reason: '回收原料价格由上游锂盐厂的收入和毛利反映' },
-              { indicatorId: bInd2.id, channelIds: [], reason: '产能利用率无公开结构化数据源，只能手填' },
-              { indicatorId: bInd3.id, channelIds: [bCh1.id], reason: '已接线的不应出现' },
-              { indicatorId: 'n_hallucinated', channelIds: [bCh1.id], reason: '幻觉指标' },
-              { indicatorId: bInd1.id, channelIds: ['ch_hallucinated'], reason: '幻觉通道' },
-            ],
+            proposal: {
+              indicatorId: bInd1.id,
+              channelIds: [bCh1.id, bCh2.id],
+              reason: '采购量可由两家上游公司的财报交叉验证',
+            },
           }),
         },
       }],
@@ -2325,55 +2296,44 @@ globalThis.fetch = async (url, opts) => {
 try {
   const proposeResult = await proposeChannelLinks(
     { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bTheme.id)
+    bInd1,
+    [bCh1, bCh2])
 
-  ok('B: 端到端返回 ok', proposeResult.ok === true)
-  ok('B: 端到端返回提议数组', Array.isArray(proposeResult.proposals))
-
-  // 已接线的 bInd3 不应出现在结果里（sanitize 过滤了非法 indicatorId）
-  const indIds = proposeResult.proposals.map((p) => p.indicatorId)
-  ok('B: 已接线指标不被提议', !indIds.includes(bInd3.id))
-  ok('B: 幻觉指标被丢弃', !indIds.includes('n_hallucinated'))
-
-  // bInd1 应该有一条合法提议
-  const p1 = proposeResult.proposals.find((p) => p.indicatorId === bInd1.id)
-  ok('B: bInd1 有提议', p1 != null)
-  ok('B: bInd1 提议 2 个通道', p1?.channelIds.length === 2)
-  ok('B: bInd1 提议含 bCh1', p1?.channelIds.includes(bCh1.id))
-  ok('B: bInd1 提议含 bCh2', p1?.channelIds.includes(bCh2.id))
-  ok('B: bInd1 reason 正确', p1?.reason === '回收原料价格由上游锂盐厂的收入和毛利反映')
-
-  // bInd2 应该有空通道提议
-  const p2 = proposeResult.proposals.find((p) => p.indicatorId === bInd2.id)
-  ok('B: bInd2 有空通道提议', p2 != null && p2.channelIds.length === 0)
-  ok('B: bInd2 reason 说明缺什么', p2?.reason.includes('手填'))
-
-  // 幻觉通道的提议被整条丢弃
-  const hallucinatedCh = proposeResult.proposals.find((p) =>
-    p.indicatorId === bInd1.id && p.channelIds.includes('ch_hallucinated'))
-  ok('B: 幻觉通道提议被丢弃', hallucinatedCh == null)
-
-  // LLM 输入包含未接线指标但不包含已接线的
-  ok('B: LLM 输入含未接线指标', capturedUserContent.includes(bInd1.id))
-  ok('B: LLM 输入不含已接线指标', !capturedUserContent.includes(bInd3.id))
-  ok('B: LLM 输入含主题 tags', capturedUserContent.includes('锂电'))
+  ok('B: 单指标提议返回 ok', proposeResult.ok === true)
+  ok('B: 单指标提议返回 proposal', proposeResult.proposal?.indicatorId === bInd1.id)
+  ok('B: 单指标提议含两个通道', proposeResult.proposal?.channelIds.length === 2)
+  ok('B: 单指标提议含 bCh1', proposeResult.proposal?.channelIds.includes(bCh1.id))
+  ok('B: 单指标提议含 bCh2', proposeResult.proposal?.channelIds.includes(bCh2.id))
+  ok('B: 单指标提议 reason 正确', proposeResult.proposal?.reason.includes('交叉验证'))
+  ok('B: LLM 输入只含当前指标', capturedUserContent.includes(bInd1.id))
+  ok('B: LLM 输入含指标 tags', capturedUserContent.includes('回收'))
   ok('B: LLM 输入含通道 tags', capturedUserContent.includes('财报'))
 
-  // 模拟「采用」→ 写入 channelIds
-  await store.updateNode(bInd1.id, { channelIds: p1.channelIds })
-  const updated = store.allNodes().find((n) => n.id === bInd1.id)
-  ok('B: 采用后 channelIds 写入', updated.channelIds.length === 2)
-  ok('B: 采用后 channelIds 含 bCh1', updated.channelIds.includes(bCh1.id))
-  ok('B: 采用后 channelIds 含 bCh2', updated.channelIds.includes(bCh2.id))
+  const merged = [...new Set(['ch_existing', ...proposeResult.proposal.channelIds])]
+  store.updateNode(bInd1.id, { channelIds: merged })
+  const updated = store.allNodes().find((node) => node.id === bInd1.id)
+  ok('B: 采用时保留已有通道', updated.channelIds.includes('ch_existing'))
+  ok('B: 采用时合并提议通道', updated.channelIds.includes(bCh1.id) && updated.channelIds.includes(bCh2.id))
+} finally {
+  globalThis.fetch = originalFetch
+}
 
-  // 采用后该指标不再是缺口
-  const stillGap = !updated.channelIds || updated.channelIds.length === 0
-  ok('B: 采用后不再是缺口', stillGap === false)
+// --- 幻觉通道整条拒绝 ---
 
-  // 模拟「忽略」→ channelIds 仍为空
-  await store.updateNode(bInd2.id, { channelIds: [] })
-  const ignored = store.allNodes().find((n) => n.id === bInd2.id)
-  ok('B: 忽略后 channelIds 仍为空', (!ignored.channelIds || ignored.channelIds.length === 0))
+globalThis.fetch = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{ message: { content: JSON.stringify({
+      proposal: { indicatorId: bInd1.id, channelIds: ['ch_hallucinated'], reason: '猜测' },
+    }) } }],
+  }),
+})
+try {
+  const invalidResult = await proposeChannelLinks(
+    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
+    bInd1,
+    [bCh1, bCh2])
+  ok('B: 幻觉通道提议被拒绝', invalidResult.ok === false && invalidResult.error === 'invalid proposal')
 } finally {
   globalThis.fetch = originalFetch
 }
@@ -2384,7 +2344,8 @@ globalThis.fetch = async () => { throw new Error('network error') }
 try {
   const failResult = await proposeChannelLinks(
     { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bTheme.id)
+    bInd1,
+    [bCh1])
   ok('B: LLM 失败返回 ok: false', failResult.ok === false)
   ok('B: LLM 失败有 error', typeof failResult.error === 'string')
 } finally {
@@ -2397,30 +2358,25 @@ globalThis.fetch = async () => ({ ok: false, status: 500 })
 try {
   const httpFailResult = await proposeChannelLinks(
     { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bTheme.id)
+    bInd1,
+    [bCh1])
   ok('B: HTTP 错误返回 ok: false', httpFailResult.ok === false)
   ok('B: HTTP 错误含状态码', httpFailResult.error.includes('500'))
 } finally {
   globalThis.fetch = originalFetch
 }
 
+// --- 无通道时直接返回空提议 ---
+
+const noChannelResult = await proposeChannelLinks(
+  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, bInd1, [])
+ok('B: 无通道返回空提议', noChannelResult.ok === true && noChannelResult.proposal.channelIds.length === 0)
+
 // --- IPC handler ---
 
-const ipcResult = await fire('llm:proposeLinks', bTheme.id)
+const ipcResult = await fire('llm:proposeLinks', bInd1.id)
 ok('B: IPC llm:proposeLinks 可调', ipcResult != null)
 ok('B: IPC 无 key 返回 ok: false', ipcResult.ok === false)
-
-// --- 无未接线指标 → 空提议 ---
-
-const noGapTheme = store.addTheme('B-无缺口主题')
-store.addNode({
-  themeId: noGapTheme.id, parentId: null, kind: 'lemma',
-  title: '已接线的：按季度节奏更新', type: 'observation', confidence: 50,
-  channelIds: ['ch_x'],
-})
-const noGapResult = await proposeChannelLinks(
-  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, noGapTheme.id)
-ok('B: 无未接线指标返回空提议', noGapResult.ok === true && noGapResult.proposals.length === 0)
 
 // --- 不新增节点字段 ---
 
@@ -2435,23 +2391,21 @@ const pjB = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
 const pcB = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 ok('B: preload.js 有 proposeLinks', pjB.includes('proposeLinks'))
 ok('B: preload.cjs 有 proposeLinks', pcB.includes('proposeLinks'))
-const extractKeysB = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+const extractKeysB = (s) => s.split('\n').filter((line) => line.includes('ipcRenderer.invoke')).map((line) => line.trim().split(':')[0].trim()).sort()
 ok('B: preload 两份同步', JSON.stringify(extractKeysB(pjB)) === JSON.stringify(extractKeysB(pcB)))
 
-// --- IPC handler 注册 ---
+// --- IPC 与界面入口 ---
 
 const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
-ok('B: ipc.js import proposeChannelLinks', ipcBSrc.includes('proposeChannelLinks'))
-
-// --- lattice.js 缺口列表按钮（R3: 已从 vault.js 搬到 lattice.js）---
-
 const vaultBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const latticeBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
-ok('B: lattice.js 有分析按钮', latticeBSrc.includes('分析'))
-ok('B: lattice.js 有采用按钮', latticeBSrc.includes('采用'))
-ok('B: lattice.js 有忽略按钮', latticeBSrc.includes('忽略'))
-ok('B: lattice.js 有 proposeLinks 调用', latticeBSrc.includes('proposeLinks'))
+const inspectorBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
+ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
+ok('B: IPC 按 indicatorId 提议', ipcBSrc.includes("getNode(indicatorId)"))
+ok('B: lattice.js 无批量提议入口', !latticeBSrc.includes('proposeLinks'))
+ok('B: inspector.js 有单指标提议入口', inspectorBSrc.includes('proposeLinks(node.id)'))
+ok('B: inspector.js 采用时合并通道', inspectorBSrc.includes('new Set([...(node.channelIds || []), ...proposal.channelIds])'))
+ok('B: inspector.js 采用后立即拉取', inspectorBSrc.includes('m.channelFetch(id)'))
 ok('B: vault.js 无缺口列表', !vaultBSrc.includes('未关联指标'))
 
 // ============================================================
@@ -2460,22 +2414,22 @@ ok('B: vault.js 无缺口列表', !vaultBSrc.includes('未关联指标'))
 
 console.log('\n— C+D: 通道包补全 + 研究观点 —')
 
-const { channelPack } = await import('../src/main/templates.js')
+const { channelLibrary: getChannelLibrary } = await import('../src/main/templates.js')
 
-// --- C1: saas 通道包 ---
-const saasPack = channelPack('saas')
-ok('C1: saas 通道包非空', saasPack.length > 0)
-ok('C1: saas 有 edgarFilings', saasPack.some((c) => c.fetch === 'edgarFilings'))
-ok('C1: saas 有 edgarConcept', saasPack.some((c) => c.fetch === 'edgarConcept'))
-ok('C1: saas 覆盖 ≥5 家公司', new Set(saasPack.filter((c) => c.fetch === 'edgarFilings').map((c) => c.query)).size >= 5)
+// --- C1: 软件服务通道配置 ---
+const saasPack = getChannelLibrary().filter((channel) => channel.tags.includes('软件服务'))
+ok('C1: 软件服务通道非空', saasPack.length > 0)
+ok('C1: 软件服务有 edgarFilings', saasPack.some((channel) => channel.fetch === 'edgarFilings'))
+ok('C1: 软件服务有 edgarConcept', saasPack.some((channel) => channel.fetch === 'edgarConcept'))
+ok('C1: 软件服务覆盖 ≥5 家公司', new Set(saasPack.filter((channel) => channel.fetch === 'edgarFilings').map((channel) => channel.query)).size >= 5)
 
-// --- C2: crypto 通道包 ---
-const cryptoPack = channelPack('crypto')
-ok('C2: crypto 通道包非空', cryptoPack.length > 0)
-ok('C2: crypto 有 defillamaProtocol', cryptoPack.some((c) => c.fetch === 'defillamaProtocol'))
-ok('C2: crypto 有 defillamaStablecoins', cryptoPack.some((c) => c.fetch === 'defillamaStablecoins'))
-ok('C2: crypto 有 blockchainChart', cryptoPack.some((c) => c.fetch === 'blockchainChart'))
-ok('C2: crypto 全免费无 key', cryptoPack.every((c) => c.needsKey === false))
+// --- C2: 数字资产通道配置 ---
+const cryptoPack = getChannelLibrary().filter((channel) => channel.tags.includes('数字资产'))
+ok('C2: 数字资产通道非空', cryptoPack.length > 0)
+ok('C2: 数字资产有 defillamaProtocol', cryptoPack.some((channel) => channel.fetch === 'defillamaProtocol'))
+ok('C2: 数字资产有 defillamaStablecoins', cryptoPack.some((channel) => channel.fetch === 'defillamaStablecoins'))
+ok('C2: 数字资产有 blockchainChart', cryptoPack.some((channel) => channel.fetch === 'blockchainChart'))
+ok('C2: 数字资产通道全免费无 key', cryptoPack.every((channel) => channel.needsKey === false))
 
 // --- C2: 新取数器注册 ---
 const availCD = (await import('../src/main/fetchers.js')).availableFetchers()
@@ -2703,31 +2657,12 @@ ok('B2: IPC channel:metricFetchers 可调', Array.isArray(await fire('channel:me
 const metricFetchersList = await fire('channel:metricFetchers')
 ok('B2: IPC 返回 4 个取数器', metricFetchersList.length === 4, `实际 ${metricFetchersList.length}`)
 
-// --- B3: theme:fromTemplate 传 metric/interval ---
+// --- B3: 验证通道库保留 metric/interval ---
 
-ok('B3: ipc.js fromTemplate 传 metric', ipcSrc66.includes('metric: ch.metric || null'))
-ok('B3: ipc.js fromTemplate 传 interval', ipcSrc66.includes('interval: Math.max(15, Number(ch.interval) || 60)'))
-
-// B3 端到端：crypto 模板 → 通道有 metric
-const b3Theme = await fire('theme:fromTemplate', 'crypto')
-if (b3Theme) {
-  const b3Channels = store.allChannels().filter((c) => c.themeId === b3Theme.id)
-  ok('B3: crypto 模板建了通道', b3Channels.length > 0, `实际 ${b3Channels.length}`)
-  const b3WithMetric = b3Channels.filter((c) => c.metric)
-  ok('B3: crypto 通道有 metric', b3WithMetric.length > 0, `实际 ${b3WithMetric.length}`)
-  ok('B3: crypto 通道有 interval', b3Channels.every((c) => c.interval != null))
-} else {
-  ok('B3: crypto 模板建主题', false, '返回 null')
-}
-
-// B3: saas 模板 → edgarConcept 通道有 metric
-const b3SaasTheme = await fire('theme:fromTemplate', 'saas')
-if (b3SaasTheme) {
-  const b3SaasChannels = store.allChannels().filter((c) => c.themeId === b3SaasTheme.id)
-  const b3SaasEdgar = b3SaasChannels.filter((c) => c.fetch === 'edgarConcept')
-  ok('B3: saas 有 edgarConcept 通道', b3SaasEdgar.length > 0)
-  ok('B3: saas edgarConcept 有 metric', b3SaasEdgar.every((c) => c.metric))
-}
+const b3Library = getChannelLibrary()
+ok('B3: 通道库保留 metric', b3Library.some((channel) => channel.metric))
+ok('B3: 通道库保留 interval 或使用默认值', b3Library.every((channel) => channel.interval == null || channel.interval >= 15))
+ok('B3: preload 无模板入口', !pj66.includes('addThemeFromTemplate') && !pc66.includes('addThemeFromTemplate'))
 
 // --- I1: 读数筛选指标维度 ---
 
@@ -2899,7 +2834,7 @@ ok('T3: ipc.js 有 routeProposals', ipcSrcTL.includes('routeProposals'))
 ok('T3: ipc.js 有 route-proposal', ipcSrcTL.includes("'route-proposal'"))
 ok('T3: ipc.js 有 recordTagHits', ipcSrcTL.includes('recordTagHits'))
 ok('T3: ipc.js theme:setupNew 调 generateTagLibrary', ipcSrcTL.includes('generateTagLibrary'))
-ok('T3: ipc.js theme:fromTemplate 调 generateTagLibrary', ipcSrcTL.includes('generateTagLibrary'))
+ok('T3: ipc.js 无 theme:fromTemplate', !ipcSrcTL.includes('theme:fromTemplate'))
 
 // --- T4: 标签库可视化 ---
 
@@ -2964,13 +2899,12 @@ const ipcSrcER = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
 const pjER = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
 const pcER = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 
-// --- E1: 三路菜单 ---
+// --- E1: 单一路径建主题 ---
 
 ok('E1: app.js 有 renderThemeCreator', appSrcER.includes('function renderThemeCreator'))
 ok('E1: app.js 有 setupNewTheme 调用', appSrcER.includes('setupNewTheme'))
-ok('E1: app.js 有 addThemeFromTemplate 调用', appSrcER.includes('addThemeFromTemplate'))
-ok('E1: app.js 有 addTheme 空白主题', appSrcER.includes('addTheme'))
-ok('E1: app.js 有空白主题明示', appSrcER.includes('只有名称'))
+ok('E1: app.js 无 addThemeFromTemplate 调用', !appSrcER.includes('addThemeFromTemplate'))
+ok('E1: app.js 只有描述输入框', appSrcER.includes('描述你要跟踪的'))
 
 // --- E2: 空态复用 ---
 
@@ -2985,7 +2919,7 @@ ok('E3: lattice.js 有骨架提示', latticeSrcER.includes('还没有骨架'))
 ok('E3: lattice.js 有 scaffoldExisting 调用', latticeSrcER.includes('scaffoldExisting'))
 ok('E3: ipc.js 有 scaffoldTheme 共用函数', ipcSrcER.includes('async function scaffoldTheme'))
 ok('E3: ipc.js 有 theme:scaffoldExisting', ipcSrcER.includes('theme:scaffoldExisting'))
-ok('E3: ipc.js setupNew 调 scaffoldTheme', ipcSrcER.includes('await scaffoldTheme(theme.id, description, s)'))
+ok('E3: ipc.js setupNew 调 scaffoldTheme', ipcSrcER.includes('await scaffoldTheme(theme.id, description, settings())'))
 ok('E3: preload.js 有 scaffoldExisting', pjER.includes('scaffoldExisting'))
 ok('E3: preload.cjs 有 scaffoldExisting', pcER.includes('scaffoldExisting'))
 ok('E3: preload 两份同步', pjER.includes('scaffoldExisting') === pcER.includes('scaffoldExisting'))
@@ -3028,14 +2962,14 @@ ok('R2: inspector.js 有 channelAdd', inspectorSrcER.includes('channelAdd'))
 ok('R2: inspector.js 有 addReading', inspectorSrcER.includes('addReading'))
 ok('R2: vault.js 无 addReading 调用', !vaultSrcER.includes('addReading'))
 
-// --- R3: 缺口列表在脉络视图 ---
+// --- R3: 缺口只保留头部汇总，提议移到检视面板 ---
 
-ok('R3: lattice.js 有 renderGapList', latticeSrcER.includes('function renderGapList'))
-ok('R3: lattice.js 有未关联指标', latticeSrcER.includes('未关联指标'))
-ok('R3: lattice.js 有 proposeLinks', latticeSrcER.includes('proposeLinks'))
-ok('R3: lattice.js 有采用按钮', latticeSrcER.includes('采用'))
-ok('R3: lattice.js 有忽略按钮', latticeSrcER.includes('忽略'))
-ok('R3: vault.js 无未关联指标', !vaultSrcER.includes('未关联指标'))
+ok('R3: lattice.js 无 renderGapList', !latticeSrcER.includes('function renderGapList'))
+ok('R3: lattice.js 有指标汇总', latticeSrcER.includes('个指标') && latticeSrcER.includes('个未接数据'))
+ok('R3: inspector.js 有 proposeLinks', inspectorSrcER.includes('proposeLinks'))
+ok('R3: inspector.js 有采用按钮', inspectorSrcER.includes('采用'))
+ok('R3: inspector.js 有忽略按钮', inspectorSrcER.includes('忽略'))
+ok('R3: inspector.js 采用后立即拉取', inspectorSrcER.includes('channelFetch'))
 ok('R3: vault.js 无 proposeLinks', !vaultSrcER.includes('proposeLinks'))
 
 // --- R4: 无「未关联」筛选项 ---
@@ -3053,7 +2987,47 @@ const oldReading = store.addReading({ metric: 'old.test', value: 1, indicatorId:
 ok('验收: 旧读数有 indicatorId 不影响 addReading', oldReading.added === true)
 
 // 3. scaffoldTheme 不写 indicatorId
-ok('验收: ipc.js scaffoldTheme 无 indicatorId', !ipcSrcER.includes('indicatorId'))
+const scaffoldThemeSrc = ipcSrcER.slice(
+  ipcSrcER.indexOf('async function scaffoldTheme'),
+  ipcSrcER.indexOf("ipcMain.handle('theme:setupNew'"),
+)
+ok('验收: ipc.js scaffoldTheme 无 indicatorId', !scaffoldThemeSrc.includes('indicatorId'))
+
+// ============================================================
+// v0.7: S4 图交互 + S5 字阶
+// ============================================================
+
+console.log('\n— v0.7: 图交互与字阶 —')
+
+const graphSrcS45 = readFileSync2(join(ROOT2, 'src/renderer/views/graph.js'), 'utf8')
+const stylesSrcS45 = readFileSync2(join(ROOT2, 'src/renderer/styles.css'), 'utf8')
+const rendererJsS45 = [
+  appSrcER,
+  latticeSrcER,
+  inspectorSrcER,
+  vaultSrcER,
+  readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8'),
+  readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8'),
+].join('\n')
+
+ok('S4: graph.js 无 CRUD 函数', !graphSrcS45.match(/addChildHere|toggleCold|removeNode/))
+ok('S4: graph.js 无原生 confirm', !graphSrcS45.includes('confirm('))
+ok('S4: graph.js 无浮动操作组', !graphSrcS45.includes('node-acts'))
+ok('S4: 图中隐藏重新生成', latticeSrcER.includes('isGraph ? null : (() => {'))
+ok('S4: 图中隐藏新建按钮', latticeSrcER.includes("isGraph ? null : h('button'"))
+ok('S4: 图中 Enter 切回树形', latticeSrcER.includes("state.shape === 'graph'"))
+ok('S4: 图中方向键遍历节点', latticeSrcER.includes("state.shape === 'graph' ? '.node' : '.row'"))
+ok('S4: 支持 Cmd/Ctrl+Backspace', latticeSrcER.includes("(e.metaKey || e.ctrlKey) && e.key === 'Backspace'"))
+ok('S4: 树图共用软删函数', appSrcER.includes('export async function deleteNodeWithUndo'))
+ok('S4: 软删 toast 可撤销', appSrcER.includes('m.restoreNode(id)') && appSrcER.includes("label: '撤销'"))
+
+ok('S5: 有 caption 字阶', stylesSrcS45.includes('--t-caption: 11px'))
+ok('S5: 有 body 字阶', stylesSrcS45.includes('--t-body: 13px'))
+ok('S5: 有 title 字阶', stylesSrcS45.includes('--t-title: 15px'))
+ok('S5: 有 head 字阶', stylesSrcS45.includes('--t-head: 20px'))
+ok('S5: 有 hero 字阶', stylesSrcS45.includes('--t-hero: 28px'))
+ok('S5: CSS 无直接像素字号', !/font-size:\s*[\d.]+px/.test(stylesSrcS45))
+ok('S5: 渲染 JS 无直接像素字号', !/fontSize:\s*['"][\d.]+px/.test(rendererJsS45))
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

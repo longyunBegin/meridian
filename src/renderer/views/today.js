@@ -50,7 +50,7 @@ export async function renderToday(mid) {
         '默认信任，例外修正'),
       h('span', { style: { flex: 1 } }),
       h('button', {
-        class: 'btn', style: { height: '26px', fontSize: '12px' },
+        class: 'btn', style: { height: '26px', fontSize: 'var(--t-body)' },
         onclick: async () => {
           if (lastAutoImport?.id) {
             await m.inboxUndoAutoImport(lastAutoImport.id)
@@ -129,7 +129,7 @@ export async function renderToday(mid) {
             ...inbox.map((item, i) => renderInboxItem(item, i, mid, themeNodes)),
             // 批量入库栏
             h('div', { class: 'inbox-import-bar' },
-              h('span', { style: { fontSize: '12px', color: 'var(--text-3)' } }, `已选 ${picked.size} / ${inbox.length} 条`),
+              h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)' } }, `已选 ${picked.size} / ${inbox.length} 条`),
               h('span', { style: { flex: 1 } }),
               h('button', {
                 class: 'btn', style: { height: '28px' },
@@ -219,7 +219,7 @@ export async function renderToday(mid) {
           return h('div', { class: 'q' },
             h('span', { class: 'cf', style: { marginTop: '6px' } }, '冲突'),
             h('div', { class: 'q-body' },
-              h('div', { class: 'q-text', style: { fontSize: '12px' } },
+              h('div', { class: 'q-text', style: { fontSize: 'var(--t-body)' } },
                 a?.title || c.a, ' ↔ ', b?.title || c.b),
               h('div', { class: 'q-meta' },
                 h('span', { style: { color: 'var(--text-3)' } }, c.note || '方向相反'),
@@ -227,7 +227,7 @@ export async function renderToday(mid) {
             ),
           )
         }),
-        conflicts.length > 5 ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', padding: '4px 0' } }, `+${conflicts.length - 5} 条`) : null,
+        conflicts.length > 5 ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', padding: '4px 0' } }, `+${conflicts.length - 5} 条`) : null,
       ),
     ) : null,
 
@@ -280,7 +280,7 @@ function renderInboxItem(item, i, mid, themeNodes) {
         h('span', { class: 'inbox-quality' },
           h('span', { class: 'bar', style: { width: '40px' } },
             h('i', { style: { width: `${(label.quality || 0) * 100}%`, background: color } })),
-          h('span', { style: { fontSize: '10px', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } },
+          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums' } },
             label.quality?.toFixed(2) || '—'),
         ),
         hasDup ? h('span', { class: 'feed-dup' }, '重复') : h('span', { class: 'feed-new' }, '新'),
@@ -293,9 +293,9 @@ function renderInboxItem(item, i, mid, themeNodes) {
       lemmas.length > 1 ? h('div', { class: 'inbox-lemmas' },
         ...lemmas.slice(0, 3).map((l) => h('div', { class: 'inbox-lemma' },
           h('span', { class: 'dot', style: { background: confColor(l.confidence), width: '4px', height: '4px' } }),
-          h('span', { style: { fontSize: '11px', color: 'var(--text-2)' } }, l.title),
+          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)' } }, l.title),
         )),
-        lemmas.length > 3 ? h('div', { style: { fontSize: '10px', color: 'var(--text-3)', padding: '2px 0 0 10px' } }, `+${lemmas.length - 3} 条`) : null,
+        lemmas.length > 3 ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', padding: '2px 0 0 10px' } }, `+${lemmas.length - 3} 条`) : null,
       ) : null,
 
       // 内联裁决：置信度滑块

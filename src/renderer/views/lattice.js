@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
-import { state, refresh, selectNode, setShape } from '../app.js'
-import { confColor, confColorContinuous, TYPE_LABEL, todayStr, nodePath } from './shared.js'
+import { state, refresh, selectNode, setShape, deleteNodeWithUndo } from '../app.js'
+import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
 
 const m = window.meridian
@@ -32,7 +32,7 @@ function renderTagLibraryBand(theme) {
     if (!expanded) return
     const body = h('div', { class: 'sect-b' })
     if (!total) {
-      body.append(h('p', { style: { fontSize: '12px', color: 'var(--text-3)', padding: '6px 0' } }, '暂无标签库'))
+      body.append(h('p', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', padding: '6px 0' } }, '暂无标签库'))
     } else if (organizeMode) {
       renderOrganize(body)
     } else {
@@ -44,7 +44,7 @@ function renderTagLibraryBand(theme) {
 
   function renderList(body) {
     body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: () => { organizeMode = true; render() } }, '整理'),
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = true; render() } }, '整理'),
     ))
     for (const tag of lib) {
       const row = h('div', { class: 'q', style: { cursor: 'pointer' },
@@ -67,18 +67,18 @@ function renderTagLibraryBand(theme) {
 
   function renderTagDetail(body, tag) {
     clear(body)
-    body.append(h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', marginBottom: '6px' }, onclick: () => render() }, '返回'))
+    body.append(h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', marginBottom: '6px' }, onclick: () => render() }, '返回'))
     const nameInput = h('input', { class: 'txt', value: tag.name, style: { width: '100%', marginBottom: '6px' } })
     const synInput = h('input', { class: 'txt', value: (tag.synonyms || []).join(', '), style: { width: '100%', marginBottom: '6px' } })
     const thrInput = h('input', { class: 'txt', type: 'number', value: tag.threshold, min: '0.4', max: '0.85', step: '0.05', style: { width: '80px', marginBottom: '6px' } })
     body.append(
-      h('div', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '名称'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '名称'),
       nameInput,
-      h('div', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '同义词（逗号分隔）'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '同义词（逗号分隔）'),
       synInput,
-      h('div', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '阈值'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '阈值'),
       thrInput,
-      h('button', { class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: '11px', marginTop: '4px' }, onclick: async () => {
+      h('button', { class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', marginTop: '4px' }, onclick: async () => {
         await m.updateTagLibraryTag(theme.id, tag.id, {
           name: nameInput.value.trim(),
           synonyms: synInput.value.split(',').map((s) => s.trim()).filter(Boolean),
@@ -92,8 +92,8 @@ function renderTagLibraryBand(theme) {
   function renderOrganize(body) {
     const checked = new Set()
     body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: () => { organizeMode = false; render() } }, '完成'),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: () => {
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = false; render() } }, '完成'),
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => {
         for (const t of lib) if (!t.hits) checked.add(t.id)
         renderOrganizeBody(body, checked)
       } }, '全选命中 0'),
@@ -119,15 +119,15 @@ function renderTagLibraryBand(theme) {
         ),
       ))
     }
-    const deleteBtn = h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', color: 'var(--red)', marginTop: '6px' }, onclick: async () => {
+    const deleteBtn = h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)', marginTop: '6px' }, onclick: async () => {
       if (!checked.size) return
       await m.deleteTagLibraryTags(theme.id, [...checked])
       await refresh()
     } }, `删除所选 ${checked.size}`)
     clear(body)
     body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: () => { organizeMode = false; render() } }, '完成'),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: () => {
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = false; render() } }, '完成'),
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => {
         for (const t of lib) if (!t.hits) checked.add(t.id)
         renderOrganizeBody(body, checked)
       } }, '全选命中 0'),
@@ -138,25 +138,25 @@ function renderTagLibraryBand(theme) {
     const nameInput = h('input', { class: 'txt', value: theme.name, style: { flex: '1', minWidth: '120px' } })
     const tagsInput = h('input', { class: 'txt', value: (theme.tags || []).join(', '), style: { flex: '1', minWidth: '120px' } })
     body.append(h('div', { class: 'q', style: { marginTop: '8px', flexDirection: 'column', alignItems: 'stretch', gap: '6px' } },
-      h('div', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '主题名'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题名'),
       h('div', { style: { display: 'flex', gap: '4px' } },
         nameInput,
-        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: async () => {
+        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
           const name = nameInput.value.trim()
           if (!name) return
           await m.renameTheme(theme.id, name)
           await refresh()
         } }, '保存'),
       ),
-      h('div', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '主题标签（逗号分隔）'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题标签（逗号分隔）'),
       h('div', { style: { display: 'flex', gap: '4px' } },
         tagsInput,
-        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: async () => {
+        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
           await m.themeUpdate(theme.id, { tags: tagsInput.value.split(',').map((s) => s.trim()).filter(Boolean) })
           await refresh()
         } }, '保存'),
       ),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', color: 'var(--red)' }, onclick: async () => {
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)' }, onclick: async () => {
         await m.removeTheme(theme.id)
         await refresh()
         toast(`已删除主题「${theme.name}」`, 'var(--text-2)')
@@ -175,7 +175,7 @@ function renderSkeletonPrompt(theme) {
   if (hasBranch) return null
   const box = h('div', { class: 'sect', style: { marginBottom: '0' } },
     h('div', { class: 'sect-b' },
-      h('p', { style: { margin: '0 0 8px', fontSize: '12px', color: 'var(--text-3)' } }, '这个主题还没有骨架。'),
+      h('p', { style: { margin: '0 0 8px', fontSize: 'var(--t-body)', color: 'var(--text-3)' } }, '这个主题还没有骨架。'),
       h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
         (() => {
           const input = h('input', {
@@ -205,133 +205,32 @@ function renderSkeletonPrompt(theme) {
             }, '生成'),
           )
         })(),
-        h('button', {
-          class: 'btn', style: { padding: '2px 10px' },
-          onclick: async () => {
-            // 从模板补生成：用模板 instantiate + 生成标签库
-            const templates = await m.templates()
-            if (!templates.length) return
-            // 选第一个模板（简化：侧边栏已有模板选择，这里给快速入口）
-            const tpl = templates[0]
-            const theme2 = await m.addThemeFromTemplate(tpl.id)
-            // 不建新主题，而是把模板内容灌进当前主题
-            // 实际走 scaffoldExisting 用模板名做描述
-            await m.scaffoldExisting(theme.id, tpl.name)
-            await refresh()
-          },
-        }, '从模板…'),
       ),
     ),
   )
   return box
 }
 
-/** R3: 缺口列表——未关联指标 + 分析按钮，放在标签库带正下方 */
-function renderGapList(theme) {
-  if (!theme) return null
-  const gaps = state.nodes.filter((n) =>
-    n.type === 'observation' && n.status !== 'dead' &&
-    (!n.channelIds || n.channelIds.length === 0))
-  if (!gaps.length) return null
-
-  let proposalsMap = new Map()
-  const ignored = new Set()
-  const band = h('div', { class: 'sect', style: { marginBottom: '0' } })
-  const header = h('div', { class: 'sect-h' },
-    h('h2', {}, '未关联指标'),
-    h('em', {}, String(gaps.length)),
-  )
-  const body = h('div', { class: 'sect-b' })
-
-  function renderBody() {
-    clear(body)
-    const visible = gaps.filter((n) => !ignored.has(n.id))
-    for (const n of visible) {
-      const proposal = proposalsMap.get(n.id)
-      if (proposal && proposal.channelIds.length > 0) {
-        body.append(h('div', { class: 'q' },
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, n.title),
-            h('div', { class: 'q-meta' },
-              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
-            ),
-            h('div', { style: { marginTop: '6px' } },
-              h('span', { style: { fontSize: '12px', color: 'var(--text-3)' } }, `建议挂 ${proposal.channelIds.length} 个通道`),
-            ),
-            proposal.reason
-              ? h('div', { style: { fontSize: '11px', color: 'var(--text-3)', marginTop: '2px' } }, proposal.reason)
-              : null,
-          ),
-          h('div', { class: 'q-acts' },
-            h('button', {
-              class: 'btn btn-primary',
-              onclick: async () => {
-                await m.updateNode(n.id, { channelIds: proposal.channelIds })
-                ignored.add(n.id)
-                proposalsMap.delete(n.id)
-                renderBody()
-              },
-            }, '采用'),
-            h('button', {
-              class: 'btn',
-              onclick: () => { ignored.add(n.id); proposalsMap.delete(n.id); renderBody() },
-            }, '忽略'),
-          ),
-        ))
-      } else {
-        body.append(h('div', { class: 'q' },
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, n.title),
-            h('div', { class: 'q-meta' },
-              h('span', {}, nodePath(state.nodes, n.id) || '未归档'),
-              h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, '· 暂无自动源，需手填'),
-            ),
-          ),
-        ))
-      }
-    }
-  }
-
-  const analyzeBtn = h('button', {
-    class: 'btn', style: { marginLeft: 'auto' },
-    onclick: async () => {
-      analyzeBtn.textContent = '分析中…'
-      analyzeBtn.disabled = true
-      const result = await m.proposeLinks(theme.id)
-      analyzeBtn.textContent = '分析'
-      analyzeBtn.disabled = false
-      if (!result.ok) {
-        toast(result.error === 'no-key' ? '未配置 API key' : `分析失败：${result.error}`, 'var(--red)')
-        return
-      }
-      proposalsMap = new Map(result.proposals.map((p) => [p.indicatorId, p]))
-      renderBody()
-    },
-  }, '分析')
-
-  header.append(analyzeBtn)
-  band.append(header, body)
-  renderBody()
-  return band
-}
-
 export function renderLattice(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
   const isGraph = state.shape === 'graph'
+  const indicators = state.nodes.filter((node) => node.type === 'observation' && node.status !== 'dead')
+  const unlinked = indicators.filter((node) => !node.channelIds?.length).length
 
   // 树形管逐条编辑，图管看清结构——同一个主题、同一个选中项，来回切不丢上下文
   const head = h('div', { class: 'mid-head hairline-b' },
     h('h1', {}, theme ? theme.name : ''),
+    h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, `${indicators.length} 个指标 · ${unlinked} 个未接数据`),
     h('div', { class: 'spacer' }),
     // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动
-    (() => {
+    isGraph ? null : (() => {
       const btn = h('button', {
         class: 'btn regenerate-btn', title: '重新生成骨架',
         onclick: () => {
           if (!theme) return
           const input = h('input', {
             type: 'text', value: theme.name,
-            style: { width: '220px', fontSize: '13px', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: '4px', outline: 'none' },
+            style: { width: '220px', fontSize: 'var(--t-body)', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: '4px', outline: 'none' },
             onkeydown: async (e) => {
               if (e.key === 'Enter') {
                 const desc = input.value.trim()
@@ -364,14 +263,14 @@ export function renderLattice(mid) {
         onclick: () => setShape('graph'),
       }, '图'),
     ),
-    h('button', {
+    isGraph ? null : h('button', {
       class: 'btn btn-icon', title: '新建环节', onclick: () => newNode(null),
     }, icon('plus', 14)),
   )
 
   if (isGraph) {
     const wrap = h('div', { class: 'graph-wrap' })
-    for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'graph-debug' }, wrap)]) if (el) mid.append(el)
+    for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), h('div', { class: 'graph-debug' }, wrap)]) if (el) mid.append(el)
     try {
       renderGraph(wrap)
     } catch (e) {
@@ -384,7 +283,7 @@ export function renderLattice(mid) {
   }
 
   const tree = h('div', { class: 'tree' })
-  for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), renderGapList(theme), h('div', { class: 'tree-wrap' }, tree)]) if (el) mid.append(el)
+  for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), h('div', { class: 'tree-wrap' }, tree)]) if (el) mid.append(el)
   paint(tree)
   wireKeys(tree)
 }
@@ -597,10 +496,7 @@ function startEdit(row, node) {
 }
 
 async function confirmDelete(id) {
-  if (!confirm('删除这条及它的全部子树？')) return
-  await m.removeNode(id)
-  if (state.selectedId === id) state.selectedId = null
-  await refresh()
+  await deleteNodeWithUndo(id)
 }
 
 async function toggleCold(id) {
@@ -646,26 +542,38 @@ export async function newNode(mode) {
   document.querySelector(`.row[data-id="${node.id}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
-/** 键盘：⏎ 兄弟、Tab 子层、⌘⌫ 删除子树、↑↓ 在可见行间移动（图里没有 .row，自然空转） */
+/** 树中回车建同级、Tab 建子层；图中回车回树编辑。两种形态共享移动和软删。 */
 export function wireKeys(container) {
   container.tabIndex = 0
   container.onkeydown = async (e) => {
     if (e.target.tagName === 'INPUT' || e.target === 'TEXTAREA') return
-    if (e.key === 'Enter') { e.preventDefault(); await newNode('sibling'); return }
-    if (e.key === 'Tab') { e.preventDefault(); await newNode('child'); return }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (state.shape === 'graph') {
+        const node = state.nodes.find((item) => item.id === state.selectedId)
+        setShape('tree')
+        requestAnimationFrame(() => {
+          const row = document.querySelector(`.row[data-id="${state.selectedId}"]`)
+          if (row && node) startEdit(row, node)
+        })
+      } else {
+        await newNode('sibling')
+      }
+      return
+    }
+    if (e.key === 'Tab' && state.shape === 'tree') { e.preventDefault(); await newNode('child'); return }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Backspace') {
       e.preventDefault()
-      if (!state.selectedId) return
-      await m.removeNode(state.selectedId)
-      state.selectedId = null
-      await refresh()
+      if (state.selectedId) await deleteNodeWithUndo(state.selectedId)
       return
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      const rows = [...container.querySelectorAll('.row')]
-      const i = rows.findIndex((r) => r.dataset.id === state.selectedId)
-      const next = rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i) + (e.key === 'ArrowDown' ? 1 : -1)))]
+      const selector = state.shape === 'graph' ? '.node' : '.row'
+      const rows = [...container.querySelectorAll(selector)]
+      const i = rows.findIndex((row) => row.dataset.id === state.selectedId)
+      const delta = e.key === 'ArrowDown' ? 1 : -1
+      const next = rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i) + delta))]
       if (next) selectNode(next.dataset.id)
     }
   }

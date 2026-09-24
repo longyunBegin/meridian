@@ -1,5 +1,5 @@
-import { h, mount, icon, clear } from '../lib/dom.js'
-import { state, refresh, selectNode, setView } from '../app.js'
+import { h, mount, icon, clear, toast } from '../lib/dom.js'
+import { state, refresh, selectNode, setView, deleteNodeWithUndo } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 
 const m = window.meridian
@@ -8,7 +8,7 @@ const m = window.meridian
 async function sourcePanel(node) {
   const box = h('div', { class: 'insp-section' })
   box.append(h('div', { class: 'insp-h' }, '读数来源'),
-    h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载中…'))
+    h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '加载中…'))
 
   try {
     const channels = await m.channelList()
@@ -28,23 +28,26 @@ async function sourcePanel(node) {
     // 已挂通道
     if (attached.length) {
       box.append(h('div', { class: 'src-list', style: { marginTop: '6px' } },
-        ...attached.map((ch) => h('div', { class: 'src-row' },
-          h('span', { class: 'badge badge-observation', style: { fontSize: '10px' } }, ch.fetch),
-          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name),
-          h('button', { class: 'btn btn-icon', title: '移除', onclick: async () => {
-            await m.updateNode(node.id, { channelIds: (node.channelIds || []).filter((id) => id !== ch.id) })
-            await refresh()
-          } }, '×'),
+        ...attached.map((ch) => h('div', { style: { minWidth: 0 } },
+          h('div', { class: 'src-row' },
+            h('span', { class: 'badge badge-observation', style: { fontSize: 'var(--t-caption)' } }, ch.fetch),
+            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, ch.name),
+            h('button', { class: 'btn btn-icon', title: '移除', onclick: async () => {
+              await m.updateNode(node.id, { channelIds: (node.channelIds || []).filter((id) => id !== ch.id) })
+              await refresh()
+            } }, '×'),
+          ),
+          ch.lastError ? h('p', { style: { margin: '2px 0 6px', fontSize: 'var(--t-caption)', color: 'var(--red)' } }, ch.lastError) : null,
         )),
       ))
     } else {
-      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
+      box.append(h('p', { style: { margin: '6px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '暂无自动源，需手填'))
       // R2: 手填一条读数——正确时机是「你正在看那个空指标的时候」
       const formInputs = {}
       let formVisible = false
       const formBox = h('div', { style: { marginTop: '6px' } })
       const toggleBtn = h('button', {
-        class: 'btn', style: { marginTop: '4px', padding: '2px 8px', fontSize: '11px' },
+        class: 'btn', style: { marginTop: '4px', padding: '2px 8px', fontSize: 'var(--t-caption)' },
         onclick: () => {
           formVisible = !formVisible
           clear(formBox)
@@ -65,7 +68,7 @@ async function sourcePanel(node) {
                 h('option', { value: '自媒体' }, '自媒体'),
               ),
               h('button', {
-                class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: '11px' },
+                class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' },
                 onclick: async () => {
                   if (!formInputs.metric || !formInputs.value) return
                   // 复用 F4 逻辑：自动建/复用主题级手动通道 + 挂到指标
@@ -93,7 +96,43 @@ async function sourcePanel(node) {
           )
         },
       }, '手填一条读数')
-      box.append(toggleBtn, formBox)
+      const proposalBox = h('div', { style: { marginTop: '6px' } })
+      const proposeBtn = h('button', {
+        class: 'btn', style: { marginTop: '4px', padding: '2px 8px', fontSize: 'var(--t-caption)' },
+        onclick: async () => {
+          proposeBtn.disabled = true
+          proposeBtn.textContent = '提议中…'
+          const result = await m.proposeLinks(node.id)
+          proposeBtn.disabled = false
+          proposeBtn.textContent = '让 LLM 提议'
+          clear(proposalBox)
+          if (!result.ok) {
+            toast(result.error === 'no-key' ? '未配置 API key' : `提议失败：${result.error}`, 'var(--red)')
+            return
+          }
+          const proposal = result.proposal
+          const proposed = proposal.channelIds.map((id) => channels.find((channel) => channel.id === id)).filter(Boolean)
+          proposalBox.append(h('div', { class: 'q', style: { alignItems: 'flex-start' } },
+            h('div', { class: 'q-body' },
+              h('div', { class: 'q-text' }, proposed.length ? `建议挂：${proposed.map((channel) => channel.name).join(' · ')}` : '没有合适的自动源'),
+              proposal.reason ? h('div', { class: 'q-meta' }, proposal.reason) : null,
+            ),
+            h('div', { class: 'q-acts' },
+              proposed.length ? h('button', {
+                class: 'btn btn-primary',
+                onclick: async () => {
+                  const channelIds = [...new Set([...(node.channelIds || []), ...proposal.channelIds])]
+                  await m.updateNode(node.id, { channelIds })
+                  await Promise.all(proposal.channelIds.map((id) => m.channelFetch(id)))
+                  await refresh()
+                },
+              }, '采用') : null,
+              h('button', { class: 'btn', onclick: () => clear(proposalBox) }, '忽略'),
+            ),
+          ))
+        },
+      }, '让 LLM 提议')
+      box.append(toggleBtn, proposeBtn, formBox, proposalBox)
     }
 
     // 挂通道下拉（按标签相关性排序，themeId 次级）
@@ -141,7 +180,7 @@ async function sourcePanel(node) {
       )
       box.append(chSel)
     } else if (channels.length === 0) {
-      box.append(h('p', { style: { margin: '6px 0 0', fontSize: '11px', color: 'var(--text-3)' } },
+      box.append(h('p', { style: { margin: '6px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
         '没有可选通道，去',
         h('a', { style: { color: 'var(--blue, #0071e3)', cursor: 'pointer', textDecoration: 'underline' }, onclick: () => setView('vault', 'feeds') }, '数据源'),
         '建一个',
@@ -154,26 +193,26 @@ async function sourcePanel(node) {
       for (const { channel, reading } of latestReadings) {
         const indicators = await m.indicatorsForReading(reading)
         box.append(h('div', { class: 'src-row', style: { marginTop: '4px' } },
-          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '11px', color: 'var(--text-2)' } },
+          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--t-caption)', color: 'var(--text-2)' } },
             `${reading.metric}  ${(typeof reading.value === 'number' ? reading.value.toLocaleString('en-US') : reading.value)}${reading.unit ? ' ' + reading.unit : ''}`,
           ),
-          h('span', { style: { fontSize: '10px', color: 'var(--text-3)', flex: 'none' } }, reading.asOf || '—'),
-          reading.source?.url ? h('button', { class: 'btn', style: { padding: '1px 6px', fontSize: '11px', flex: 'none' }, onclick: () => m.openExternal(reading.source.url) }, '来源') : null,
+          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', flex: 'none' } }, reading.asOf || '—'),
+          reading.source?.url ? h('button', { class: 'btn', style: { padding: '1px 6px', fontSize: 'var(--t-caption)', flex: 'none' }, onclick: () => m.openExternal(reading.source.url) }, '来源') : null,
         ))
         if (indicators.length) {
-          box.append(h('p', { style: { margin: '0 0 4px', fontSize: '10px', color: 'var(--text-3)' } },
+          box.append(h('p', { style: { margin: '0 0 4px', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
             `跟踪指标：${indicators.map((n) => n.title).join('、')}`))
         }
       }
     }
 
     // 状态行
-    box.append(h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)' } },
+    box.append(h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
       attached.length ? `有 ${attached.length} 个自动源` : '暂无自动源，需手填'))
   } catch {
     clear(box)
     box.append(h('div', { class: 'insp-h' }, '读数来源'),
-      h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载失败'))
+      h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '加载失败'))
   }
   return box
 }
@@ -182,7 +221,7 @@ async function sourcePanel(node) {
 async function researchPanel(node) {
   const box = h('div', { class: 'insp-section' })
   box.append(h('div', { class: 'insp-h' }, '研究观点'),
-    h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载中…'))
+    h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '加载中…'))
   try {
     const notes = await m.researchByNode(node.id)
     clear(box)
@@ -241,10 +280,10 @@ async function researchPanel(node) {
         }
         box.append(h('div', { class: 'q', style: { padding: '4px 0' } },
           h('div', { class: 'q-body' },
-            h('div', { class: 'q-text', style: { fontSize: '12px' } }, `${n.org} · ${stanceLabel} · ${n.publishedAt || n.at}`),
+            h('div', { class: 'q-text', style: { fontSize: 'var(--t-body)' } }, `${n.org} · ${stanceLabel} · ${n.publishedAt || n.at}`),
             h('div', { class: 'q-meta' },
-              h('span', { style: { fontSize: '11px' } }, n.title),
-              compare ? h('span', { style: { marginLeft: '6px', fontSize: '11px', color: compare.includes('一致') ? 'var(--accent)' : 'var(--text-3)' } }, compare) : null,
+              h('span', { style: { fontSize: 'var(--t-caption)' } }, n.title),
+              compare ? h('span', { style: { marginLeft: '6px', fontSize: 'var(--t-caption)', color: compare.includes('一致') ? 'var(--accent)' : 'var(--text-3)' } }, compare) : null,
             ),
           ),
         ))
@@ -253,7 +292,7 @@ async function researchPanel(node) {
   } catch {
     clear(box)
     box.append(h('div', { class: 'insp-h' }, '研究观点'),
-      h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '加载失败'))
+      h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '加载失败'))
   }
   return box
 }
@@ -267,7 +306,7 @@ function scaffoldSection(sc, answered = 0) {
   const bullets = (items) => h('ul', {
     style: { margin: '0', padding: '0 0 0 14px', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' },
   }, ...(items || []).map((t, i) => h('li', {
-    style: { position: 'relative', fontSize: '12px', color: i < answered ? 'var(--text-3)' : 'var(--text-2)', lineHeight: '1.55' },
+    style: { position: 'relative', fontSize: 'var(--t-body)', color: i < answered ? 'var(--text-3)' : 'var(--text-2)', lineHeight: '1.55' },
   }, h('span', {
     style: {
       position: 'absolute', left: '-14px', top: '8px', width: '3px', height: '3px',
@@ -282,17 +321,17 @@ function scaffoldSection(sc, answered = 0) {
     sc.indicators?.length ? h('div', { class: 'insp-h', style: { marginTop: '16px' } }, '要跟踪') : null,
     ...(sc.indicators || []).map((ind) => h('div', { class: 'field', style: { minHeight: '22px' } },
       h('span', {
-        style: { flex: '1', minWidth: '0', fontSize: '12px', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        style: { flex: '1', minWidth: '0', fontSize: 'var(--t-body)', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
         title: ind.name,
       }, ind.name),
-      h('span', { style: { fontSize: '10px', color: 'var(--text-3)', flex: 'none' } }, ind.cadence),
+      h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', flex: 'none' } }, ind.cadence),
     )),
 
     sc.falsifier ? h('div', {
       style: { marginTop: '16px', padding: '9px 10px', borderRadius: 'var(--r-sm)', background: 'rgba(255, 149, 0, 0.09)' },
     },
-      h('div', { style: { fontSize: '10px', fontWeight: '600', color: 'var(--orange)', marginBottom: '4px', letterSpacing: '0.02em' } }, '错了我怎么知道'),
-      h('div', { style: { fontSize: '11.5px', color: 'var(--text-2)', lineHeight: '1.55' } }, sc.falsifier),
+      h('div', { style: { fontSize: 'var(--t-caption)', fontWeight: '600', color: 'var(--orange)', marginBottom: '4px', letterSpacing: '0.02em' } }, '错了我怎么知道'),
+      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)', lineHeight: '1.55' } }, sc.falsifier),
     ) : null,
   )
 }
@@ -329,7 +368,7 @@ export function renderInspectorLattice(aside) {
     // 连续传导权重滑块：产品最核心的连续参数不该只有三档
     // 拖动时下游置信度实时跟着变——这才是「传导」被看见
     const propOut = h('input', { type: 'number', min: '0', max: '1', step: '0.05', value: node.propagation.toFixed(2),
-      style: { width: '48px', fontSize: '12px', textAlign: 'center' },
+      style: { width: '48px', fontSize: 'var(--t-body)', textAlign: 'center' },
       onchange: async (e) => { const v = Math.max(0, Math.min(1, Number(e.target.value) || 0)); propSlider.value = String(v); await m.updateNode(node.id, { propagation: v }); await refresh() },
     })
     const propSlider = h('input', {
@@ -353,7 +392,7 @@ export function renderInspectorLattice(aside) {
     // 环节自己的确信度。没有它，传导在界面上永远触发不了——
     // 产业链上有子节点的全是环节，而环节恰恰是唯一该被拖动的那个。
     const segConfOut = h('input', { type: 'number', min: '0', max: '100', value: String(Math.round(node.confidence)),
-      style: { width: '42px', fontSize: '12px', textAlign: 'center' },
+      style: { width: '42px', fontSize: 'var(--t-body)', textAlign: 'center' },
       onchange: async (e) => { const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))); segSlider.value = String(v); segBar.style.width = `${v}%`; segBar.style.background = confColor(v); await m.updateNode(node.id, { confidence: v }); await refresh() },
     })
     const segBar = h('i', { style: { width: `${node.confidence}%`, background: confColor(node.confidence) } })
@@ -376,34 +415,32 @@ export function renderInspectorLattice(aside) {
         ? scaffoldSection(node.scaffold, Math.min(answers, kids.filter((k) => k.kind === 'lemma').length))
         : h('div', { class: 'insp-section' },
             h('div', { class: 'insp-h' }, '这一层'),
-            h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+            h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
               '骨架没有预置问题。用 Tab 在这里往下拆，或先写下你自己的判断。'),
           ),
       h('div', { class: 'insp-section' },
         h('div', { class: 'insp-h' }, '环节'),
-        h('div', { class: 'field' }, h('label', {}, '子项'), h('span', { style: { fontSize: '12px', color: 'var(--text-2)' } }, String(kids.length))),
+        h('div', { class: 'field' }, h('label', {}, '子项'), h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)' } }, String(kids.length))),
         spawnBtn,
       ),
       h('div', { class: 'insp-section' },
         h('div', { class: 'insp-h' }, '确信度', segConfOut),
         h('div', { class: 'field' }, h('label', {}, '这一层'), segSlider),
         h('div', { class: 'bar', style: { width: '100%', height: '4px', marginTop: '6px' } }, segBar),
-        h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+        h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
           '拖动它，下面所有命题按传导权重同向重估——上游证据一变，下游判断跟着变。'),
       ),
       h('div', { class: 'insp-section' },
         h('div', { class: 'insp-h' }, '传导权重', h('b', {}, node.propagation.toFixed(2))),
         h('div', { class: 'field' }, h('label', {}, '向下游'), segs),
-        h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+        h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
           '拖动边上的权重，下游置信度实时跟着变——这才是「传导」被看见。'),
         h('button', {
           class: 'btn', style: { marginTop: '10px' },
           onclick: async () => { await m.repropagate(node.id); await refresh() },
         }, icon('lattice', 13), '按当前权重重算子树'),
       ),      h('div', { class: 'insp-section' },
-        h('button', { class: 'btn', style: { color: 'var(--red)' }, onclick: async () => {
-          await m.removeNode(node.id); state.selectedId = null; await refresh()
-        } }, icon('trash', 13), '删除环节及其子树'),
+        h('button', { class: 'btn', style: { color: 'var(--red)' }, onclick: () => deleteNodeWithUndo(node.id) }, icon('trash', 13), '删除环节及其子树'),
       ),
     )
     return
@@ -411,7 +448,7 @@ export function renderInspectorLattice(aside) {
 
   // ---------------- 命题 ----------------
   const confOut = h('input', { type: 'number', min: '0', max: '100', value: String(Math.round(node.confidence)),
-    style: { width: '42px', fontSize: '12px', textAlign: 'center' },
+    style: { width: '42px', fontSize: 'var(--t-body)', textAlign: 'center' },
     onchange: async (e) => { const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0))); slider.value = String(v); bar.style.width = `${v}%`; bar.style.background = confColor(v); await m.updateNode(node.id, { confidence: v }); await refresh() },
   })
   const bar = h('i', { style: { width: `${node.confidence}%`, background: confColor(node.confidence) } })
@@ -482,7 +519,7 @@ export function renderInspectorLattice(aside) {
   const settled = node.settlement?.resolved
     ? h('span', { class: `badge ${node.settlement.correct ? 'badge-observation' : 'badge-hypothesis'}` },
       node.settlement.correct ? '已命中' : '已证伪')
-    : h('span', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '未结算')
+    : h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '未结算')
 
   const tagInput = h('input', {
     class: 'txt', placeholder: '用逗号分隔，如：能源成本, 半导体周期',
@@ -519,7 +556,7 @@ export function renderInspectorLattice(aside) {
     clear(tickerBox)
     for (const t of node.tickers || []) {
       tickerBox.append(h('div', { class: 'src-row' },
-        h('span', { class: 'badge badge-observation', style: { fontSize: '10px' } }, t.code),
+        h('span', { class: 'badge badge-observation', style: { fontSize: 'var(--t-caption)' } }, t.code),
         h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.name),
         h('span', { class: 'q' }, t.relation),
         h('button', { class: 'btn btn-icon', title: '移除', onclick: async () => {
@@ -536,18 +573,18 @@ export function renderInspectorLattice(aside) {
     class: 'btn', style: { marginTop: '8px' },
     onclick: async () => {
       clear(socraticBox)
-      socraticBox.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } }, '追问中…'))
+      socraticBox.append(h('p', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '追问中…'))
       const r = await m.socratic(node.id)
       clear(socraticBox)
       if (!r.ok) {
-        socraticBox.append(h('p', { style: { fontSize: '11px', color: 'var(--text-3)' } },
+        socraticBox.append(h('p', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
           r.reason === 'no-key' ? '需要先在设置里填 API key' : `失败：${r.reason}`))
         return
       }
       socraticBox.append(h('ul', {
         style: { margin: '0', padding: '0 0 0 14px', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' },
       }, ...r.questions.map((q) => h('li', {
-        style: { position: 'relative', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.55' },
+        style: { position: 'relative', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.55' },
       }, h('span', {
         style: { position: 'absolute', left: '-14px', top: '8px', width: '3px', height: '3px', borderRadius: '50%', background: 'var(--text-3)' },
       }), q))))
@@ -562,7 +599,7 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'insp-h' }, '命题'),
       h('div', { class: 'field' }, h('label', {}, '类型'), typeSeg),
       h('div', { class: 'field' }, h('label', {}, '置信度'), slider,
-        h('span', { style: { fontSize: '12px', color: 'var(--text-2)', width: '22px', textAlign: 'right' } }, confOut)),
+        h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)', width: '22px', textAlign: 'right' } }, confOut)),
       h('div', { class: 'bar', style: { width: '100%', height: '4px', marginTop: '6px' } }, bar),
     ),
     h('div', { class: 'insp-section' },
@@ -576,7 +613,7 @@ export function renderInspectorLattice(aside) {
               ? h('button', { class: 'btn btn-raw', title: '看当时读的原文', onclick: () => showRaw(s.rawId) }, '原文')
               : null,
           )))
-        : h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '还没有来源。用 ⌘⇧V 捕获时自动打标。'),
+        : h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '还没有来源。用 ⌘⇧V 捕获时自动打标。'),
       rawBox,
       h('div', { class: 'field', style: { marginTop: '8px' } }, h('label', {}, '追加'), kindSel),
     ),
@@ -586,10 +623,10 @@ export function renderInspectorLattice(aside) {
         ? h('div', {},
             h('div', { class: 'bar', style: { width: '100%', height: '4px', marginBottom: '8px' } },
               h('i', { style: { width: `${node.sources.reduce((s, x) => s + x.quality, 0) / node.sources.length * 100}%`, background: 'var(--accent)' } })),
-            h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+            h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
               `${node.sources.length} 个独立来源，平均质量 ${(node.sources.reduce((s, x) => s + x.quality, 0) / node.sources.length).toFixed(2)}。来源越多且质量越一致，这条命题的根基越稳。`),
           )
-        : h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '还没有来源，无法计算收敛度。'),
+        : h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '还没有来源，无法计算收敛度。'),
     ),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '底层概念', h('span', { style: { fontWeight: '400', color: 'var(--text-3)' } }, '跨主题同构的来源')),
@@ -599,7 +636,7 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'insp-h' }, '标的', h('span', { style: { fontWeight: '400', color: 'var(--text-3)' } }, '只做可见性，不做信号')),
       tickerBox,
       h('div', { class: 'field', style: { marginTop: '8px' } }, h('label', {}, '追加'), tickerInput, relationSel),
-      h('p', { style: { margin: '6px 0 0', fontSize: '10px', color: 'var(--text-3)', lineHeight: '1.5' } },
+      h('p', { style: { margin: '6px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
         '命题上挂涉及的标的，可反查这条产业链位置影响哪些票。不输出买卖建议、评分、目标价。'),
     ),
     (() => { const sp = h('div'); sourcePanel(node).then((el) => { sp.replaceWith(el) }); return sp })(),
@@ -616,24 +653,24 @@ export function renderInspectorLattice(aside) {
             class: 'chain-node', onclick: () => selectNode(d.id),
           }, h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.title),
             h('span', { class: 'd' }, String(Math.round(d.confidence))))))
-        : h('p', { style: { margin: 0, fontSize: '11px', color: 'var(--text-3)' } }, '叶子节点，没有下游。'),
+        : h('p', { style: { margin: 0, fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '叶子节点，没有下游。'),
     ),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '传导'),
-      h('div', { class: 'field' }, h('label', {}, '下游'), h('span', { style: { fontSize: '12px', color: 'var(--text-2)' } }, downstream.length ? `${downstream.length} 条子命题` : '叶子节点')),
+      h('div', { class: 'field' }, h('label', {}, '下游'), h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)' } }, downstream.length ? `${downstream.length} 条子命题` : '叶子节点')),
       hist.length > 1 ? h('div', { class: 'hist' }, ...hist.map((x) => h('i', {
         style: { height: `${Math.max(4, x.confidence)}%` },
         dataset: { by: x.by },
         title: `${x.t} · ${Math.round(x.confidence)} · ${x.by === 'propagation' ? '传导' : '手动'}`,
       }))) : null,
-      hist.length > 1 ? h('div', { style: { display: 'flex', gap: '10px', marginTop: '6px', fontSize: '10px', color: 'var(--text-3)' } },
+      hist.length > 1 ? h('div', { style: { display: 'flex', gap: '10px', marginTop: '6px', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
         h('span', {}, '← 历史 · 越高越确信'),
         h('span', { style: { color: 'var(--orange)' } }, '■ 传导')) : null,
     ),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '结算', settled),
       h('div', { class: 'field' }, h('label', {}, '到期日'), dueInput),
-      h('p', { style: { margin: '8px 0 0', fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } },
+      h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
         '到期后系统会问你：还想下这个注吗？答案进入你的校准曲线。'),
     ),
     h('div', { class: 'insp-section' },
@@ -641,9 +678,7 @@ export function renderInspectorLattice(aside) {
         h('button', { class: 'btn', onclick: async () => {
           await m.updateNode(node.id, { status: node.status === 'cold' ? 'live' : 'cold' }); await refresh()
         } }, node.status === 'cold' ? '移出冷库' : '移入冷库'),
-        h('button', { class: 'btn', style: { color: 'var(--red)' }, onclick: async () => {
-          await m.removeNode(node.id); state.selectedId = null; await refresh()
-        } }, icon('trash', 13), '删除'),
+        h('button', { class: 'btn', style: { color: 'var(--red)' }, onclick: () => deleteNodeWithUndo(node.id) }, icon('trash', 13), '删除'),
       ),
     ),
   )

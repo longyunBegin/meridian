@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('meridian', {
   allNodes: () => ipcRenderer.invoke('db:allNodes'),
   getNode: (id) => ipcRenderer.invoke('db:getNode', id),
   themes: () => ipcRenderer.invoke('theme:all'),
-  templates: () => ipcRenderer.invoke('theme:templates'),
   settings: () => ipcRenderer.invoke('settings:get'),
   labelTest: (text) => ipcRenderer.invoke('label:test', text),
   due: () => ipcRenderer.invoke('db:due'),
@@ -37,7 +36,6 @@ contextBridge.exposeInMainWorld('meridian', {
   resolveConflict: (id, verdict) => ipcRenderer.invoke('db:resolveConflict', id, verdict),
   spawn: (branchId) => ipcRenderer.invoke('db:spawn', branchId),
   addTheme: (name) => ipcRenderer.invoke('theme:add', name),
-  addThemeFromTemplate: (templateId) => ipcRenderer.invoke('theme:fromTemplate', templateId),
   setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
   scaffoldExisting: (themeId, description) => ipcRenderer.invoke('theme:scaffoldExisting', themeId, description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
@@ -100,7 +98,7 @@ contextBridge.exposeInMainWorld('meridian', {
   discoverTags: (ticker) => ipcRenderer.invoke('edgar:discoverTags', ticker),
 
   // ---- LLM 提议指针
-  proposeLinks: (themeId) => ipcRenderer.invoke('llm:proposeLinks', themeId),
+  proposeLinks: (indicatorId) => ipcRenderer.invoke('llm:proposeLinks', indicatorId),
 
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),

@@ -47,13 +47,35 @@ export function mount(parent, ...children) {
 export const $ = (sel, root = document) => root.querySelector(sel)
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)]
 
-/** 临时浮层提示，3 秒后自动消失。替代 alert()。 */
-export function toast(msg, color = 'var(--text-2)') {
+/** 临时浮层提示，4 秒后自动消失。替代 alert()。 */
+export function toast(msg, color = 'var(--text-2)', action = null) {
   const el = document.createElement('div')
   el.className = 'toast' + (color === 'var(--red)' ? ' toast-error' : '')
-  el.textContent = msg
+  el.append(document.createTextNode(msg))
+  let timer = setTimeout(() => el.remove(), 4000)
+  if (action) {
+    const button = document.createElement('button')
+    button.className = 'toast-btn'
+    button.textContent = action.label
+    button.addEventListener('click', async () => {
+      clearTimeout(timer)
+      el.remove()
+      await action.onClick()
+    })
+    el.append(button)
+  }
   document.body.append(el)
-  setTimeout(() => el.remove(), 3000)
+  return el
+}
+
+export function confirmToast(msg, label = '确认') {
+  return new Promise((resolve) => {
+    const el = toast(msg, 'var(--red)', { label, onClick: () => resolve(true) })
+    setTimeout(() => {
+      if (el.isConnected) el.remove()
+      resolve(false)
+    }, 4000)
+  })
 }
 
 /** 行内 SVG 图标，1.5px 描边，风格贴近 SF Symbols。 */

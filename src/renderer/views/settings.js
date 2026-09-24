@@ -1,5 +1,5 @@
-import { h, clear } from '../lib/dom.js'
-import { state, refresh } from '../app.js'
+import { h, clear, confirmToast } from '../lib/dom.js'
+import { state } from '../app.js'
 import { confColor } from './shared.js'
 
 const m = window.meridian
@@ -12,13 +12,13 @@ const planPurge = (scope, dryRunResult, confirmed) => {
 
 export async function renderSettings(mid) {
   clear(mid)
-  const [settings, templates] = await Promise.all([m.settings(), m.templates()])
+  const settings = await m.settings()
   state.settings = settings
 
   const field = (label, control, hint) => h('div', { class: 'field', style: { alignItems: 'flex-start' } },
     h('label', { style: { paddingTop: '5px' } }, label),
     h('div', { style: { flex: '1', minWidth: '0' } }, control,
-      hint ? h('p', { style: { margin: '5px 0 0', fontSize: '11px', color: 'var(--text-3)', lineHeight: '1.5' } }, hint) : null),
+      hint ? h('p', { style: { margin: '5px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } }, hint) : null),
   )
 
   const txt = (value, onCommit, placeholder) => h('input', {
@@ -36,7 +36,7 @@ export async function renderSettings(mid) {
       class: 'btn btn-icon', title: '显示/隐藏', style: { flex: 'none' },
       onclick: () => { input.type = input.type === 'password' ? 'text' : 'password' },
     }, '👁')
-    const feedback = h('span', { style: { fontSize: '11px', color: 'var(--text-3)', minWidth: '40px' } }, '')
+    const feedback = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', minWidth: '40px' } }, '')
     const save = h('button', {
       class: 'btn btn-primary', style: { height: '28px', flex: 'none' },
       onclick: async () => {
@@ -68,7 +68,7 @@ export async function renderSettings(mid) {
   const deletedTs = await m.deletedThemes()
   const purgePreview = await m.purgeDead('all', { dryRun: true })
 
-  const toast = h('div', { style: { fontSize: '12px', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
+  const toast = h('div', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
   const flash = (msg, color = 'var(--text-2)') => {
     toast.textContent = msg
     toast.style.color = color
@@ -83,7 +83,7 @@ export async function renderSettings(mid) {
   const VIA = { table: '查表', jev: 'Jev', llm: '前沿模型' }
 
   const testOut = h('p', {
-    style: { margin: '10px 0 0', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6', minHeight: '18px' },
+    style: { margin: '10px 0 0', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6', minHeight: '18px' },
   })
   const testBox = h('textarea', {
     class: 'txt', rows: '3', placeholder: '粘贴任意原文，看它怎么被归类…',
@@ -129,7 +129,7 @@ export async function renderSettings(mid) {
     h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '来源分类'), h('em', {}, `${kinds.length} 类`)),
       h('div', { class: 'sect-b' },
-        h('p', { style: { margin: '6px 0 12px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
+        h('p', { style: { margin: '6px 0 12px', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6' } },
           '外部内容按来源分七类。打标器只负责选类型，质量分一律由这张表裁决——这是校准曲线唯一的基准，改一条，历史全部不可比。'),
         h('div', { class: 'kinds' },
           ...kinds.map(([label, q]) => h('div', { class: 'kind-row' },
@@ -139,7 +139,7 @@ export async function renderSettings(mid) {
             h('span', { class: 'kind-q' }, q.toFixed(2)),
           )),
         ),
-        h('div', { class: 'sect-h', style: { marginTop: '18px' } }, h('h2', { style: { fontSize: '12px' } }, '试一段')),
+        h('div', { class: 'sect-h', style: { marginTop: '18px' } }, h('h2', { style: { fontSize: 'var(--t-body)' } }, '试一段')),
         testBox,
         h('button', { class: 'btn', style: { marginTop: '6px' }, onclick: runTest }, '打标看看'),
         testOut,
@@ -156,26 +156,12 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '主题骨架')),
-      h('div', { class: 'sect-b' },
-        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
-          '骨架只提供产业结构，不含任何判断。用它起步，然后填你自己的命题。'),
-        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
-          ...templates.map((t) => h('button', {
-            class: 'btn', style: { height: '28px' },
-            onclick: async () => { await m.addThemeFromTemplate(t.id); await refresh() },
-          }, `＋ ${t.name} · ${t.version}`)),
-        ),
-      ),
-    ),
-
-    h('section', { class: 'sect' },
 
       h('div', { class: 'sect-b' },
         h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
           `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +
           `${stats.verdicts} 条裁决 · ${stats.conflicts} 待裁决冲突 · ${stats.due} 待结算 · ${stats.readings} 读数`),
-        h('p', { style: { margin: '0 0 10px', fontSize: '12px', color: 'var(--text-2)', lineHeight: '1.6' } },
+        h('p', { style: { margin: '0 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6' } },
           '判断在 meridian.json，原文在 raw.jsonl。原文可以随便清——清掉不影响任何一条命题，只是以后复盘不了当初读的是什么。'),
         h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
           h('button', { class: 'btn', onclick: () => m.openDataDir() }, '打开数据目录'),
@@ -190,7 +176,7 @@ export async function renderSettings(mid) {
           h('button', {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
-              if (!confirm('清空全部原文？\n\n判断、置信度、校准曲线全部保留，但所有「看原文」都会失效。')) return
+              if (!await confirmToast('清空全部原文？判断会保留，但所有原文引用会失效。', '清空')) return
               const r = await m.rawClear()
               flash(`已清空 ${r.removed} 条原文，摘除 ${r.unlinked} 处引用`)
               await renderSettings(mid)
@@ -200,7 +186,7 @@ export async function renderSettings(mid) {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
               const preview = await m.purgeDead('user', { dryRun: true })
-              const confirmed = preview.removed > 0 && confirm(`真删 ${preview.removed} 条你用 ⌘⌫ 删的节点？\n\n不可恢复。`)
+              const confirmed = preview.removed > 0 && await confirmToast(`真删 ${preview.removed} 条你删的节点？此操作不可恢复。`, '真删')
               const plan = planPurge('user', preview, confirmed)
               if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有你删的节点'); return }
               const r = await m.purgeDead(plan.scope)
@@ -212,7 +198,7 @@ export async function renderSettings(mid) {
             class: 'btn', style: { color: 'var(--red)' },
             onclick: async () => {
               const preview = await m.purgeDead('auto', { dryRun: true })
-              const confirmed = preview.removed > 0 && confirm(`真删 ${preview.removed} 条置信度跌破 20 自动进墓的节点？\n\n不可恢复。`)
+              const confirmed = preview.removed > 0 && await confirmToast(`真删 ${preview.removed} 条自动进墓的节点？此操作不可恢复。`, '真删')
               const plan = planPurge('auto', preview, confirmed)
               if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有跌死的节点'); return }
               const r = await m.purgeDead(plan.scope)
@@ -228,7 +214,7 @@ export async function renderSettings(mid) {
     deletedTs.length ? h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '已删主题'), h('em', {}, String(deletedTs.length))),
       h('div', { class: 'sect-b' },
-        h('p', { style: { margin: '6px 0 10px', fontSize: '12px', color: 'var(--text-3)', lineHeight: '1.6' } },
+        h('p', { style: { margin: '6px 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-3)', lineHeight: '1.6' } },
           '软删的主题可恢复。节点仍在墓碑区，恢复后整棵子树复活。'),
         ...deletedTs.map((t) => h('div', { class: 'q' },
           h('div', { class: 'q-body' },
@@ -246,7 +232,7 @@ export async function renderSettings(mid) {
             h('button', {
               class: 'btn', style: { color: 'var(--red)' },
               onclick: async () => {
-                if (!confirm(`永久删除主题「${t.name}」及其所有节点？\n\n不可恢复。`)) return
+                if (!await confirmToast(`永久删除主题「${t.name}」及其所有节点？此操作不可恢复。`, '真删')) return
                 await m.removeTheme(t.id)
                 await m.purgeDead('all')
                 flash(`已永久删除主题「${t.name}」`)

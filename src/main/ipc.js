@@ -21,9 +21,9 @@ import {
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid,
 } from './store.js'
-import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary, pickChannelsFromLibrary } from './extract.js'
 import { labelSource } from './labeler.js'
-import { list as templateList, find as templateFind, instantiate, channelPack } from './templates.js'
+import { genericFallback, channelLibrary, instantiate } from './templates.js'
 
 import { fetchChannel, availableFetchers, METRIC_FETCHERS } from './fetchers.js'
 import { discoverTags, deriveChannelTags } from './discover.js'
@@ -381,48 +381,16 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:update', (_, id, patch) => updateTheme(id, patch))
   ipcMain.handle('theme:tagLibrary:updateTag', (_, themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
   ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
-  ipcMain.handle('theme:templates', () => templateList())
-  ipcMain.handle('theme:fromTemplate', async (_, templateId) => {
-    const tpl = templateFind(templateId)
-    if (!tpl) return null
-    const theme = addTheme(tpl.name)
-    if (Array.isArray(tpl.tags) && tpl.tags.length) updateTheme(theme.id, { tags: tpl.tags })
-    instantiate(tpl, (spec) => addNode({ ...spec, themeId: theme.id }))
-    // 自动配默认通道包
-    for (const ch of channelPack(templateId)) {
-      addChannel({
-        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
-        metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
-        cadence: ch.cadence, themeId: theme.id,
-        enabled: !ch.needsKey,
-      })
-    }
-    // 生成标签库（降级不阻塞）
-    const s = settings()
-    const titles = allNodes().filter((n) => n.themeId === theme.id && n.kind === 'branch').map((n) => n.title)
-    const tlResult = await generateTagLibrary(s, tpl.name, titles)
-    if (tlResult.ok) updateTheme(theme.id, { tagLibrary: tlResult.tagLibrary })
-    return theme
-  })
 
-  // 按描述匹配最接近的出厂模板（降级时用）
-  function matchTemplateId(description) {
-    const d = description.toLowerCase()
-    if (/crypto|虚拟货币|加密|比特币|以太坊|blockchain|区块链|defi|nft|token|矿机|算力|稳定币/.test(d)) return 'crypto'
-    if (/saas|软件|订阅|cloud|云服务|arr|mrr|churn|留存|经营/.test(d)) return 'saas'
-    if (/ai|人工智能|llm|大模型|gpu|芯片|算力|光模块|半导体|silicon|inference|training/.test(d)) return 'ai-chain'
-    return null
-  }
-
-  // 一句话冷启动：建主题 → 生成骨架 → 配通道 → 打标签 → 返回
-  // scaffoldTheme 是共用核心：setupNew 和 scaffoldExisting 都调它
   async function scaffoldTheme(themeId, description, s) {
-    // 骨架和主题标签并行——标签只依赖 description，不依赖骨架
-    const [r, tagResult] = await Promise.all([
+    const library = channelLibrary()
+    const [skeletonResult, tagResult, channelResult] = await Promise.all([
       generateSkeleton(s, description),
       generateThemeTags(s, description),
+      pickChannelsFromLibrary(s, description, library),
     ])
-    if (r.ok) {
+
+    if (skeletonResult.ok) {
       const walk = (node, parentId) => {
         const n = addNode({
           themeId, parentId, kind: 'branch', title: node.title,
@@ -431,44 +399,42 @@ function register({ getMainWindow }) {
         })
         for (const c of node.children || []) walk(c, n.id)
       }
-      for (const root of r.skeleton.roots || []) walk(root, null)
+      for (const root of skeletonResult.skeleton.roots || []) walk(root, null)
     } else {
-      // 无 key 降级：按描述匹配最接近的模板
-      const tpl = templateFind(matchTemplateId(description) || 'ai-chain')
-      if (tpl) instantiate(tpl, (spec) => addNode({ ...spec, themeId }))
+      const fallback = genericFallback()
+      if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
     }
-    // 按描述匹配通道包，匹配不到不配任何通道——比塞一套不相关的通道诚实
-    const AI_KEYWORDS = /AI|人工智能|LLM|大模型|GPU|芯片|算力|光模块|半导体|silicon|photonics|inference|training|token|cloud|云/
-    const packId = AI_KEYWORDS.test(description) ? 'ai-chain' : null
-    if (packId) {
-      for (const ch of channelPack(packId)) {
-        addChannel({
-          name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
-          metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
-          cadence: ch.cadence, themeId,
-          enabled: !ch.needsKey,
-        })
-      }
+
+    for (const ch of channelResult.channels || []) {
+      addChannel({
+        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+        metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
+        cadence: ch.cadence, themeId, tags: ch.tags || [],
+        enabled: !ch.needsKey,
+      })
     }
+
     if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
-    // 标签库依赖骨架 titles，必须骨架之后
     const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
-    const tlResult = await generateTagLibrary(s, description, titles)
-    if (tlResult.ok) updateTheme(themeId, { tagLibrary: tlResult.tagLibrary })
+    const tagLibraryResult = await generateTagLibrary(s, description, titles)
+    if (tagLibraryResult.ok) updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary })
+
+    return {
+      degraded: !skeletonResult.ok,
+      channelCount: channelResult.channels?.length || 0,
+    }
   }
 
   ipcMain.handle('theme:setupNew', async (_, description) => {
     const theme = addTheme(description)
-    const s = settings()
-    await scaffoldTheme(theme.id, description, s)
-    return theme
+    const result = await scaffoldTheme(theme.id, description, settings())
+    return { ...theme, ...result }
   })
 
   // 空白主题补生成骨架 + 标签库（E3）
   ipcMain.handle('theme:scaffoldExisting', async (_, themeId, description) => {
-    const s = settings()
-    await scaffoldTheme(themeId, description, s)
-    return { ok: true }
+    const result = await scaffoldTheme(themeId, description, settings())
+    return { ok: true, ...result }
   })
 
   ipcMain.handle('settings:get', () => ({ ...settings(), sourceQuality: SOURCE_QUALITY }))
@@ -794,21 +760,6 @@ function register({ getMainWindow }) {
           url: item.url || null,
           channelId: ch.id,
         })
-        // review: true → 强制进收件箱等人裁决
-        if (ch.review) {
-          addInboxItem({
-            text: item.text,
-            title: firstSentence(item.text),
-            label: cap.label,
-            lemmas: cap.lemmas,
-            rejected: cap.rejected,
-            noulCompared: cap.noulCompared,
-            noulMaxScore: cap.noulMaxScore,
-            provenance: { platform: item.platform || null, url: item.url || null, channelId: ch.id },
-          })
-          continue
-        }
-        // review: false → 走闸门
         const gate = gateCheck(cap)
         if (gate.pass && cap.lemmas.length > 0) {
           autoImport(cap, themeId, gate.reasons, uid(), uid())
@@ -843,9 +794,9 @@ function register({ getMainWindow }) {
   })
 
   // ---- LLM 提议指针 ----
-  ipcMain.handle('llm:proposeLinks', async (_, themeId) => {
+  ipcMain.handle('llm:proposeLinks', async (_, indicatorId) => {
     try {
-      return await proposeChannelLinks(settings(), themeId)
+      return await proposeChannelLinks(settings(), getNode(indicatorId), allChannels())
     } catch (e) {
       return { ok: false, error: e.message || String(e) }
     }

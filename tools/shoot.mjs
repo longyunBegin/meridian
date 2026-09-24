@@ -10,16 +10,17 @@
  * 运行：npm run shoot
  * 输出：/tmp/meridian-shots/*.png
  */
-const { app, BrowserWindow, ipcMain } = globalThis.__electron || {}
+import { createRequire } from 'node:module'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
-import {
-  load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict,
-  settleLemma, allNodes,
-} from '../src/main/store.js'
-import { find as tplFind, instantiate } from '../src/main/templates.js'
-import { register } from '../src/main/ipc.js'
+
+const require = createRequire(import.meta.url)
+globalThis.__electron = require('electron')
+const { app, BrowserWindow, ipcMain } = globalThis.__electron
+
+let load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel
+let settleLemma, allNodes, genericFallback, instantiate, register
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
@@ -28,7 +29,11 @@ const HUD = join(ROOT, 'src/renderer/capture.html')
 const OUT = '/tmp/meridian-shots'
 const DATA = '/tmp/meridian-shoot-data'
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const check = (condition, label) => {
+  if (!condition) throw new Error(`交互验收失败：${label}`)
+  console.log('  ✓', label)
+}
 
 const SAMPLE = '我们跟踪的 1.6T 光模块供应链显示，北美某云厂商 Q4 订单能见度已排到明年 Q2，产能被头部客户锁定。但同时，一家新进入者宣布其硅光方案成本低 30%，预计 2027 年量产。——某产业调研纪要'
 
@@ -82,7 +87,20 @@ async function shoot(label, query = {}, hud = false) {
   console.log('  →', label + '.png')
 }
 
-app.whenReady().then(async () => {
+Promise.all([
+  import('../src/main/store.js'),
+  import('../src/main/templates.js'),
+  import('../src/main/ipc.js'),
+]).then(([store, templates, ipc]) => {
+  ({
+    load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel,
+    settleLemma, allNodes,
+  } = store)
+  genericFallback = templates.genericFallback
+  instantiate = templates.instantiate
+  register = ipc.register
+  return app.whenReady()
+}).then(async () => {
   // 独立数据目录，绝不碰真实数据
   rmSync(DATA, { recursive: true, force: true })
   rmSync(OUT, { recursive: true, force: true })
@@ -97,13 +115,13 @@ app.whenReady().then(async () => {
 
   // ---------------------------------------------------------------- 造数据
   const ai = addTheme('AI 产业链')
-  instantiate(tplFind('ai-chain'), (spec) => addNode({ ...spec, themeId: ai.id }))
+  instantiate(genericFallback(), (spec) => addNode({ ...spec, themeId: ai.id }))
 
-  const gpu = branchOf(ai, 'GPU')
-  const hbm = branchOf(ai, 'HBM')
-  const opt = branchOf(ai, '光模块')
-  const power = branchOf(ai, '电力')
-  const trade = branchOf(ai, '估值锚')
+  const gpu = branchOf(ai, '上游')
+  const hbm = gpu
+  const opt = branchOf(ai, '中游')
+  const power = branchOf(ai, '下游')
+  const trade = power
 
   // 多来源收敛 + 一条方向冲突
   const l1 = addNode({
@@ -145,10 +163,15 @@ app.whenReady().then(async () => {
 
   // 第二个主题，共享「能源成本」→ 共同前提
   const crypto = addTheme('虚拟货币')
-  instantiate(tplFind('crypto'), (spec) => addNode({ ...spec, themeId: crypto.id }))
-  const miner = branchOf(crypto, '矿机')
+  instantiate(genericFallback(), (spec) => addNode({ ...spec, themeId: crypto.id }))
+  const miner = branchOf(crypto, '上游')
   addNode({ themeId: crypto.id, parentId: miner.id, kind: 'lemma', title: '矿机关机价随电价上移', type: 'observation', confidence: 66, tags: ['能源成本', '半导体周期'] })
   addNode({ themeId: crypto.id, parentId: null, kind: 'lemma', title: '稳定币净发行回升', type: 'observation', confidence: 71, tags: ['美元流动性'] })
+
+  addChannel({
+    name: '失败状态示例', fetch: 'rss', kind: '独立媒体', query: 'https://example.com/feed',
+    themeId: ai.id, lastError: '连接超时',
+  })
 
   // 触发一次传导：环节有子节点，拖动它的确信度才会向下游衰减
   updateNode(opt.id, { confidence: 78 })
@@ -210,6 +233,60 @@ app.whenReady().then(async () => {
   await shoot('14-graph-focus', { view: 'lattice', shape: 'graph', select: opt.id })
   await shoot('15-graph-stage', { view: 'lattice', shape: 'graph', select: gpu.id })
 
+  const graphKeys = await win.webContents.executeJavaScript(`
+    (async () => {
+      const wrap = document.querySelector('.graph-wrap')
+      const before = document.querySelector('.insp-title')?.textContent
+      const noCrud = !document.querySelector('[title="新建环节"]') && !document.querySelector('.regenerate-btn')
+      wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 120))
+      const after = document.querySelector('.insp-title')?.textContent
+      wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 120))
+      return {
+        noCrud,
+        moved: Boolean(before && after && before !== after),
+        tree: document.querySelector('.seg-shape button[aria-selected="true"]')?.textContent === '树形',
+        editing: Boolean(document.querySelector('.row-edit')),
+      }
+    })()
+  `)
+  check(graphKeys.noCrud, '图形态无结构操作按钮')
+  check(graphKeys.moved, '图形态 ↑↓ 移动选中')
+  check(graphKeys.tree && graphKeys.editing, '图形态 Enter 回树编辑')
+
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'graph', select: opt.id } })
+  await sleep(700)
+  const deleteUndo = await win.webContents.executeJavaScript(`
+    (async () => {
+      document.querySelector('.graph-wrap').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Backspace', metaKey: true, bubbles: true })
+      )
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const toast = document.querySelector('.toast')?.textContent || ''
+      const softDeleted = document.querySelector('.node[data-id="${opt.id}"]')?.getAttribute('opacity') === '0.45'
+      document.querySelector('.toast-btn')?.click()
+      await new Promise(resolve => setTimeout(resolve, 300))
+      const restored = document.querySelector('.node[data-id="${opt.id}"]')?.getAttribute('opacity') === '1'
+      return { toast, softDeleted, restored }
+    })()
+  `)
+  check(deleteUndo.softDeleted && deleteUndo.toast.includes('撤销'), '图形态 Cmd+Backspace 软删并提示撤销')
+  check(deleteUndo.restored, '删除 toast 可恢复整棵子树')
+
+  await win.loadFile(RENDERER, { query: { view: 'lattice', select: l1.id } })
+  await sleep(700)
+  check(await win.webContents.executeJavaScript(`document.body.textContent.includes('让 LLM 提议')`), '空指标显示单指标 LLM 提议')
+
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await sleep(700)
+  const channelState = await win.webContents.executeJavaScript(`({
+    lastError: document.body.textContent.includes('连接超时'),
+    noReview: !document.body.textContent.includes('免复审') && !document.body.textContent.includes('需复审'),
+  })`)
+  check(channelState.lastError, '数据源显示 lastError')
+  check(channelState.noReview, '数据源无复审状态控件')
+
   // 原文层：选中刚入库的那条，点开「看原文」
   if (win) {
     await win.loadFile(RENDERER, { query: { view: 'lattice' } })
@@ -239,6 +316,33 @@ app.whenReady().then(async () => {
     writeFileSync(join(OUT, '16-raw.png'), (await win.webContents.capturePage()).toPNG())
     console.log('  →', '16-raw.png')
   }
+
+  await win.loadFile(RENDERER, { query: { view: 'lattice' } })
+  await sleep(700)
+  const themeCreation = await win.webContents.executeJavaScript(`
+    (async () => {
+      document.querySelector('[title="新建主题"]')?.click()
+      const creator = document.querySelector('#themes .theme-creator')
+      const singleInput = creator?.querySelectorAll('input').length === 1
+      const noTemplates = !creator?.textContent.includes('模板')
+      const input = creator?.querySelector('#skeleton-desc')
+      input.value = '城市轨交客流与设备更新'
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 700))
+      const text = document.body.textContent
+      return {
+        singleInput,
+        noTemplates,
+        fallback: text.includes('上游') && text.includes('中游') && text.includes('下游'),
+        notice: document.querySelector('.toast')?.textContent.includes('API key') || false,
+      }
+    })()
+  `)
+  check(themeCreation.singleInput && themeCreation.noTemplates, '新建主题只有描述输入')
+  check(themeCreation.fallback, '无 key 建成领域中立上中下游骨架')
+  check(themeCreation.notice, '无 key 显示降级提示')
+  writeFileSync(join(OUT, '17-generic-fallback.png'), (await win.webContents.capturePage()).toPNG())
+  console.log('  →', '17-generic-fallback.png')
 
   console.log('\n完成\n')
   app.exit(0)

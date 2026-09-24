@@ -71,7 +71,7 @@ ok('应用按新权重重算为 52', Math.abs(app_.confidence - 52) < 0.01, `实
 ok('云仍为 70', Math.abs(cloud.confidence - 70) < 0.01, `实际 ${cloud.confidence}`)
 
 console.log('\n— 结算与校准曲线 —')
-const { list, find, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
+const { version, genericFallback, channelLibrary, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
 const settleTheme = s.addTheme('结算主题')
 const p1 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 确信', confidence: 90, settlement: { date: '2026-01-01' } })
 const p2 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 错', confidence: 92, settlement: { date: '2026-01-01' } })
@@ -181,28 +181,25 @@ ok('purgeDead 真删', purged.removed === deadCount, `实际 ${purged.removed} v
 ok('真删后节点不在', s.getNode(gpu.id) == null)
 ok('冲突引用被清理', s.allConflicts().every((c) => s.getNode(c.a) && s.getNode(c.b)))
 
-console.log('\n— 模板实例化 —')
-const tpl = find('ai-chain')
-const t3 = s.addTheme('模板主题')
-const roots = instantiate(tpl, (spec) => addNode({ ...spec, themeId: t3.id }))
+console.log('\n— 通用骨架实例化 —')
+const fallback = genericFallback()
+const t3 = s.addTheme('通用骨架主题')
+const roots = instantiate(fallback, (spec) => addNode({ ...spec, themeId: t3.id }))
 const created = s.allNodes().filter((n) => n.themeId === t3.id)
 
-ok('模板铺出 5 个根环节', roots.length === 5, `实际 ${roots.length}`)
-ok('上游环节含 5 个子项', s.childrenOf(roots[1]).length === 5, `实际 ${s.childrenOf(roots[1]).length}`)
-ok('所有模板节点都是环节', created.every((n) => n.kind === 'branch'))
+ok('通用骨架铺出上中下游', roots.length === 3, `实际 ${roots.length}`)
+ok('通用骨架领域中立', roots.map((id) => s.getNode(id).title).join(',') === '上游,中游,下游')
+ok('所有骨架节点都是环节', created.every((n) => n.kind === 'branch'))
 ok('没有重复 id', new Set(s.allNodes().map((n) => n.id)).size === s.allNodes().length)
-
-const leaves = s.childrenOf(roots[1]).map((n) => n.id)
-ok('叶子环节都挂了 scaffold', leaves.every((id) => s.getNode(id)?.scaffold?.answer?.length))
-ok('分组层不继承子层的 scaffold', !roots.some((id) => s.getNode(id)?.scaffold), roots.map((id) => s.getNode(id).title).join(','))
-ok('scaffold 含指标与证伪信号', created.filter((n) => n.scaffold).every((n) => n.scaffold.indicators?.length && n.scaffold.falsifier))
+ok('根环节都挂了 scaffold', roots.every((id) => s.getNode(id)?.scaffold?.answer?.length))
+ok('scaffold 含指标与证伪信号', created.every((n) => n.scaffold.indicators?.length && n.scaffold.falsifier))
+ok('验证通道库非空且 id 唯一', channelLibrary().length > 0 && new Set(channelLibrary().map((channel) => channel.id)).size === channelLibrary().length)
 
 console.log('\n— 从骨架生成命题（结算日由更新频率推导）—')
-const leaf = s.childrenOf(roots[1])[0]
+const leaf = s.getNode(roots[0])
 const spawned = s.spawnFromScaffold(leaf.id)
 ok('生成了命题', spawned.length > 0, `实际 ${spawned.length}`)
 ok('全部挂在父环节下', spawned.every((n) => n.parentId === leaf.id && n.kind === 'lemma'))
-ok('分组层本身没有 scaffold，不生成', s.spawnFromScaffold(roots[1]).length === 0)
 ok('指标命题带结算日', spawned.filter((n) => n.settlement?.date).length > 0)
 ok('季度节奏的结算日在 90 天左右', spawned.some((n) => {
   const d = n.settlement?.date
@@ -218,11 +215,10 @@ ok('墓碑节点不接收传导', (() => {
   return tomb.confidence === before
 })())
 
-console.log('\n— 模板版本与查询 —')
-ok('模板带版本号', typeof tpl.version === 'string' && tpl.version.length > 0, tpl.version)
-ok('三个模板都列得出', list().length === 3, `实际 ${list().length}`)
-ok('列表带环节数', list().every((t) => t.count > 0))
-ok('找不到的模板返回 null', find('nope') === null)
+console.log('\n— 骨架与通道库版本 —')
+ok('配置带版本号', Number.isInteger(version()) && version() >= 2, String(version()))
+ok('通用骨架不可选模板', fallback.id === 'generic')
+ok('通道库条目保留取数配置', channelLibrary().every((channel) => channel.fetch && channel.name))
 
 console.log('\n— 数据主权 —')
 const json = s.exportAll()

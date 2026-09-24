@@ -19,7 +19,6 @@ export const state = {
   query: '',
   nodes: [],
   themes: [],
-  templates: [],
   settings: {},
   loadedTheme: null,
 }
@@ -48,7 +47,6 @@ function themeColor(id) {
 
 async function boot() {
   state.themes = await m.themes()
-  state.templates = await m.templates()
   state.settings = await m.settings()
   state.view = 'today'
   if (state.themes.length) {
@@ -139,6 +137,22 @@ export async function refresh() {
   render()
 }
 
+export async function deleteNodeWithUndo(id) {
+  const node = state.nodes.find((item) => item.id === id)
+  if (!node) return
+  await m.removeNode(id)
+  if (state.selectedId === id) state.selectedId = null
+  await refresh()
+  toast(`已删除「${node.title}」及其子树`, 'var(--text-2)', {
+    label: '撤销',
+    onClick: async () => {
+      await m.restoreNode(id)
+      state.selectedId = id
+      await refresh()
+    },
+  })
+}
+
 export function selectTheme(id) {
   state.themeId = id
   state.selectedId = null
@@ -210,7 +224,7 @@ function renderNav() {
       const ta = document.querySelector('#inbox-textarea')
       if (ta) ta.focus()
     },
-  }, icon('plus', 15), '捕获', h('span', { style: { marginLeft: 'auto', fontSize: '10px', color: 'var(--text-3)' } }, '⌘⇧V')))
+  }, icon('plus', 15), '捕获', h('span', { style: { marginLeft: 'auto', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '⌘⇧V')))
   for (const v of NAV) {
     nav.append(h('button', {
       class: 'nav-item',
@@ -231,7 +245,7 @@ function renderThemes() {
   const wrap = $('#themes')
   clear(wrap)
   if (!state.themes.length) {
-    wrap.append(h('div', { style: { padding: '6px 8px', fontSize: '11px', color: 'var(--text-3)' } }, '还没有主题'))
+    wrap.append(h('div', { style: { padding: '6px 8px', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '还没有主题'))
   }
   for (const t of state.themes) {
     const count = lemmaCount(t.id)
@@ -245,7 +259,7 @@ function renderThemes() {
       class: 'theme-menu-btn', title: '重命名 / 删除',
       onclick: () => {
         const input = h('input', {
-          class: 'txt', value: t.name, style: { flex: '1', minWidth: '60px', fontSize: '12px', padding: '2px 6px' },
+          class: 'txt', value: t.name, style: { flex: '1', minWidth: '60px', fontSize: 'var(--t-body)', padding: '2px 6px' },
           onkeydown: async (e) => {
             if (e.key === 'Enter') {
               const name = input.value.trim()
@@ -259,13 +273,13 @@ function renderThemes() {
         })
         const row = h('div', { class: 'theme-edit-row' },
           input,
-          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px' }, onclick: async () => {
+          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
             const name = input.value.trim()
             if (!name) return
             await m.renameTheme(t.id, name)
             await refresh()
           } }, '保存'),
-          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: '11px', color: 'var(--red)' }, onclick: async () => {
+          h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)' }, onclick: async () => {
             await m.removeTheme(t.id)
             // 先更新 state.themes，再选下一个——否则 state.themes 还含已删主题
             await refresh()
@@ -341,14 +355,12 @@ async function paintVaultCounts() {
   } catch { /* 计数失败不该影响主流程 */ }
 }
 
-/** 主题创建器：一句话描述 / 从模板 / 空白主题。侧边栏和零主题空态共用 */
+/** 主题创建器：用户只描述要跟踪什么，其余由系统完成。 */
 export function renderThemeCreator(opts = {}) {
   const compact = opts.compact || false
-  const onDone = opts.onDone || (async () => { state.view = 'today'; await refresh() })
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
+  const statusEl = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', marginLeft: '6px' } })
 
-  // 一句话描述
-  const statusEl = h('span', { style: { fontSize: '11px', color: 'var(--text-3)', marginLeft: '6px' } })
   const submitDesc = async (desc) => {
     if (!desc) return
     statusEl.textContent = '生成骨架中…'
@@ -359,79 +371,33 @@ export function renderThemeCreator(opts = {}) {
       state.themeId = theme.id
       state.view = 'lattice'
       await refresh()
+      if (theme.degraded) toast('已使用通用骨架。配 API key 后可生成针对这个主题的骨架和标签库。')
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '开始跟踪' }
     }
   }
-  const descBox = h('div', { class: 'skeleton-gen' },
-    h('input', {
-      class: 'txt skeleton-input', placeholder: '描述你要跟踪的产业链，如「AI 产业链」',
-      id: 'skeleton-desc',
-      onkeydown: async (e) => {
-        if (e.key === 'Enter') { e.target.disabled = true; await submitDesc(e.target.value.trim()) }
-      },
-    }),
-    h('button', {
-      class: 'btn btn-primary', style: { height: '34px' },
-      onclick: async () => {
-        const input = document.getElementById('skeleton-desc')
-        if (input) input.disabled = true
-        await submitDesc(input?.value.trim())
-      },
-    }, icon('plus', 13), '开始跟踪'),
-    statusEl,
-  )
 
-  // 模板列表 + 空白主题
-  const actions = h('div', { class: 'empty-actions' },
-    h('div', { style: { fontSize: '11px', color: 'var(--text-3)', margin: '4px 0 2px', width: '100%' } }, '从模板'),
-    ...state.templates.map((t) => h('button', {
-      class: 'btn', style: { height: '34px', justifyContent: 'space-between', padding: '0 12px' },
-      onclick: async () => {
-        statusEl.textContent = `从模板「${t.name}」创建中…`
-        try {
-          const theme = await m.addThemeFromTemplate(t.id)
-          state.themeId = theme.id
-          state.view = 'lattice'
-          await refresh()
-        } catch (e) {
-          statusEl.textContent = '失败：' + (e.message || '未知错误')
-        }
-      },
-    }, h('b', { style: { fontWeight: '600', color: 'var(--text)' } }, t.name),
-      h('span', { style: { fontSize: '11px', color: 'var(--text-3)' } }, `${t.count} 环节`)),
-    ),
-    h('button', {
-      class: 'btn', style: { height: '34px', justifyContent: 'flex-start', padding: '0 12px', color: 'var(--text-3)' },
-      onclick: async () => {
-        const name = blankNameInput.value.trim()
-        if (!name) { blankNameInput.focus(); return }
-        const theme = await m.addTheme(name)
-        state.themeId = theme.id
-        state.view = 'lattice'
-        await refresh()
-      },
-    }, h('span', {}, '或新建空白主题…')),
-  )
-
-  // 空白主题名称输入（明示：只有名称，之后可补生成骨架和标签库）
-  const blankNameInput = h('input', {
-    class: 'txt', placeholder: '空白主题名称（只有名称，之后可补生成骨架和标签库）',
-    style: { width: '100%', margin: '4px 0' },
+  const input = h('input', {
+    class: 'txt skeleton-input', placeholder: '描述你要跟踪的', id: 'skeleton-desc',
     onkeydown: async (e) => {
-      if (e.key === 'Enter') {
-        const name = e.target.value.trim()
-        if (!name) return
-        const theme = await m.addTheme(name)
-        state.themeId = theme.id
-        state.view = 'lattice'
-        await refresh()
-      }
+      if (e.key !== 'Enter') return
+      e.target.disabled = true
+      await submitDesc(e.target.value.trim())
     },
   })
 
-  wrap.append(descBox, actions, blankNameInput)
+  wrap.append(h('div', { class: 'skeleton-gen' },
+    input,
+    h('button', {
+      class: 'btn btn-primary', style: { height: '34px' },
+      onclick: async () => {
+        input.disabled = true
+        await submitDesc(input.value.trim())
+      },
+    }, icon('plus', 13), '开始跟踪'),
+    statusEl,
+  ))
   return wrap
 }
 
