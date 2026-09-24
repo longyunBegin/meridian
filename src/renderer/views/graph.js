@@ -233,7 +233,10 @@ export function renderGraph(wrap) {
   // viewBox 在内容空间里定义"可见矩形"，wheel 和 drag 只改这四个数，不碰容器尺寸。
   let vb = [0, 0, 800, 600] // [x, y, w, h] — 内容空间坐标
 
-  function applyViewBox() { svg.setAttribute('viewBox', vb.map((v, i) => `${i % 2 ? v.toFixed(1) : Math.round(v)}`).join(' ')) }
+  function applyViewBox() {
+    const safe = [vb[0], vb[1], Math.max(1, vb[2]), Math.max(1, vb[3])]
+    svg.setAttribute('viewBox', safe.map((v, i) => `${i % 2 ? v.toFixed(1) : Math.round(v)}`).join(' '))
+  }
 
   // ------------------------------------------------------------- 边
   const edgeEls = new Map()
@@ -588,7 +591,7 @@ export function renderGraph(wrap) {
     const vw = pr.width > 0 ? pr.width : (document.documentElement?.clientWidth || window.innerWidth || 1280)
     const vh = pr.height > 0 ? pr.height : (document.documentElement?.clientHeight || window.innerHeight || 820)
     const pad = 50
-    const scale = Math.min((vw - pad * 2) / cw, (vh - pad * 2) / ch, 1.2)
+    const scale = Math.max(0.01, Math.min((vw - pad * 2) / cw, (vh - pad * 2) / ch, 1.2))
     const cwS = cw * scale, chS = ch * scale
     vb = [minX - (vw - cwS) / 2 / scale, minY - (vh - chS) / 2 / scale, vw / scale, vh / scale]
     applyViewBox()
