@@ -4470,11 +4470,20 @@ await v8Test('等长篡改后退出不能洗白索引，重启后禁止继续追
 await v8Test('摄入队列并发有界，MCP 拒绝非法初始化参数', async () => {
   const { indicator } = v8Reset()
   await v8WithServer(async (server, directory, counts) => {
-    // 文件投递已移除，摄入并发上界改由 HTTP 入口的队列保证
-    const many = Array.from({ length: 40 }, () => v8Envelope(v8Input(indicator, { period: { start: '2026-01-01', end: '2026-03-31' }, value: 100 + Math.random() })))
+    // 文件投递已移除，摄入并发上界改由 HTTP 入口的队列保证。
+    // 一次打 40 个并发：队列只放 8 个，超出必须回 429 而不是把内存撑爆——
+    // 所以这里断言「要么全进要么超额被拒」，不是「全部 200」（那会在时序波动时偶发失败）。
+    const many = Array.from({ length: 40 }, (_, i) => v8Envelope(v8Input(indicator, {
+      period: { start: '2026-01-01', end: '2026-03-31' }, value: 100 + i,
+    })))
     const results = await Promise.all(many.map((body) => v8Http(server, '/readings', { method: 'POST', body })))
-    v8Assert.ok(results.every((r) => r.status === 200), '并发推送全部被处理')
-    v8Assert.ok(counts().calls >= 1)
+    const statuses = results.map((r) => r.status)
+    v8Assert.ok(statuses.every((s) => s === 200 || s === 429), '并发超额只能回 429，不能 5xx：' + [...new Set(statuses)].join(','))
+    v8Assert.ok(statuses.some((s) => s === 200), '至少有一部分被处理')
+    // 拒绝的必须带得懂的错因，不能是裸状态码
+    const busy = results.find((r) => r.status === 429)
+    if (busy) v8Assert.ok(/队列/.test(busy.json?.error || ''), '429 要说明是队列满：' + JSON.stringify(busy.json))
+    v8Assert.equal(store.allReadings().length, statuses.filter((s) => s === 200).length, '入库数等于成功数')
     const response = await v8Http(server, '/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: 17 } })
     v8Assert.equal(response.json.error.code, -32602)
   })
