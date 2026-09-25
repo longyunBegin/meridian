@@ -12,12 +12,13 @@ const m = window.meridian
 export const state = {
   view: 'today',
   shape: localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree',
-  vaultKind: 'cold',
+  auditKind: 'cold',
   themeId: null,
   selectedId: null,
   open: new Set(),
   query: '',
   nodes: [],
+  readings: [],
   themes: [],
   settings: {},
   loadedTheme: null,
@@ -26,17 +27,17 @@ export const state = {
 const NAV = [
   { id: 'today', label: '今日', icon: 'settle', key: '⌘1' },
   { id: 'lattice', label: '脉络', icon: 'lattice', key: '⌘2' },
-  { id: 'vault', label: '库', icon: 'lattice', key: '⌘3' },
+  { id: 'sources', label: '数据源', icon: 'export', key: '⌘3' },
+  { id: 'readings', label: '读数', icon: 'export', key: '⌘4', count: 'readings' },
 ]
 
-const VAULTS = [
+/** 审计五视图。台账性质，不是工作面——收在侧栏一组里，默认收起。 */
+const AUDITS = [
   { id: 'cold', label: '冷库', icon: 'lattice' },
   { id: 'dead', label: '墓碑区', icon: 'trash' },
   { id: 'filtered', label: '误杀审计', icon: 'flag' },
   { id: 'review', label: '复盘', icon: 'settle' },
   { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
-  { id: 'feeds', label: '数据源', icon: 'export' },
-  { id: 'readings', label: '读数', icon: 'export' },
 ]
 
 const THEME_COLORS = ['#0071e3', '#af52de', '#34c759', '#ff9500', '#ff2d55', '#00b8b8', '#ff3b30', '#5856d6']
@@ -55,6 +56,19 @@ async function boot() {
   if (state.themeId) await loadNodes()
   render()
   m.onChanged(() => refresh())
+  // 骨架铺完的通知——建主题是异步的，这里负责收尾刷新
+  m.onThemeScaffolded(async (info) => {
+    await refresh()
+    if (info?.skipped === 'has-branches') return
+    if (info?.degraded) {
+      // 分清楚是没配 key 还是配了但调用失败——后者值得用户立刻看见并重试
+      const why = !info.hasKey
+        ? '未配置 API key'
+        : { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.reason] || `调用失败（${info.reason}）`
+      toast(`骨架没生成：${why}。可在脉络页点「重新生成」重试。`, 'var(--red)')
+    }
+    else if (info?.themeId) toast('骨架已生成')
+  })
   m.onInboxPaste(captureText)
   m.onInboxPruned((info) => {
     if (info?.removed > 0) toast(`已清理 ${info.removed} 条超过 30 天未处理的待确认`)
@@ -87,10 +101,10 @@ function applyUrlParams() {
   const p = new URLSearchParams(location.search)
   const view = p.get('view')
   if (!view) return
-  const vault = p.get('vault')
+  const kind = p.get('audit')
   const shape = p.get('shape')
   if (shape === 'tree' || shape === 'graph') state.shape = shape
-  setView(view, vault)
+  setView(view, kind)
 
   // 复现「新建主题后侧栏不显示」：走与输入框回车相同的路径
   const newtheme = p.get('newtheme')
@@ -116,8 +130,10 @@ function applyUrlParams() {
 }
 
 async function loadNodes() {
-  if (!state.themeId) { state.nodes = []; return }
+  if (!state.themeId) { state.nodes = []; state.readings = []; return }
   state.nodes = await m.nodes(state.themeId)
+  // 读数随节点一起加载——脉络树要 inline 显示指标的最新读数
+  state.readings = await m.allReadings()
   state.loadedTheme = state.themeId
 }
 
@@ -171,9 +187,9 @@ export function selectNode(id) {
   }
 }
 
-export function setView(v, vaultKind) {
+export function setView(v, auditKind) {
   state.view = v
-  if (vaultKind) state.vaultKind = vaultKind
+  if (auditKind) state.auditKind = auditKind
   if (v === 'lattice' && state.loadedTheme !== state.themeId) return refresh()
   render()
 }
@@ -199,7 +215,7 @@ function render() {
   renderNav()
   renderThemes()
   renderSideFoot()
-  renderVaults()
+  renderAudits()
   renderMid()
   renderInspector()
 }
@@ -226,7 +242,9 @@ function renderNav() {
       class: 'nav-item',
       'aria-selected': state.view === v.id ? 'true' : 'false',
       onclick: () => setView(v.id),
-    }, icon(v.icon, 15), v.label))
+    }, icon(v.icon, 15), v.label,
+      // 读数是唯一需要一眼看到存量的顶级视图——侧栏计数在这里会离内容太远
+      v.count ? h('em', { class: 'count', id: `vc-${v.count}` }, '') : null))
   }
 }
 
@@ -324,20 +342,32 @@ function renderSideFoot() {
   )
 }
 
-function renderVaults() {
+/** 侧栏「审计」组：五个台账视图收在一处，默认收起。
+ *  它们是出事才看的东西，平铺在侧栏会和主题列表抢注意力。 */
+let auditOpen = false
+
+function renderAudits() {
   const wrap = $('#vaults')
   clear(wrap)
-  for (const v of VAULTS) {
-    const on = state.view === 'vault' && state.vaultKind === v.id
+  wrap.append(h('button', {
+    class: 'vault-item audit-head',
+    'aria-expanded': auditOpen ? 'true' : 'false',
+    onclick: () => { auditOpen = !auditOpen; renderAudits() },
+  }, icon('flag', 14), h('span', {}, '审计'),
+    h('span', { class: 'audit-chev' }, '›')))
+
+  if (!auditOpen) return
+  for (const a of AUDITS) {
+    const on = state.view === 'audit' && state.auditKind === a.id
     wrap.append(h('button', {
-      class: 'vault-item',
+      class: 'vault-item audit-sub',
       'aria-selected': on ? 'true' : 'false',
-      onclick: () => setView('vault', v.id),
-    }, icon(v.icon, 14), h('span', {}, v.label), h('em', { class: 'count', id: `vc-${v.id}` }, '')))
+      onclick: () => setView('audit', a.id),
+    }, icon(a.icon, 13), h('span', {}, a.label), h('em', { class: 'count', id: `vc-${a.id}` }, '')))
   }
 }
 
-/** 侧栏各库的计数，进入对应视图时才拉，避免启动时打满请求 */
+/** 侧栏各审计视图的计数，进入对应视图时才拉，避免启动时打满请求 */
 async function paintVaultCounts() {
   const set = (id, n) => { const el = document.getElementById(`vc-${id}`); if (el) el.textContent = n ? String(n) : '' }
   try {
@@ -357,17 +387,20 @@ export function renderThemeCreator(opts = {}) {
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
   const statusEl = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', marginLeft: '6px' } })
 
+  // 异步：主题立即建好并切过去，骨架在后台铺。用户不用对着转圈等——
+  // 可以先去别处看，铺完由 theme:scaffolded 通知刷新。
   const submitDesc = async (desc) => {
     if (!desc) return
-    statusEl.textContent = '生成骨架中…'
     const submitBtn = wrap.querySelector('.btn-primary')
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '生成中…' }
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '创建中…' }
     try {
       const theme = await m.setupNewTheme(desc)
+      input.value = ''
+      statusEl.textContent = '骨架生成中…'
       state.themeId = theme.id
       state.view = 'lattice'
       await refresh()
-      if (theme.degraded) toast('已使用通用骨架。配 API key 后可生成针对这个主题的骨架和标签库。')
+      if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架和标签库。')
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '开始跟踪' }
@@ -437,12 +470,14 @@ function renderMid() {
   else if (state.view === 'lattice') {
     if (!state.themeId) { mid.append(emptyState()); return }
     renderLattice(mid)
-  } else if (state.view === 'vault') {
-    if (state.vaultKind === 'feeds') renderSources(mid)
-    else if (state.vaultKind === 'readings') renderReadings(mid)
-    else if (state.vaultKind === 'filtered') renderAudit(mid)
-    else if (state.vaultKind === 'review') renderVault(mid, 'review')
-    else renderVault(mid, state.vaultKind)
+  } else if (state.view === 'sources') {
+    renderSources(mid)
+  } else if (state.view === 'readings') {
+    renderReadings(mid)
+  } else if (state.view === 'audit') {
+    if (state.auditKind === 'filtered') renderAudit(mid)
+    else if (state.auditKind === 'review') renderVault(mid, 'review')
+    else renderVault(mid, state.auditKind)
   }
   else if (state.view === 'settings') renderSettings(mid)
 }
@@ -467,7 +502,7 @@ function renderInspector() {
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
-  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'vault' }
+  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'sources', '4': 'readings' }
   if (map[e.key]) { e.preventDefault(); setView(map[e.key]) }
 })
 

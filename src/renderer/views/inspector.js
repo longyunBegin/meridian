@@ -182,7 +182,7 @@ async function sourcePanel(node) {
     } else if (channels.length === 0) {
       box.append(h('p', { style: { margin: '6px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
         '没有可选通道，去',
-        h('a', { style: { color: 'var(--blue, #0071e3)', cursor: 'pointer', textDecoration: 'underline' }, onclick: () => setView('vault', 'feeds') }, '数据源'),
+        h('a', { style: { color: 'var(--blue, #0071e3)', cursor: 'pointer', textDecoration: 'underline' }, onclick: () => setView('sources') }, '数据源'),
         '建一个',
       ))
     }

@@ -27,6 +27,10 @@ const USER = (text, branches) =>
   (branches?.length ? `已有的产业链环节（归位时参考）：${branches.join('、')}\n\n` : '')
 
 const LLM_TIMEOUT_MS = 15000
+/** 骨架是一次性生成整棵树（3-5 层 × 每层 2-5 个环节，每个还带 answer/indicators/falsifier），
+ *  输出量是其它调用的十倍以上。共用 15s 会稳定超时——实测三次全部卡在 15001-15010ms，
+ *  结果每次都用兜底模板盖掉 LLM 真生成的结构，标签却生成了，看着像模型只干了一半。 */
+const SKELETON_TIMEOUT_MS = 90000
 
 function errorReason(e) {
   return e?.name === 'TimeoutError' ? 'timeout' : (e.message || String(e))
@@ -371,7 +375,7 @@ export async function generateSkeleton(settings, description) {
     res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(SKELETON_TIMEOUT_MS),
       body: JSON.stringify({
         model,
         temperature: 0.2,
@@ -396,35 +400,90 @@ export async function generateSkeleton(settings, description) {
   return { ok: true, skeleton, usage }
 }
 
-function parseSkeleton(raw) {
-  const s = String(raw)
+/** 模型不总按 schema 吐：标题可能叫 name/label，子层可能叫 sub/nodes，顶层可能直接是数组。
+ *  这些都得认。认不出来才该降级——把一棵合法的树扔了换成上中下游，比解析失败更糟：
+ *  用户看到的是「模型分析过了但只给了通用模板」，而事实是模型给的结构被我们丢了。 */
+const TITLE_KEYS = ['title', 'name', 'label', 'stage']
+const CHILD_KEYS = ['children', 'child', 'sub', 'subStages', 'nodes']
+
+const pickTitle = (n) => {
+  for (const k of TITLE_KEYS) {
+    const v = n?.[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return ''
+}
+
+const pickChildren = (n) => {
+  for (const k of CHILD_KEYS) if (Array.isArray(n?.[k])) return n[k]
+  return []
+}
+
+const pickRoots = (parsed) => {
+  if (Array.isArray(parsed)) return parsed
+  for (const k of ['roots', 'stages', 'tree', 'chain', 'skeleton', 'layers']) {
+    if (Array.isArray(parsed?.[k])) return parsed[k]
+  }
+  return []
+}
+
+function normalizeScaffoldSpec(sc) {
+  if (!sc) return null
+  return {
+    answer: normalizeAnswers(sc.answer),
+    indicators: Array.isArray(sc.indicators)
+      ? sc.indicators
+        .map((i) => typeof i === 'string'
+          ? { name: i, cadence: '季度' }
+          : { name: String(i?.name || '').trim().slice(0, 60), cadence: normalizeCadence(i?.cadence) })
+        .filter((i) => i.name)
+        .slice(0, 5)
+      : [],
+    falsifier: String(sc.falsifier || '').trim().slice(0, 200) || null,
+  }
+}
+
+/** 从模型回复里切出候选 JSON 片段：先对象后数组。
+ *  顶层是数组时，对象切法会切到第一个元素身上——解析"成功"却只剩一个环节。
+ *  所以两种切法都要试，谁真能给出 roots 用谁。 */
+function skeletonCandidates(s) {
+  const spans = []
   const a = s.indexOf('{')
   const b = s.lastIndexOf('}')
-  if (a < 0 || b <= a) return null
-  try {
-    const parsed = JSON.parse(s.slice(a, b + 1))
-    if (!parsed || !Array.isArray(parsed.roots)) return null
-    // 递归清理
-    const clean = (node) => ({
-      title: String(node.title || '').trim().slice(0, 50),
-      propagation: Math.max(0, Math.min(1, Number(node.propagation) || 0.5)),
-      stableId: Math.random().toString(36).slice(2, 10),
-      scaffold: node.scaffold ? {
-        answer: normalizeAnswers(node.scaffold.answer),
-        indicators: Array.isArray(node.scaffold.indicators)
-          ? node.scaffold.indicators
-            .map((i) => typeof i === 'string'
-              ? { name: i, cadence: '季度' }
-              : { name: String(i?.name || '').trim().slice(0, 60), cadence: normalizeCadence(i?.cadence) })
-            .filter((i) => i.name)
-            .slice(0, 5)
-          : [],
-        falsifier: String(node.scaffold.falsifier || '').trim().slice(0, 200) || null,
-      } : null,
-      children: Array.isArray(node.children) ? node.children.map(clean).filter((c) => c.title) : [],
-    })
-    return {
-      roots: parsed.roots.map(clean).filter((r) => r.title),
+  if (a >= 0 && b > a) spans.push(s.slice(a, b + 1))
+  const a2 = s.indexOf('[')
+  const b2 = s.lastIndexOf(']')
+  if (a2 >= 0 && b2 > a2) spans.push(s.slice(a2, b2 + 1))
+  return spans
+}
+
+export function parseSkeleton(raw) {
+  const s = String(raw)
+  const clean = (node) => ({
+    title: pickTitle(node).slice(0, 50),
+    propagation: Math.max(0, Math.min(1, Number(node.propagation) || 0.5)),
+    stableId: Math.random().toString(36).slice(2, 10),
+    scaffold: normalizeScaffoldSpec(node.scaffold),
+    children: pickChildren(node).map(clean),
+  })
+
+  // 没标题的中间层直接穿透，孩子并进父级——不为一个空名的环节造一行
+  const flatten = (nodes) => {
+    const out = []
+    for (const n of nodes) {
+      if (!n.title) { out.push(...flatten(n.children)); continue }
+      out.push({ ...n, children: flatten(n.children) })
     }
-  } catch { return null }
+    return out
+  }
+
+  for (const span of skeletonCandidates(s)) {
+    let parsed = null
+    try { parsed = JSON.parse(span) } catch { continue }
+    const rawRoots = pickRoots(parsed)
+    if (!rawRoots.length) continue
+    const roots = flatten(rawRoots.map(clean))
+    if (roots.length) return { roots }
+  }
+  return null
 }

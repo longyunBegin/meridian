@@ -609,6 +609,15 @@ select { font: inherit; color: inherit; }
 
 /* 降级为 hover 的元信息：默认几乎不可见，悬停才浮现。
    内容优先于边框——这些是 chrome，不该和命题文本抢重量。 */
+/* 指标节点 inline 读数——总览层。树里一眼扫完所有指标当前站哪，
+   不用切去读数页；流水和快照是两个视角，不重叠。 */
+.row-reading {
+  font-size: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  flex: none;
+  white-space: nowrap;
+}
 .row-hint {
   font-size: var(--t-caption);
   color: var(--text-3);
@@ -739,6 +748,20 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
   transition: background 120ms var(--ease), color 120ms var(--ease);
 }
 .seg button[aria-selected="true"] { background: var(--surface-solid); color: var(--text); box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.12); }
+/* 选项少的 seg 不拉伸：两个选项各占一半，按钮里全是空白 */
+.seg-fit { flex: none; }
+.seg-fit button { flex: none; min-width: 76px; }
+
+/* Jev 备用模型：一行折叠开关 + 收起来的三项配置。
+   开关是个按钮但长期没有对应样式，渲染成浏览器默认按钮——和周围完全两个语言。 */
+.jev-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  margin-top: 10px; padding: 4px 0; font-size: var(--t-body); color: var(--text-2); text-align: left;
+  transition: color 120ms var(--ease);
+}
+.jev-toggle:hover { color: var(--text); }
+.jev-body { margin-top: 6px; }
+.jev-body[hidden] { display: none; }
 
 .chain { display: flex; flex-direction: column; gap: 2px; }
 .chain-node {
@@ -810,6 +833,184 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .q-meta { font-size: var(--t-caption); color: var(--text-3); display: flex; align-items: center; gap: 8px; }
 .q-acts { display: flex; gap: 4px; flex: none; }
 .q-acts .btn { height: 24px; }
+
+/* ------------- 数据源页：三段式行（R15）-------------
+   原实现 11 个 span 全横排、全靠「· 」分隔，工程字段和用户字段混成一锅。
+   改成：状态点 + 名称/说明 + 右簇 + ›，工程字段全部收纳进详情区。 */
+.channel-rows { display: flex; flex-direction: column; }
+.channel-cell { box-shadow: 0 0.5px 0 var(--hairline-soft); }
+.channel-cell:last-child { box-shadow: none; }
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+}
+.channel-row:hover { background: var(--hover); }
+/* ① 状态点三态：绿启用 / 灰停用 / 红出错 */
+.channel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-3);
+}
+.channel-row[data-state="on"] .channel-dot { background: var(--green); }
+.channel-row[data-state="error"] .channel-dot { background: var(--red); }
+.channel-main { flex: 1; min-width: 0; }
+.channel-name {
+  font-size: var(--t-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-desc { font-size: var(--t-caption); color: var(--text-3); margin-top: 1px; }
+/* ⑤ 出错态：名称下红色 caption，不降级进 tooltip */
+.channel-err { font-size: var(--t-caption); color: var(--red); margin-top: 1px; }
+/* ③ 右簇恒定宽度，扫读时成列 */
+.channel-right { display: flex; align-items: center; gap: 8px; flex: none; }
+.channel-rate {
+  min-width: 76px;
+  text-align: right;
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.channel-rate[data-high="true"] { color: var(--orange); }
+.channel-pill {
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: var(--t-caption);
+  cursor: pointer;
+  background: var(--hover);
+  color: var(--text-3);
+}
+.channel-pill[data-on="true"] { background: rgba(52, 199, 89, 0.14); color: var(--green); }
+.channel-link {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: var(--t-caption);
+  color: var(--accent);
+  cursor: pointer;
+}
+.channel-link.is-danger { color: var(--red); }
+.channel-chev { color: var(--text-3); font-size: var(--t-body); cursor: pointer; transition: transform var(--dur) var(--ease); }
+.channel-chev[data-open="true"] { transform: rotate(90deg); }
+/* ⑥ 工程字段收纳区 */
+.channel-detail { padding: 0 4px 12px 18px; }
+.channel-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 16px;
+  font-size: var(--t-caption);
+}
+.channel-detail-grid > div { display: flex; gap: 6px; min-width: 0; }
+.channel-detail-grid span { color: var(--text-3); flex: none; }
+.channel-detail-grid b {
+  font-weight: 400;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-detail-acts { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+
+/* ------------- 读数页：流水（feed）形态 -------------
+   原实现按 metric 分卡片（对账单视角），一次一屏 1-2 张卡，
+   且卡内按 asOf 排序——看不出「最近进了什么」。
+
+   流水视角：按抓取时间倒序，一行一条，按天分组。
+   点行就地展开该 metric 的完整历史。 */
+.feed-rows { display: flex; flex-direction: column; }
+.feed-day { margin-bottom: 4px; }
+.feed-day-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 14px 4px 6px;
+  font-size: var(--t-caption);
+  font-weight: 600;
+  color: var(--text-3);
+}
+.feed-day-n { font-weight: 400; color: var(--text-3); opacity: 0.7; }
+.feed-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto auto auto minmax(90px, auto) 16px;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 4px;
+  box-shadow: 0 0.5px 0 var(--hairline);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.feed-row:hover { background: var(--hover); }
+.feed-name {
+  font-size: var(--t-body);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-value {
+  font-size: var(--t-body);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.feed-unit { font-size: var(--t-caption); color: var(--text-3); flex: none; }
+.feed-delta {
+  font-size: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 62px;
+  white-space: nowrap;
+}
+.feed-delta[data-tone="up"] { color: var(--green); }
+.feed-delta[data-tone="down"] { color: var(--red); }
+.feed-delta[data-tone="flat"] { color: var(--text-3); }
+.feed-src {
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-chev { color: var(--text-3); text-align: center; }
+.feed-row:hover .feed-chev { color: var(--accent); }
+/* 展开：该 metric 的完整历史 */
+.feed-detail {
+  padding: 10px 4px 14px 16px;
+  border-left: 2px solid var(--accent-soft);
+  margin: 4px 0 6px;
+}
+.feed-detail-h { font-size: var(--t-caption); color: var(--text-3); margin-bottom: 6px; }
+.feed-detail-grid { display: flex; flex-direction: column; gap: 2px; }
+.feed-detail-row {
+  display: grid;
+  grid-template-columns: 90px 70px 1fr;
+  gap: 10px;
+  font-size: var(--t-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.feed-detail-row b { font-weight: 600; color: var(--text-2); text-align: right; }
+.feed-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: var(--t-caption);
+  color: var(--text-3);
+}
 
 /* ------------- 数据源页：三段式行（R15）-------------
    原实现 11 个 span 全横排、全靠「· 」分隔，工程字段和用户字段混成一锅。
@@ -1277,6 +1478,15 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .vault-item[aria-selected="true"] { background: var(--active); color: var(--text); font-weight: 600; }
 .vault-item .count { margin-left: auto; font-size: var(--t-caption); color: var(--text-3); font-variant-numeric: tabular-nums; }
 
+/* 侧栏「审计」组：台账视图收在一处，默认收起 */
+.audit-head { font-weight: 600; color: var(--text-2); }
+.audit-chev {
+  margin-left: auto; font-size: var(--t-caption); color: var(--text-3);
+  transition: transform var(--dur) var(--ease);
+}
+.audit-head[aria-expanded="true"] .audit-chev { transform: rotate(90deg); }
+.audit-sub { padding-left: 22px; }
+
 /* ------------- 非脉络视图收起检视栏 ------------- */
 
 .insp-empty { display: grid; place-content: center; height: 100%; font-size: var(--t-caption); color: var(--text-3); }
@@ -1285,14 +1495,16 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .app[data-view="premise"] .inspect,
 .app[data-view="today"] .inspect,
 .app[data-view="feeds"] .inspect,
-.app[data-view="vault"] .inspect,
+.app[data-view="sources"] .inspect,
+.app[data-view="readings"] .inspect,
 .app[data-view="settings"] .inspect { display: none; }
 .app[data-view="settle"],
 .app[data-view="audit"],
 .app[data-view="premise"],
 .app[data-view="today"],
 .app[data-view="feeds"],
-.app[data-view="vault"],
+.app[data-view="sources"],
+.app[data-view="readings"],
 .app[data-view="settings"] { grid-template-columns: 206px 1fr; }
 
 /* ------------- 来源分类表 ------------- */

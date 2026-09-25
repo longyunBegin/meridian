@@ -12,7 +12,13 @@ const planPurge = (scope, dryRunResult, confirmed) => {
 
 export async function renderSettings(mid) {
   clear(mid)
-  const settings = await m.settings()
+  let settings = await m.settings()
+  // 「前沿模型」档位已移除。旧设置里读到它时归一到查表——
+  // 不归一的话两个 tab 都不选中，界面看起来像坏了。
+  if (settings.labeler === 'llm') {
+    await m.saveSettings({ labeler: 'table' })
+    settings.labeler = 'table'
+  }
   state.settings = settings
 
   const field = (label, control, hint) => h('div', { class: 'field', style: { alignItems: 'flex-start' } },
@@ -28,9 +34,11 @@ export async function renderSettings(mid) {
 
   /** 密钥字段：password 类型 + 显示/隐藏 + 保存按钮 */
   const secret = (value, onCommit, placeholder) => {
+    // minWidth: 0 ——input 默认 min-width 是 auto，窄栏里不肯收缩，
+    // 会把同一行的其他字段挤到下一行
     const input = h('input', {
       class: 'txt', type: 'password', value: value || '', placeholder,
-      style: { flex: '1' },
+      style: { flex: '1', minWidth: 0 },
     })
     const toggle = h('button', {
       class: 'btn btn-icon', title: '显示/隐藏', style: { flex: 'none' },
@@ -56,7 +64,7 @@ export async function renderSettings(mid) {
     return h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, input, toggle, save, feedback)
   }
 
-  const seg = (cur, options, onPick) => h('div', { class: 'seg' },
+  const seg = (cur, options, onPick, fit) => h('div', { class: fit ? 'seg seg-fit' : 'seg' },
     ...options.map(([v, label]) => h('button', {
       'aria-selected': cur === v ? 'true' : 'false',
       onclick: () => onPick(v),
@@ -77,10 +85,84 @@ export async function renderSettings(mid) {
 
   const mb = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`)
 
+  // ---------------------------------------------------------------- LLM 连通性测试
+  const llmTestOut = h('p', {
+    style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', lineHeight: '1.6', minHeight: '16px' },
+  })
+  const llmTestBtn = h('button', {
+    class: 'btn', style: { height: '26px' },
+    onclick: async () => {
+      llmTestBtn.disabled = true
+      llmTestBtn.textContent = '测试中…'
+      llmTestOut.textContent = ''
+      llmTestOut.style.color = 'var(--text-3)'
+      try {
+        const r = await m.llmTest()
+        if (r.ok) {
+          llmTestOut.style.color = 'var(--green)'
+          llmTestOut.textContent = `✓ 连通 · ${r.model} · ${r.latency}ms · 返回「${r.text}」`
+        } else {
+          llmTestOut.style.color = 'var(--red)'
+          const why = {
+            'no-key': '未填密钥',
+            timeout: '超时（20s）',
+            empty: '模型无返回',
+            'reasoning-only': '推理模型把预算全花在思考上了，正文为空——接口是通的，换非推理模型或调大预算',
+            'no-content': '模型只返回了思考，没有正文',
+          }[r.reason] || r.reason
+          llmTestOut.textContent = `✗ ${why}${r.latency ? ` · ${r.latency}ms` : ''}`
+        }
+      } catch {
+        llmTestOut.style.color = 'var(--red)'
+        llmTestOut.textContent = '✗ 请求失败，请检查地址与密钥'
+      } finally {
+        llmTestBtn.disabled = false
+        llmTestBtn.textContent = '测试连接'
+      }
+    },
+  }, '测试连接')
+
+  // ---------------------------------------------------------------- Jev 折叠
+  // 三项配置必须真的放进 jevBody——之前它们是 jevBody 的兄弟节点，
+  // 折叠开关藏的是个空 div，三个字段等于永久展开，把「来源打标器」撑得很长。
+  const jevBody = h('div', { class: 'jev-body', hidden: true })
+  const jevChev = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', transition: 'transform var(--dur) var(--ease)' } }, '›')
+  // caption 在输入框上方的紧凑排布：三个字段一行放得下，不像左标签右输入那样
+  // 每个都要占一整行、还把输入框拉到 700px 宽看着很空。
+  // flex 必须挂在 jevCol 自己身上——挂进内层包裹的话，父级是 column 布局，
+  // flex-basis 会变成输入框的高度，把每个字段竖向撑到 250px。
+  const jevCap = (text) => h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, text)
+  const jevCol = (cap, control, flex) => h('div', {
+    style: { display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0, flex },
+  }, cap, control)
+  jevBody.append(
+    h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' } },
+      jevCol(jevCap('接口地址'), txt(settings.jevBaseUrl, (v) => m.saveSettings({ jevBaseUrl: v }), 'https://openrouter.ai/api/v1'), '1 1 250px'),
+      jevCol(jevCap('密钥'), secret(settings.jevKey, (v) => m.saveSettings({ jevKey: v }), 'sk-…'), '1 1 280px'),
+      jevCol(jevCap('模型'), txt(settings.jevModel, (v) => m.saveSettings({ jevModel: v }), 'typesafe/jev-1.13'), '1 1 170px'),
+    ),
+    h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
+      '默认跟随主模型，只有 System One Model 用独立端点时才填。密钥 AES-256-GCM 加密存储，机器绑定，不上传。'),
+  )
+  const jevRow = h('div', {},
+    h('button', {
+      class: 'jev-toggle',
+      onclick: () => {
+        jevBody.hidden = !jevBody.hidden
+        jevChev.style.transform = jevBody.hidden ? '' : 'rotate(90deg)'
+      },
+    },
+      h('span', {}, settings.jevKey ? '备用模型已配置' : '备用模型（可选）'),
+      h('span', { style: { flex: 1 } }),
+      jevChev,
+    ),
+    jevBody,
+  )
+
   // ---------------------------------------------------------------- 来源分类
   const kinds = settings.sourceQuality || []
   const maxQ = Math.max(...kinds.map(([, q]) => q), 1)
-  const VIA = { table: '查表', jev: 'Jev', llm: '前沿模型' }
+  const VIA = { table: '查表', jev: 'Jev', channel: '通道声明' }
 
   const testOut = h('p', {
     style: { margin: '10px 0 0', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6', minHeight: '18px' },
@@ -117,12 +199,11 @@ export async function renderSettings(mid) {
         field('打标器', seg(settings.labeler, [
           ['table', '查表（默认）'],
           ['jev', 'Jev'],
-          ['llm', '前沿模型'],
-        ], async (v) => { await m.saveSettings({ labeler: v }); await renderSettings(mid) }),
+        ], async (v) => { await m.saveSettings({ labeler: v }); await renderSettings(mid) }, true),
           '质量分一律由 SOURCE_QUALITY 表裁决，打标器只负责选类型——否则换一个模型，整条校准曲线的基准就漂移了。'),
-        field('Jev 接口', txt(settings.jevBaseUrl, (v) => m.saveSettings({ jevBaseUrl: v }), 'https://openrouter.ai/api/v1'), 'System One Model，只做判断不聊天。'),
-        field('Jev 密钥', secret(settings.jevKey, (v) => m.saveSettings({ jevKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定，不上传。'),
-        field('Jev 模型', txt(settings.jevModel, (v) => m.saveSettings({ jevModel: v }), 'typesafe/jev-1.13')),
+        // Jev 的三项配置只在选中 Jev 时出现。固定显示会让人误以为换个打标器就得重新配一遍——
+        // 而查表压根不需要任何配置。折成一行「备用模型」也是同一理由：默认空 = 跟随主模型。
+        settings.labeler === 'jev' ? jevRow : null,
       ),
     ),
 
@@ -147,11 +228,17 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '命题抽取')),
+      h('div', { class: 'sect-h' },
+        h('h2', {}, '命题抽取'),
+        h('span', { class: 'spacer' }),
+        // LLM 连通性测试：key / 端点 / 模型一次验完，不用等建主题才失败
+        llmTestBtn,
+      ),
       h('div', { class: 'sect-b' },
         field('接口地址', txt(settings.baseUrl, (v) => m.saveSettings({ baseUrl: v }), 'https://api.stepfun.com/v1'), '任意 OpenAI 兼容端点。'),
         field('密钥', secret(settings.apiKey, (v) => m.saveSettings({ apiKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定。'),
         field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3'), '只做「抽取命题」，不需要太强的模型。'),
+        llmTestOut,
       ),
     ),
 

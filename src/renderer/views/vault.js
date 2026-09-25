@@ -1,7 +1,6 @@
 import { h, icon, clear, add, $, toast, confirmToast } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
-import { confColor, TYPE_LABEL, nodePath } from './shared.js'
-import { groupReadings } from '../../shared/readings.js'
+import { confColor, TYPE_LABEL, nodePath, todayStr as today } from './shared.js'
 import { SCENARIO_LABELS } from '../../main/llmlog.js'
 
 const m = window.meridian
@@ -408,110 +407,103 @@ function readingRow(r, prev, opts = {}) {
   )
 }
 
-function metricCard(group, indicators, channels, gaapLabels) {
-  const channelIds = new Set(group.items.map((r) => r.channelId).filter(Boolean))
-  const tracked = indicators.filter((n) => (n.channelIds || []).some((id) => channelIds.has(id)))
-  const channelName = group.items.map((r) => channels.find((c) => c.id === r.channelId)?.name).find((name) => name?.trim())
-  const gaapLabel = gaapLabels.find(({ tag }) => group.metric.endsWith(tag))?.label
-  const title = channelName || gaapLabel || group.metric
+/**
+ * 读数流水——按抓取时间倒序，一行一条。
+ *
+ * 原实现按 metric 分卡片，是「对账单」视角：一次一屏 1-2 张卡，
+ * 且卡内按 asOf 排序，看不出「最近进了什么」。
+ *
+ * 流水视角回答的是另一个问题：今天我的通道给我带来了什么。
+ * 一行一条，按天分组；点行就地展开该 metric 的完整历史。
+ */
+function readingsFeed(readings, channels, gaapLabels) {
+  const byDay = new Map()
+  for (const r of readings) {
+    const day = (r.at || '').slice(0, 10) || '未知日期'
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day).push(r)
+  }
+  const days = [...byDay.keys()].sort((a, b) => b.localeCompare(a))
 
-  // 常量只在卡片头出现一次：单位、来源类型、抓取时间
-  const latest = group.latest || group.items[0]
-  const unit = group.items.map((r) => r.unit).find(Boolean)
-  const kind = latest?.source?.kind || '未知来源'
-  const fetchedAt = (latest?.at || '').slice(0, 10)
-
-  // 最新一期的环比：上期 = items 里排在它后面的那条
-  const latestIdx = group.items.indexOf(latest)
-  const latestPrev = latestIdx >= 0 ? group.items[latestIdx + 1] : null
-  let latestChange = null
-  if (latestPrev && Number(latestPrev.value) > 0 && Number.isFinite(Number(latest.value))) {
-    const ratio = Number(latest.value) / Number(latestPrev.value) - 1
-    if (Number.isFinite(ratio)) latestChange = ratio
+  const nameOf = (r) => {
+    const ch = channels.find((c) => c.id === r.channelId)
+    return ch?.name || gaapLabels.find(({ tag }) => r.metric.endsWith(tag))?.label || r.metric
+  }
+  const sourceOf = (r) => {
+    const ch = channels.find((c) => c.id === r.channelId)
+    if (!ch) return r.source?.kind || '未知来源'
+    return ch.kind || r.source?.kind || '未知来源'
   }
 
-  const isFolded = group.count > FOLD_THRESHOLD
-  const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
-
-  // 重述检测：同一 asOf 出现多次 → 只留最新一条为当前值
-  const byAsOf = new Map()
-  for (const r of group.items) {
-    const key = r.asOf || '\u2014'
-    if (!byAsOf.has(key)) byAsOf.set(key, [])
-    byAsOf.get(key).push(r)
-  }
-  const restatedSet = new Set()
-  for (const list of byAsOf.values()) {
-    if (list.length < 2) continue
-    for (const r of list.slice(1)) restatedSet.add(r.id)
+  // 每个 metric 的历史（点行展开时用）
+  const historyByMetric = new Map()
+  for (const r of readings) {
+    if (!historyByMetric.has(r.metric)) historyByMetric.set(r.metric, [])
+    historyByMetric.get(r.metric).push(r)
   }
 
-  const renderRow = (r, i) => {
-    const prev = group.items[i + 1]
-    return readingRow(r, prev, { latest: r === group.latest, restated: restatedSet.has(r.id) })
-  }
-  const body = h('div', { class: 'reading-grid' }, ...visible.map(renderRow))
-
-  if (isFolded) {
-    let expanded = false
-    const moreBtn = h('button', {
-      class: 'reading-more',
-      onclick: () => {
-        if (expanded) return
-        expanded = true
-        for (let i = FOLD_THRESHOLD; i < group.items.length; i++) body.append(renderRow(group.items[i], i))
-        moreBtn.remove()
-      },
-    }, `显示其余 ${group.count - FOLD_THRESHOLD} 期`)
-    body.append(moreBtn)
-  }
-
-  const latestChangeLabel = latestChange == null
-    ? '—'
-    : `${latestChange >= 0 ? '+' : '\u2212'}${Math.abs(latestChange * 100).toFixed(1)}%`
-
-  return h('section', { class: 'reading-card' },
-    // 卡片头：人读标题 + 跟踪态 + ⓘ 悬停看 camelCase
-    h('div', { class: 'reading-card-h' },
-      h('div', { class: 'reading-card-title' },
-        h('h2', {}, title),
-        tracked.length ? h('span', { class: 'reading-tracking' }, '跟踪中') : null,
-        h('span', { class: 'reading-info', title: group.metric }, '\u24d8'),
+  return h('div', { class: 'feed-rows' },
+    ...days.map((day) => h('div', { class: 'feed-day' },
+      h('div', { class: 'feed-day-h' },
+        h('span', {}, day === today() ? '今天' : day.slice(5)),
+        h('span', { class: 'feed-day-n' }, `${byDay.get(day).length} 条`),
       ),
-      h('div', { class: 'reading-card-const' },
-        h('span', {}, `${group.count} 期`),
-        unit ? h('span', {}, unit) : null,
-        h('span', {}, kind),
-        fetchedAt ? h('span', {}, `抓于 ${fetchedAt}`) : null,
-      ),
-    ),
-    // 最新一期摘要：扫读的第一落点，大字号 + 语义色环比
-    h('div', { class: 'reading-hero' },
-      h('div', { class: 'reading-hero-main' },
-        h('span', { class: 'reading-hero-value' }, fmtValue(latest?.value)),
-        unit ? h('span', { class: 'reading-hero-unit' }, unit) : null,
-      ),
-      h('div', { class: 'reading-hero-side' },
-        h('span', {
-          class: 'reading-hero-delta',
-          dataset: { tone: latestChange == null ? 'flat' : latestChange >= 0 ? 'up' : 'down' },
-        }, latestChangeLabel),
-        h('span', { class: 'reading-hero-asof' }, `${latest?.asOf || '无期间'} · ${latest?.basis === 'estimated' ? '估算' : '财报口径'}`),
-      ),
-    ),
-    body,
-    h('div', { class: 'reading-card-foot' },
-      '技术名、原文链接和每次抓取的明细，收在悬停与展开里。',
-    ),
+      ...byDay.get(day).map((r) => {
+        const hist = historyByMetric.get(r.metric) || []
+        const prev = hist.find((x) => x.asOf && r.asOf && x.asOf < r.asOf)
+        let change = null
+        if (prev && Number(prev.value) > 0 && Number.isFinite(Number(r.value))) {
+          const ratio = Number(r.value) / Number(prev.value) - 1
+          if (Number.isFinite(ratio)) change = ratio
+        }
+        const detail = h('div', { class: 'feed-detail', style: { display: 'none' } })
+
+        const row = h('div', { class: 'feed-row' },
+          h('span', { class: 'feed-name' }, nameOf(r)),
+          h('span', { class: 'feed-value' }, fmtValue(r.value)),
+          r.unit ? h('span', { class: 'feed-unit' }, r.unit) : null,
+          h('span', {
+            class: 'feed-delta',
+            dataset: { tone: change == null ? 'flat' : change >= 0 ? 'up' : 'down' },
+          }, change == null ? '—' : `${change >= 0 ? '+' : '\u2212'}${Math.abs(change * 100).toFixed(1)}%`),
+          h('span', { class: 'feed-src' }, sourceOf(r)),
+          h('span', { class: 'feed-chev' }, '\u203a'),
+        )
+        row.onclick = () => {
+          detail.style.display = detail.style.display === 'none' ? 'block' : 'none'
+          if (detail.style.display === 'block' && !detail.childNodes.length) {
+            detail.append(h('div', { class: 'feed-detail-h' }, `${nameOf(r)} · ${hist.length} 期`),
+              h('div', { class: 'feed-detail-grid' },
+                ...hist.map((x) => h('div', { class: 'feed-detail-row' },
+                  h('span', {}, x.asOf || '无期间'),
+                  h('span', {}, x.basis === 'estimated' ? '估算' : '财报口径'),
+                  h('b', {}, fmtValue(x.value)),
+                )),
+              ),
+              h('div', { class: 'feed-detail-meta' },
+                `技术名 ${r.metric}`,
+                r.source?.url ? h('button', {
+                  class: 'btn', style: { padding: '1px 6px', fontSize: 'var(--t-caption)' },
+                  onclick: (e) => { e.stopPropagation(); m.openExternal(r.source.url) },
+                }, '原文链接') : null,
+              ),
+            )
+          }
+        }
+        return h('div', {}, row, detail)
+      }),
+    )),
   )
 }
+
 
 export async function renderReadings(mid) {
   clear(mid)
   const [all, channels, nodes, gaapLabels] = await Promise.all([
     m.allReadings(), m.channelList(), m.allNodes(), m.commonUsGaap(),
   ])
-  if (state.view !== 'vault' || state.vaultKind !== 'readings') return
+  // 异步返回时用户可能已经切走——不往别人的页面里写东西
+  if (state.view !== 'readings') return
   const page = h('div', { class: 'page' })
   mid.append(page)
 
@@ -562,23 +554,30 @@ export async function renderReadings(mid) {
     if (currentFilter) {
       filtered = filtered.filter((r) => r.channelId === currentFilter)
     }
-    const groups = groupReadings(filtered)
     const list = $('#readings-list', mid)
     if (list) {
       clear(list)
-      add(list, groups.map((g) => metricCard(g, indicators, channels, gaapLabels)))
+      add(list, readingsFeed(
+        [...filtered].sort((a, b) => (b.at || '').localeCompare(a.at || '')),
+        channels, gaapLabels,
+      ))
     }
   }
 
-  const groups = groupReadings(all)
+  // 按抓取时间倒序——流水视角，「最近进了什么」在第一眼
+  const feed = [...all].sort((a, b) => (b.at || '').localeCompare(a.at || ''))
   page.append(h('section', { class: 'sect' },
-    h('div', { class: 'sect-h' }, h('h2', {}, '读数'), h('em', {}, String(all.length))),
+    h('div', { class: 'sect-h' },
+      h('h2', {}, '读数'),
+      h('span', { class: 'spacer' }),
+      h('em', {}, `${all.length} 条 · ${new Set(all.map((r) => r.metric)).size} 个指标`),
+    ),
     filterBar('全部指标', indicators.map((n) => ({ label: n.title, value: n.id })),
       (value) => { currentIndicator = value }, '10px'),
     filterBar('全部通道', [...channelIds].map((id) => ({ label: channels.find((c) => c.id === id)?.name || id, value: id })),
       (value) => { currentFilter = value }, '6px'),
     h('div', { id: 'readings-list' },
-      ...groups.map((g) => metricCard(g, indicators, channels, gaapLabels)),
+      readingsFeed(feed, channels, gaapLabels),
     ),
   ))
 }

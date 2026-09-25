@@ -23,7 +23,7 @@ import {
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary, pickChannelsFromLibrary } from './extract.js'
-import { labelSource, jevLabel, llmLabel } from './labeler.js'
+import { labelSource } from './labeler.js'
 import { tracked } from './llmlog.js'
 import { genericFallback, channelLibrary, instantiate } from './templates.js'
 
@@ -551,11 +551,18 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
 
   async function scaffoldTheme(themeId, description, s) {
+    // 幂等：主题已经有环节就不要再铺。兜底模板没有去重，连点几次「生成」
+    // 就会 instantiate 好几遍——实测同一个主题下摞了三套上中下游。
+    // theme:regenerate 是先删后建，走到底下时已经是空树，不受这里挡。
+    if (allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')) {
+      return { degraded: false, channelCount: 0, skipped: 'has-branches' }
+    }
+
     const library = channelLibrary()
     const [skeletonResult, tagResult, channelResult] = await Promise.all([
       tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
       tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
-      tracked('pickChannels', () => pickChannelsFromLibrary(s, description, library), { themeId }),
+      tracked('pickChannelsFromLibrary', () => pickChannelsFromLibrary(s, description, library), { themeId }),
     ])
 
     if (skeletonResult.ok) {
@@ -568,7 +575,10 @@ function register({ getMainWindow }) {
         for (const c of node.children || []) walk(c, n.id)
       }
       for (const root of skeletonResult.skeleton.roots || []) walk(root, null)
-    } else {
+    } else if (!s.apiKey) {
+      // 只有完全没有 key 时才用兜底模板——那是唯一还能给出结构的情形。
+      // key 在却失败了（超时 / 解析不出来）就留空：铺一套上中下游上去，
+      // 用户会以为模型分析过了，只是水平差。留空 + 明说失败，比假的通用骨架诚实。
       const fallback = genericFallback()
       if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
     }
@@ -589,26 +599,89 @@ function register({ getMainWindow }) {
 
     return {
       degraded: !skeletonResult.ok,
+      // 把失败原因带出去——「树没生成」和「key 没配」是两件事，用户该知道是哪件
+      reason: skeletonResult.ok ? null : (skeletonResult.reason || 'unknown'),
+      hasKey: !!s.apiKey,
       channelCount: channelResult.channels?.length || 0,
     }
   }
 
+  // 建主题分两步：主题立即建好返回（UI 不必卡住），骨架异步铺。
+  // 铺完由 db:changed 通知渲染层刷新——用户在等的时候还能看别的东西。
   ipcMain.handle('theme:setupNew', async (_, description) => {
     const theme = addTheme(description)
-    const result = await scaffoldTheme(theme.id, description, settings())
-    return { ...theme, ...result }
+    scaffoldTheme(theme.id, description, settings())
+      .then((result) => {
+        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId: theme.id, ...result })
+      })
+      .catch(() => {})
+    return { ...theme, degraded: !settings().apiKey }
+  })
+
+  // 重新生成骨架：删掉原有的，再走一次 scaffoldTheme。
+  // 破坏性操作——UI 必须先提示「将删除原有环节和命题」。
+  ipcMain.handle('theme:regenerate', async (_, themeId) => {
+    const theme = allThemes().find((t) => t.id === themeId)
+    if (!theme) return { ok: false, error: 'not-found' }
+    // 删旧：整棵环节树 + 标签库 + 该主题下自动配的通道
+    for (const n of allNodes().filter((n) => n.themeId === themeId)) removeNode(n.id)
+    for (const ch of allChannels().filter((c) => c.themeId === themeId)) removeChannel(ch.id)
+    updateTheme(themeId, { tags: [], tagLibrary: [] })
+    scaffoldTheme(themeId, theme.name, settings())
+      .then((result) => {
+        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId, ...result })
+      })
+      .catch(() => {})
+    return { ok: true }
   })
 
   // 空白主题补生成骨架 + 标签库（E3）
+  // 给已有主题补骨架。同样是异步——UI 立即返回，铺完由 theme:scaffolded 通知
   ipcMain.handle('theme:scaffoldExisting', async (_, themeId, description) => {
-    const result = await scaffoldTheme(themeId, description, settings())
-    return { ok: true, ...result }
+    scaffoldTheme(themeId, description, settings())
+      .then((result) => {
+        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId, ...result })
+      })
+      .catch(() => {})
+    return { ok: true, async: true }
   })
 
   ipcMain.handle('settings:get', () => ({ ...settings(), sourceQuality: SOURCE_QUALITY }))
   ipcMain.handle('settings:set', (_, patch) => saveSettings(patch))
   // 试标：不落库，只为在捕获之前验证打标器通不通、规则命中得对不对
   ipcMain.handle('label:test', (_, text) => labelSource(settings(), text))
+  // LLM 连通性测试：打一次最小请求，验证 key / 端点 / 模型三件事。
+  // max_tokens 必须给足：推理模型（step-3 / o 系列）会把预算全花在 reasoning 上，
+  // content 回来是空串、finish_reason 是 length。16 实测不够，512 起。
+  ipcMain.handle('llm:test', async () => {
+    const s = settings()
+    if (!s.apiKey) return { ok: false, reason: 'no-key' }
+    const t0 = Date.now()
+    try {
+      const res = await fetch(`${s.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${s.apiKey}` },
+        body: JSON.stringify({
+          model: s.model,
+          max_tokens: 512,
+          messages: [{ role: 'user', content: '回复「连通」两个字' }],
+        }),
+        signal: AbortSignal.timeout(20000),
+      })
+      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, latency: Date.now() - t0 }
+      const body = await res.json()
+      const msg = body?.choices?.[0]?.message
+      const text = msg?.content?.trim()
+      if (text) return { ok: true, text: text.slice(0, 40), model: s.model, latency: Date.now() - t0 }
+      // 有 reasoning 没正文——推理模型的预算被思考吃光了，不是接口坏了
+      if (msg?.reasoning_content || msg?.reasoning) {
+        return { ok: false, reason: body?.choices?.[0]?.finish_reason === 'length' ? 'reasoning-only' : 'no-content', latency: Date.now() - t0 }
+      }
+      return { ok: false, reason: 'empty', latency: Date.now() - t0 }
+    } catch (e) {
+      return { ok: false, reason: e.name === 'TimeoutError' ? 'timeout' : (e.message || 'network'), latency: Date.now() - t0 }
+    }
+  })
 
   // 原文层：单独一个 stats，不并进 db:stats——那个每次渲染都调，会把原文文件拖进启动路径
   ipcMain.handle('raw:stats', () => rawStats())

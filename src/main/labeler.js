@@ -2,11 +2,13 @@
  * 来源打标器。
  *
  * 这是整个产品里唯一必须可替换的模块：换打标器不触动抽取、存储和 UI。
- * 三种实现，按 settings.labeler 选择：
+ * 两种实现，按 settings.labeler 选择：
  *
  *   table —— 关键词启发式 + SOURCE_QUALITY 表裁决（默认，零依赖，永远可用）
  *   jev   —— Jev 的 Choice / Score / Noul（System One Model，只做判断不聊天）
- *   llm   —— 前沿模型打标（有 key 但没接 Jev 时的过渡）
+ *
+ * 曾经的 llm 档位已移除：它和 jev 打的是同一个 OpenAI 兼容端点，只是 prompt 形状不同，
+ * 用户视角看不出区别，却多一个要理解的概念。接 Jev 就选 jev，不接就用查表。
  *
  * 硬约束：**质量分一律由 SOURCE_QUALITY 表裁决**，打标器只负责选类型。
  * 否则换一个模型，整条校准曲线的基准就漂移了。
@@ -84,30 +86,6 @@ export async function jevLabel(settings, text) {
   }
 }
 
-/** 前沿模型打标：有 key 但没接 Jev 时的过渡路径 */
-export async function llmLabel(settings, text) {
-  const { baseUrl, apiKey, model } = settings
-  if (!apiKey) return { ok: false, why: 'no-key' }
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      messages: [
-        { role: 'system', content: `判断这段文字的来源类型，只能从这些里选一个：${KINDS.join('、')}。只输出类型名。` },
-        { role: 'user', content: String(text).slice(0, 2000) },
-      ],
-    }),
-  })
-  if (!res.ok) return { ok: false, why: `HTTP ${res.status}` }
-  const usage = await readUsage(res)
-  const body = await res.json()
-  const raw = (body?.choices?.[0]?.message?.content || '').trim()
-  const kind = KINDS.find((k) => raw.includes(k)) || tableLabel(text).kind
-  return { ok: true, kind, quality: QUALITY.get(kind), via: 'llm', usage }
-}
-
 /**
  * 统一入口：按设置选择打标器，失败一律静默降级到查表。
  *
@@ -129,9 +107,6 @@ export async function labelSource(settings, text, channelMeta) {
   try {
     if (settings.labeler === 'jev') {
       const r = await jevLabel(settings, text)
-      if (r.ok) return r
-    } else if (settings.labeler === 'llm') {
-      const r = await llmLabel(settings, text)
       if (r.ok) return r
     }
   } catch {

@@ -271,6 +271,42 @@ ok('骨架节点带 scaffold', skNodes[0].scaffold?.answer?.[0] === '芯片设�
 ok('骨架节点带 propagation', skNodes[0].propagation === 0.6)
 
 // ============================================================
+console.log('\n— 骨架解析容错（模型不按 schema 吐） —')
+// ============================================================
+
+const { parseSkeleton } = await import('../src/main/extract.js')
+
+const parseTitles = (r) => (r?.roots || []).map((n) => n.title)
+const flatTitles = (r) => {
+  const out = []
+  const walk = (n) => { out.push(n.title); for (const c of n.children || []) walk(c) }
+  for (const n of r?.roots || []) walk(n)
+  return out
+}
+
+// 顶层直接是数组——模型经常这么干，以前整棵树被扔掉换兜底模板
+const arrTop = parseSkeleton('[{"title":"上游","children":[{"title":"光芯片"}]}]')
+ok('顶层数组能解析', Array.isArray(arrTop?.roots) && arrTop.roots.length === 1, JSON.stringify(parseTitles(arrTop)))
+ok('顶层数组子层也在', flatTitles(arrTop).join(',') === '上游,光芯片')
+
+// 键名不同：stages / name / sub
+const altKeys = parseSkeleton('{"stages":[{"name":"上游","sub":[{"name":"光芯片","sub":[]}]}]}')
+ok('stages/name/sub 能解析', flatTitles(altKeys).join(',') === '上游,光芯片', JSON.stringify(flatTitles(altKeys)))
+
+// 没标题的中间层穿透，不为空名造一行
+const hoisted = parseSkeleton('{"roots":[{"children":[{"title":"上游","children":[]},{"title":"下游","children":[]}]}]}')
+ok('无标题中间层被穿透', flatTitles(hoisted).join(',') === '上游,下游', JSON.stringify(flatTitles(hoisted)))
+ok('穿透后没有空标题行', flatTitles(hoisted).every((t) => t && t.trim()))
+
+// markdown 代码块包裹 + 前后废话
+const fenced = parseSkeleton('好的，结果如下：\n```json\n{"roots":[{"title":"上游"}]}\n```\n以上')
+ok('代码块包裹能解析', flatTitles(fenced).join(',') === '上游')
+
+// 真解析不了还是要返回 null，让调用方走降级
+ok('纯废话返回 null', parseSkeleton('我不知道') === null)
+ok('空 roots 返回 null', parseSkeleton('{"roots":[]}') === null)
+
+// ============================================================
 console.log('\n— 收件箱 inbox:capture 带通道元数据 —')
 // ============================================================
 
@@ -1848,7 +1884,7 @@ ok('O4: store.js 无 indicatorId', !storeSrc.includes('indicatorId'))
 
 // --- O5: 空态提示加跳转 ---
 ok('O5: inspector.js 有 setView 导入', inspectorSrc.includes('setView'))
-ok('O5: inspector.js 有跳转链接', inspectorSrc.includes("setView('vault', 'feeds')"))
+ok('O5: inspector.js 有跳转链接', inspectorSrc.includes("setView('sources')"))
 
 // --- v0.6.3 preload 两份同步（再验一次，加了 discoverTags）---
 const pj63 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
@@ -2939,7 +2975,9 @@ ok('E3: lattice.js 有骨架提示', latticeSrcER.includes('还没有骨架'))
 ok('E3: lattice.js 有 scaffoldExisting 调用', latticeSrcER.includes('scaffoldExisting'))
 ok('E3: ipc.js 有 scaffoldTheme 共用函数', ipcSrcER.includes('async function scaffoldTheme'))
 ok('E3: ipc.js 有 theme:scaffoldExisting', ipcSrcER.includes('theme:scaffoldExisting'))
-ok('E3: ipc.js setupNew 调 scaffoldTheme', ipcSrcER.includes('await scaffoldTheme(theme.id, description, settings())'))
+// 异步化后 setupNew / scaffoldExisting 都不再 await scaffoldTheme——
+// 主题立即返回，骨架后台铺，铺完由 theme:scaffolded 通知
+ok('E3: setupNew 异步调 scaffoldTheme', ipcSrcER.includes('scaffoldTheme(theme.id, description, settings())') && !ipcSrcER.includes('await scaffoldTheme(theme.id'))
 ok('E3: preload.js 有 scaffoldExisting', pjER.includes('scaffoldExisting'))
 ok('E3: preload.cjs 有 scaffoldExisting', pcER.includes('scaffoldExisting'))
 ok('E3: preload 两份同步', pjER.includes('scaffoldExisting') === pcER.includes('scaffoldExisting'))
@@ -2950,20 +2988,44 @@ const e3BeforeNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).l
 ok('E3: 空白主题无节点', e3BeforeNodes === 0)
 const e3Result = await fire('theme:scaffoldExisting', e3Theme.id, 'AI 算力供应链')
 ok('E3: scaffoldExisting 返回 ok', e3Result?.ok === true)
-const e3AfterNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).length
+// 异步：等 scaffoldTheme 在后台跑完（轮询节点出现，最多 3 秒）
+let e3AfterNodes = 0
+for (let i = 0; i < 30 && e3AfterNodes === 0; i++) {
+  await new Promise((r) => setTimeout(r, 100))
+  e3AfterNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).length
+}
 ok('E3: 补生成后有节点', e3AfterNodes > 0, `实际 ${e3AfterNodes}`)
 const e3ThemeAfter = store.allThemes().find((t) => t.id === e3Theme.id)
 ok('E3: 补生成后有标签库', Array.isArray(e3ThemeAfter?.tagLibrary))
 
+// 幂等：已经有环节的主题再触发一次，不能把兜底模板再铺一遍。
+// 实测用户连点几次「生成」后，同一个主题下摞了三套上中下游。
+const idemTheme = store.addTheme('幂等测试主题')
+await fire('theme:scaffoldExisting', idemTheme.id, 'AI 算力供应链')
+let idemCount = 0
+for (let i = 0; i < 30 && idemCount === 0; i++) {
+  await new Promise((r) => setTimeout(r, 100))
+  idemCount = store.allNodes().filter((n) => n.themeId === idemTheme.id).length
+}
+await new Promise((r) => setTimeout(r, 200))
+await fire('theme:scaffoldExisting', idemTheme.id, 'AI 算力供应链')
+await fire('theme:scaffoldExisting', idemTheme.id, 'AI 算力供应链')
+await new Promise((r) => setTimeout(r, 400))
+const idemAfter = store.allNodes().filter((n) => n.themeId === idemTheme.id).length
+ok('幂等：重复触发不重复铺节点', idemAfter === idemCount, `第一次 ${idemCount} → 三次后 ${idemAfter}`)
+
 // --- R1: 读数视图只读 + 三审计字段 ---
 
 ok('R1: vault.js 无手动录入表单', !vaultSrcER.includes('手动记一条读数'))
-ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期'))
-ok('R1: vault.js 有抓于', vaultSrcER.includes('抓于'))
-ok('R1: vault.js 有跟踪', vaultSrcER.includes('跟踪'))
-ok('R1: 跟踪按整组通道集合计算', vaultSrcER.includes('const tracked = indicators.filter') && vaultSrcER.includes('channelIds.has(id)') && !vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard')).includes('跟踪'))
+ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期') || vaultSrcER.includes('x.asOf'))
+// 抓于迁到流水按天分组——「今天 / 09-24」即抓取时间
+ok('R1: 流水按抓取时间分组', vaultSrcER.includes("day === today() ? '今天'") && vaultSrcER.includes('.slice(0, 10)'))
+// 跟踪态在脉络树节点 inline 显示（总览层），读数页是流水
+ok('R1: 流水有点行展开', vaultSrcER.includes('feed-detail') && vaultSrcER.includes('historyByMetric'))
+ok('R1: 跟踪反查保留在 inspector', inspectorSrcER.includes('indicatorsForReading') || inspectorSrcER.includes('channelIds'))
 // R14 之后同 asOf 重述用 data-restated 标记，不再依赖 CSS class
-ok('R1: 重述行有标记', vaultSrcER.includes('restatedSet') && vaultSrcER.includes("restated: String(restated)"))
+// 重述检测随卡片一起移除；流水按天分组，同 asOf 多条在展开区并列可见
+ok('R1: 展开区并列同 metric 全部期数', vaultSrcER.includes('hist.length') && vaultSrcER.includes('feed-detail-grid'))
 
 // R1 端到端：读数显示跟踪指标
 const r1Theme = store.addTheme('R1 测试主题')
@@ -3214,13 +3276,13 @@ ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem
 ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
 // 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」
 ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:\s*[1-9]\d*px(?!\s*;)/.test(stylesSrcS45.replace(/border-radius:\s*50%/g, '')) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))
-const cleanupReadingRow = vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard'))
 // R14 之后行是五列网格，常量已上移卡片头；跟踪仍只算一次
-const metricCardSrc = vaultSrcER.slice(vaultSrcER.indexOf('function metricCard'))
-ok('C6/R14: 行是网格且不含重复常量与跟踪',
-  cleanupReadingRow.includes('rc-value') && metricCardSrc.includes('reading-grid') &&
-  !cleanupReadingRow.includes('跟踪') && !cleanupReadingRow.includes('单位') &&
-  !cleanupReadingRow.includes('来源') && !cleanupReadingRow.includes('抓于'))
+// 流水形态：行模板只含名称/值/单位/环比/来源，常量与跟踪不上行
+const feedRowSrc = vaultSrcER.slice(vaultSrcER.indexOf('function readingsFeed'), vaultSrcER.indexOf('function metricCard') !== -1 ? vaultSrcER.indexOf('function metricCard') : vaultSrcER.length)
+const rowPart = feedRowSrc.slice(0, feedRowSrc.indexOf('const detail'))
+ok('C6/R14: 流水行不含重复常量与跟踪',
+  vaultSrcER.includes('feed-row') && vaultSrcER.includes('feed-value') &&
+  !rowPart.includes('跟踪') && !rowPart.includes('单位') && !rowPart.includes('抓于'))
 ok('C6: 单项筛选整排隐藏', vaultSrcER.includes('if (options.length <= 1) return null'))
 
 // ============================================================

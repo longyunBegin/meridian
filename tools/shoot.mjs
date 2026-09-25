@@ -309,11 +309,11 @@ Promise.all([
   await shoot('03-scaffold', { view: 'lattice', select: opt.id })
   await shoot('04-lemma', { view: 'lattice', select: l1.id })
   await shoot('05-today', { view: 'today' })
-  await shoot('06-audit', { view: 'vault', vault: 'filtered' })
+  await shoot('06-audit', { view: 'audit', audit: 'filtered' })
   await shoot('07-premise', { view: 'lattice' })
-  await shoot('08-conflicts', { view: 'vault', vault: 'conflicts' })
-  await shoot('09-cold', { view: 'vault', vault: 'cold' })
-  await shoot('10-filtered', { view: 'vault', vault: 'filtered' })
+  await shoot('08-conflicts', { view: 'audit', audit: 'conflicts' })
+  await shoot('09-cold', { view: 'audit', audit: 'cold' })
+  await shoot('10-filtered', { view: 'audit', audit: 'filtered' })
 
   await shoot('11-newtheme', { newtheme: '有色金属' })
 
@@ -367,7 +367,7 @@ Promise.all([
   await sleep(700)
   check(await win.webContents.executeJavaScript(`document.body.textContent.includes('让 LLM 提议')`), '空指标显示单指标 LLM 提议')
 
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
   await sleep(700)
   const channelState = await win.webContents.executeJavaScript(`({
     lastError: document.body.textContent.includes('连接超时'),
@@ -382,7 +382,7 @@ Promise.all([
     extracted: false, matchScore: 0, skipped: 'low-quality',
     provenance: { channelId: rateChannel.id, platform: '本地验收' },
   })
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
   await sleep(400)
   check(await win.webContents.executeJavaScript(`document.body.textContent.includes('只作参考，不会自动停用通道') &&
     document.body.textContent.includes('未匹配 100%')`), 'C6: 通道未匹配率只作参考，不自动停用通道')
@@ -843,7 +843,7 @@ Promise.all([
   })()`), 'C2: 已忽略提议仍可在收件箱展开查看，不占待处理计数')
   addNode({ themeId: ai.id, kind: 'lemma', title: '碳化硅季度产能继续增长' })
   check(!!route.promotedTo, 'C2: 后续入图回填到提议记录')
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'filtered' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'filtered' } })
   await sleep(300)
   const auditUi = await win.webContents.executeJavaScript(`(async () => {
     const stats = await window.meridian.falseKill(30)
@@ -873,88 +873,47 @@ Promise.all([
       })
     }
   })()`)
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'readings' } })
+  await win.loadFile(RENDERER, { query: { view: 'readings' } })
   await sleep(300)
   const readingUi = await win.webContents.executeJavaScript(`(() => {
-    const group = document.querySelector('#readings-list > .reading-card')
-    const rows = [...group.querySelectorAll('.reading-row')]
-    const text = group.textContent
-    const deltas = [...group.querySelectorAll('.rc-delta')].map(el => el.textContent)
+    const rows = [...document.querySelectorAll('#readings-list .feed-row')]
+    const dayHeads = [...document.querySelectorAll('#readings-list .feed-day-h')].map(el => el.textContent.trim())
+    const first = rows[0]
     return {
-      name: group.querySelector('h2').textContent,
-      // camelCase 只出现在 ⓘ 的 title 属性里，不进正文——正是 R14 的要求
-      metricInTitle: !!group.querySelector('.reading-info')?.title?.includes('nvda.Revenue'),
-      metricInText: text.includes('nvda.Revenue'),
-      // R14：camelCase 只在 ⓘ 悬停里，卡片正文不外露
-      metricInBody: [...group.querySelectorAll('.reading-card-const')].some(el => el.textContent.includes('nvda.Revenue')),
-      tracked: group.querySelectorAll('.reading-tracking').length,
-      rows: rows.length,
-      // R14：五列网格 + 常量只在卡片头一次
-      grid: rows.every(row => row.querySelectorAll('.rc-asof').length === 1 && row.querySelectorAll('.rc-value').length === 1),
-      constOnce: group.querySelectorAll('.reading-card-const').length === 1,
-      deltas,
-      latest: rows[0].querySelector('.rc-value').textContent.includes('16,675,000,011') && getComputedStyle(rows[0].querySelector('.rc-value')).fontWeight === '600',
-      hiddenFilters: !document.querySelector('#mid').textContent.includes('全部指标') && !document.querySelector('#mid').textContent.includes('全部通道'),
+      rowCount: rows.length,
+      dayCount: dayHeads.length,
+      hasName: !!first?.querySelector('.feed-name'),
+      hasValue: !!first?.querySelector('.feed-value'),
+      hasDelta: !!first?.querySelector('.feed-delta'),
+      hasSrc: !!first?.querySelector('.feed-src'),
+      // camelCase 只在展开区的技术名里，不在行上
+      rowTextNoCamel: rows.every(r => !r.textContent.includes('nvda.Revenue')),
+      nameText: first?.querySelector('.feed-name')?.textContent || '',
     }
   })()`)
-  check(readingUi.name === 'NVDA 总收入' && readingUi.metricInTitle && !readingUi.metricInText && readingUi.tracked === 1, 'R14: 人类标题与跟踪态，camelCase 只进悬停 ' + JSON.stringify({ name: readingUi.name, inTitle: readingUi.metricInTitle, inText: readingUi.metricInText, tracked: readingUi.tracked }))
-  check(!readingUi.metricInBody, 'R14: 卡片正文无 camelCase 指标名')
+  console.log('读数流水:', JSON.stringify(readingUi))
+  check(readingUi.rowCount >= 10 && readingUi.hasName && readingUi.hasValue && readingUi.hasDelta && readingUi.hasSrc,
+    'R14-feed: 流水行含名称/值/环比/来源 ' + JSON.stringify(readingUi))
+  check(readingUi.rowTextNoCamel, 'R14-feed: 行上无 camelCase 技术名')
+  check(readingUi.dayCount >= 1, 'R14-feed: 按抓取时间分组 ' + readingUi.dayCount + ' 天')
   writeFileSync(join(OUT, '25-readings-initial.png'), (await win.webContents.capturePage()).toPNG())
-  check(readingUi.rows === 10 && readingUi.grid && readingUi.constOnce && readingUi.latest, 'R14: 五列网格、常量一次、最新期强调与十条折叠 ' + JSON.stringify(readingUi))
-  // 环比列：每行都有值（数据里每期都有上期）；占位只在上期缺失或为 0 时出现
-  // 负号用真减号 U+2212（Apple 排版规范），不是 ASCII hyphen
-  check(readingUi.deltas.length === 10 && readingUi.deltas.every(d => d === '—' || /^[+\u2212]\d/.test(d)), 'R14: 环比列每行有值或占位：' + readingUi.deltas.slice(0, 3).join('/'))
-  // 上期为 0 时必须给占位而不是 Infinity/NaN
-  const zeroPrev = await win.webContents.executeJavaScript(`(async () => {
-    const ch = await window.meridian.channelList()
-    const c = ch.find(x => x.name === 'NVDA 总收入')
-    await window.meridian.addReading({ metric: 'nvda.zero.prev', value: 0, unit: 'USD', asOf: '2024-12-31', basis: 'reported', channelId: c.id, source: { kind: '财报 / 公告', accn: 'zero-1' } })
-    await window.meridian.addReading({ metric: 'nvda.zero.prev', value: 500, unit: 'USD', asOf: '2025-12-31', basis: 'reported', channelId: c.id, source: { kind: '财报 / 公告', accn: 'zero-2' } })
-    return true
+
+  // 点第一行 → 展开该 metric 的完整历史
+  const feedExpand = await win.webContents.executeJavaScript(`(() => {
+    const row = document.querySelector('#readings-list .feed-row')
+    row.click()
+    const detail = row.nextElementSibling
+    return {
+      opened: detail?.style.display === 'block',
+      hasHistory: !!detail?.querySelector('.feed-detail-grid'),
+      hasTechName: (detail?.textContent || '').includes('nvda.Revenue'),
+      rows: detail ? detail.querySelectorAll('.feed-detail-row').length : 0,
+    }
   })()`)
-  check(zeroPrev, 'R14: 造出上期为 0 的数据')
-  // 重新加载页面，让新读数进入渲染
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'readings' } })
-  await sleep(300)
-  const zeroDelta = await win.webContents.executeJavaScript(`(() => {
-    const cards = [...document.querySelectorAll('#readings-list > .reading-card')]
-    // 两张卡可能同名（同通道）——用 ⓘ 的 title 精确定位 nvda.zero.prev
-    const card = cards.find(c => c.querySelector('.reading-info')?.title === 'nvda.zero.prev')
-    if (!card) return 'no-card: ' + cards.map(c => c.querySelector('.reading-info')?.title).join('|')
-    const rows = [...card.querySelectorAll('.reading-row')]
-    const zeroRow = rows.find(r => r.querySelector('.rc-asof').textContent === '2025-12-31')
-    return zeroRow ? zeroRow.querySelector('.rc-delta').textContent : 'no-row'
-  })()`)
-  check(zeroDelta === '—', 'R14: 上期为 0 时环比给占位而非 Infinity：' + zeroDelta)
-  check(readingUi.hiddenFilters, 'C6: 单指标/单通道隐藏整排筛选器')
-  check(await win.webContents.executeJavaScript(`(() => {
-    const button = [...document.querySelectorAll('#readings-list .reading-more')][0]
-    if (!button) return 'no-button'
-    button.click()
-    button.click()
-    const rows = document.querySelectorAll('#readings-list .reading-row')
-    return { rows: rows.length, restated: document.querySelectorAll('#readings-list .reading-row[data-restated="true"]').length }
-  })()`), 'R14: 展开不重复，重述行有标记')
-  await sleep(100)
-  writeFileSync(join(OUT, '25-readings-compact.png'), (await win.webContents.capturePage()).toPNG())
-  await win.webContents.executeJavaScript(`(async () => {
-    const m = window.meridian
-    const ch = await m.channelAdd({ name: '第二数据源', fetch: 'manual', kind: '一手数据', themeId: '${ai.id}' })
-    await m.addNode({ themeId: '${ai.id}', kind: 'lemma', type: 'observation', title: '第二指标', channelIds: [ch.id] })
-    await m.addReading({ metric: 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax', value: 42, channelId: ch.id, source: { accn: 'second-source' } })
-    await m.addReading({ metric: 'other.Revenues', value: 10, source: { accn: 'gaap-fallback' } })
-    await m.addReading({ metric: 'unknown.custom', value: 20, source: { accn: 'raw-fallback' } })
-  })()`)
-  await win.reload()
-  await sleep(350)
-  check(await win.webContents.executeJavaScript(`(() => {
-    const headings = [...document.querySelectorAll('#readings-list h2')].map(el => el.textContent)
-    const cards = [...document.querySelectorAll('#readings-list > .reading-card')]
-    // R14：跟踪态是组级徽章，不是组头文字
-    const tracked = cards.find(el => el.querySelector('.reading-info')?.title?.includes('RevenueFromContract'))
-    const badges = [...(tracked?.querySelectorAll('.reading-tracking') || [])].length
-    return headings.includes('总收入') && headings.includes('unknown.custom') && badges >= 1
-  })()`), 'C6: 中文映射和原 metric 兜底，跨通道跟踪取并集')
+  console.log('展开:', JSON.stringify(feedExpand))
+  check(feedExpand.opened && feedExpand.hasHistory && feedExpand.rows >= 10, 'R14-feed: 点行展开完整历史 ' + JSON.stringify(feedExpand))
+  check(feedExpand.hasTechName, 'R14-feed: 技术名收在展开区')
+
   check(await win.webContents.executeJavaScript(`(() => {
     const button = [...document.querySelectorAll('#mid .sect-b .btn')].find(el => el.textContent === '第二数据源')
     if (!button) return 'no-filter-button'
@@ -966,7 +925,7 @@ Promise.all([
   const llmDay = recordLlmUsage('extract', { ok: true, tokens: 1200 })
   recordLlmUsage('extract', { ok: false, tokens: 0, error: 'HTTP 429', latency: 820 })
   recordLlmUsage('label', { ok: true, tokens: 90, degraded: true })
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'review' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'review' } })
   await sleep(400)
   const llmCard = await win.webContents.executeJavaScript(`(() => {
     const card = [...document.querySelectorAll('.card')].find(el => el.querySelector('h2')?.textContent === 'LLM 调用')
@@ -1039,8 +998,35 @@ Promise.all([
   check(danger.hasZone && danger.hasCap && danger.hasSafe, 'R3: 破坏性操作独立分区，安全操作分离')
   check(danger.redCount >= 3, 'R3: 危险区收拢全部破坏性操作：' + danger.redCount)
 
+  // 来源打标器：只剩两档，且配置跟着档位走——固定显示会让人以为都要配
+  // jevRow 是 field 的兄弟节点，不在 field 里面，所以从整个 sect-b 里找
+  const labelerSect = `(() => {
+    const f = [...document.querySelectorAll('.field')].find(f => f.querySelector('label')?.textContent.trim() === '打标器')
+    return f ? f.closest('.sect-b') : null
+  })()`
+  const labeler = await win.webContents.executeJavaScript(`(() => {
+    const sect = ${labelerSect}
+    if (!sect) return { found: false }
+    const seg = sect.querySelector('.seg')
+    return {
+      found: true,
+      btns: [...seg.querySelectorAll('button')].map(b => b.textContent.trim()),
+      fit: seg.classList.contains('seg-fit'),
+      hasJevRow: !!sect.querySelector('.jev-toggle'),
+    }
+  })()`)
+  check(labeler.found && labeler.btns.length === 2 && !labeler.btns.includes('前沿模型'),
+    '打标器只剩查表/Jev 两档：' + labeler.btns.join('/'))
+  check(labeler.fit, '打标器两档不拉伸（seg-fit）')
+  check(!labeler.hasJevRow, '选中查表时不显示 Jev 配置')
+
+  await win.webContents.executeJavaScript(`${labelerSect}.querySelectorAll('.seg button')[1].click()`)
+  await sleep(600)
+  const jevShown = await win.webContents.executeJavaScript(`!!${labelerSect}?.querySelector('.jev-toggle')`)
+  check(jevShown, '选中 Jev 时才显示它的配置')
+
   // R4 数字层级（审计页的口径行）
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'filtered' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'filtered' } })
   await sleep(300)
   const hierarchy = await win.webContents.executeJavaScript(`(() => {
     const scope = document.querySelector('.audit-scope')
@@ -1053,7 +1039,33 @@ Promise.all([
     const labels = [...document.querySelectorAll('.side-label')].map(el => el.textContent.trim())
     return { labels }
   })()`)
-  check(sidebar.labels.includes('档案') && !sidebar.labels.includes('库'), 'R6: 侧栏分组改「档案」，与顶部导航「库」消歧：' + sidebar.labels.join('/'))
+  check(sidebar.labels.includes('主题') && !sidebar.labels.includes('档案') && !sidebar.labels.includes('库'),
+    '侧栏只剩主题分组，审计自己收拢：' + sidebar.labels.join('/'))
+
+  // 「库」这层收纳没了：数据源/读数升为顶级，五个审计视图收进侧栏一组
+  const navShape = await win.webContents.executeJavaScript(`(() => ({
+    nav: [...document.querySelectorAll('#nav .nav-item')].map(b => b.textContent.trim()),
+    hasReadings: [...document.querySelectorAll('#nav .nav-item')].some(b => b.textContent.trim().startsWith('读数')),
+    auditHead: !!document.querySelector('.audit-head'),
+    auditSubs: document.querySelectorAll('.audit-sub').length,
+    auditExpanded: document.querySelector('.audit-head')?.getAttribute('aria-expanded'),
+    readingsCount: document.getElementById('vc-readings')?.textContent,
+  }))()`)
+  check(navShape.nav.includes('数据源') && navShape.hasReadings && !navShape.nav.some(t => t === '库'),
+    '顶栏是 今日/脉络/数据源/读数，无「库」：' + navShape.nav.join('/'))
+  check(navShape.auditHead && navShape.auditSubs === 0,
+    '审计默认收起，五个台账视图不外露')
+  check(!!navShape.readingsCount, '读数计数跟着升到顶栏：' + navShape.readingsCount)
+
+  // 展开后才看得见五个子项
+  await win.webContents.executeJavaScript(`document.querySelector('.audit-head').click()`)
+  await sleep(300)
+  const auditOpen = await win.webContents.executeJavaScript(`(() => ({
+    subs: [...document.querySelectorAll('.audit-sub')].map(b => b.textContent.trim()),
+    expanded: document.querySelector('.audit-head')?.getAttribute('aria-expanded'),
+  }))()`)
+  check(auditOpen.subs.length === 5 && auditOpen.expanded === 'true',
+    '审计展开显示 5 个台账视图：' + auditOpen.subs.join('/'))
 
   // R9 环节层降权
   await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
@@ -1067,7 +1079,7 @@ Promise.all([
 
 
   // ---------------------------------------------------------------- R15 · 数据源页
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
   await sleep(400)
   const ch15 = await win.webContents.executeJavaScript(`(async () => {
     const m = window.meridian
@@ -1079,7 +1091,7 @@ Promise.all([
     location.reload()
     return { before, chId: ch.id }
   })()`)
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
   await sleep(400)
   const r15 = await win.webContents.executeJavaScript(`(async () => {
     const m = window.meridian
@@ -1123,9 +1135,9 @@ Promise.all([
   check(r15.gone && r15.after === r15.before - 1, 'R15: 删除通道生效且列表刷新 ' + JSON.stringify({ before: r15.before, after: r15.after }))
 
 
-  // ------------------------------------------- 档案 · 冷库 / 墓碑区 / 待裁决冲突
+  // ------------------------------------------- 审计 · 冷库 / 墓碑区 / 待裁决冲突
   // 这三个分区此前只有 store 层断言，没有 UI 断言——渲染路径变了不会被发现
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'cold' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'cold' } })
   await sleep(400)
   const coldUi = await win.webContents.executeJavaScript(`(async () => {
     const m = window.meridian
@@ -1138,7 +1150,7 @@ Promise.all([
     return { themeId: th.id, coldId: cold.id, liveId: live.id }
   })()`)
   if (!coldUi.skip) {
-    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'cold' } })
+    await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'cold' } })
     await sleep(400)
     const coldCheck = await win.webContents.executeJavaScript(`(() => {
       const rows = [...document.querySelectorAll('#mid .q-text')].map(el => el.textContent)
@@ -1150,11 +1162,11 @@ Promise.all([
       }
     })()`)
     console.log('冷库:', JSON.stringify(coldCheck))
-    check(coldCheck.hasCold && !coldCheck.hasLive, '档案·冷库：只显示 status=cold，不混入主图谱')
-    check(coldCheck.hasRestoreBtn && coldCheck.hasViewBtn, '档案·冷库：有移回主图谱与查看操作')
+    check(coldCheck.hasCold && !coldCheck.hasLive, '审计·冷库：只显示 status=cold，不混入主图谱')
+    check(coldCheck.hasRestoreBtn && coldCheck.hasViewBtn, '审计·冷库：有移回主图谱与查看操作')
 
     // 墓碑区：跌死 + 删死都要能看见，且删除的显示删于日期
-    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'dead' } })
+    await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'dead' } })
     await sleep(400)
     const deadCheck = await win.webContents.executeJavaScript(`(async () => {
       const m = window.meridian
@@ -1165,7 +1177,7 @@ Promise.all([
       location.reload()
       return true
     })()`)
-    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'dead' } })
+    await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'dead' } })
     await sleep(400)
     const deadUi = await win.webContents.executeJavaScript(`(() => {
       const rows = [...document.querySelectorAll('#mid .q')]
@@ -1177,12 +1189,12 @@ Promise.all([
       }
     })()`)
     console.log('墓碑区:', JSON.stringify(deadUi))
-    check(deadUi.hasDeleted && deadUi.deletedAt, '档案·墓碑区：软删节点可见且标注删于日期')
-    check(deadUi.hasRestore, '档案·墓碑区：删除的节点可整棵复活')
+    check(deadUi.hasDeleted && deadUi.deletedAt, '审计·墓碑区：软删节点可见且标注删于日期')
+    check(deadUi.hasRestore, '审计·墓碑区：删除的节点可整棵复活')
   }
 
   // 待裁决冲突
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'conflicts' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'conflicts' } })
   await sleep(400)
   const conflictUi = await win.webContents.executeJavaScript(`(async () => {
     const m = window.meridian
@@ -1194,7 +1206,7 @@ Promise.all([
     location.reload()
     return { created: list.length }
   })()`)
-  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'conflicts' } })
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'conflicts' } })
   await sleep(400)
   const conflictCheck = await win.webContents.executeJavaScript(`(() => {
     const cards = [...document.querySelectorAll('#mid .conflict')]
@@ -1209,10 +1221,10 @@ Promise.all([
     }
   })()`)
   console.log('冲突:', JSON.stringify(conflictCheck))
-  check(conflictCheck.count >= 1 && conflictCheck.hasPair && conflictCheck.hasVs, '档案·冲突：显示 A vs B 配对')
+  check(conflictCheck.count >= 1 && conflictCheck.hasPair && conflictCheck.hasVs, '审计·冲突：显示 A vs B 配对')
   check(conflictCheck.acts.includes('A 成立') && conflictCheck.acts.includes('B 成立') && conflictCheck.acts.includes('两者都对（我搞错了）'),
-    '档案·冲突：三种裁决入口齐全：' + (conflictCheck.acts || []).join('/'))
-  check(conflictCheck.unresolved, '档案·冲突：未裁决的不预设立场')
+    '审计·冲突：三种裁决入口齐全：' + (conflictCheck.acts || []).join('/'))
+  check(conflictCheck.unresolved, '审计·冲突：未裁决的不预设立场')
 
   console.log('\n完成\n')
   app.exit(0)

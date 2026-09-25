@@ -121,7 +121,7 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   model: 'step-3',
   hotkey: 'CommandOrControl+Shift+V',
-  labeler: 'table', // table | jev | llm —— 可替换的打标器
+  labeler: 'table', // table | jev —— 可替换的打标器
   jevBaseUrl: 'https://openrouter.ai/api/v1',
   jevModel: 'typesafe/jev-1.13',
   jevKey: '',

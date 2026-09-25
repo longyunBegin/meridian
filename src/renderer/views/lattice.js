@@ -1,9 +1,20 @@
-import { h, icon, clear, toast } from '../lib/dom.js'
+import { h, icon, clear, toast, confirmToast } from '../lib/dom.js'
 import { state, refresh, selectNode, setShape, deleteNodeWithUndo } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
 
 const m = window.meridian
+
+/** 紧凑数值：树里 inline 用，$130.6B 而不是 130,570,000,000 */
+function fmtCompact(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return String(v ?? '—')
+  const abs = Math.abs(v)
+  if (abs >= 1e12) return `${(v / 1e12).toFixed(1)}T`
+  if (abs >= 1e9) return `${(v / 1e9).toFixed(1)}B`
+  if (abs >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+  if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K`
+  return String(v)
+}
 
 /** 每一层的缩进与导轨位置都由它推导，改一处全树同步 */
 const INDENT = 15
@@ -239,33 +250,26 @@ export function renderLattice(mid) {
     h('h1', {}, theme ? theme.name : ''),
     h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, `${indicators.length} 个指标 · ${unlinked} 个未接数据`),
     h('div', { class: 'spacer' }),
-    // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动
+    // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动。
+    // 破坏性操作——先提示会删掉原有环节和命题，确认后才动。异步执行，不卡界面。
     isGraph ? null : (() => {
       const btn = h('button', {
         class: 'btn regenerate-btn', title: '重新生成骨架',
-        onclick: () => {
+        onclick: async () => {
           if (!theme) return
-          const input = h('input', {
-            type: 'text', value: theme.name,
-            style: { width: '220px', fontSize: 'var(--t-body)', padding: '4px 8px', border: '1px solid var(--accent, #007aff)', borderRadius: 'var(--r-sm)', outline: 'none' },
-            onkeydown: async (e) => {
-              if (e.key === 'Enter') {
-                const desc = input.value.trim()
-                if (!desc) return
-                input.replaceWith(btn)
-                const r = await m.generateSkeleton(desc)
-                if (r.ok) {
-                  await m.instantiateSkeleton(state.themeId, r.skeleton)
-                  await refresh()
-                }
-              } else if (e.key === 'Escape') {
-                input.replaceWith(btn)
-              }
-            },
-          })
-          btn.replaceWith(input)
-          input.focus()
-          input.select()
+          const ok = await confirmToast(
+            `重新生成「${theme.name}」的骨架？\n\n将删除该主题下所有环节和命题，并重新生成。此操作不可撤销。`,
+            '重新生成',
+          )
+          if (!ok) return
+          btn.disabled = true
+          btn.textContent = '生成中…'
+          try {
+            await m.regenerateTheme(theme.id)
+          } catch {
+            btn.disabled = false
+            btn.textContent = '重新生成'
+          }
         },
       }, icon('lattice', 12), '重新生成')
       return btn
@@ -421,6 +425,13 @@ function paint(container) {
       const scSum = !isLemma && sc ? scaffoldSummary(node) : null
       // 右缘只留三样，优先级固定：裁决状态 > 信心 > 源计数。其余全部降为 hover 提示——
       // 一行摆 8-9 个同权重元素时，用户找不到该看哪个。
+      // 指标节点 inline 显示最新读数——总览层：打开树就看见所有指标当前站哪，
+      // 不用切去读数页。读数是流水，这里是快照，两个视角不重叠。
+      const latestReading = isLemma && node.type === 'observation' && node.channelIds?.length
+        ? state.readings
+            .filter((r) => node.channelIds.includes(r.channelId))
+            .sort((a, b) => (b.at || '').localeCompare(a.at || ''))[0]
+        : null
       const meta = h('span', { class: 'row-meta' },
         // ① 裁决状态：结算旗 / 已证伪 / 环节的待结算数，合并成一个图标位
         isLemma
@@ -430,6 +441,9 @@ function paint(container) {
           : a.due ? h('span', { class: 'chip chip-due', title: `${a.due} 条待结算` }, icon('flag', 9), String(a.due)) : null,
         // ② 信心：唯一组件，条 + 数字一体
         isLemma || a.avg != null ? confCell(isLemma ? conf : a.avg, { agg: !isLemma }) : null,
+        latestReading ? h('span', { class: 'row-reading', title: `${latestReading.asOf || '无期间'} · 抓于 ${(latestReading.at || '').slice(5)}` },
+          `${fmtCompact(latestReading.value)}${latestReading.unit ? ' ' + latestReading.unit : ''}`,
+        ) : null,
         // ③ 源计数
         srcs > 1 ? h('span', { class: 'src-chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
         // 以下都只是 hover：类型徽章、冷库、传导、scaffold 进度
@@ -486,7 +500,10 @@ function paint(container) {
     return lvl
   }
 
-  container.append(draw(null, 0))
+  // draw() 在没有子节点时返回 null。原生 append(null) 会把 null 转成字符串 "null"
+  // 追加进去——新主题还没铺骨架的那几秒，树里就挂着一个裸 "null"。
+  const root = draw(null, 0)
+  if (root) container.append(root)
 }
 
 function toggle(id, container) {
