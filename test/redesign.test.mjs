@@ -3879,16 +3879,25 @@ await v8Test('严格字段校验逐条报索引和理由；非法读数不能污
   }
 })
 
-await v8Test('无法归位不丢、不进收件箱；人工归位后可查询和验链', async () => {
+// 四个来源共用收件箱：待归位的读数不再只躺在读数页，而是进收件箱等裁决。
+// 曾经只有捕获走这道门，agent 推来的读数直接入库，用户在路上永远看不到它们。
+await v8Test('待归位读数进收件箱，归位后待办消失且可查询验链', async () => {
   const { indicator } = v8Reset()
   v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { indicator: '完全未知的月球矿石产量' }))), 1)
   const reading = store.allReadings()[0]
   v8Assert.equal(reading.indicatorId, null)
-  v8Assert.equal(store.allInbox().length, 0)
+  const queued = store.allInbox().filter((i) => i.kind === 'reading')
+  v8Assert.equal(queued.length, 1, '待归位读数必须进收件箱')
+  v8Assert.equal(queued[0].readingId, reading.id)
+  v8Assert.equal(queued[0].reading.value, reading.value)
+  // 重推同一条不重复建待办
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { indicator: '完全未知的月球矿石产量' }))), 0, 1)
+  v8Assert.equal(store.allInbox().filter((i) => i.kind === 'reading').length, 1, '重复推送不重复建待办')
   const pending = store.readingsPage({ limit: 10 }).items[0]
   v8Assert.equal(pending.pending, true)
   v8ChainOk(pending.chainKey, 1)
   store.assignReading(reading.id, indicator.id)
+  v8Assert.equal(store.allInbox().filter((i) => i.kind === 'reading').length, 0, '归位后待办消失')
   const assigned = v8OnlyObservation(indicator.id)
   v8Assert.equal(assigned.pending, false)
   v8Assert.equal(assigned.value, reading.value)
@@ -3896,6 +3905,16 @@ await v8Test('无法归位不丢、不进收件箱；人工归位后可查询和
   v8Assert.ok(evidence.items.some((item) => item.value === reading.value))
   const check = store.verifyReadingChain(assigned.chainKey)
   v8Assert.equal(check.ok, true, JSON.stringify(check))
+})
+
+// 干净且匹配上指标的不进收件箱——收件箱是裁决台，不是监控台
+await v8Test('匹配上的读数直接入账，不占收件箱', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator))), 1)
+  v8Assert.equal(store.allInbox().filter((i) => i.kind === 'reading').length, 0)
+  const obs = v8OnlyObservation(indicator.id)
+  v8Assert.equal(obs.pending, false)
+  v8Assert.equal(obs.indicatorId, indicator.id)
 })
 
 // ---- 回归：总览层对「待归位」失明 ----
@@ -4285,39 +4304,20 @@ await v8Test('MCP initialize、三工具、真实 push 与 JSON-RPC 错误', asy
   })
 })
 
-await v8Test('文件投递缺失、半行、坏行、重放；close 真正释放监听', async () => {
+// 文件投递已移除：只保留 HTTP 与 MCP 两个入口
+await v8Test('接入只有 HTTP 与 MCP，没有文件投递', async () => {
   const { indicator } = v8Reset()
   await v8WithServer(async (server, directory, counts, close) => {
-    await server.pollFile()
-    v8Assert.equal(counts().calls, 0)
-    const inbox = join(directory, 'inbox-readings.jsonl')
-    const a = JSON.stringify(v8Envelope(v8Input(indicator)))
-    const b = JSON.stringify(v8Envelope(v8Input(indicator, { period: { start: '2026-07-01', end: '2026-09-30' }, value: 101 })))
-    const split = Math.floor(b.length / 2)
-    v8Fs.writeFileSync(inbox, `${a}\nnot-json\n${b.slice(0, split)}`)
-    await server.pollFile()
-    v8Assert.equal(store.allReadings().length, 1)
-    v8Assert.equal(server.stats.badLines, 1)
-    v8Assert.ok(v8Fs.readFileSync(inbox, 'utf8').endsWith(b.slice(0, split)), '半行必须留在文件，不能只藏内存')
-    await server.pollFile()
-    v8Assert.equal(store.allReadings().length, 1)
-    v8Assert.equal(server.stats.badLines, 1, '坏行消费后不重复计数')
-    v8Fs.appendFileSync(inbox, `${b.slice(split)}\n${a}\n`)
-    await server.pollFile()
-    v8Assert.equal(store.allReadings().length, 2)
-    v8Assert.equal(server.stats.badLines, 1)
-    v8Assert.ok(counts().changed >= 1)
-    const remaining = v8Fs.readFileSync(inbox, 'utf8')
-    const calls = counts().calls
-    await server.pollFile()
-    v8Assert.equal(counts().calls, calls)
+    v8Assert.equal(typeof server.pollFile, 'undefined', '不再有文件轮询入口')
+    v8Assert.ok(!Array.isArray(server.inboxPaths), '不再有投递路径列表')
+    v8Assert.ok(!v8Fs.existsSync(join(directory, 'inbox-readings.jsonl')), '不再创建投递文件')
+    v8Assert.ok(!v8Fs.existsSync(join(directory, 'inbox-readings-cursor.json')), '不再写投递游标')
+    v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator))), 1)
+    v8Assert.equal(store.allReadings().length, 1, 'HTTP/MCP 摄入不受影响')
     await close()
-    await v8Assert.rejects(v8Http(server, '/intent'), (error) => error.code === 'ECONNREFUSED')
-    // 游标按路径分别记——多个投递点互不干扰
-    const checkpoint = JSON.parse(v8Fs.readFileSync(join(directory, 'inbox-readings-cursor.json'), 'utf8'))
-    v8Assert.equal(checkpoint[inbox].offset, Buffer.byteLength(remaining), '用持久游标消费完整行，避免截断并发追加的数据')
   })
 })
+
 
 await v8Test('打开数据目录用 handle，成功路径和 shell 错误均可见', async () => {
   const ipc = v8Fs.readFileSync(join(ROOT, 'src/main/ipc.js'), 'utf8')
@@ -4467,17 +4467,14 @@ await v8Test('等长篡改后退出不能洗白索引，重启后禁止继续追
   } finally { journal.close() }
 })
 
-await v8Test('文件单轮最多一百行，MCP 拒绝非法初始化参数', async () => {
+await v8Test('摄入队列并发有界，MCP 拒绝非法初始化参数', async () => {
   const { indicator } = v8Reset()
   await v8WithServer(async (server, directory, counts) => {
-    const row = JSON.stringify(v8Envelope(v8Input(indicator))) + '\n'
-    v8Fs.writeFileSync(join(directory, 'inbox-readings.jsonl'), row.repeat(250))
-    await server.pollFile()
-    v8Assert.equal(counts().calls, 100)
-    await server.pollFile()
-    v8Assert.equal(counts().calls, 200)
-    await server.pollFile()
-    v8Assert.equal(counts().calls, 250)
+    // 文件投递已移除，摄入并发上界改由 HTTP 入口的队列保证
+    const many = Array.from({ length: 40 }, () => v8Envelope(v8Input(indicator, { period: { start: '2026-01-01', end: '2026-03-31' }, value: 100 + Math.random() })))
+    const results = await Promise.all(many.map((body) => v8Http(server, '/readings', { method: 'POST', body })))
+    v8Assert.ok(results.every((r) => r.status === 200), '并发推送全部被处理')
+    v8Assert.ok(counts().calls >= 1)
     const response = await v8Http(server, '/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: 17 } })
     v8Assert.equal(response.json.error.code, -32602)
   })

@@ -120,7 +120,7 @@ Promise.all([
     getAgentConnection: () => ({
       available: true, host: '127.0.0.1', port: 54321,
       path: '/tmp/meridian-shoot-data/agent-port.json',
-      inboxPaths: ['/tmp/meridian-shoot-data/inbox-readings.jsonl'],
+      token: 'a'.repeat(64), requireToken: true,
       error: null,
     }),
   })
@@ -903,8 +903,11 @@ Promise.all([
   await win.webContents.executeJavaScript(`(() => { const d = document.querySelector('.reading-connection'); d.open = true; d.dispatchEvent(new Event('toggle')) })()`)
   await sleep(1500)
   const ingestText = await win.webContents.executeJavaScript(`document.querySelector('.reading-connection')?.textContent || ''`)
-  const ingestMissing = ['MCP', 'HTTP', '文件投递'].filter(k => !ingestText.includes(k))
-  check(!ingestMissing.length, '三种接入方式都在数据源页说明' + (ingestMissing.length ? '，缺：' + ingestMissing.join('/') : ''))
+  // 文件投递已移除，只剩 MCP 与 HTTP 两个入口
+  const ingestMissing = ['MCP', 'HTTP'].filter(k => !ingestText.includes(k))
+  check(!ingestMissing.length && !ingestText.includes('文件投递'),
+    '接入只剩 MCP 与 HTTP' + (ingestMissing.length ? '，缺：' + ingestMissing.join('/') : ''))
+  check(ingestText.includes('访问凭据') && ingestText.includes('复制凭据'), '访问凭据可见且可一键复制')
 
 
 
@@ -1240,6 +1243,19 @@ Promise.all([
   check(auditOpen.subs.length === 5 && auditOpen.expanded === 'true',
     '审计展开显示 5 个台账视图：' + auditOpen.subs.join('/'))
 
+  // 设置页改动后不能弹回页首——任何一项设置变化都会整体重画
+  await win.loadFile(RENDERER, { query: { view: 'settings' } })
+  await sleep(600)
+  await win.webContents.executeJavaScript(`document.querySelector('.page').scrollTop = 600`)
+  await win.webContents.executeJavaScript(`(() => {
+    const btns = [...document.querySelectorAll('.field .seg button')]
+    const jev = btns.find(b => b.textContent.trim() === 'Jev')
+    if (jev) jev.click()
+  })()`)
+  await sleep(600)
+  const scrollKept = await win.webContents.executeJavaScript(`Math.round(document.querySelector('.page').scrollTop)`)
+  check(scrollKept > 400, '设置页切换档位后滚动位置保持：' + scrollKept)
+
   // 图的问号：缩放手感因人而异，悬浮要能指向设置项
   await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'graph' } })
   await sleep(500)
@@ -1442,6 +1458,35 @@ Promise.all([
     })
     return { accepted, ingestMs: performance.now() - started, renderMs: performance.now() - start, domRows: document.querySelectorAll('.feed-row').length }
   })()`)
+  // 四个来源共用一个收件箱：待归位的读数要出现在今日页，和捕获的文本并排
+  const unifiedInbox = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    await m.pushReadings({ schema: 'meridian.reading.v1', readings: [{
+      indicator: '无人认领的统一门验收指标', value: 77, unit: '件',
+      period: { start: '2026-09-01', end: '2026-09-30' }, basis: 'reported', tier: 'agent',
+      source: { kind: '自媒体', label: '统一门来源', platform: '手动抄录', url: 'https://example.com/unified' },
+    }] })
+    const { refresh } = await import('./app.js')
+    await refresh()
+    return true
+  })()`)
+  await sleep(400)
+  await win.loadFile(RENDERER, { query: { view: 'today' } })
+  await waitDom("document.querySelector('#inbox-section')")
+  const inboxHasReading = await win.webContents.executeJavaScript(`(() => {
+    const rows = [...document.querySelectorAll('#inbox-section .q, #inbox-section .inbox-item')]
+    const text = document.querySelector('#inbox-section')?.textContent || ''
+    return { found: text.includes('无人认领的统一门验收指标'), count: rows.length }
+  })()`)
+  check(unifiedInbox && inboxHasReading.found, '待归位读数进入今日页收件箱：' + JSON.stringify(inboxHasReading))
+  // 清掉刚才推的那条，别影响后面的断言
+  await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const item = (await m.inboxList({ limit: 50, offset: 0 })).items.find(i => i.kind === 'reading')
+    if (item) await m.inboxResolve(item.id, 'ignore')
+    await m.inboxClearUnextracted().catch(() => {})
+  })()`)
+
   console.log('万条读数实测：', JSON.stringify(stress))
   check(stress.accepted === 10000 && stress.renderMs < 1000 && stress.domRows <= 50, 'v0.8: 一万条数据下首屏低于 1 秒，DOM 有界')
   writeFileSync(join(OUT, '27-readings-10000.png'), (await win.webContents.capturePage()).toPNG())

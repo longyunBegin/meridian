@@ -126,6 +126,11 @@ function scaffoldSection(sc, answered = 0) {
   )
 }
 
+/** 校准曲线只统计 history 里第一条 by:'manual' 的节点——搬运来的信心进不去。 */
+function confidenceUnowned(node) {
+  return !(node.history || []).some((entry) => entry.by === 'manual')
+}
+
 export function renderInspectorLattice(aside) {
   const node = state.nodes.find((n) => n.id === state.selectedId)
   if (!node) {
@@ -394,6 +399,11 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'field' }, h('label', {}, '置信度'), slider,
         h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)', width: '22px', textAlign: 'right' } }, confOut)),
       h('div', { class: 'bar', style: { width: '100%', height: '4px', marginTop: '6px' } }, bar),
+      // 校准曲线只认「你自己给过的信心」。搬运来的命题带的是来源质量推定的值，
+      // 它进不了曲线——这件事以前是静默的，用户以为自己的曲线已经算上了它。
+      confidenceUnowned(node)
+        ? h('p', { class: 'insp-note' }, '这个信心是搬运时按来源质量推定的，还没进你的校准曲线。拖一次滑杆或改一次数字，它才开始算你的。')
+        : null,
     ),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '来源', h('b', {}, `${node.sources?.length || 0} 个独立源`)),

@@ -1,6 +1,7 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
 import { confColor, nodePath } from './shared.js'
+import { trustMark, periodLabel } from './readings.js'
 
 const m = window.meridian
 
@@ -473,6 +474,35 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
       item.kind === 'route-proposal' ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '系统建议归位'),
         h('p', { class: 'inbox-detail-note' }, `主题：${item.matchedTheme?.name || '未指定'} · 标签：${(item.matchedTags || []).map((tag) => tag.name).join('、') || '无'}`),
+      ) : null,
+      // 待归位的读数：四个来源共用收件箱后，它们和捕获来的文本并排等裁决。
+      // 要做的决定只有一个——这条数字挂到哪个指标上。
+      item.kind === 'reading' ? h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, '待归位的读数'),
+        h('div', { class: 'inbox-reading-value' },
+          h('b', {}, `${(item.reading?.value ?? '—').toLocaleString('en-US', { maximumFractionDigits: 8 })} ${item.reading?.unit || ''}`),
+          trustMark(item.reading),
+        ),
+        h('p', { class: 'inbox-detail-note' },
+          `${periodLabel(item.reading)} · ${item.reading?.basis === 'estimated' ? '估算' : '已披露'} · ${({ structured: '结构化', 'local-llm': '模型解读', agent: '外部提供' })[item.reading?.tier] || '来路未记录'}`),
+        h('p', { class: 'inbox-detail-note' }, '这条读数没能自动匹配到指标节点。选一个指标挂上去，它就会进入该指标的历史序列。'),
+        h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } },
+          ...state.nodes
+            .filter((n) => n.type === 'observation' && n.status !== 'dead')
+            .map((n) => h('button', {
+              class: 'btn',
+              onclick: async (e) => {
+                e.currentTarget.disabled = true
+                try {
+                  await m.assignReading(item.readingId, n.id)
+                  toast(`已挂到「${n.title}」`)
+                  await refresh()
+                } catch { toast('归位失败，请重试', 'var(--red)'); e.currentTarget.disabled = false }
+              },
+            }, n.title)),
+        ),
+        state.nodes.some((n) => n.type === 'observation' && n.status !== 'dead') ? null
+          : h('p', { class: 'inbox-detail-note' }, '这个主题下还没有指标节点。去脉络页把某条命题的类型改成「观测」，它就能接读数。'),
       ) : null,
       h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '原文'),

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { open, readFile, writeFile, rename, stat, unlink } from 'node:fs/promises'
+import { readFile, writeFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const MAX_BODY = 1024 * 1024
@@ -28,28 +28,16 @@ const tools = [
   { name: 'list_open_judgments', description: '读取未结算判断与正在等待的指标。', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 ]
 
-export async function startAgentServer({ userData, ingest, getIntent, onChanged = () => {}, inboxPaths = [] }) {
-  const token = randomBytes(32).toString('hex')
+export async function startAgentServer({ userData, ingest, getIntent, onChanged = () => {}, host = '127.0.0.1', port = 0, requireToken = true }) {
+  // 凭据可关闭，但只对本机绑定开放——绑到局域网还免鉴权，等于把账本敞开在网络上
+  const token = requireToken ? randomBytes(32).toString('hex') : ''
+  const exposed = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1'
+  if (exposed && !requireToken) throw new Error('绑定非本机地址必须启用访问凭据')
   const discoveryFile = join(userData, 'agent-port.json')
-  const checkpointFile = join(userData, 'inbox-readings-cursor.json')
-  // 默认投递点 + 用户自己配的路径。曾经只认数据目录下写死的 inbox-readings.jsonl——
-  // 助手的输出不在那儿就毫无办法，用户只能把文件挪过去。
-  const defaultInbox = join(userData, 'inbox-readings.jsonl')
-  const inboxFiles = [...new Set([defaultInbox, ...inboxPaths.filter((p) => typeof p === 'string' && p.trim())])]
-  const stats = { accepted: 0, rejected: 0, badLines: 0, oversized: 0, fileErrors: 0 }
+  const stats = { accepted: 0, rejected: 0, oversized: 0 }
   let closed = false
   let pending = 0
   let queue = Promise.resolve()
-  let polling = null
-  let timer = null
-  /** path → { ino, offset, skipping }。每个投递点独立记游标，互不干扰 */
-  let checkpoints = {}
-  try { checkpoints = JSON.parse(await readFile(checkpointFile, 'utf8')) || {} } catch {}
-  const saveCheckpoints = async () => {
-    const temp = `${checkpointFile}.${process.pid}.tmp`
-    await writeFile(temp, JSON.stringify(checkpoints), { mode: 0o600 })
-    await rename(temp, checkpointFile)
-  }
 
   const submit = (body) => {
     if (pending >= 8) return Promise.reject(Object.assign(new Error('摄入队列已满，请稍后重试'), { status: 429 }))
@@ -70,6 +58,7 @@ export async function startAgentServer({ userData, ingest, getIntent, onChanged 
   }
   const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } })
   const authorized = (req) => {
+    if (!token) return true
     const received = Buffer.from(req.headers.authorization || '')
     const expected = Buffer.from(`Bearer ${token}`)
     return received.length === expected.length && timingSafeEqual(received, expected)
@@ -148,10 +137,7 @@ export async function startAgentServer({ userData, ingest, getIntent, onChanged 
       const result = await submit(body)
       send(res, result.ok === false && !result.accepted ? 422 : 200, result)
     } catch (e) {
-      if (e.status === 413) {
-        stats.oversized++
-        console.warn('[meridian] 已拒收超过 1MB 的摄入请求')
-      }
+      if (e.status === 413) stats.oversized++
       if (!res.headersSent && !res.destroyed) {
         if (req.url?.split('?')[0] === '/mcp' && e.status === 400) send(res, 400, rpcError(null, -32700, '无效 JSON'))
         else send(res, e.status || 500, { ok: false, error: e.status ? e.message : '摄入失败，请检查本地记录' })
@@ -161,100 +147,24 @@ export async function startAgentServer({ userData, ingest, getIntent, onChanged 
   server.requestTimeout = 15000
   server.headersTimeout = 10000
   server.maxConnections = 16
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  const port = server.address().port
-  const discovery = { host: '127.0.0.1', port, token, protocol: 'meridian.reading.v1' }
+  // 地址和端口都由设置决定。曾经写死 127.0.0.1 + 随机端口——
+  // agent 在别的机器上根本连不到，端口每次启动还变，agent 没法配固定地址。
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(Number(port) || 0, host, resolve)
+  })
+  const boundPort = server.address().port
+  const discovery = { host, port: boundPort, token, requireToken: !!token, protocol: 'meridian.reading.v1' }
   try {
     const temp = `${discoveryFile}.${process.pid}.tmp`
     await writeFile(temp, JSON.stringify(discovery), { mode: 0o600 })
     await rename(temp, discoveryFile)
   } catch (e) { await new Promise((r) => server.close(r)); throw e }
 
-  async function consumeFile() {
-    for (const inboxFile of inboxFiles) {
-      let handle
-      try {
-        await consumeOne(inboxFile)
-      } catch (e) {
-        if (e.code !== 'ENOENT') stats.fileErrors++
-      } finally { await handle?.close() }
-    }
-  }
-
-  async function consumeOne(inboxFile) {
-    let handle
-    try {
-      const info = await stat(inboxFile)
-      // 局部变量就是 map 里的那个对象——写成 checkpoints[path] = {...} 会换对象，
-      // 后面读的还是旧引用，skipping 状态脱钩，坏行跳过逻辑会失效
-      let checkpoint = checkpoints[inboxFile]
-      if (!checkpoint || checkpoint.ino !== info.ino || checkpoint.offset > info.size) {
-        checkpoint = { ino: info.ino, offset: 0, skipping: false }
-        checkpoints[inboxFile] = checkpoint
-      }
-      handle = await open(inboxFile, 'r')
-      let offset = checkpoint.offset
-      let parts = []
-      let bytes = 0
-      let lines = 0
-      let scanned = 0
-      const buffer = Buffer.alloc(65536)
-      while (offset < info.size && lines < 100 && scanned < 4 * MAX_BODY && !closed) {
-        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, info.size - offset), offset)
-        if (!bytesRead) break
-        scanned += bytesRead
-        let start = 0
-        for (let i = 0; i < bytesRead; i++) {
-          if (buffer[i] !== 10) continue
-          const part = buffer.subarray(start, i)
-          bytes += part.length
-          if (!checkpoint.skipping && bytes <= MAX_BODY) {
-            parts.push(Buffer.from(part))
-            const line = Buffer.concat(parts).toString('utf8').trim()
-            if (line) {
-              let body
-              try { body = JSON.parse(line) } catch { stats.badLines++ }
-              if (body !== undefined) await submit(body)
-            }
-          } else if (!checkpoint.skipping) stats.badLines++
-          offset += i + 1 - start
-          Object.assign(checkpoint, { offset, skipping: false })
-          parts = []
-          bytes = 0
-          start = i + 1
-          lines++
-          if (lines >= 100 || closed) break
-        }
-        if (lines >= 100 || closed) break
-        const remainder = buffer.subarray(start, bytesRead)
-        offset += remainder.length
-        bytes += remainder.length
-        if (!checkpoint.skipping && bytes <= MAX_BODY) parts.push(Buffer.from(remainder))
-        if (bytes > MAX_BODY) {
-          if (!checkpoint.skipping) stats.badLines++
-          parts = []
-          Object.assign(checkpoint, { offset, skipping: true })
-        }
-      }
-      // 保存消费位置而不截断生产者正在追加的文件，避免并发追加丢失。
-      await saveCheckpoints()
-    } catch (e) {
-      if (e.code !== 'ENOENT') throw e
-    } finally { await handle?.close() }
-  }
-  function pollFile() {
-    if (closed) return Promise.resolve()
-    if (!polling) polling = consumeFile().finally(() => { polling = null })
-    return polling
-  }
-  timer = setInterval(pollFile, 30000)
-  timer.unref()
   return {
-    ...discovery, stats, pollFile, inboxPaths: [...inboxFiles],
+    ...discovery, stats,
     async close() {
       closed = true
-      clearInterval(timer)
-      await polling
       await queue
       await new Promise((resolve) => { server.close(resolve); server.closeIdleConnections() })
       try {

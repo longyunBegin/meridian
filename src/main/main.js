@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
     getAgentConnection: () => ({
       available: !!agentServer, host: '127.0.0.1', port: agentServer?.port || null,
       path: join(app.getPath('userData'), 'agent-port.json'),
-      inboxPaths: agentServer?.inboxPaths || [],
+      requireToken: agentServer?.requireToken,
       error: agentError,
     }),
   })
@@ -99,11 +99,10 @@ app.whenReady().then(async () => {
     agentServer = await startAgentServer({
       userData: app.getPath('userData'), ingest: ingestReadings, getIntent: exportIntent,
       onChanged: () => mainWin?.webContents.send('db:changed'),
-      // 默认投递点之外，用户自己配的路径——助手输出在哪儿就读哪儿
-      inboxPaths: settings().readingInboxPaths || [],
+      host: settings().agentHost || '127.0.0.1',
+      port: Number(settings().agentPort) || 0,
+      requireToken: settings().agentToken !== false,
     })
-    agentServer.pollFile()
-    app.on('browser-window-focus', () => agentServer?.pollFile())
   } catch (e) {
     agentError = e.message || '本地摄入服务未启动'
     console.error('[meridian] 本地摄入服务未启动：', agentError)

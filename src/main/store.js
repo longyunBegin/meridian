@@ -129,9 +129,11 @@ const DEFAULT_SETTINGS = {
   // 产业链图的滚轮缩放灵敏度。触控板一次滚动连发多个小 deltaY，
   // 固定一档 10% 体感过快；给用户自己调。
   graphZoom: 1,
-  // 文件投递的额外路径。默认只读数据目录下的 inbox-readings.jsonl，
-  // 助手的输出在别处时加进来，不用把文件挪过去。
-  readingInboxPaths: [],
+  // 数据源接入：绑哪、哪个端口、要不要凭据。曾经全写死——127.0.0.1 + 随机端口 +
+  // 每次重启换 token，agent 在别的机器上连不到，在本机也没法配固定地址。
+  agentHost: '127.0.0.1',
+  agentPort: 0,          // 0 = 每次随机
+  agentToken: true,      // 关闭仅允许本机绑定
 }
 
 const blank = () => ({
@@ -1512,6 +1514,10 @@ export function addInboxItem(item) {
     ...(item.matchedTags ? { matchedTags: item.matchedTags } : {}),
     ...(item.originChannel !== undefined ? { originChannel: item.originChannel } : {}),
     ...(item.bestScore != null ? { bestScore: item.bestScore } : {}),
+    // 读数型待办：四个来源共用收件箱后，待归位的读数也走这道门
+    ...(item.readingId ? { readingId: item.readingId } : {}),
+    ...(item.observationId ? { observationId: item.observationId } : {}),
+    ...(item.reading ? { reading: item.reading } : {}),
     status: 'pending',
     createdAt: today(),
   }
@@ -2054,8 +2060,35 @@ export function ingestReadingCore(input, { trusted = false, channelId = null, mi
     const projection = projectSumScope(fact, projectReadings(rs, new Map([[fact.id, consistencyFlags(fact)]])), rs)
     const reading = s.commit({ fact, source, event: { kind: 'ingest', ...projection, trace: { matched: !!indicatorId, channelId: fact.channelId, quality: QUALITY.get(source.kind) || 0, effectiveTier: fact.effectiveTier } } })
     persist()
+    // 闸门：需要人做决定的才进收件箱。干净且匹配上指标的直接入账，不打扰——
+    // 收件箱是裁决台，不是监控台，否则 agent 一次推一千条能把它埋了。
+    // 冲突另走冲突队列（今日页已有），这里只收「没地方放」的待归位读数。
+    if (!migration && !indicatorId) queuePendingReading(reading)
     return { added: true, reading, dedupeKey }
   } catch (error) { return { added: false, error: error.message } }
+}
+
+/**
+ * 待归位的读数进收件箱——三个来源（手贴 / agent 推送 / HTTP+ MCP）
+ * 从此共用一个门。曾经只有捕获走这道门，agent 推来的读数直接入库，
+ * 用户在路上永远看不到它们，也就永远等不到归位。
+ */
+function queuePendingReading(reading) {
+  const existing = db.inbox.find((i) => i.kind === 'reading' && i.readingId === reading.id)
+  if (existing) return existing
+  const item = addInboxItem({
+    kind: 'reading',
+    readingId: reading.id,
+    observationId: reading.observationId || null,
+    title: reading.indicator || reading.metric || '未命名读数',
+    text: reading.indicator || reading.metric || '',
+    label: { kind: reading.source?.kind || '来源未分类', quality: 0, via: 'reading' },
+    lemmas: [], extracted: true, matchScore: 0,
+    provenance: { platform: reading.source?.platform || null, url: reading.source?.url || null, rawId: reading.rawId || null },
+  })
+  item.reading = { value: reading.value, unit: reading.unit, period: reading.period, basis: reading.basis, tier: reading.tier, status: reading.status, trust: reading.trust }
+  persist()
+  return item
 }
 
 export function allReadings() { load(); return readingsStore().all() }
@@ -2119,6 +2152,8 @@ export function assignReading(id, indicatorId) {
   if (!r || !db.nodes.some((n) => n.id === indicatorId && n.type === 'observation' && n.status !== 'dead')) return { ok: false, error: '读数或指标不存在' }
   if (r.indicatorId === indicatorId) return { ok: true }
   if (r.indicatorId) return { ok: false, error: '只有待归位读数可重新匹配' }
+  const queued = db.inbox.find((i) => i.kind === 'reading' && i.readingId === id)
+  if (queued) { db.inbox = db.inbox.filter((i) => i !== queued); persist() }
   try {
     const moved = s.groupReadings(observationKey(r)).map((row) => ({ ...row, indicatorId }))
     const target = s.groupReadings(observationKey(moved[0]))

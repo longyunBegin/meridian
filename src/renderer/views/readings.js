@@ -422,22 +422,20 @@ export function renderSources(mid) {
       const c = await m.agentConnection()
       if (!c.port) {
         clear(info).append(note('本机接收服务尚未启动。'), c.error ? note(`原因：${c.error}`) : null,
-          note('仍然可以用文件投递——直接往下面的路径追加 JSONL。'))
+          note('HTTP 与 MCP 两个入口都不可用。'))
       }
+      const base = `http://${c.host || '127.0.0.1'}:${c.port}`
+      const auth = c.requireToken === false ? {} : { authorization: `Bearer ${c.token}` }
       const rows = [
-        // 三种接法并列说清。曾经这里只提 HTTP 和文件投递，MCP 实现了却一个字没提，
+        // 两种接法并列说清。曾经只提 HTTP，MCP 实现了却一个字没提，
         // 用户以为只有一种接法，也没法配一个 MCP client。
+        // 复制按钮直接把真凭据填进去——留 <token> 占位等于让用户自己开文件抄 64 位。
         { name: 'MCP', desc: '助手作为 MCP client 直连，可用 push_readings / list_themes / list_open_judgments 三个工具',
           action: c.port ? { label: '复制 MCP 配置', run: () => copy(JSON.stringify({
-            mcpServers: { meridian: { url: `http://${c.host || '127.0.0.1'}:${c.port}/mcp`, headers: { authorization: 'Bearer <token>' } } },
+            mcpServers: { meridian: { url: `${base}/mcp`, ...(Object.keys(auth).length ? { headers: auth } : {}) } },
           }, null, 2), 'MCP 配置') } : null },
-        { name: 'HTTP', desc: c.port ? `POST http://${c.host || '127.0.0.1'}:${c.port}/readings 推送；GET /intent 读主题与未结算判断` : '服务未启动',
-          action: c.port ? { label: '复制地址', run: () => copy(`http://${c.host || '127.0.0.1'}:${c.port}`, '接收地址') } : null },
-        ...(c.inboxPaths || [c.inboxPath]).map((p, i) => ({
-          name: i === 0 ? '文件投递' : `文件投递 ${i + 1}`,
-          desc: `往 ${p} 追加 JSONL，一行一条，30 秒内自动入账`,
-          action: { label: '复制路径', run: () => copy(p, '文件路径') },
-        })),
+        { name: 'HTTP', desc: c.port ? `POST ${base}/readings 推送；GET ${base}/intent 读主题与未结算判断` : '服务未启动',
+          action: c.port ? { label: '复制地址', run: () => copy(base, '接收地址') } : null },
       ]
       const list = h('div', { class: 'connection-rows' }, ...rows.map((r) => h('div', { class: 'connection-row' },
         h('div', { class: 'connection-main' },
@@ -446,9 +444,15 @@ export function renderSources(mid) {
         r.action ? h('button', { class: 'btn', onclick: r.action.run }, r.action.label) : null,
       )))
       clear(info).append(
-        note('三种接法走的是同一套验证，任选其一。投递路径可以在 设置 → 界面 → 投递路径 里加。'),
+        note('两种接法走的是同一套验证，任选其一。'),
         list,
-        note(`连接凭据在 ${c.path}（权限 0600）。MCP 配置里的 <token> 换成那个文件里的 token 即可。`),
+        c.token ? h('div', { class: 'connection-row' },
+          h('div', { class: 'connection-main' },
+            h('b', {}, '访问凭据'),
+            note(`Bearer ${c.token.slice(0, 8)}…${c.token.slice(-4)}（共 ${c.token.length} 位）`)),
+          h('button', { class: 'btn', onclick: () => copy(c.token, '访问凭据') }, '复制凭据'),
+        ) : note('当前未启用访问凭据——只监听本机时才建议这样。'),
+        note(`地址与端口可在 设置 → 界面 → 监听地址 / 端口 里改。完整信息也写在 ${c.path}（权限 0600）。`),
       )
     } catch { failure(info, loadConnection, '连接信息读取失败。') }
   }

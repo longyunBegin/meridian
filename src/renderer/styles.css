@@ -769,6 +769,15 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .connection-main b { font-size: var(--t-body); font-weight: 600; }
 .connection-row .btn { flex: none; }
 
+/* 收件箱里的待归位读数：数字是主角，信任标记跟着 */
+.inbox-reading-value { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 6px; }
+.inbox-reading-value b { font-size: var(--t-title); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 检视面板里的一句说明：解释某个状态为什么不生效 */
+.insp-note {
+  margin: 7px 0 0; font-size: var(--t-caption); color: var(--text-3); line-height: 1.5;
+}
+
 .jev-toggle {
   display: flex; align-items: center; gap: 6px; width: 100%;
   margin-top: 10px; padding: 4px 0; font-size: var(--t-body); color: var(--text-2); text-align: left;
