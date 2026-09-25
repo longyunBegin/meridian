@@ -210,6 +210,30 @@ export async function renderSettings(mid) {
       ),
     ),
 
+    // ---- 收件箱过期清理
+    h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '收件箱'), h('em', {}, `${stats.inbox} 条待确认`)),
+      h('div', { class: 'sect-b' },
+        h('p', { style: { margin: '6px 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-3)', lineHeight: '1.6' } },
+          '收件箱是队列不是档案。启动时会自动清掉超过 30 天、没人看过、也没主动忽略的待确认条目——',
+          '本地优先产品的数据文件是你自己的负担。'),
+        h('div', { class: 'q-acts' },
+          h('button', {
+            class: 'btn',
+            onclick: async () => {
+              const preview = await m.inboxPrune(30, { dryRun: true })
+              if (preview.removed === 0) { flash('没有超过 30 天未处理的待确认'); return }
+              const confirmed = await confirmToast(`清理 ${preview.removed} 条超过 30 天未处理的待确认？`, '清理')
+              if (!confirmed) return
+              const r = await m.inboxPrune(30)
+              flash(`已清理 ${r.removed} 条，保留 ${r.kept} 条`)
+              await renderSettings(mid)
+            },
+          }, '立即清理过期待确认'),
+        ),
+      ),
+    ),
+
     // ---- 已删主题（可恢复）
     deletedTs.length ? h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '已删主题'), h('em', {}, String(deletedTs.length))),

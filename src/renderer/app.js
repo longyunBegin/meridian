@@ -56,6 +56,9 @@ async function boot() {
   render()
   m.onChanged(() => refresh())
   m.onInboxPaste(captureText)
+  m.onInboxPruned((info) => {
+    if (info?.removed > 0) toast(`已清理 ${info.removed} 条超过 30 天未处理的待确认`)
+  })
   m.onDueNotify(() => {
     state.view = 'today'
     document.querySelector('.app').dataset.view = 'today'

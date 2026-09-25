@@ -1,7 +1,7 @@
 const { app, BrowserWindow, globalShortcut, clipboard } = globalThis.__electron
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { load, settings } from './store.js'
+import { load, settings, lastInboxPrune } from './store.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -71,6 +71,14 @@ app.whenReady().then(() => {
   }
   load()
   createMain()
+  // 收件箱启动清理的告知。删的是「30 天以上没人看的待确认」，
+  // 但即便是该删的也不能静默删。必须放在 createMain() 之后——mainWin 在此之前是 null。
+  const pruned = lastInboxPrune()
+  if (pruned?.removed > 0) {
+    mainWin.webContents.once('did-finish-load', () => {
+      mainWin.webContents.send('inbox:pruned', pruned)
+    })
+  }
   const { runChannelFetch } = register({ getMainWindow: () => mainWin })
 
   // 到期结算通知 + 通道轮询

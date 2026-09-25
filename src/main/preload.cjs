@@ -69,7 +69,7 @@ contextBridge.exposeInMainWorld('meridian', {
 
   // ---- 收件箱
   inboxCapture: (text, channelMeta) => ipcRenderer.invoke('inbox:capture', text, channelMeta),
-  inboxList: () => ipcRenderer.invoke('inbox:list'),
+  inboxList: (opts) => ipcRenderer.invoke('inbox:list', opts),
   inboxIgnored: () => ipcRenderer.invoke('inbox:ignored'),
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
   inboxImport: (themeId, items, overrides) => ipcRenderer.invoke('inbox:import', themeId, items, overrides),
@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxLastAutoImport: () => ipcRenderer.invoke('inbox:lastAutoImport'),
   inboxExtract: (ids) => ipcRenderer.invoke('inbox:extract', ids),
   inboxClearUnextracted: () => ipcRenderer.invoke('inbox:clearUnextracted'),
+  inboxPrune: (days, opts) => ipcRenderer.invoke('inbox:prune', days, opts),
   intakeSeries: (sinceDays) => ipcRenderer.invoke('intake:series', sinceDays),
 
   // ---- LLM 账本 + 通道未匹配率
@@ -125,4 +126,5 @@ contextBridge.exposeInMainWorld('meridian', {
   // ---- 收件箱热键：主进程读剪贴板后发给渲染进程
   onInboxPaste: (cb) => ipcRenderer.on('inbox:paste', (_, text) => cb(text)),
   onDueNotify: (cb) => ipcRenderer.on('due:notify', () => cb()),
+  onInboxPruned: (cb) => ipcRenderer.on('inbox:pruned', (_, info) => cb(info)),
 })

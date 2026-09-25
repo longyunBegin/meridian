@@ -14,6 +14,7 @@ import {
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext, channelMatchRates,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
+  traceIndexByHash, recordLabelAggregate, pruneInbox, lastInboxPrune, INBOX_TTL_DAYS,
   allChannels, addChannel, updateChannel, removeChannel,
   addReading, allReadings, indicatorsForReading, latestReadingByChannel,
   updateTheme, rankChannelsByTags, kindToTags, sicToTags,
@@ -87,19 +88,17 @@ function targetTagScore(themeId, text) {
  * 两种都零 LLM 调用——这是同 hash 内容第二次进来不花钱的关键。
  */
 function findReuse(h, themeId = null) {
-  const traces = allTraces()
-  for (let i = traces.length - 1; i >= 0; i--) {
-    const t = traces[i]
-    if (t.input?.textHash !== h) continue
-    if (t.stage === 'extract' && t.decision?.lemmas) {
-      // 只复用同主题的抽取结果——别的主题的挂点在当前主题里是悬空的
-      const traced = t.target?.themeId || null
-      if (traced && themeId && traced !== themeId) continue
-      return { kind: 'lemmas', lemmas: t.decision.lemmas, themeId: traced }
-    }
-    if (t.stage === 'gate' && t.decision?.skipped) {
-      return { kind: 'skipped', skipped: t.decision.skipped, matchScore: t.decision.matchScore || 0 }
-    }
+  // 走 textHash 索引，不扫全量 traces——traces 只增不减，扫下去会线性恶化
+  const t = traceIndexByHash().get(h)
+  if (!t) return null
+  if (t.stage === 'extract' && t.decision?.lemmas) {
+    // 只复用同主题的抽取结果——别的主题的挂点在当前主题里是悬空的
+    const traced = t.target?.themeId || null
+    if (traced && themeId && traced !== themeId) return null
+    return { kind: 'lemmas', lemmas: t.decision.lemmas, themeId: traced }
+  }
+  if (t.stage === 'gate' && t.decision?.skipped) {
+    return { kind: 'skipped', skipped: t.decision.skipped, matchScore: t.decision.matchScore || 0 }
   }
   return null
 }
@@ -330,16 +329,12 @@ async function processCapture(text, themeId, channelMeta, { forceExtract = false
     }
   }
 
-  // 留痕：打标阶段
-  addTrace({
-    target: { type: 'inbox', id: null },
-    stage: 'label',
-    actor: { by: label.via || 'table', model: s.model || null, promptVersion: 'v1' },
-    input: { textHash: h, textLen: actualText.length, channelMeta: actualChannel || null },
-    output: { kind: label.kind, quality: label.jevScore ?? null, via: label.via },
-    decision: { kind: label.kind, quality: label.quality },
-    reason: label.jevScore != null && label.jevScore !== label.quality
-      ? `表值 ${label.quality} ≠ 模型值 ${label.jevScore}` : null,
+  // 留痕：打标阶段。只被 labelerDivergence 消费（按 kind 的条数和分差均值），
+  // 所以按天聚合成计数，不逐条存——逐条存时 3175 条里 1556 条 label 占了 2MB。
+  recordLabelAggregate({
+    kind: label.kind,
+    tableQuality: label.quality,
+    modelQuality: label.jevScore,
   })
 
   const hints = branchTitles(themeId)
@@ -357,7 +352,9 @@ async function processCapture(text, themeId, channelMeta, { forceExtract = false
     target: { type: 'inbox', id: null, themeId },
     stage: 'extract',
     actor: { by: reused ? 'reuse' : (ex.ok ? 'model' : 'table'), model: s.model || null, promptVersion: 'v1' },
-    input: { textHash: h, textLen: actualText.length, channelMeta: actualChannel || null },
+    // input 只留 findReuse 要用的 textHash。textLen 没有任何消费者，
+    // channelMeta 在 inbox 条目的 provenance 里已有——各砍掉能省约 30% 体积。
+    input: { textHash: h },
     output: ex.ok ? { lemmas: ex.lemmas, model: ex.model || null, reused } : { error: ex.reason || 'no-key' },
     decision: ex.ok ? { lemmas: ex.lemmas } : { degraded: true },
     reason: reused ? '同 hash 内容复用上次抽取结果，零调用'
@@ -764,7 +761,12 @@ function register({ getMainWindow }) {
   ipcMain.handle('llm:usage', () => llmUsage())
   ipcMain.handle('channel:matchRates', () => channelMatchRates(30))
 
-  ipcMain.handle('inbox:list', () => allInbox())
+  // 分页：无分页时每次渲染把全部 pending（含 text+lemmas）拉过 IPC，
+  // 而 refresh() 挂在 db:changed 上——改任何东西都会重跑一遍。
+  ipcMain.handle('inbox:list', (_, { limit = 50, offset = 0 } = {}) => {
+    const pending = allInbox()
+    return { items: pending.slice(offset, offset + limit), total: pending.length }
+  })
   ipcMain.handle('inbox:ignored', () => ignoredInbox())
 
   ipcMain.handle('inbox:resolve', (_, id, action) => {
@@ -865,6 +867,7 @@ function register({ getMainWindow }) {
   })
 
   ipcMain.handle('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
+  ipcMain.handle('inbox:prune', (_, days, opts) => pruneInbox(days, opts))
   ipcMain.handle('inbox:clear', () => clearInbox())
 
   // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch

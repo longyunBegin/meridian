@@ -5,6 +5,8 @@ import { confColor, nodePath } from './shared.js'
 const m = window.meridian
 
 let inboxItems = []
+let inboxTotal = 0
+let inboxLimit = 50
 let picked = new Set()
 let inboxLoading = false
 let renderSeq = 0
@@ -37,16 +39,21 @@ export async function renderToday(mid) {
     } catch { /* 静默 */ }
   }
 
-  const [due, calib, inbox, conflicts, ignored] = await Promise.all([
-    m.due(), m.calibration(), m.inboxList(), m.conflicts(), m.inboxIgnored(),
+  // 分页拉取：只要前 N 条。全量拉时每次渲染把全部 pending（含 text+lemmas）
+  // 序列化过 IPC，而 refresh() 挂在 db:changed 上——改任何东西都会重跑。
+  // 窗口随「加载更多」扩大，重渲染不会缩回第一页。
+  const pageSize = Math.max(inboxLimit, inboxItems.length)
+  const [due, calib, inboxPage, conflicts, ignored] = await Promise.all([
+    m.due(), m.calibration(), m.inboxList({ limit: pageSize, offset: 0 }), m.conflicts(), m.inboxIgnored(),
   ])
   if (seq !== renderSeq || state.view !== 'today') return
   const previousIndex = inboxItems.findIndex((item) => item.id === selectedInboxId)
-  inboxItems = inbox
-  const ids = new Set(inbox.map((item) => item.id))
+  inboxItems = inboxPage.items
+  inboxTotal = inboxPage.total
+  const ids = new Set(inboxItems.map((item) => item.id))
   picked = new Set([...picked].filter((id) => ids.has(id)))
   for (const key of overrides.keys()) if (!ids.has(key.slice(key.indexOf(':') + 1))) overrides.delete(key)
-  if (!ids.has(selectedInboxId)) selectedInboxId = inbox[Math.max(0, Math.min(previousIndex, inbox.length - 1))]?.id || null
+  if (!ids.has(selectedInboxId)) selectedInboxId = inboxItems[Math.max(0, Math.min(previousIndex, inboxItems.length - 1))]?.id || null
 
   const allNodes = await m.allNodes()
   if (seq !== renderSeq || state.view !== 'today') return
@@ -81,7 +88,7 @@ export async function renderToday(mid) {
     // ---- 顶部两个大数字
     h('div', { class: 'today-metrics' },
       h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'inbox-section') },
-        h('span', { class: 'today-metric-num', style: { color: inbox.length ? 'var(--accent)' : 'var(--text-3)' } }, String(inbox.length)),
+        h('span', { class: 'today-metric-num', style: { color: inboxTotal ? 'var(--accent)' : 'var(--text-3)' } }, String(inboxTotal)),
         h('span', { class: 'today-metric-label' }, '待确认'),
       ),
       h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'due-section') },
@@ -100,7 +107,7 @@ export async function renderToday(mid) {
       ),
     ),
 
-    renderInboxWorkspace(themeNodes, allNodes),
+    renderInboxWorkspace(mid, seq, themeNodes, allNodes),
     renderIgnoredProposals(ignored, allNodes),
 
     // ---- 到期未结算
@@ -202,12 +209,12 @@ function renderIgnoredProposals(items, nodes) {
   )
 }
 
-function renderInboxWorkspace(themeNodes, allNodes) {
+function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   const items = inboxItems
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
       h('h2', {}, '待确认'), h('p', {}, '已抽取的核对归位，未抽取的留档待命'),
-      h('span', { class: 'spacer' }), h('em', {}, `${items.length} 条待审阅`),
+      h('span', { class: 'spacer' }), h('em', {}, `${inboxTotal} 条待审阅`),
     ),
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
       h('span', { class: 'hud-dot' }), '正在解析新内容，你可以继续审阅其他信息。') : null,
@@ -345,10 +352,27 @@ function renderInboxWorkspace(themeNodes, allNodes) {
   appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '核对信息，再归位到脉络') })
   appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
   appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [clearUnmatched]) })
+
+  // 分页：只渲染前 inboxLimit 条。全量渲染时上千条 DOM 本身就是卡顿源。
+  const remaining = Math.max(0, inboxTotal - inboxItems.length)
+  const loadMore = remaining > 0 ? h('button', {
+    class: 'btn inbox-load-more',
+    onclick: async (e) => {
+      e.target.disabled = true
+      e.target.textContent = '加载中…'
+      const page = await m.inboxList({ limit: inboxLimit, offset: inboxItems.length })
+      if (seq === renderSeq && state.view === 'today') {
+        inboxItems = [...inboxItems, ...page.items]
+        await renderToday(mid)
+      }
+    },
+  }, `还有 ${remaining} 条待确认 · 加载更多`) : null
+
   section.append(h('div', { class: 'inbox-split' },
     h('div', { class: 'inbox-list-pane' },
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
+      loadMore,
       h('div', { class: 'inbox-import-bar' }, count, importPicked),
     ),
     detail,

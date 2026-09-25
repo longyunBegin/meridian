@@ -94,12 +94,24 @@ ok('收件箱有 1 条', store.allInbox().length === 1, `实际 ${store.allInbox
 console.log('\n— 收件箱 IPC: inbox:list / resolve / clear —')
 // ============================================================
 
+// T1: inbox:list 分页——返回 { items, total }，不再全量数组
 const listResult = await fire('inbox:list')
-ok('inbox:list 返回数组', Array.isArray(listResult))
-ok('inbox:list 返回 1 条', listResult.length === 1, `实际 ${listResult.length}`)
+ok('inbox:list 返回 { items, total }', listResult && Array.isArray(listResult.items) && typeof listResult.total === 'number')
+ok('inbox:list 返回 1 条', listResult.items.length === 1, `实际 ${listResult.items.length}`)
+ok('inbox:list total 正确', listResult.total === 1, `实际 ${listResult.total}`)
 
-const resolveResult = await fire('inbox:resolve', listResult[0].id, 'reject')
-ok('inbox:resolve 返回条目', resolveResult?.id === listResult[0].id)
+// 默认 limit 50；offset 生效
+store.addInboxItem({ text: '批量测试甲', title: '批量测试甲', label: { kind: '自媒体', quality: 0.5 }, lemmas: [] })
+store.addInboxItem({ text: '批量测试乙', title: '批量测试乙', label: { kind: '自媒体', quality: 0.5 }, lemmas: [] })
+const pageAll = await fire('inbox:list')
+ok('inbox:list 默认 limit 50', pageAll.items.length === 3 && pageAll.total === 3, `实际 ${pageAll.items.length}/${pageAll.total}`)
+const pageLimited = await fire('inbox:list', { limit: 2 })
+ok('inbox:list limit 生效', pageLimited.items.length === 2, `实际 ${pageLimited.items.length}`)
+const pageOffset = await fire('inbox:list', { limit: 2, offset: 2 })
+ok('inbox:list offset 生效', pageOffset.items.length === 1, `实际 ${pageOffset.items.length}`)
+
+const resolveResult = await fire('inbox:resolve', listResult.items[0].id, 'reject')
+ok('inbox:resolve 返回条目', resolveResult?.id === listResult.items[0].id)
 ok('reject 后 verdicts 增加', store.allVerdicts().length > 0, `实际 ${store.allVerdicts().length}`)
 
 const clearResult = await fire('inbox:clear')
@@ -444,9 +456,10 @@ console.log('\n— 留痕层 trace —')
 // 清空收件箱和 traces，准备测试
 store.clearInbox()
 const traceBefore = store.allTraces().length
+// label stage 不再逐条存（改按天聚合，见 T3），结构测试用仍在存储的 gate stage
 store.addTrace({
   target: { type: 'node', id: 'test-node-1' },
-  stage: 'label',
+  stage: 'gate',
   actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
   input: { textHash: 'abc123', textLen: 100, channelMeta: { platform: 'arxiv' } },
   output: { kind: '一手数据', quality: 0.9, via: 'jev' },
@@ -458,7 +471,7 @@ ok('addTrace 创建了 trace', store.allTraces().length === traceBefore + 1, `�
 const tr = store.allTraces()[traceBefore]
 ok('trace 有 id', typeof tr.id === 'string')
 ok('trace 有 t', typeof tr.t === 'string')
-ok('trace stage = label', tr.stage === 'label')
+ok('trace stage = gate', tr.stage === 'gate')
 ok('trace actor.by = model', tr.actor.by === 'model')
 ok('trace actor.model = step-3', tr.actor.model === 'step-3')
 ok('trace actor.promptVersion = v1', tr.actor.promptVersion === 'v1')
@@ -466,18 +479,16 @@ ok('trace output 未加工', tr.output.quality === 0.9)
 ok('trace decision 是最终值', tr.decision.quality === 0.9)
 ok('trace reason 为 null（表值=模型值）', tr.reason === null)
 
-// 取表值 ≠ 模型值时写 reason
-store.addTrace({
-  target: { type: 'node', id: 'test-node-2' },
-  stage: 'label',
-  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
-  input: { textHash: 'def456', textLen: 200 },
-  output: { kind: '一手数据', quality: 0.9, via: 'jev' },
-  decision: { kind: '自媒体', quality: 0.4 },
-  reason: '表值 0.4 ≠ 模型值 0.9',
-})
-const tr2 = store.allTraces()[traceBefore + 1]
-ok('trace reason 记录了分歧', tr2.reason.includes('0.4') && tr2.reason.includes('0.9'))
+// 取表值 ≠ 模型值时：label 走按天聚合，分差 = 模型值 - 表值
+store.recordLabelAggregate({ kind: '分歧测试源', tableQuality: 0.4, modelQuality: 0.9 })
+const diverged = store.labelerDivergence().find((g) => g.kind === '分歧测试源')
+ok('分歧曲线按 kind 统计', diverged != null && diverged.count === 1, `实际 ${diverged?.count}`)
+ok('分歧均值 = 模型值 - 表值', diverged != null && Math.abs(diverged.meanDiff - 0.5) < 0.01, `实际 ${diverged?.meanDiff}`)
+// 同一天同 kind 累加，均值不变
+store.recordLabelAggregate({ kind: '分歧测试源', tableQuality: 0.4, modelQuality: 0.9 })
+const diverged2 = store.labelerDivergence().find((g) => g.kind === '分歧测试源')
+ok('同 kind 累加 count=2', diverged2?.count === 2, `实际 ${diverged2?.count}`)
+ok('同 kind 累加均值不变', diverged2 != null && Math.abs(diverged2.meanDiff - 0.5) < 0.01, `实际 ${diverged2?.meanDiff}`)
 
 // 按 target 查询
 const byTarget = store.tracesByTarget('test-node-1')
@@ -500,13 +511,9 @@ ok('userConf = 72', mc[0].userConf === 72)
 ok('modelCalibration 带 model', mc[0].model === 'step-3')
 ok('modelCalibration 带 promptVersion', mc[0].promptVersion === 'v1')
 
-// 打标器 vs 表的分歧曲线
+// 打标器 vs 表的分歧曲线（读按天聚合）
 const ld = store.labelerDivergence()
 ok('labelerDivergence 返回数组', Array.isArray(ld))
-// 有分歧的那条（0.9 - 0.4 = 0.5）
-const diverged = ld.find((g) => g.kind === '自媒体')
-ok('分歧曲线有自媒体', diverged != null)
-ok('自媒体分歧均值 = 0.5', diverged != null && Math.abs(diverged.meanDiff - 0.5) < 0.01, `实际 ${diverged?.meanDiff}`)
 
 // trace 不内联进 node
 const dbNodes = store.allNodes()
@@ -1444,6 +1451,13 @@ const pc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 // 提取桥接键对比（去掉 require/import 行差异）
 const extractKeys = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('preload: 两份桥接键同步', JSON.stringify(extractKeys(pj)) === JSON.stringify(extractKeys(pc)))
+
+// 语法检查。同步测试只比内容——preload 少个逗号照样「同步」，但 app 直接起不来。
+// 这一条是那次事故之后补的。
+import { default as vm } from 'node:vm'
+const syntaxOk = (src) => { try { new vm.Script(src); return true } catch { return false } }
+ok('preload: preload.js 语法可编译', syntaxOk(pj), '语法错误会让 app 起不来')
+ok('preload: preload.cjs 语法可编译', syntaxOk(pc), '语法错误会让 app 起不来')
 
 // ============================================================
 console.log('\n— R3: SEC EDGAR 取数器 —')
@@ -3446,6 +3460,86 @@ ok('C5/C6: 两份 preload 仍然完全同步', pjGov === pcGov && pjGov.includes
 // 收尾：恢复抽取桩与设置，别把 stub 留给后面的断言
 llmHooks.run = realRunHook
 store.saveSettings({ apiKey: '' })
+
+// ============================================================
+console.log('\n— 数据边界：inbox 过期 / trace 索引 / 抽取上限 —')
+// ============================================================
+
+// ---- T2 pruneInbox ----
+const pruneTheme = store.addTheme('清理测试')
+// addInboxItem 永远写 createdAt: today()，所以要造假数据得直接改 DB
+const mkInbox = (daysAgo, extra = {}) => {
+  const entry = store.addInboxItem({
+    text: `清理测试 ${daysAgo} 天前`, title: `清理测试 ${daysAgo}`,
+    label: { kind: '自媒体', quality: 0.5 }, lemmas: [],
+  })
+  Object.assign(entry, { createdAt: new Date(Date.now() - daysAgo * 864e5).toISOString().slice(0, 10) }, extra)
+  return entry
+}
+mkInbox(40)                                    // 该清
+mkInbox(40, { ignored: true })                 // 主动忽略，永不清
+mkInbox(5)                                     // 新，不清
+const acceptedOld = mkInbox(40)                // 已处理的，不清（先 resolve 再测）
+store.resolveInboxItem(acceptedOld.id, 'reject')
+
+// 用增量断言——测试文件前面已经攒了一批 inbox，绝对值不可靠
+const inboxBase = store.allInbox().length
+const pruneDry = store.pruneInbox(30, { dryRun: true })
+ok('T2 dryRun 该清的只有 1 条', pruneDry.removed === 1, `实际 removed=${pruneDry.removed}`)
+ok('T2 dryRun 后数据没变', store.allInbox().length === inboxBase, `实际 ${store.allInbox().length} vs ${inboxBase}`)
+const pruneReal = store.pruneInbox(30)
+ok('T2 真删 1 条', pruneReal.removed === 1, `实际 ${pruneReal.removed}`)
+ok('T2 净减 1 条', store.allInbox().length === inboxBase - 1, `实际 ${store.allInbox().length} vs ${inboxBase - 1}`)
+// ignored / 5 天内的 / 已处理的都还在。注意 allInbox() 本就排除 ignored，
+// 所以这三条要查 load().inbox 而不是 allInbox()
+const rawInbox = store.load().inbox
+ok('T2 ignored 的还在', rawInbox.some((i) => i.ignored), 'ignored 条目被清了')
+ok('T2 新的还在', rawInbox.some((i) => i.title === '清理测试 5'), '5 天前的条目被清了')
+ok('T2 已处理的还在', rawInbox.some((i) => i.id === acceptedOld.id && i.status === 'rejected'), '已处理条目被清了')
+ok('T2 40 天前的没了', !rawInbox.some((i) => i.title === '清理测试 40' && !i.ignored && i.status === 'pending'), '该清的没清')
+
+// ---- T4 trace 索引 ----
+const idxBefore = store.allTraces().length
+store.addTrace({
+  target: { type: 'node', id: 'idx-node' }, stage: 'extract',
+  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+  input: { textHash: 'idx-hash-1' },
+  output: { lemmas: [{ title: '索引测试命题', type: 'observation', confidence: 60 }] },
+  decision: { lemmas: [{ title: '索引测试命题', type: 'observation', confidence: 60 }] },
+})
+const idx = store.traceIndexByHash()
+ok('T4 索引能查到刚写的', idx.get('idx-hash-1')?.input?.textHash === 'idx-hash-1')
+ok('T4 索引含存量 trace', idx.size >= idxBefore, `实际 ${idx.size} vs ${idxBefore}`)
+// 同 hash 后写覆盖先写
+store.addTrace({
+  target: { type: 'node', id: 'idx-node-2' }, stage: 'extract',
+  actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+  input: { textHash: 'idx-hash-1' },
+  output: { lemmas: [{ title: '第二条', type: 'observation', confidence: 70 }] },
+  decision: { lemmas: [{ title: '第二条', type: 'observation', confidence: 70 }] },
+})
+ok('T4 同 hash 后写覆盖', store.traceIndexByHash().get('idx-hash-1').target.id === 'idx-node-2')
+store.invalidateTraceIndex()
+ok('T4 invalidate 后重建', store.traceIndexByHash().get('idx-hash-1').target.id === 'idx-node-2')
+
+// ---- T3 extract trace 上限 ----
+const extractsBefore = store.allTraces().filter((t) => t.stage === 'extract').length
+for (let i = 0; i < store.MAX_EXTRACT_TRACES + 20; i++) {
+  store.addTrace({
+    target: { type: 'node', id: `bulk-${i}` }, stage: 'extract',
+    actor: { by: 'model', model: 'step-3', promptVersion: 'v1' },
+    input: { textHash: `bulk-hash-${i}` },
+    output: { lemmas: [] }, decision: { lemmas: [] },
+  })
+}
+const extractsAfter = store.allTraces().filter((t) => t.stage === 'extract').length
+ok('T3 extract trace 不超上限', extractsAfter <= store.MAX_EXTRACT_TRACES, `实际 ${extractsAfter} / 上限 ${store.MAX_EXTRACT_TRACES}`)
+ok('T3 保留的是最新的', store.allTraces().some((t) => t.target?.id === `bulk-${store.MAX_EXTRACT_TRACES + 19}`), '最新一条被清了')
+
+// ---- T3 label 不再逐条存 ----
+const labelCount = store.allTraces().filter((t) => t.stage === 'label').length
+ok('T3 label trace 不逐条存', labelCount === 0, `实际 ${labelCount} 条`)
+ok('T3 traceAggregates.label 有数据', store.load().traceAggregates.label.length > 0)
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

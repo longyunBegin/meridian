@@ -142,6 +142,7 @@ const blank = () => ({
   readings: [], // 读数：结构化财务数字，只追加不覆盖
   researchNotes: [], // 研究观点：外部机构对命题的判断，不产生 node、不进校准
   llmUsage: { daily: [], recent: [] }, // LLM 账本：按天聚合 + 最近失败明细
+  traceAggregates: { label: [] }, // 留痕聚合：label 按天计数，extract/route 仍逐条（见文件末尾）
 })
 
 let db = null
@@ -179,6 +180,72 @@ function normalizeLlmUsage(llmUsage) {
   }
 }
 
+/**
+ * 留痕聚合。label stage 的 trace 只被 labelerDivergence 消费（按 kind 的条数和分差均值），
+ * 逐条存 input/output 全是浪费——3175 条里 1556 条 label 占了 2MB。
+ * 改成按天一条计数。extract / route 仍逐条：前者是 findReuse 的复用来源，后者是归位判定链路。
+ */
+function normalizeTraceAggregates(ta) {
+  const a = ta && typeof ta === 'object' ? ta : {}
+  return { label: Array.isArray(a.label) ? a.label : [] }
+}
+
+/** 记一条 label 聚合。同一天同 kind 累加，分差存累计值（求均值时再除）。 */
+export function recordLabelAggregate({ kind, tableQuality, modelQuality }) {
+  const db = load()
+  const t = today()
+  let day = db.traceAggregates.label.find((d) => d.date === t)
+  if (!day) {
+    day = { date: t, byKind: {} }
+    db.traceAggregates.label.push(day)
+    // 只留最近 90 天——再老的聚合对「换打标器会不会漂移」没有意义
+    if (db.traceAggregates.label.length > 90) db.traceAggregates.label.shift()
+  }
+  const k = kind || '未知'
+  if (!day.byKind[k]) day.byKind[k] = { count: 0, diffSum: 0 }
+  day.byKind[k].count += 1
+  day.byKind[k].diffSum += (Number(modelQuality) || 0) - (Number(tableQuality) || 0)
+  persist()
+  return day
+}
+
+/** 收件箱条目超过这个天数还没人看过 → 清掉。ROADMAP 的边界：
+ *  「用户从未看过、且 30 天未升级为命题的自动拦截——连裁决记录一起清掉。
+ *   本地优先产品的数据文件是用户自己的负担。」 */
+export const INBOX_TTL_DAYS = 30
+
+/** 上一次启动时的清理结果，供 main.js 告知用户（静默删数据是这个产品最不能做的事） */
+let lastPruneInfo = null
+export const lastInboxPrune = () => lastPruneInfo
+
+/**
+ * 清掉过期没人看的待确认条目。返回 { removed, kept }。
+ *
+ * 保留（按重要性）：
+ *   · status !== 'pending'  已处理的，是记录
+ *   · ignored               你主动标记过的——「系统认为相关、人认为不相关」是误杀审计的原料
+ *   · 30 天内的 pending      还没来得及看
+ *
+ * 清掉的只有「30 天以上、没人看过、没被主动忽略」的 pending。
+ */
+export function pruneInbox(days = INBOX_TTL_DAYS, { dryRun = false } = {}) {
+  const d = load()
+  const cutoff = Date.now() - days * 864e5
+  const keep = (i) => {
+    if (i.status !== 'pending') return true
+    if (i.ignored) return true
+    // 只读 createdAt——addInboxItem 永远写它，从没写过 at（那个分支是死的）
+    const ts = Date.parse(i.createdAt || '')
+    return Number.isFinite(ts) && ts >= cutoff
+  }
+  const removed = d.inbox.filter((i) => !keep(i)).length
+  if (dryRun) return { removed, kept: d.inbox.length - removed }
+  const before = d.inbox.length
+  d.inbox = d.inbox.filter(keep)
+  persist()
+  return { removed: before - d.inbox.length, kept: d.inbox.length }
+}
+
 export function load() {
   if (db) return db
   const file = DATA_FILE()
@@ -186,6 +253,9 @@ export function load() {
     try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
   } else db = blank()
   migrate(db)
+  // 收件箱是队列不是档案——启动时清一次过期积压。放在 load 里而不是起定时器：
+  // 天然一天一次，且没有「app 开着但没触发」的窗口。
+  lastPruneInfo = pruneInbox()
   return db
 }
 
@@ -204,6 +274,7 @@ function migrate(d) {
   d.readings = d.readings || []
   d.researchNotes = d.researchNotes || []
   d.llmUsage = normalizeLlmUsage(d.llmUsage)
+  d.traceAggregates = normalizeTraceAggregates(d.traceAggregates)
   for (const t of d.themes || []) {
     t.tags = Array.isArray(t.tags) ? t.tags : []
     t.tagLibrary = normalizeTagLibrary(t.tagLibrary)
@@ -1325,7 +1396,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage) }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -1543,6 +1614,26 @@ export function intakeSeries(sinceDays = 30) {
 // 留痕层 trace
 // ============================================================
 
+/** extract trace 的上限。依据：一天 300 次捕获 × 7 天 = 2100，够覆盖一周的复用窗口，
+ *  再老的内容被 findReuse 命中到的概率极低，而无限长会让索引和文件一起涨。 */
+export const MAX_EXTRACT_TRACES = 2000
+
+/** textHash → 最新 trace 的内存索引。findReuse 用它把 O(n) 扫降成 O(1)。
+ *  内存态不进 DB——重启重建，成本 O(n) 一次。 */
+let traceIndex = null
+
+export function traceIndexByHash() {
+  if (traceIndex) return traceIndex
+  traceIndex = new Map()
+  for (const t of load().traces) {
+    const h = t.input?.textHash
+    if (h) traceIndex.set(h, t)   // 后写的覆盖先写的，天然「最新优先」
+  }
+  return traceIndex
+}
+
+export function invalidateTraceIndex() { traceIndex = null }
+
 export function addTrace(trace) {
   const db = load()
   const record = {
@@ -1551,6 +1642,20 @@ export function addTrace(trace) {
     ...trace,
   }
   db.traces.push(record)
+  // extract trace 只留最近的——老的复用价值趋零，但会让文件和索引一起涨
+  if (record.stage === 'extract') {
+    const extracts = db.traces.filter((t) => t.stage === 'extract')
+    if (extracts.length > MAX_EXTRACT_TRACES) {
+      const drop = new Set(extracts.slice(0, extracts.length - MAX_EXTRACT_TRACES).map((t) => t.id))
+      db.traces = db.traces.filter((t) => !drop.has(t.id))
+    }
+  }
+  // 写入同步索引，否则要等下次启动才能复用
+  const h = record.input?.textHash
+  if (h) {
+    if (!traceIndex) traceIndexByHash()
+    traceIndex.set(h, record)
+  }
   persist()
   return record
 }
@@ -1584,20 +1689,23 @@ export function modelCalibration() {
 }
 
 /** 打标器 vs 表的分歧曲线：Jev 的 Score 和表值的差，按来源类型分开统计 */
+/** 打标器 vs 表的分歧曲线：Jev 的 Score 和表值的差，按来源类型分开统计。
+ *  读的是按天聚合（traceAggregates.label），不再逐条扫 traces——
+ *  聚合前后的 count 和 meanDiff 必须一致，否则这条曲线的基准就漂了。 */
 export function labelerDivergence() {
   const db = load()
   const byKind = {}
-  for (const tr of db.traces) {
-    if (tr.stage === 'label' && tr.output?.quality != null && tr.decision?.quality != null) {
-      const kind = tr.decision?.kind || '未知'
-      if (!byKind[kind]) byKind[kind] = { kind, count: 0, diffs: [] }
-      byKind[kind].count++
-      byKind[kind].diffs.push(tr.output.quality - tr.decision.quality)
+  for (const day of db.traceAggregates.label) {
+    for (const [kind, g] of Object.entries(day.byKind || {})) {
+      if (!byKind[kind]) byKind[kind] = { kind, count: 0, diffSum: 0 }
+      byKind[kind].count += g.count
+      byKind[kind].diffSum += g.diffSum
     }
   }
   return Object.values(byKind).map((g) => ({
-    ...g,
-    meanDiff: g.diffs.reduce((a, b) => a + b, 0) / g.diffs.length,
+    kind: g.kind,
+    count: g.count,
+    meanDiff: g.count ? g.diffSum / g.count : 0,
   }))
 }
 // ============================================================
