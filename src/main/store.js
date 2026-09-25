@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
 import { __testHooks as llmHooks } from './llmlog.js'
+import { ReadingStore, digest, normalizeName, observationKey, validateReading } from './reading-store.js'
 const { app } = globalThis.__electron
 
 const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
@@ -125,6 +126,12 @@ const DEFAULT_SETTINGS = {
   jevBaseUrl: 'https://openrouter.ai/api/v1',
   jevModel: 'typesafe/jev-1.13',
   jevKey: '',
+  // 产业链图的滚轮缩放灵敏度。触控板一次滚动连发多个小 deltaY，
+  // 固定一档 10% 体感过快；给用户自己调。
+  graphZoom: 1,
+  // 文件投递的额外路径。默认只读数据目录下的 inbox-readings.jsonl，
+  // 助手的输出在别处时加进来，不用把文件挪过去。
+  readingInboxPaths: [],
 }
 
 const blank = () => ({
@@ -139,7 +146,8 @@ const blank = () => ({
   traces: [], // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
   channels: [], // 通道描述符：按内容类型选取数器
   intakeEvents: [], // 采集漏斗：每次捕获一条记录
-  readings: [], // 读数：结构化财务数字，只追加不覆盖
+  readings: [], // 仅接收旧文件迁移；正文独立存于 readings.jsonl
+  sources: [], // 从读数观测出来的来源，不是配置项
   researchNotes: [], // 研究观点：外部机构对命题的判断，不产生 node、不进校准
   llmUsage: { daily: [], recent: [] }, // LLM 账本：按天聚合 + 最近失败明细
   traceAggregates: { label: [] }, // 留痕聚合：label 按天计数，extract/route 仍逐条（见文件末尾）
@@ -147,6 +155,29 @@ const blank = () => ({
 
 let db = null
 let saveTimer = null
+let readingStore = null
+
+function readingsStore() {
+  if (!readingStore) readingStore = new ReadingStore(app.getPath('userData'))
+  return readingStore
+}
+
+function readingSnapshot() {
+  const { readings, ...rest } = db
+  // 迁移尚未全部成功时保留旧数组，避免一次 I/O 失败被 debounce 写盘吞掉未迁移项。
+  return { ...rest, readings: readings || [], sources: allSources().map(({ readingIds, ...source }) => source) }
+}
+
+function migrateReadings(readings) {
+  for (const r of readings) {
+    if (readingsStore().refs.has(r.id)) continue
+    if (r.hash || r.prevHash) throw new Error('带存证的读数缺少原始追加记录，已停止迁移')
+    const source = { ...db.sources.find((s) => s.id === r.sourceId), ...r.source }
+    const result = ingestReadingCore({ ...r, source }, { migration: true })
+    if (result.error) throw new Error(`旧读数 ${r.id || ''} 迁移失败：${result.error}`)
+  }
+  db.readings = []
+}
 
 function normalizeScaffold(scaffold) {
   if (!scaffold || typeof scaffold !== 'object') return null
@@ -253,6 +284,8 @@ export function load() {
     try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
   } else db = blank()
   migrate(db)
+  readingsStore()
+  migrateReadings(db.readings)
   // 收件箱是队列不是档案——启动时清一次过期积压。放在 load 里而不是起定时器：
   // 天然一天一次，且没有「app 开着但没触发」的窗口。
   lastPruneInfo = pruneInbox()
@@ -272,6 +305,7 @@ function migrate(d) {
   d.channels = d.channels || []
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
+  d.sources = Array.isArray(d.sources) ? d.sources : []
   d.researchNotes = d.researchNotes || []
   d.llmUsage = normalizeLlmUsage(d.llmUsage)
   d.traceAggregates = normalizeTraceAggregates(d.traceAggregates)
@@ -292,6 +326,8 @@ function migrate(d) {
     n.by = n.by || 'manual'
     n.stableId = n.stableId || n.id
     n.channelIds = Array.isArray(n.channelIds) ? n.channelIds : []
+    n.indicatorIds = Array.isArray(n.indicatorIds) ? n.indicatorIds : []
+    n.cadence = n.cadence ?? null
     delete n.source
   }
   // feeds → channels 迁移。feeds.kind 硬编码 'rss' 不在 SOURCE_QUALITY 表里，
@@ -327,7 +363,7 @@ function persist() {
   saveTimer = setTimeout(() => {
     const file = DATA_FILE()
     mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify(db, null, 2))
+    writeFileSync(file, JSON.stringify(readingSnapshot(), null, 2))
   }, 120)
 }
 
@@ -375,6 +411,9 @@ export function addNode(input) {
     by: input.by || 'manual',
     stableId: input.stableId || uid(),
     channelIds: [...new Set(input.channelIds || [])],
+    indicatorIds: [...new Set(input.indicatorIds || [])],
+    cadence: input.cadence ?? null,
+    ...(input.measurement ? { measurement: { ...input.measurement } } : {}),
     createdAt: t,
     updatedAt: t,
     ...(input.intakeId ? { intakeId: input.intakeId } : {}),
@@ -430,6 +469,9 @@ export function updateNode(id, patch, { propagate = true } = {}) {
   if (patch.tags !== undefined) node.tags = [...new Set(patch.tags)]
   if (patch.tickers !== undefined) node.tickers = normalizeTickers(patch.tickers)
   if (patch.channelIds !== undefined) node.channelIds = [...new Set(patch.channelIds)]
+  if (patch.indicatorIds !== undefined) node.indicatorIds = [...new Set(patch.indicatorIds)]
+  if (patch.cadence !== undefined) node.cadence = patch.cadence
+  if (patch.measurement !== undefined) node.measurement = patch.measurement ? { ...patch.measurement } : null
   node.updatedAt = today()
   if (patch.title !== undefined) promoteMatchingIgnoredRoutes(node)
   persist()
@@ -836,11 +878,17 @@ export function addConflict(a, b, note) {
   return c
 }
 
-export function allConflicts() { return load().conflicts }
+export function allConflicts() {
+  load()
+  const conflicts = new Map(db.conflicts.map((c) => [c.id, c]))
+  for (const [id, c] of readingsStore().conflicts) conflicts.set(id, { ...c })
+  return [...conflicts.values()]
+}
 
 export function resolveConflict(id, verdict) {
-  const c = db.conflicts.find((x) => x.id === id)
-  if (!c) return null
+  const c = allConflicts().find((x) => x.id === id)
+  if (!c || !['a', 'b', 'both'].includes(verdict)) return null
+  if (c.type === 'reading') return resolveReadingConflict(c, verdict)
   c.resolved = verdict // 'a' | 'b' | 'both'
   c.resolvedAt = today()
   persist()
@@ -1245,11 +1293,11 @@ export function stats() {
     due: dueSettlements().length,
     events: propagationEvents(14).length,
     verdicts: db.verdicts.length,
-    conflicts: db.conflicts.filter((c) => !c.resolved).length,
+    conflicts: allConflicts().filter((c) => !c.resolved).length,
     premises: sharedPremises().length,
     feeds: db.channels.filter((c) => c.enabled).length,
     inbox: inboxCount(),
-    readings: db.readings.length,
+    readings: readingsStore().refs.size,
     researchNotes: db.researchNotes.length,
   }
 }
@@ -1341,6 +1389,7 @@ export function getRaw(id) { return loadRaw().get(id) || null }
 function referencedRawIds() {
   const used = new Set()
   for (const n of db.nodes) for (const s of n.sources || []) if (s.rawId) used.add(s.rawId)
+  for (const r of readingsStore().refs.values()) if (r.rawId) used.add(r.rawId)
   return used
 }
 
@@ -1388,7 +1437,8 @@ export function rawStats() {
  * 空数组会被导入端理解成"用空覆盖"，把磁盘上的原文清掉。
  */
 export function exportAll({ withRaw = true } = {}) {
-  const out = { ...db, version: 4 }
+  load()
+  const out = { ...db, version: 4, readingFormat: 'meridian.reading.v1', sources: allSources(), readings: allReadings(), readingJournal: readingsStore().exportJournal() }
   if (withRaw) out.raw = [...loadRaw().values()]
   return JSON.stringify(out, null, 2)
 }
@@ -1396,8 +1446,17 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
+  if ((parsed.readingFormat || (parsed.readings || []).some((r) => r.hash || r.prevHash)) && !Array.isArray(parsed.readingJournal)) {
+    throw new Error('带存证的读数必须附完整追加记录，不能按旧数据重新签名')
+  }
+  // 新导出保留事实和裁决事件；显式导入替换当前视图，原账本只改名归档。
+  if (parsed.readingJournal) readingsStore().validateJournal(parsed.readingJournal)
+  else for (const r of parsed.readings || []) validateReading({ ...r, source: r.source || (parsed.sources || []).find((s) => s.id === r.sourceId) || {} }, { legacy: true })
+  readingsStore().replaceJournal(parsed.readingJournal || [])
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], sources: parsed.sources || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
   migrate(db)
+  if (!parsed.readingJournal) migrateReadings(db.readings)
+  else db.readings = []
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
     const keep = parsed.raw.filter((e) => e?.id && e.text)
@@ -1661,11 +1720,13 @@ export function addTrace(trace) {
 }
 
 export function allTraces() {
-  return load().traces
+  // 读数留痕来自独立账本，只展示最近 100 条，不逐条写回 meridian.json。
+  const traces = load().traces
+  return [...traces, ...JSON.parse(JSON.stringify([...readingsStore().recentTraces.values()]))]
 }
 
 export function tracesByTarget(targetId) {
-  return load().traces.filter((t) => t.target?.id === targetId)
+  return allTraces().filter((t) => t.target?.id === targetId)
 }
 
 /** 模型建议的校准曲线：模型建议的置信度 vs 用户最终的置信度 */
@@ -1767,63 +1828,388 @@ export function removeChannel(id) {
 }
 // ------------------------------------------------------------------ 读数层
 
-/**
- * 读数：结构化财务数字（收入、库存、capex 等），只追加不覆盖。
- *
- * 去重键 = (metric, start, end, accn)。
- * 不能用 (metric, start, end)——10-K 会把上一年作比较期重列，
- * 同一期间会被两个 filing 重复申报。实例：
- *   2017-01-30 ~ 2018-01-28
- *      filed=2019-02-21  form=10-K  accn=0001045810-19-000010  val=9,714,000,000
- *      filed=2020-02-20  form=10-K  accn=0001045810-20-000036  val=9,714,000,000
- * 用 (metric, start, end) 会随机丢掉两条中的一条。
- *
- * frame 字段覆盖率只有 18/28，不能当键。
- */
+/** 同步兼容入口：与批量摄入共享归一、去重、冲突、留痕、落库核心。
+ * 去重包含完整期间/单位/口径/来源出处/accn/值；忽略调用方自报的 dedupeKey。
+ * 事实只追加，状态/信任/归位/裁决进入独立事件；不自动裁定命题。 */
 export function addReading(input) {
-  const db = load()
-  const dedupeKey = input.dedupeKey
-    || `${input.metric}|${input.source?.start || ''}|${input.source?.end || ''}|${input.source?.accn || ''}`
-  if (db.readings.some((r) => r.dedupeKey === dedupeKey)) {
-    return { added: false, dedupeKey }
-  }
-  const reading = {
-    id: uid(),
-    at: input.at || today(),
-    asOf: input.asOf || null,
+  return ingestReadingCore(input)
+}
 
-    nodeId: input.nodeId || null,
-    metric: input.metric,
-    value: input.value,
-    unit: input.unit || null,
-    source: input.source || {},
-    basis: input.basis || 'reported',
-    channelId: input.channelId || null,
-    dedupeKey,
+/** 人话优先；精确、规范化、标签库各级都只接受唯一匹配。 */
+export function matchReadingIndicator(input, { trusted = false, channelId = null, migration = false } = {}) {
+  const d = load()
+  const nodes = d.nodes.filter((n) => n.type === 'observation' && n.status !== 'dead')
+  const hint = normalizeName(input.themeHint)
+  const scoped = hint ? nodes.filter((n) => d.themes.some((t) => t.id === n.themeId && (t.id === input.themeHint || normalizeName(t.name) === hint))) : nodes
+  if (input.indicator) {
+    const exact = scoped.filter((n) => n.title === input.indicator)
+    if (exact.length) return exact.length === 1 ? exact[0].id : null
+    const name = normalizeName(input.indicator)
+    const normalized = scoped.filter((n) => normalizeName(n.title) === name)
+    if (normalized.length) return normalized.length === 1 ? normalized[0].id : null
+    const matches = scoped.filter((n) => {
+      const theme = d.themes.find((t) => t.id === n.themeId)
+      return (theme?.tagLibrary || []).some((tag) => [tag.name, ...(tag.synonyms || [])].some((s) => normalizeName(s) === name) && ((n.tags || []).includes(tag.name) || (n.tags || []).includes(tag.id) || normalizeName(n.title) === normalizeName(tag.name)))
+    })
+    if (matches.length) return matches.length === 1 ? matches[0].id : null
+    if (!trusted) return null
   }
-  db.readings.push(reading)
+  // 此同步接口也被 IPC 使用，channelId/tier 本身绝不是可信证明。
+  // 兼容内部关联，但 structured 权重只由不来自 envelope 的 trusted 参数授权。
+  if (trusted || migration || input.nodeId || input.indicatorId) {
+    const direct = nodes.find((n) => n.id === (input.indicatorId || input.nodeId))
+    if (direct) return direct.id
+  }
+  const channel = channelId || input.channelId
+  const matches = nodes.filter((n) => (channel && (n.channelIds || []).includes(channel)) || (trusted && input.metric && n.metric === input.metric))
+  return matches.length === 1 ? matches[0].id : null
+}
+
+function sourceIdentity(source, trusted, channelId) {
+  let host = ''
+  try { host = new URL(source.url).hostname.toLowerCase().replace(/^www\./, '') } catch { /* 旧离线来源 */ }
+  const identity = host || normalizeName(source.platform || source.label) || 'unknown'
+  const independentKey = identity !== 'unknown' ? `origin:${identity}` : 'unknown'
+  return { id: `src:${digest(identity)}`, identity, independentKey }
+}
+
+function independentSources(readings) {
+  const parent = readings.map((_, i) => i)
+  const owners = new Map()
+  const root = (i) => {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i] }
+    return i
+  }
+  readings.forEach((r, i) => {
+    const source = r.source || readingsStore().get(r.id)?.source || {}
+    const keys = []
+    try { keys.push(`host:${new URL(source.url).hostname.toLowerCase().replace(/^www\./, '')}`) } catch {}
+    const platform = normalizeName(source.platform)
+    if (platform) keys.push(`platform:${platform}`)
+    if (r.rawId) keys.push(`raw:${r.rawId}`)
+    if (!keys.length) keys.push('unknown')
+    for (const key of keys) {
+      if (owners.has(key)) parent[root(i)] = root(owners.get(key))
+      else owners.set(key, i)
+    }
+  })
+  return Math.max(1, new Set(parent.map((_, i) => root(i))).size)
+}
+
+function trustFor(r, crossCount, flags) {
+  const base = r.effectiveTier === 'structured' ? 1 : r.effectiveTier === 'local-llm' ? 0.7 : 0.4
+  const penalty = (flags.includes('jump') ? 0.1 : 0) + (flags.includes('sum-violation') ? 0.3 : 0) + (flags.includes('contradicted') ? 0.5 : 0)
+  // 公式本身就是那道线：base 上限 1.0，所以单一来源最多 0.6——想更高必须有第二个独立来源。
+  // 不需要额外的佐证上限，加了也是死代码（base > 1 才可能触发）。
+  let score = Math.max(0, Math.min(1, base * (0.6 + 0.4 * Math.min(1, (crossCount - 1) * 0.25)) - penalty))
+  if (flags.includes('review-required')) score = Math.min(score, 0.24)
+  if (flags.includes('legacy-invalid-value')) score = 0
+  return { score, crossCount, flags: [...new Set(flags)] }
+}
+
+/** 只在同期间、同单位、同口径的证据组内比较。状态变化只进入事件。 */
+function projectReadings(rs, extraFlags = new Map()) {
+  const active = rs.filter((r) => !['superseded', 'rejected'].includes(r.status))
+  const byValue = new Map()
+  for (const r of active) {
+    if (!byValue.has(r.value)) byValue.set(r.value, [])
+    byValue.get(r.value).push(r)
+  }
+  const counts = new Map([...byValue].map(([value, rows]) => [value, independentSources(rows)]))
+  const conflict = byValue.size > 1
+  const patches = rs.map((r) => {
+    const flags = [...(r.trust?.flags || []).filter((f) => f !== 'conflict'), ...(extraFlags.get(r.id) || [])]
+    const live = active.includes(r)
+    if (conflict && live) flags.push('conflict')
+    const crossCount = counts.get(r.value) || 1
+    return { id: r.id, indicatorId: r.indicatorId, status: live ? (conflict || flags.includes('sum-violation') ? 'conflicted' : 'current') : r.status, trust: trustFor(r, crossCount, flags) }
+  })
+  const conflicts = []
+  if (conflict) {
+    const a = active[0]
+    for (const b of active.slice(1)) if (a.value !== b.value) {
+      const id = `rc:${digest([observationKey(a), ...[a.id, b.id].sort()])}`
+      const prior = readingsStore().conflicts.get(id)
+      conflicts.push({ id, type: 'reading', observationId: observationKey(a), readingA: a.id, readingB: b.id, a: a.id, b: b.id, note: '同期间读数不一致，等待人工裁决', at: today(), resolved: prior?.resolved || null, ...(prior?.resolvedAt ? { resolvedAt: prior.resolvedAt } : {}) })
+    }
+  }
+  return { patches, conflicts }
+}
+
+function consistencyFlags(fact) {
+  const s = readingsStore()
+  const flags = []
+  const series = s.series.get(JSON.stringify([fact.indicatorId || fact.chainKey, fact.unit, fact.basis])) || []
+  let low = 0, high = series.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (s.groups.get(series[mid]).period.end < fact.period.end) low = mid + 1
+    else high = mid
+  }
+  const earlier = series.slice(Math.max(0, low - 5), low).map((key) => s.groups.get(key)).filter((g) => g.value != null && g.status === 'current')
+  if (earlier.length >= 4) {
+    const duration = (p) => Date.parse(p.end) - Date.parse(p.start)
+    const comparable = earlier.every((g) => Math.abs(duration(g.period) - duration(fact.period)) <= 7 * 864e5)
+    const changes = earlier.slice(1).map((g, i) => earlier[i].value ? Math.abs((g.value - earlier[i].value) / earlier[i].value) : Infinity)
+    const last = earlier[earlier.length - 1]
+    if (comparable && changes.every((x) => x <= 0.1) && last.value && Math.abs((fact.value - last.value) / last.value) > 0.4) flags.push('jump')
+  }
+  return flags
+}
+
+/** 显式范围元数据才检查加和；父子位置本身不证明可加（收入和毛利也可为父子）。 */
+function projectSumScope(fact, projection, incoming = []) {
+  if (!fact.indicatorId) return projection
+  const node = getNode(fact.indicatorId)
+  const parent = node?.measurement?.role === 'total' ? node : getNode(node?.parentId)
+  if (parent?.type !== 'observation' || parent.measurement?.role !== 'total' || !parent.measurement.scope) return projection
+  const children = childrenOf(parent.id).filter((n) => n.type === 'observation' && n.measurement?.role === 'component' && n.measurement.scope === parent.measurement.scope)
+  if (!children.length || (node.id !== parent.id && !children.some((n) => n.id === node.id))) return projection
+  const s = readingsStore()
+  const patches = new Map(projection.patches.map((p) => [p.id, p]))
+  const conflicts = new Map(projection.conflicts.map((c) => [c.id, c]))
+  const rows = []
+  const scopeKeys = new Set()
+  for (const member of [parent, ...children]) {
+    const key = observationKey({ ...fact, indicatorId: member.id })
+    scopeKeys.add(key)
+    const entries = new Map(s.groupReadings(key).map((r) => [r.id, r]))
+    for (const r of incoming) if (observationKey(r) === key) entries.set(r.id, r)
+    const clean = [...entries.values()].map((r) => {
+      const row = { ...r, ...patches.get(r.id) }
+      return { ...row, trust: { ...row.trust, flags: row.trust.flags.filter((f) => f !== 'sum-violation') } }
+    })
+    const p = projectReadings(clean)
+    for (const patch of p.patches) patches.set(patch.id, patch)
+    for (const conflict of p.conflicts) conflicts.set(conflict.id, conflict)
+    const live = clean.filter((r) => !['superseded', 'rejected'].includes(r.status))
+    rows.push(new Set(live.map((r) => r.value)).size === 1 ? live : [])
+  }
+  const representatives = rows.map((group) => group.at(-1))
+  const [total, ...components] = representatives
+  const sum = components.reduce((n, r) => n + (r?.value || 0), 0)
+  const invalid = total && components.every(Boolean) && representatives.every((r) => r.value >= 0)
+    && sum > total.value + Math.max(1, Math.abs(total.value)) * 1e-9
+  let activeId = null
+  if (invalid) {
+    const ids = rows.flat().map((r) => r.id)
+    activeId = `rc:${digest(['sum', ...representatives.map((r) => r.id)])}`
+    for (const id of ids) {
+      const patch = patches.get(id)
+      const r = incoming.find((r) => r.id === id) || s.refs.get(id)
+      patches.set(id, { ...patch, status: 'conflicted', trust: trustFor(r, patch.trust.crossCount, [...patch.trust.flags, 'sum-violation']) })
+    }
+    conflicts.set(activeId, {
+      id: activeId, type: 'reading', readingA: total.id, readingB: components[0].id, a: total.id, b: components[0].id,
+      readingIds: ids, totalIds: rows[0].map((r) => r.id), componentIds: rows.slice(1).flat().map((r) => r.id),
+      note: `同范围总计 ${total.value}，分部之和 ${sum}，两者不一致`, at: today(), resolved: null, reason: 'sum-violation',
+      comparison: { total: total.value, sum, unit: total.unit },
+    })
+  }
+  for (const c of s.conflicts.values()) {
+    if (c.reason !== 'sum-violation' || c.resolved || c.id === activeId) continue
+    const a = s.refs.get(c.readingA || c.a)
+    if (a && scopeKeys.has(observationKey(a))) conflicts.set(c.id, { ...c, resolved: 'both', resolvedAt: today(), obsolete: 'recomputed' })
+  }
+  return { patches: [...patches.values()], conflicts: [...conflicts.values()] }
+}
+
+/** trusted 是本地调用上下文，绝不从 input 读取；外部适配器只使用默认 false。 */
+export function ingestReadingCore(input, { trusted = false, channelId = null, migration = false } = {}) {
+  load()
+  try {
+    const period = input?.period || { start: input?.source?.start || input?.asOf || input?.source?.end, end: input?.source?.end || input?.asOf }
+    const normalized = validateReading({ ...input, ...(migration ? {} : { period }) }, { legacy: migration })
+    if (migration) normalized.source = { ...input.source, ...normalized.source }
+    const s = readingsStore()
+    const indicatorId = matchReadingIndicator({ ...normalized, themeHint: input.themeHint, indicatorId: input.indicatorId, nodeId: input.nodeId, channelId: input.channelId }, { trusted, channelId, migration })
+    const chainKey = indicatorId || `pending:${digest([normalizeName(normalized.indicator || normalized.metric || 'unknown'), normalizeName(input.themeHint)])}`
+    const identity = sourceIdentity(normalized.source, trusted, channelId || input.channelId)
+    const sourceId = migration && input.sourceId ? input.sourceId : identity.id
+    const source = { ...normalized.source, id: sourceId, identity: identity.identity, at: input.at || new Date().toISOString(), independentKey: identity.independentKey }
+    const dedupeKey = digest([chainKey, normalized.period, normalized.unit, normalized.basis, sourceId, normalized.source.url, normalized.source.accn, normalized.value])
+    if (s.dedupe.has(dedupeKey) && !migration) return { added: false, dedupeKey }
+    const old = s.groupReadings(observationKey({ ...normalized, indicatorId, chainKey }))
+    const superseded = old.filter((r) => !['superseded', 'rejected'].includes(r.status) && r.sourceId === sourceId && identity.identity !== 'unknown' && normalized.source.accn && r.accn === normalized.source.accn && r.value !== normalized.value)
+    const rawId = normalized.raw ? appendRaw({ kind: source.kind, label: source.label, text: normalized.raw, channel: { url: source.url, platform: source.platform } }).id : migration ? input.rawId || input.source?.rawId || null : null
+    const flags = []
+    if ((QUALITY.get(source.kind) || 0) < 0.6 || !source.url) flags.push('review-required')
+    if (normalized.legacyInvalidValue) flags.push('legacy-invalid-value')
+    const { raw, ...fields } = normalized
+    // 自报的 tier 作为先验采信。曾经这里一律压成 'agent'，等于宣布外部数据永远不可信——
+    // 结果是 agent 喂进来的结构化数据天花板只有 0.4，信任分失去区分度。
+    // 真正的约束在 trustFor 的佐证上限：没有第二个独立来源，谁都到不了 0.6 以上。
+    const effectiveTier = normalized.tier
+    const fact = s.makeFact({
+      ...fields, ...(migration && input.id ? { id: input.id } : {}),
+      at: migration && input.at ? input.at : new Date().toISOString(),
+      indicatorId, nodeId: indicatorId || (typeof input.nodeId === 'string' ? input.nodeId : null), channelId: channelId || input.channelId || null,
+      chainKey, sourceId, independentKey: identity.independentKey, accn: source.accn,
+      effectiveTier,
+      asOf: normalized.period.end, rawId, dedupeKey,
+      supersedes: superseded[superseded.length - 1]?.id || null,
+      status: normalized.legacyInvalidValue ? 'rejected' : 'current', trust: trustFor({ effectiveTier }, 1, flags),
+    })
+    const rs = [...old.map((r) => superseded.includes(r) ? { ...r, status: 'superseded' } : r), fact]
+    const projection = projectSumScope(fact, projectReadings(rs, new Map([[fact.id, consistencyFlags(fact)]])), rs)
+    const reading = s.commit({ fact, source, event: { kind: 'ingest', ...projection, trace: { matched: !!indicatorId, channelId: fact.channelId, quality: QUALITY.get(source.kind) || 0, effectiveTier: fact.effectiveTier } } })
+    persist()
+    return { added: true, reading, dedupeKey }
+  } catch (error) { return { added: false, error: error.message } }
+}
+
+export function allReadings() { load(); return readingsStore().all() }
+export function getReading(id) { load(); return readingsStore().get(id) }
+export function readingsPage(options = {}) {
+  load()
+  const page = readingsStore().page(options)
+  page.items = page.items.map((r) => ({ ...r, title: getNode(r.indicatorId)?.title || readingsStore().refs.get(readingsStore().groups.get(r.id)?.ids[0])?.indicator || '待归位' }))
+  return page
+}
+
+function judgmentsFor(indicatorIds) {
+  const ids = new Set(indicatorIds.filter(Boolean))
+  const channels = new Set(db.nodes.filter((n) => ids.has(n.id)).flatMap((n) => n.channelIds || []))
+  return db.nodes.filter((n) => n.kind === 'lemma' && n.type !== 'observation' && n.status !== 'dead' && ((n.indicatorIds || []).some((id) => ids.has(id)) || (n.channelIds || []).some((id) => channels.has(id)) || db.nodes.some((i) => ids.has(i.id) && i.parentId === n.id)))
+}
+
+export function readingEvidence(options = {}) {
+  load()
+  const result = readingsStore().evidence(options)
+  const group = readingsStore().groups.get(options.observationId)
+  const ids = options.indicatorId ? [options.indicatorId] : group ? [group.indicatorId] : result.items.map((r) => r.indicatorId)
+  return { ...result, judgments: judgmentsFor(ids).map((n) => ({ id: n.id, title: n.title, claim: n.title, confidence: n.confidence, settlesOn: n.settlement?.date || null, resolved: n.settlement?.resolved ?? null })) }
+}
+
+export function latestReadings() {
+  load()
+  const s = readingsStore()
+  const items = [...s.latest.entries()].map(([key, groupKey]) => {
+    const g = s.groups.get(groupKey)
+    const reading = s.get(g.currentReadingId || g.ids[g.ids.length - 1])
+    return {
+      ...reading, indicatorId: g.indicatorId, nodeId: g.indicatorId, pending: g.pending,
+      title: getNode(g.indicatorId)?.title || reading.indicator || reading.metric || '待归位',
+      value: g.value, values: g.values || null, trust: { ...g.trust, flags: [...g.trust.flags] },
+      status: g.status, currentReadingId: g.currentReadingId, observationId: groupKey,
+    }
+  })
+  // 待归位的排后面——已归位的才是树的主体，待归位是待办
+  items.sort((a, b) => (a.pending ? 1 : 0) - (b.pending ? 1 : 0) || (b.period?.end || '').localeCompare(a.period?.end || ''))
+  return { items, total: items.length, pending: items.filter((r) => r.pending).length }
+}
+
+export function allSources(options) {
+  load()
+  const sources = new Map((db.sources || []).map((s) => [s.id, s]))
+  for (const [id, source] of readingsStore().sources) {
+    const { scoreSum, ...publicSource } = source
+    sources.set(id, { ...publicSource, readingIdsTruncated: source.pushCount > (source.readingIds?.length || 0) })
+  }
+  const items = [...sources.values()].map((s) => JSON.parse(JSON.stringify(s)))
+  return options ? readingsStore().paginate(items, options).items : items
+}
+export function sourcesPage(options = {}) { return readingsStore().paginate(allSources(), options) }
+export function verifyReadingChain(key) { load(); return readingsStore().verify(key) }
+
+export function assignReading(id, indicatorId) {
+  load()
+  const s = readingsStore()
+  const r = s.refs.get(id)
+  if (!r || !db.nodes.some((n) => n.id === indicatorId && n.type === 'observation' && n.status !== 'dead')) return { ok: false, error: '读数或指标不存在' }
+  if (r.indicatorId === indicatorId) return { ok: true }
+  if (r.indicatorId) return { ok: false, error: '只有待归位读数可重新匹配' }
+  try {
+    const moved = s.groupReadings(observationKey(r)).map((row) => ({ ...row, indicatorId }))
+    const target = s.groupReadings(observationKey(moved[0]))
+    const combined = [...target, ...moved]
+    const projection = projectSumScope(moved[0], projectReadings(combined), combined)
+    const ids = new Set(moved.map((row) => row.id))
+    // 同一待归位观测的所有作证一起移动，保留修正和驳回状态。
+    const retired = [...s.conflicts.values()].filter((c) => !c.resolved && (ids.has(c.readingA) || ids.has(c.readingB))).map((c) => ({ ...c, resolved: 'both', resolvedAt: today(), obsolete: 'assigned' }))
+    s.commit({ event: { kind: 'assign', readingId: id, readingIds: [...ids], indicatorId, patches: projection.patches, conflicts: [...retired, ...projection.conflicts] } })
+    persist()
+    return { ok: true }
+  } catch (error) { return { ok: false, error: error.message } }
+}
+
+function resolveReadingConflict(c, verdict) {
+  const s = readingsStore()
+  const a = s.refs.get(c.readingA || c.a), b = s.refs.get(c.readingB || c.b)
+  if (!a || !b) return { ok: false, error: '冲突证据不存在' }
+  // 兼容旧导入的 readingA/readingB 或 a/b 冲突：先追加到事件账本。
+  if (!s.conflicts.has(c.id)) s.commit({ event: { kind: 'conflict', patches: [], conflicts: [{ ...c, readingA: a.id, readingB: b.id, resolved: c.resolved || null }] } })
+  const ids = new Set([...s.groupReadings(observationKey(a)), ...s.groupReadings(observationKey(b))].map((r) => r.id))
+  for (const id of c.readingIds || []) if (s.refs.has(id)) ids.add(id)
+  const losers = new Set(c.reason === 'sum-violation'
+    ? verdict === 'a' ? c.componentIds || [b.id] : verdict === 'b' ? c.totalIds || [a.id] : []
+    : verdict === 'a' ? [b.id] : verdict === 'b' ? [a.id] : [])
+  const groups = new Map()
+  for (const id of ids) {
+    const r = s.refs.get(id)
+    const flags = r.trust.flags.filter((f) => f !== 'sum-violation')
+    if (losers.has(id)) flags.push('contradicted')
+    const row = { ...r, status: losers.has(id) ? 'rejected' : r.status === 'conflicted' ? 'current' : r.status, trust: { ...r.trust, flags } }
+    const key = observationKey(row)
+    groups.set(key, [...(groups.get(key) || []), row])
+  }
+  const projections = [...groups.values()].map((rs) => projectReadings(rs))
+  const patches = projections.flatMap((p) => p.patches)
+  const remainingConflicts = projections.flatMap((p) => p.conflicts).filter((other) => other.id !== c.id)
+  const resolved = { ...c, readingA: a.id, readingB: b.id, resolved: verdict, resolvedAt: today() }
+  const aliases = [...s.conflicts.values()].filter((other) => other.id !== c.id && ((other.readingA === a.id && other.readingB === b.id) || (other.readingA === b.id && other.readingB === a.id))).map((other) => ({ ...other, resolved: verdict === 'both' ? verdict : (other.readingA === a.id ? verdict : verdict === 'a' ? 'b' : 'a'), resolvedAt: today() }))
+  const retired = [...s.conflicts.values()].filter((other) => other.id !== c.id && !other.resolved && (losers.has(other.readingA) || losers.has(other.readingB)))
+    .map((other) => ({ ...other, resolved: 'both', resolvedAt: today(), obsolete: 'superseded-by-decision' }))
+  s.commit({ event: { kind: 'resolve', conflictId: c.id, verdict, patches, conflicts: [...remainingConflicts, ...retired, resolved, ...aliases] } })
   persist()
-  return { added: true, reading }
+  return resolved
 }
 
-export function allReadings() {
-  return load().readings
-}
-/** 反查：某个读数属于哪些指标节点 */
+/** 反查：indicatorId 为主，channelIds 只作为旧数据兼容。 */
 export function indicatorsForReading(reading) {
-  const db = load()
-  const ch = db.channels.find((c) => c.id === reading.channelId)
-  if (!ch) return []
-  return db.nodes.filter((n) => (n.channelIds || []).includes(ch.id))
+  const d = load()
+  return d.nodes.filter((n) => n.id === reading.indicatorId || n.id === reading.nodeId || (reading.channelId && (n.channelIds || []).includes(reading.channelId)))
 }
 
-/** 取某通道产出的最新一条读数 */
 export function latestReadingByChannel(channelId) {
-  const db = load()
-  const readings = db.readings.filter((r) => r.channelId === channelId)
-  if (!readings.length) return null
-  return readings.reduce((latest, r) =>
-    (r.at || '') >= (latest.at || '') ? r : latest, readings[0])
+  load()
+  const s = readingsStore()
+  const rs = [...s.refs.values()].filter((r) => r.channelId === channelId).sort((a, b) => b.period.end.localeCompare(a.period.end) || b.period.start.localeCompare(a.period.start) || b.lineNo - a.lineNo)
+  if (!rs.length) return null
+  const r = s.get(rs[0].id), g = s.groups.get(observationKey(rs[0]))
+  return { ...r, value: g.value, status: g.status, trust: { ...g.trust, flags: [...g.trust.flags] } }
+}
+
+export function exportIntent() {
+  const d = load()
+  const tree = (themeId, parentId = null, visited = new Set()) => d.nodes.filter((n) => n.themeId === themeId && (n.parentId || null) === parentId && n.status !== 'dead' && !visited.has(n.id)).map((n) => ({ id: n.id, title: n.title, type: n.type, cadence: n.cadence || null, indicatorIds: n.indicatorIds || [], children: tree(themeId, n.id, new Set([...visited, n.id])) }))
+  return {
+    themes: d.themes.filter((t) => !t.deletedAt).map((t) => ({ id: t.id, name: t.name, tags: t.tags || [], tree: tree(t.id), tagLibrary: t.tagLibrary || [] })),
+    openJudgments: d.nodes.filter((n) => n.kind === 'lemma' && n.type !== 'observation' && n.status !== 'dead' && n.settlement?.resolved == null).map((n) => ({ id: n.id, claim: n.title, confidence: n.confidence, settlesOn: n.settlement?.date || null, indicators: d.nodes.filter((i) => i.type === 'observation' && i.status !== 'dead' && ((n.indicatorIds || []).includes(i.id) || i.parentId === n.id || (n.channelIds || []).some((id) => (i.channelIds || []).includes(id)))).map((i) => i.title) })),
+  }
+}
+
+export function dueIndicators(now = Date.now()) {
+  const d = load()
+  const time = typeof now === 'number' ? now : new Date(now).getTime()
+  if (!Number.isFinite(time)) return []
+  return d.nodes.filter((n) => n.type === 'observation' && n.status !== 'dead').map((n) => {
+    let parent = d.nodes.find((p) => p.id === n.parentId)
+    let inherited = null
+    const visited = new Set([n.id])
+    while (parent && !visited.has(parent.id)) {
+      visited.add(parent.id)
+      inherited = parent.scaffold?.indicators?.find((i) => normalizeName(i.name) === normalizeName(n.title))?.cadence
+      if (inherited) break
+      parent = d.nodes.find((p) => p.id === parent.parentId)
+    }
+    const cadence = n.cadence || inherited || '季度'
+    const days = ({ 日: 1, 每日: 1, 周: 7, 每周: 7, 月: 30, 每月: 30, 季: 95, 年: 365, ...CADENCE_DAYS })[cadence] || 95
+    const key = readingsStore().latest.get(n.id)
+    const last = readingsStore().groups.get(key)
+    const nextDue = new Date(last ? Date.parse(last.at) + days * 864e5 : 0).toISOString()
+    return { ...n, channelIds: n.channelIds || [], cadence, lastReadingAt: last?.at || null, nextDue }
+  }).filter((n) => Date.parse(n.nextDue) <= time)
 }
 // ------------------------------------------------------------------ 研究观点
 

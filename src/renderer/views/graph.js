@@ -17,8 +17,8 @@
  * 用 SVG 不用 Canvas：节点量级是几十到低几百；SVG 在 retina 上能画真正的
  * 0.5px 发丝线、能用 CSS 变量跟着深浅色模式走、命中测试免费。
  */
-import { h } from '../lib/dom.js'
-import { state, refresh, selectNode, setShape } from '../app.js'
+import { h, icon } from '../lib/dom.js'
+import { state, refresh, selectNode, setShape, setView } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 
 const m = window.meridian
@@ -475,8 +475,17 @@ export function renderGraph(wrap) {
   view.append(nodeLayer)
 
   // ------------------------------------------------------------- 因果聚焦
+  // 问号：缩放手感是很个人的事，第一次用大概率觉得快。
+  // 悬浮/聚焦给一句指向设置项的话，点一下直接跳过去——不让用户自己去找。
+  const helpTip = h('span', { class: 'graph-help-tip', role: 'tooltip' },
+    '缩放太快或太慢？去 设置 → 界面 → 图的缩放 调。')
+  const helpBtn = h('button', {
+    class: 'graph-help', type: 'button', 'aria-label': '图的缩放设置',
+    onclick: (e) => { e.stopPropagation(); setView('settings') },
+  }, '?')
   const hint = h('div', { class: 'graph-hint' },
-    h('span', { class: 'graph-hint-k' }, '滚轮缩放 · 拖拽平移 · 双击适应'),
+    h('span', { class: 'graph-hint-k' }, '点节点看因果 · 点空白看全图 · 滚轮缩放 · 拖拽平移 · 双击适应'),
+    helpBtn, helpTip,
   )
   const radius = h('span', { class: 'graph-radius' })
   const overlay = h('div', { class: 'graph-overlay' }, radius, hint)
@@ -537,45 +546,75 @@ export function renderGraph(wrap) {
 
     // 优先用容器尺寸，截图工具 show:false 时容器为零，回退到视口
     const pr = wrap.parentElement?.getBoundingClientRect() || {}
-    const vw = pr.width > 0 ? pr.width : (document.documentElement?.clientWidth || window.innerWidth || 1280)
-    const vh = pr.height > 0 ? pr.height : (document.documentElement?.clientHeight || window.innerHeight || 820)
+    const sized = pr.width > 0 && pr.height > 0
+    const vw = sized ? pr.width : (document.documentElement?.clientWidth || window.innerWidth || 1280)
+    const vh = sized ? pr.height : (document.documentElement?.clientHeight || window.innerHeight || 820)
     const pad = 50
     const scale = Math.max(0.01, Math.min((vw - pad * 2) / cw, (vh - pad * 2) / ch, 1.2))
     const cwS = cw * scale, chS = ch * scale
     vb = [minX - (vw - cwS) / 2 / scale, minY - (vh - chS) / 2 / scale, vw / scale, vh / scale]
     applyViewBox()
 
-    // 给 SVG 显式像素尺寸——show:false 时 CSS 100% 拿不到容器尺寸
-    svg.setAttribute('width', String(vw))
-    svg.setAttribute('height', String(vh))
-    // wrapper 也显式设尺寸，不让 flex 布局决定
-    wrap.style.width = vw + 'px'
-    wrap.style.height = vh + 'px'
+    // 容器有真实尺寸时，尺寸交给 CSS 的 inset:0 说话。
+    // 曾经这里无条件写死像素，而 wrap 是 position:absolute; inset:0——
+    // 一写 width/height 就覆盖了 inset，全屏后父容器长了它不跟着长，图就缩在一角。
+    // 只有容器量不到尺寸（截图工具 show:false）才需要显式兜底。
+    if (sized) {
+      wrap.style.width = ''
+      wrap.style.height = ''
+      svg.removeAttribute('width')
+      svg.removeAttribute('height')
+    } else {
+      svg.setAttribute('width', String(vw))
+      svg.setAttribute('height', String(vh))
+      wrap.style.width = vw + 'px'
+      wrap.style.height = vh + 'px'
+    }
   }
 
 
+  /** 缩放灵敏度：设置里可调。触控板一次滚动会连发多个小 deltaY，
+   *  固定 10% 一档体感过快；deltaMode 还要归一——按「行」滚的鼠标 deltaY 是上百。 */
+  const zoomSpeed = () => {
+    const v = Number(state.settings?.graphZoom)
+    return Number.isFinite(v) && v > 0 ? Math.max(0.2, Math.min(3, v)) : 1
+  }
+  const zoomLimits = () => {
+    const base = Math.max(vb[2], vb[3])
+    return [base / 6, base * 6]
+  }
   svg.addEventListener('wheel', (e) => {
     e.preventDefault()
-    // 把光标位置转到内容空间
+    // 归一到「档」：像素模式按 4px 一档（触滑板一次小滚动约 1-10px），
+    // 行模式本来就是一档，页模式按 3 档算。以前像素模式 unit=1，
+    // 触滑板随手一拂就是 4-8 档，灵敏度调到 0.4 也照样跳。
+    const unit = e.deltaMode === 1 ? 1 : e.deltaMode === 2 ? 3 : 4
+    const steps = Math.max(-4, Math.min(4, e.deltaY / unit))
+    const factor = Math.pow(1.08, -steps * zoomSpeed())
+    const [minW, maxW] = zoomLimits()
+    const nw = Math.max(minW, Math.min(maxW, vb[2] * factor))
+    const real = nw / vb[2]
+    if (real === 1) return
+    // 把光标位置转到内容空间，缩放围绕光标做
     const r = svg.getBoundingClientRect()
     const cx = vb[0] + (e.clientX - r.left) / r.width * vb[2]
     const cy = vb[1] + (e.clientY - r.top) / r.height * vb[3]
-    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-    const nw = vb[2] * factor, nh = vb[3] * factor
-    vb = [cx - (cx - vb[0]) * factor, cy - (cy - vb[1]) * factor, nw, nh]
+    vb = [cx - (cx - vb[0]) * real, cy - (cy - vb[1]) * real, nw, vb[3] * real]
     applyViewBox()
-
   }, { passive: false })
 
   let drag = null
   svg.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.node')) return
-    drag = { x: e.clientX, y: e.clientY, vb0: [...vb] }
+    drag = { x: e.clientX, y: e.clientY, vb0: [...vb], moved: false }
     svg.setPointerCapture(e.pointerId)
     svg.classList.add('grabbing')
   })
   svg.addEventListener('pointermove', (e) => {
     if (!drag) return
+    // 移动超过 4px 算拖拽，不算点击——否则每次平移完都会顺手点亮全图
+    if (!drag.moved && (Math.abs(e.clientX - drag.x) > 4 || Math.abs(e.clientY - drag.y) > 4)) drag.moved = true
+    if (!drag.moved) return
     const r = svg.getBoundingClientRect()
     const dx = (e.clientX - drag.x) / r.width * drag.vb0[2]
     const dy = (e.clientY - drag.y) / r.height * drag.vb0[3]
@@ -583,14 +622,22 @@ export function renderGraph(wrap) {
     applyViewBox()
 
   })
-  const endDrag = () => { drag = null; svg.classList.remove('grabbing') }
+  const endDrag = () => {
+    // 在空白上点一下（没拖）= 收起因果聚焦，点亮全图。
+    // 聚焦是「点节点」才有信息量的状态，不该在用户想看全景时还压暗一半。
+    // 只清聚焦，不清选中——检视面板里那条命题还在看，用户只是想顺便看一眼全图。
+    if (drag && !drag.moved && state.selectedId) applyFocus(null)
+    drag = null
+    svg.classList.remove('grabbing')
+  }
   svg.addEventListener('pointerup', endDrag)
   svg.addEventListener('pointercancel', endDrag)
   svg.addEventListener('dblclick', (e) => { if (!e.target.closest('.node')) fitView() })
 
-  // 首次布局后适应；窗口尺寸变化时也重新适应
+  // 观察父容器而不是 wrap 自己——wrap 的尺寸由 CSS inset:0 决定，
+  // 父容器变它才变；观察 wrap 自己则在全屏/分屏时收不到通知。
   const ro = new ResizeObserver(() => fitView())
-  ro.observe(wrap)
+  ro.observe(wrap.parentElement || wrap)
   // 用两个 rAF 确保浏览器至少完成一轮布局（show:false 的窗口尤其需要）
   requestAnimationFrame(() => requestAnimationFrame(fitView))
 

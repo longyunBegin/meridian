@@ -1298,13 +1298,12 @@ ok('R1: availableFetchers 包含 web', avail.includes('web'))
 ok('R1: availableFetchers 不含未实现的 tavily', !avail.includes('tavily'))
 ok('R1: availableFetchers 不含 null 值', avail.every((k) => k != null))
 
-// 未实现的 fetch 类型静默返回空
+// v0.8 不再静默吞掉空壳取数器：旧配置仍可能存在，必须明说不可用。
 const unkResult = await fetchChannel({ fetch: 'tavily', query: 'test', kind: '自媒体' })
-ok('R1: 未实现类型返回空 items', unkResult.items.length === 0 && !unkResult.error)
+ok('R1 v0.8: 未实现类型无内容且返回明确错误', unkResult.items.length === 0 && typeof unkResult.error === 'string' && unkResult.error.length > 0)
 
-// 未知 fetch 类型也静默返回空
 const unkResult2 = await fetchChannel({ fetch: 'nonexistent', query: 'test' })
-ok('R1: 未知类型返回空 items', unkResult2.items.length === 0 && !unkResult2.error)
+ok('R1 v0.8: 未知类型无内容且返回明确错误', unkResult2.items.length === 0 && typeof unkResult2.error === 'string' && unkResult2.error.length > 0)
 
 // web fetcher 对短文本返回空
 const shortResult = await fetchChannel({ fetch: 'web', query: 'about:blank', name: 'test', kind: '自媒体' })
@@ -1327,15 +1326,15 @@ const r1 = store.addReading({
 ok('R2: addReading 返回 added: true', r1.added === true)
 ok('R2: reading 有 id', r1.reading.id != null)
 ok('R2: reading 有 dedupeKey', r1.reading.dedupeKey != null)
-ok('R2: dedupeKey 格式正确', r1.reading.dedupeKey === 'nvda.revenue|2017-01-30|2018-01-28|0001045810-19-000010')
+ok('R2 v0.8: 去重键为非空不透明标识', typeof r1.reading.dedupeKey === 'string' && r1.reading.dedupeKey.length > 0)
 
-// 幂等：同一 dedupeKey 再加一次
+// 幂等：完整来源也相同；v0.8 不再把不同来源仅凭相同 accn 合并。
 const r2 = store.addReading({
   metric: 'nvda.revenue',
   value: 9714000000,
   unit: 'USD',
   asOf: '2018-01-28',
-  source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-19-000010' },
+  source: { kind: '财报 / 公告', start: '2017-01-30', end: '2018-01-28', accn: '0001045810-19-000010', url: 'https://sec.gov/...' },
 })
 ok('R2: 重复 dedupeKey 返回 added: false', r2.added === false)
 
@@ -1365,17 +1364,18 @@ ok('R2: 不同 metric 是新记录', r4.added === true)
 const revReadings = store.allReadings().filter((r) => r.metric === 'nvda.revenue')
 ok('R2: allReadings 过滤 metric 正确', revReadings.length === 2 && revReadings.every((r) => r.metric === 'nvda.revenue'))
 
-// nodeId 过滤
+// v0.8 归位必须指向真实指标，旧 nodeId 输入仍能迁为主关联。
+const r5Indicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: '苹果收入' })
 const r5 = store.addReading({
   metric: 'aapl.revenue',
   value: 391000000000,
   unit: 'USD',
   asOf: '2024-09-28',
-  nodeId: 'node-ind-1',
+  nodeId: r5Indicator.id,
   source: { kind: '财报 / 公告', start: '2023-10-01', end: '2024-09-28', accn: '0000320193-24-000001' },
 })
-const indReadings = store.allReadings().filter((r) => r.nodeId === 'node-ind-1')
-ok('R2: allReadings 过滤 nodeId 正确', indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
+const indReadings = store.allReadings().filter((r) => r.indicatorId === r5Indicator.id)
+ok('R2 v0.8: nodeId 兼容输入归位到真实指标', r5.added && indReadings.length === 1 && indReadings[0].metric === 'aapl.revenue')
 
 // latestReading 语义：groupReadings 的 latest 字段
 const r6 = store.addReading({
@@ -1404,8 +1404,11 @@ const exportedR = store.exportAll({ withRaw: false })
 const parsedR = JSON.parse(exportedR)
 ok('R2: 导出包含 readings', Array.isArray(parsedR.readings) && parsedR.readings.length >= 4)
 
-// 老文件（无 readings 字段）导入后是空数组
+// 老文件没有 readings，也没有 v0.8 的来源集合与追加事件账本。
 delete parsedR.readings
+delete parsedR.readingJournal
+delete parsedR.readingFormat
+delete parsedR.sources
 const oldFileStrR = JSON.stringify(parsedR)
 store.importAll(oldFileStrR)
 ok('R2: 老文件导入后 readings 为空', store.stats().readings === 0)
@@ -1759,6 +1762,8 @@ ok('R7 缺口: 2 个无通道指标', gapNodes.length === 2)
 // --- grep 验收 ---
 const inspectorSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
 const vaultSrcR7 = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const readingUiSrcV8 = readFileSync2(join(ROOT2, 'src/renderer/views/readings.js'), 'utf8')
+const readingAppSrcV8 = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 
 // 读数视图和来源面板无「加权」「汇总」「总量」「合计」
 ok('R7 验收: vault.js 无 加权', !vaultSrcR7.includes('加权'))
@@ -1781,9 +1786,9 @@ const pcR7 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 const extractKeysR7 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
 ok('R7 验收: preload 两份同步', JSON.stringify(extractKeysR7(pjR7)) === JSON.stringify(extractKeysR7(pcR7)))
 
-// 新 store 导出函数有渲染层调用方
-ok('R7 验收: indicatorsForReading 有渲染层调用', inspectorSrc.includes('indicatorsForReading') || vaultSrcR7.includes('indicatorsForReading'))
-ok('R7 验收: latestReadingByChannel 有渲染层调用', inspectorSrc.includes('latestReadingByChannel') || vaultSrcR7.includes('latestReadingByChannel'))
+// v0.8：反查走按需证据，树内走每指标最新投影，不回传全量读数。
+ok('R7 v0.8: 检视面板按需加载证据', inspectorSrc.includes('readingPanel') && readingUiSrcV8.includes('m.readingEvidence('))
+ok('R7 v0.8: 树加载每指标最新投影', readingAppSrcV8.includes('m.latestReadings(') && !readingAppSrcV8.includes('m.allReadings('))
 
 // ============================================================
 // v0.6.3: O1-O5 优化
@@ -1840,8 +1845,8 @@ ok('O1: discover.js 有 parseCompanyFacts', discoverSrc.includes('parseCompanyFa
 ok('O1: ipc.js 有 edgar:discoverTags', readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8').includes('edgar:discoverTags'))
 ok('O1: preload.js 有 discoverTags', pjR7.includes('discoverTags'))
 ok('O1: preload.cjs 有 discoverTags', pcR7.includes('discoverTags'))
-// vault.js 有发现标签按钮
-ok('O1: vault.js 有发现标签按钮', vaultSrcR7.includes('发现标签'))
+// v0.8 不再要求用户发现内部标签，来源由读数自动形成。
+ok('O1 v0.8: 去掉标签配置，来源有独立分页', !vaultSrcR7.includes('发现标签') && readingUiSrcV8.includes('m.sourcesPage('))
 
 // --- O2: 通道归属主题 + optgroup ---
 const o2Theme = store.addTheme('O2 测试主题')
@@ -1857,12 +1862,11 @@ ok('O2a: 其他主题通道有 themeId', o2Ch3.themeId === o2Other.id)
 const o2Channels = store.allChannels()
 ok('O2a: channelList 包含主题私有通道', o2Channels.some((c) => c.id === o2Ch1.id && c.themeId === o2Theme.id))
 ok('O2a: channelList 包含全局通道', o2Channels.some((c) => c.id === o2Ch2.id && c.themeId === null))
-// O2b: inspector.js 有 optgroup
-ok('O2b: inspector.js 有 optgroup', inspectorSrc.includes('optgroup'))
-ok('O2b: inspector.js 有当前主题分组', inspectorSrc.includes('当前主题'))
-ok('O2b: inspector.js 有全局分组', inspectorSrc.includes('全局'))
-// vault.js 通道列表显示归属
-ok('O2: vault.js 通道列表显示主题归属', vaultSrcR7.includes('ch.themeId'))
+// v0.8：不用通道分组选管道，直接按指标查台账，未知读数再人工归位。
+ok('O2b v0.8: 检视面板提供读数台账', inspectorSrc.includes('readingPanel(node)'))
+ok('O2b v0.8: 台账查询限定当前指标', readingUiSrcV8.includes('m.readingsPage({ indicatorId: node.id'))
+ok('O2b v0.8: 未匹配读数可人工归位', readingUiSrcV8.includes('m.assignReading(') && readingUiSrcV8.includes('归位到'))
+ok('O2 v0.8: 归位选项可辨主题', readingUiSrcV8.includes('state.themes.find') && readingUiSrcV8.includes('n.themeId'))
 
 // --- O3: 删通道清悬空引用 ---
 const o3Theme = store.addTheme('O3 测试主题')
@@ -1877,14 +1881,14 @@ ok('O3: channelIds 不含已删通道 id', !o3NodeAfter.channelIds.includes(o3Ch
 // 通道确实被删了
 ok('O3: 通道已删除', !store.allChannels().some((c) => c.id === o3Ch.id))
 
-// --- O4: 清理 indicatorId 写入 ---
+// --- O4: v0.8 指标归位为主关联，获取方仍可用人话契约 ---
 ok('O4: fetchers.js 无 indicatorId', !fetchersSrc.includes('indicatorId'))
 const storeSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
-ok('O4: store.js 无 indicatorId', !storeSrc.includes('indicatorId'))
+ok('O4 v0.8: store 提供主关联和待归位入口', storeSrc.includes('indicatorId') && typeof store.assignReading === 'function')
 
-// --- O5: 空态提示加跳转 ---
-ok('O5: inspector.js 有 setView 导入', inspectorSrc.includes('setView'))
-ok('O5: inspector.js 有跳转链接', inspectorSrc.includes("setView('sources')"))
+// --- O5: 空态直接说明如何提供读数，不再跳转配置管道 ---
+ok('O5 v0.8: 检视面板直接提供读数入口', inspectorSrc.includes("from './readings.js'") && inspectorSrc.includes('readingPanel(node)'))
+ok('O5 v0.8: 空态说明手记或助手提供', inspectorSrc.includes('readingPanel') && readingUiSrcV8.includes('还没有读数') && readingUiSrcV8.includes('助手按主题'))
 
 // --- v0.6.3 preload 两份同步（再验一次，加了 discoverTags）---
 const pj63 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
@@ -1901,20 +1905,22 @@ console.log('\n— v0.6.4: F1-F5 修订 —')
 const vaultSrcF = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const ipcSrcF = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
 
-// --- F1: addReading 停用 indicatorId ---
+// --- F1: v0.8 恢复 indicatorId 主关联，不再要求丢弃归位信息 ---
+const f1Indicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: 'F1 归位指标' })
 const f1Reading = store.addReading({
   metric: 'f1.test',
+  indicator: f1Indicator.title,
   value: 42,
   unit: 'USD',
-  asOf: '2024-Q1',
-  indicatorId: 'should-not-persist',
-  source: { kind: '一手数据' },
+  period: { start: '2024-01-01', end: '2024-03-31' },
+  indicatorId: f1Indicator.id,
+  source: { kind: '一手数据', label: 'F1 来源', url: 'https://f1.example/report' },
 })
-ok('F1: addReading 不写 indicatorId', f1Reading.added && store.allReadings().find((r) => r.metric === 'f1.test').indicatorId === undefined)
-ok('F1: store.js 无 indicatorId 字符串', !storeSrc.includes('indicatorId'))
+ok('F1 v0.8: addReading 保留指标主关联', f1Reading.added && store.allReadings().find((r) => r.metric === 'f1.test').indicatorId === f1Indicator.id)
+ok('F1 v0.8: 指标读数提供有界查询', typeof store.readingsPage === 'function' && typeof store.latestReadings === 'function')
 
-// --- F2: 主题下拉默认值陷阱 ---
-ok('F2: vault.js inputs.themeId 初始化为 state.themeId', vaultSrcF.includes("themeId: state.themeId || null"))
+// --- F2: v0.8 无通道配置下拉；手填读数由当前节点带主题 ---
+ok('F2 v0.8: 手填从当前节点推导主题', !vaultSrcF.includes('channelAdd(') && readingUiSrcV8.includes('themeHint: state.themes.find') && readingUiSrcV8.includes('node.themeId'))
 
 // --- F3: COMMON_US_GAAP 带中文标签 + 同义组 ---
 const { SYNONYM_GROUPS } = await import('../src/main/store.js')
@@ -1924,14 +1930,14 @@ ok('F3: SYNONYM_GROUPS 存在', Array.isArray(SYNONYM_GROUPS) && SYNONYM_GROUPS.
 ok('F3: SYNONYM_GROUPS 每组是字符串数组', SYNONYM_GROUPS.every((g) => Array.isArray(g) && g.every((t) => typeof t === 'string')))
 ok('F3: parseCompanyFacts 返回 label', parsedTags.find((t) => t.tag === 'Revenues')?.label === '总收入')
 ok('F3: parseCompanyFacts 返回 synonymGroup', parsedTags.find((t) => t.tag === 'Revenues')?.synonymGroup === 0)
-ok('F3: vault.js 标签面板显示中文标签', vaultSrcF.includes('t.label') && vaultSrcF.includes('t.tag'))
+ok('F3 v0.8: 手填契约使用人话节点标题', readingUiSrcV8.includes('indicator: node.title'))
 
-// --- F4: 手动读数挂指标（R2: 已从 vault.js 搬到 inspector.js）---
+// --- F4: 手动读数仍在检视面板，但不再暗建 manual 通道 ---
 const inspectorSrcF4 = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
-ok('F4: inspector.js 有手填读数按钮', inspectorSrcF4.includes('手填一条读数'))
-ok('F4: inspector.js 有 manual 通道查找', inspectorSrcF4.includes("c.fetch === 'manual'"))
-ok('F4: inspector.js 有 channelAdd 手动录入', inspectorSrcF4.includes("name: '手动录入'"))
-ok('F4: inspector.js 有 updateNode channelIds', inspectorSrcF4.includes('channelIds'))
+ok('F4 v0.8: 检视面板有手填入口', inspectorSrcF4.includes('readingPanel(node)') && readingUiSrcV8.includes('记一条读数'))
+ok('F4 v0.8: 不再寻找手工通道', !inspectorSrcF4.includes("c.fetch === 'manual'") && readingUiSrcV8.includes('manualForm(node)'))
+ok('F4 v0.8: 手填也过摄入契约', !inspectorSrcF4.includes('channelAdd(') && readingUiSrcV8.includes('m.pushReadings('))
+ok('F4 v0.8: 人话归位不再改 channelIds', readingUiSrcV8.includes('indicator: node.title') && !readingUiSrcV8.includes('channelIds:'))
 ok('F4: vault.js 无手动录入表单', !vaultSrcF.includes('手动记一条读数'))
 
 // --- F5: 通道列表显示拉取错误状态 ---
@@ -1939,7 +1945,7 @@ ok('F5: store.js addChannel 有 lastOk', storeSrc.includes('lastOk'))
 ok('F5: store.js addChannel 有 lastError', storeSrc.includes('lastError'))
 ok('F5: ipc.js channel:fetch 写 lastError', ipcSrcF.includes('lastError'))
 ok('F5: ipc.js channel:fetch 写 lastOk', ipcSrcF.includes('lastOk'))
-ok('F5: vault.js 通道列表显示 lastError', vaultSrcF.includes('ch.lastError'))
+ok('F5 v0.8: 来源读取失败有重试，手填失败不丢内容', readingUiSrcV8.includes('重试') && readingUiSrcV8.includes('填写内容已保留'))
 // 端到端：addChannel 带 lastError
 const f5Ch = store.addChannel({ name: 'F5 错误通道', fetch: 'rss', kind: '独立媒体', lastError: 'HTTP 500' })
 ok('F5: addChannel 存储 lastError', f5Ch.lastError === 'HTTP 500')
@@ -2034,13 +2040,13 @@ ok('T6: 空 tags 顺序不变', t6Empty[0].channel.id === 'a' && t6Empty[3].chan
 const t6Null = rankChannelsByTags(t6Channels, null)
 ok('T6: null tags 全部 score 0', t6Null.every((r) => r.score === 0))
 
-// --- T7: inspector.js 相关性排序 ---
-ok('T7: inspector.js 有 themeTags', inspectorSrcT.includes('themeTags'))
-ok('T7: inspector.js 有 score 分组', inspectorSrcT.includes('score'))
-ok('T7: inspector.js 有最相关', inspectorSrcT.includes('最相关'))
-ok('T7: inspector.js 有相关', inspectorSrcT.includes('相关'))
-ok('T7: inspector.js 有其他', inspectorSrcT.includes('其他'))
-ok('T7: inspector.js 退化保留 themeId 分组', inspectorSrcT.includes('当前主题'))
+// --- T7: v0.8 不再挑选相关通道；台账直接给证据、信任和关联判断 ---
+ok('T7 v0.8: 检视面板直达台账', inspectorSrcT.includes('readingPanel(node)'))
+ok('T7 v0.8: 展开提供信任依据', readingUiSrcV8.includes('trust.score') && readingUiSrcV8.includes('可信度'))
+ok('T7 v0.8: 展开提供独立来源数', readingUiSrcV8.includes('源一致'))
+ok('T7 v0.8: 展开提供关联判断', readingUiSrcV8.includes('关联判断') && readingUiSrcV8.includes('result.judgments'))
+ok('T7 v0.8: 展开提供原文回溯', readingUiSrcV8.includes('m.rawGet(') && readingUiSrcV8.includes('查看原文'))
+ok('T7 v0.8: 待归位可辨主题', readingUiSrcV8.includes('n.themeId') && readingUiSrcV8.includes('归位到'))
 
 // --- T8: 不手填 ---
 ok('T8: vault.js 无 tags 输入框', !vaultSrcF.includes('placeholder.*tags') && !vaultSrcF.includes("placeholder: 'tags'"))
@@ -2073,22 +2079,24 @@ ok('T12: preload 两份同步', JSON.stringify(extractKeysT(pjT)) === JSON.strin
 
 console.log('\n— latest tie-break 修复 —')
 
-// 同 at 的多条读数，latest 取后加的那条（groupReadings）
-store.addReading({ metric: 'tie.break', value: 1, at: '2026-09-24', source: { kind: '一手数据', accn: 't1' } })
-store.addReading({ metric: 'tie.break', value: 2, at: '2026-09-24', source: { kind: '一手数据', accn: 't2' } })
-const tieGroup = groupReadings(store.allReadings().filter((r) => r.metric === 'tie.break'))
-ok('tie-break: groupReadings 同 at 取后加的', tieGroup[0].latest.value === 2)
+// v0.8：同一期间异源异值必须显式冲突，不能以入库顺序代替裁决。
+const tieIndicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: '同刻冲突指标' })
+const tieInput = { indicatorId: tieIndicator.id, indicator: tieIndicator.title, metric: 'tie.break', unit: 'USD', basis: 'reported', period: { start: '2026-09-24', end: '2026-09-24' }, at: '2026-09-24' }
+store.addReading({ ...tieInput, value: 1, source: { kind: '一手数据', label: '甲', url: 'https://tie-a.example/report', platform: '甲' } })
+store.addReading({ ...tieInput, value: 2, source: { kind: '一手数据', label: '乙', url: 'https://tie-b.example/report', platform: '乙' } })
+const tieGroup = store.readingsPage({ indicatorId: tieIndicator.id, limit: 10 })
+ok('tie-break v0.8: 同 at 异值呈现一个冲突观测', tieGroup.total === 1 && tieGroup.items[0]?.status === 'conflicted' && tieGroup.items[0]?.currentReadingId === null)
 
-// 同 at 的多条读数，latest 取后加的那条（latestReadingByChannel）
+// 旧通道查询也不能绕过冲突裁决。
 const tieCh = store.addChannel({ name: 'tie-break 通道', fetch: 'manual', kind: '一手数据' })
-store.addReading({ metric: 'tie.break.ch', value: 100, at: '2026-09-24', channelId: tieCh.id, source: { kind: '一手数据', accn: 'tc1' } })
-store.addReading({ metric: 'tie.break.ch', value: 200, at: '2026-09-24', channelId: tieCh.id, source: { kind: '一手数据', accn: 'tc2' } })
+const tieChannelIndicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: '通道冲突指标', channelIds: [tieCh.id] })
+store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 100, channelId: tieCh.id, source: { kind: '一手数据', label: '甲', url: 'https://tie-a.example/channel', platform: '甲' } })
+store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 200, channelId: tieCh.id, source: { kind: '一手数据', label: '乙', url: 'https://tie-b.example/channel', platform: '乙' } })
 const tieLatest = store.latestReadingByChannel(tieCh.id)
-ok('tie-break: latestReadingByChannel 同 at 取后加的', tieLatest.value === 200)
+ok('tie-break v0.8: latestReadingByChannel 不擅选胜者', tieLatest?.status === 'conflicted' && tieLatest?.value == null)
 
-// 确认 src 里 latest 比较用 > （相等时取后加的 = reduce 返回 b）
-const readingsSrc = readFileSync2(join(ROOT2, 'src/shared/readings.js'), 'utf8')
-ok('tie-break: readings.js 用 > 取后加的', readingsSrc.includes('a.at > b.at'))
+const readingsSrc = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
+ok('tie-break v0.8: 树使用显式最新投影而非全量排序', readingsSrc.includes('latestReadings') && !readingsSrc.includes('await m.allReadings('))
 
 // ============================================================
 // R5: 轮询器 — dueChannels + runChannelFetch + failCount
@@ -2459,9 +2467,9 @@ const inspectorBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js
 ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
 ok('B: IPC 按 indicatorId 提议', ipcBSrc.includes("getNode(indicatorId)"))
 ok('B: lattice.js 无批量提议入口', !latticeBSrc.includes('proposeLinks'))
-ok('B: inspector.js 有单指标提议入口', inspectorBSrc.includes('proposeLinks(node.id)'))
-ok('B: inspector.js 采用时合并通道', inspectorBSrc.includes('new Set([...(node.channelIds || []), ...proposal.channelIds])'))
-ok('B: inspector.js 采用后立即拉取', inspectorBSrc.includes('m.channelFetch(id)'))
+ok('B v0.8: 单指标看台账而非提议管道', inspectorBSrc.includes('readingPanel(node)') && !inspectorBSrc.includes('proposeLinks(node.id)'))
+ok('B v0.8: 手填不暗建通道', !readingUiSrcV8.includes('channelAdd(') && readingUiSrcV8.includes('m.pushReadings('))
+ok('B v0.8: 提交读数后刷新台账', readingUiSrcV8.includes('await refresh()') && !readingUiSrcV8.includes('m.channelFetch('))
 ok('B: vault.js 无缺口列表', !vaultBSrc.includes('未关联指标'))
 
 // ============================================================
@@ -2704,9 +2712,9 @@ ok('B2: ipc.js 有 channel:metricFetchers', ipcSrc66.includes('channel:metricFet
 ok('B2: ipc.js import METRIC_FETCHERS', ipcSrc66.includes('METRIC_FETCHERS'))
 ok('B2: preload.js 有 metricFetchers', pj66.includes('metricFetchers'))
 ok('B2: preload.cjs 有 metricFetchers', pc66.includes('metricFetchers'))
-ok('B2: vault.js 用 metricFetchers', vaultSrc66.includes('metricFetchers'))
-ok('B2: vault.js 用 needsMetric', vaultSrc66.includes('needsMetric'))
-ok('B2: vault.js 发现按钮仍只对 edgarConcept', vaultSrc66.includes("e.target.value === 'edgarConcept' ? '' : 'none'"))
+ok('B2 v0.8: 来源页不配置取数器', !vaultSrc66.includes('metricFetchers') && readingUiSrcV8.includes('renderSources'))
+ok('B2 v0.8: 无内部 metric 配置', !vaultSrc66.includes('needsMetric') && readingUiSrcV8.includes('indicator: node.title'))
+ok('B2 v0.8: 不再要求用户发现 GAAP 标签', !vaultSrc66.includes('发现标签') && readingUiSrcV8.includes('来源随读数自动记录'))
 
 // B2: IPC 可调
 ok('B2: IPC channel:metricFetchers 可调', Array.isArray(await fire('channel:metricFetchers')))
@@ -2720,14 +2728,14 @@ ok('B3: 通道库保留 metric', b3Library.some((channel) => channel.metric))
 ok('B3: 通道库保留 interval 或使用默认值', b3Library.every((channel) => channel.interval == null || channel.interval >= 15))
 ok('B3: preload 无模板入口', !pj66.includes('addThemeFromTemplate') && !pc66.includes('addThemeFromTemplate'))
 
-// --- I1: 读数筛选指标维度 ---
+// --- I1: v0.8 指标维度由查询限定，不在渲染层过滤全量 readings ---
 
-ok('I1: 读数保留独立指标筛选', vaultSrc66.includes("filterBar('全部指标', indicators.map"))
-ok('I1: 指标筛选显式更新选中状态', vaultSrc66.includes('currentIndicator = value') && vaultSrc66.includes("child.setAttribute('aria-selected'"))
-ok('I1: vault.js 有 全部指标', vaultSrc66.includes('全部指标'))
-ok('I1: vault.js 有 currentIndicator', vaultSrc66.includes('currentIndicator'))
-ok('I1: vault.js 指标筛选用 channelIds', vaultSrc66.includes('ind.channelIds'))
-ok('I1: vault.js 保留通道筛选', vaultSrc66.includes('全部通道'))
+ok('I1 v0.8: 指标台账限定主关联', readingUiSrcV8.includes('m.readingsPage({ indicatorId: node.id'))
+ok('I1 v0.8: 分页显式禁用不可用的翻页按钮', readingUiSrcV8.includes('prev.disabled') && readingUiSrcV8.includes('next.disabled'))
+ok('I1 v0.8: 流水加载有界页面', readingUiSrcV8.includes('pager(p => m.readingsPage(p)'))
+ok('I1 v0.8: 展开按观测查证据', readingUiSrcV8.includes('observationId: r.id') && readingUiSrcV8.includes('m.readingEvidence('))
+ok('I1 v0.8: 历史按主关联查而非通道筛选', readingUiSrcV8.includes('m.readingsPage({ indicatorId: r.indicatorId'))
+ok('I1 v0.8: 来源页独立分页而非配置通道', readingUiSrcV8.includes('m.sourcesPage(') && !vaultSrc66.includes('全部通道'))
 
 // --- I2: 主题重命名 UI ---
 
@@ -3017,15 +3025,12 @@ ok('幂等：重复触发不重复铺节点', idemAfter === idemCount, `第一�
 // --- R1: 读数视图只读 + 三审计字段 ---
 
 ok('R1: vault.js 无手动录入表单', !vaultSrcER.includes('手动记一条读数'))
-ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期') || vaultSrcER.includes('x.asOf'))
-// 抓于迁到流水按天分组——「今天 / 09-24」即抓取时间
-ok('R1: 流水按抓取时间分组', vaultSrcER.includes("day === today() ? '今天'") && vaultSrcER.includes('.slice(0, 10)'))
-// 跟踪态在脉络树节点 inline 显示（总览层），读数页是流水
-ok('R1: 流水有点行展开', vaultSrcER.includes('feed-detail') && vaultSrcER.includes('historyByMetric'))
-ok('R1: 跟踪反查保留在 inspector', inspectorSrcER.includes('indicatorsForReading') || inspectorSrcER.includes('channelIds'))
-// R14 之后同 asOf 重述用 data-restated 标记，不再依赖 CSS class
-// 重述检测随卡片一起移除；流水按天分组，同 asOf 多条在展开区并列可见
-ok('R1: 展开区并列同 metric 全部期数', vaultSrcER.includes('hist.length') && vaultSrcER.includes('feed-detail-grid'))
+ok('R1 v0.8: 读数页显示起止期间', readingUiSrcV8.includes('r.period?.start') && readingUiSrcV8.includes('r.period?.end'))
+// 抓于迁到流水按天分组；展开再懒加载证据和历史，不带全量数组。
+ok('R1 v0.8: 流水按抓取时间分组', readingUiSrcV8.includes('dayFeed') && readingUiSrcV8.includes("String(r.at || '').slice(0, 10)"))
+ok('R1 v0.8: 流水点行展开观测', readingUiSrcV8.includes('openObservation') && readingUiSrcV8.includes('reading-dialog'))
+ok('R1 v0.8: 指标台账保留在 inspector', inspectorSrcER.includes('readingPanel(node)'))
+ok('R1 v0.8: 展开历史按需分页', readingUiSrcV8.includes('m.readingEvidence(') && readingUiSrcV8.includes('m.readingsPage({ indicatorId: r.indicatorId'))
 
 // R1 端到端：读数显示跟踪指标
 const r1Theme = store.addTheme('R1 测试主题')
@@ -3039,20 +3044,20 @@ ok('R1: indicatorsForReading 返回指标', r1Inds.length > 0 && r1Inds[0].title
 
 // --- R2: 手填读数在检视面板 ---
 
-ok('R2: inspector.js 有手填一条读数', inspectorSrcER.includes('手填一条读数'))
-ok('R2: inspector.js 有 manual 通道', inspectorSrcER.includes("c.fetch === 'manual'"))
-ok('R2: inspector.js 有 channelAdd', inspectorSrcER.includes('channelAdd'))
-ok('R2: inspector.js 有 addReading', inspectorSrcER.includes('addReading'))
+ok('R2 v0.8: 检视面板保留手填入口', inspectorSrcER.includes('readingPanel(node)') && readingUiSrcV8.includes('记一条读数'))
+ok('R2 v0.8: 手填无需 manual 通道', !inspectorSrcER.includes("c.fetch === 'manual'") && readingUiSrcV8.includes('manualForm(node)'))
+ok('R2 v0.8: 手填不创建通道', !inspectorSrcER.includes('channelAdd') && readingUiSrcV8.includes('indicator: node.title'))
+ok('R2 v0.8: 手填走统一摄入', readingUiSrcV8.includes('m.pushReadings(') && readingUiSrcV8.includes('meridian.reading.v1'))
 ok('R2: vault.js 无 addReading 调用', !vaultSrcER.includes('addReading'))
 
 // --- R3: 缺口只保留头部汇总，提议移到检视面板 ---
 
 ok('R3: lattice.js 无 renderGapList', !latticeSrcER.includes('function renderGapList'))
 ok('R3: lattice.js 有指标汇总', latticeSrcER.includes('个指标') && latticeSrcER.includes('个未接数据'))
-ok('R3: inspector.js 有 proposeLinks', inspectorSrcER.includes('proposeLinks'))
-ok('R3: inspector.js 有采用按钮', inspectorSrcER.includes('采用'))
-ok('R3: inspector.js 有忽略按钮', inspectorSrcER.includes('忽略'))
-ok('R3: inspector.js 采用后立即拉取', inspectorSrcER.includes('channelFetch'))
+ok('R3 v0.8: 检视面板不再提议配置通道', !inspectorSrcER.includes('proposeLinks') && inspectorSrcER.includes('readingPanel'))
+ok('R3 v0.8: 未知读数有归位动作', readingUiSrcV8.includes('确认归位') && readingUiSrcV8.includes('m.assignReading('))
+ok('R3 v0.8: 归位失败不静默', readingUiSrcV8.includes('归位失败，请重试'))
+ok('R3 v0.8: 归位后刷新而非拉取通道', readingUiSrcV8.includes('await refresh()') && !inspectorSrcER.includes('channelFetch'))
 ok('R3: vault.js 无 proposeLinks', !vaultSrcER.includes('proposeLinks'))
 
 // --- R4: 无「未关联」筛选项 ---
@@ -3065,9 +3070,9 @@ ok('R4: vault.js 无未关联筛选', !vaultSrcER.includes("'未关联'"))
 ok('验收: vault.js 无 addReading', !vaultSrcER.includes('addReading'))
 ok('验收: vault.js 无 手动记一条', !vaultSrcER.includes('手动记一条'))
 
-// 2. 旧数据兼容：有 indicatorId 的旧读数正常显示
-const oldReading = store.addReading({ metric: 'old.test', value: 1, indicatorId: 'old-ind', source: { kind: '一手数据' } })
-ok('验收: 旧读数有 indicatorId 不影响 addReading', oldReading.added === true)
+// 2. 旧字段兼容：有效期间的读数携带失效 indicatorId 时，保留为待归位。
+const oldReading = store.addReading({ metric: 'old.test', value: 1, unit: 'USD', asOf: '2026-09-24', indicatorId: 'old-ind', source: { kind: '一手数据' } })
+ok('验收 v0.8: 失效旧关联保留为待归位', oldReading.added === true && oldReading.reading.indicatorId === null)
 
 // 3. scaffoldTheme 不写 indicatorId
 const scaffoldThemeSrc = ipcSrcER.slice(
@@ -3277,13 +3282,13 @@ ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrc
 // 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」
 ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:\s*[1-9]\d*px(?!\s*;)/.test(stylesSrcS45.replace(/border-radius:\s*50%/g, '')) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))
 // R14 之后行是五列网格，常量已上移卡片头；跟踪仍只算一次
-// 流水形态：行模板只含名称/值/单位/环比/来源，常量与跟踪不上行
-const feedRowSrc = vaultSrcER.slice(vaultSrcER.indexOf('function readingsFeed'), vaultSrcER.indexOf('function metricCard') !== -1 ? vaultSrcER.indexOf('function metricCard') : vaultSrcER.length)
-const rowPart = feedRowSrc.slice(0, feedRowSrc.indexOf('const detail'))
-ok('C6/R14: 流水行不含重复常量与跟踪',
-  vaultSrcER.includes('feed-row') && vaultSrcER.includes('feed-value') &&
-  !rowPart.includes('跟踪') && !rowPart.includes('单位') && !rowPart.includes('抓于'))
-ok('C6: 单项筛选整排隐藏', vaultSrcER.includes('if (options.length <= 1) return null'))
+// v0.8 行的单位是观测，来源和原文留在展开；默认显示信任态。
+const feedRowSrc = readingUiSrcV8.slice(readingUiSrcV8.indexOf('function observationRow'), readingUiSrcV8.indexOf('function dayFeed'))
+const rowPart = feedRowSrc
+ok('C6/R14 v0.8: 观测行显示值与信任而非内部字段',
+  rowPart.includes('trustMark(r)') && rowPart.includes('fmtValue(r.value)') &&
+  !rowPart.includes('r.hash') && !rowPart.includes('r.dedupeKey'))
+ok('C6 v0.8: 不铺通道筛选，按天虚拟化有界渲染', !vaultSrcER.includes('全部通道') && readingUiSrcV8.includes('ResizeObserver') && readingUiSrcV8.includes('rows.slice(0, 10)'))
 
 // ============================================================
 // LLM 成本治理：A（lastFetch 精度）B（免费过滤层）C（节流与归因）D（收件箱三态）
@@ -3504,7 +3509,7 @@ const c6Mine = c6Rates.find((r) => r.channelId === c6Ch.id)
 ok('C6: 未匹配率按通道聚合', c6Mine?.total === 2 && c6Mine?.unmatched === 1 && Math.abs(c6Mine.rate - 0.5) < 1e-9, `实际 ${JSON.stringify(c6Mine)}`)
 ok('C6: 只统计不改通道状态', store.allChannels().find((c) => c.id === c6Ch.id).enabled === true)
 ok('C6: 未匹配率函数不写通道', !storeSrcGov.slice(storeSrcGov.indexOf('export function channelMatchRates'), storeSrcGov.indexOf('export function channelMatchRates') + 900).includes('updateChannel'))
-ok('C6: 界面说明只作参考不停用', vaultSrcGov.includes('不会自动停用通道'))
+ok('C6 v0.8: 来源声誉只作参考不停用', readingUiSrcV8.includes('只作参考') && readingUiSrcV8.includes('不会自动停用来源'))
 
 // ---- C5：复盘页 LLM 段 ----
 
@@ -3609,6 +3614,874 @@ ok('T3 保留的是最新的', store.allTraces().some((t) => t.target?.id === `b
 const labelCount = store.allTraces().filter((t) => t.stage === 'label').length
 ok('T3 label trace 不逐条存', labelCount === 0, `实际 ${labelCount} 条`)
 ok('T3 traceAggregates.label 有数据', store.load().traceAggregates.label.length > 0)
+
+// ============================================================
+console.log('\n— v0.8 数据摄入与可追溯（真实 store / 临时目录 / 仅回环 HTTP）—')
+// ============================================================
+
+const v8Assert = (await import('node:assert/strict')).default
+const v8Fs = await import('node:fs')
+const { spawnSync: v8SpawnSync } = await import('node:child_process')
+const { request: v8Request } = await import('node:http')
+
+// 每组独立报告失败；接口尚未实现也是失败，绝不以 skip / 临时桩通过验收。
+const v8Test = async (name, run) => {
+  try {
+    await run()
+    ok(`v0.8: ${name}`, true)
+  } catch (error) {
+    ok(`v0.8: ${name}`, false, error.stack || String(error))
+  }
+}
+const v8Reset = () => {
+  store.importAll(JSON.stringify({ nodes: [], themes: [], readings: [], sources: [], raw: [], settings: { apiKey: '', labeler: 'table' } }))
+  const theme = store.addTheme('v0.8 零配置产业链')
+  const branch = store.addNode({ themeId: theme.id, kind: 'branch', title: '经营', scaffold: { indicators: [{ name: '测试收入', cadence: '季度' }] } })
+  const indicator = store.addNode({ themeId: theme.id, parentId: branch.id, kind: 'lemma', type: 'observation', title: '测试收入' })
+  return { theme, branch, indicator }
+}
+const v8Period = { start: '2026-04-01', end: '2026-06-30' }
+const v8Source = (host = 'issuer.example', extra = {}) => ({ kind: '财报 / 公告', label: '季度报告', url: `https://${host}/report`, platform: host, ...extra })
+const v8Input = (indicator, extra = {}) => ({ indicator: indicator.title, value: 100, unit: 'USD', period: { ...v8Period }, basis: 'reported', tier: 'agent', source: v8Source(), ...extra })
+const v8Envelope = (...readings) => ({ schema: 'meridian.reading.v1', readings })
+const v8Ingest = async (envelope, options) => {
+  const { ingestReadings } = await import('../src/main/reading-ingest.js')
+  return ingestReadings(envelope, options)
+}
+const v8Accepted = (result, accepted, duplicates = 0) => {
+  v8Assert.equal(result.ok, true)
+  v8Assert.equal(result.accepted, accepted)
+  v8Assert.equal(result.duplicates, duplicates)
+  v8Assert.deepEqual(result.rejected, [])
+  v8Assert.equal(result.total, accepted + duplicates)
+}
+const v8Add = (indicator, extra = {}) => {
+  const result = store.addReading({ ...v8Input(indicator), indicatorId: indicator.id, ...extra })
+  v8Assert.equal(result.added, true, result.error)
+  v8Assert.ok(result.reading?.id)
+  return result.reading
+}
+const v8OnlyObservation = (indicatorId) => {
+  const page = store.readingsPage({ indicatorId, limit: 10 })
+  v8Assert.equal(page.total, 1)
+  v8Assert.equal(page.items.length, 1)
+  return page.items[0]
+}
+const v8ChainOk = (key, count) => {
+  const check = store.verifyReadingChain(key)
+  v8Assert.equal(check.ok, true, JSON.stringify(check))
+  v8Assert.equal(check.count, count)
+  v8Assert.ok(check.firstInvalid == null, '完整序列不能报告损坏位置')
+}
+
+await v8Test('确定接口全部存在；缺失不跳过', async () => {
+  for (const name of ['addReading', 'getReading', 'allReadings', 'readingsPage', 'readingEvidence', 'latestReadings', 'allSources', 'sourcesPage', 'assignReading', 'verifyReadingChain', 'exportIntent', 'resolveConflict', 'dueIndicators']) {
+    v8Assert.equal(typeof store[name], 'function', name)
+  }
+  v8Assert.equal(typeof (await import('../src/main/reading-ingest.js')).ingestReadings, 'function')
+  v8Assert.equal(typeof (await import('../src/main/agent-server.js')).startAgentServer, 'function')
+})
+
+await v8Test('人话归位、原文引用、来源观察、重放幂等与留痕', async () => {
+  const { theme, indicator } = v8Reset()
+  const raw = '测试收入为 100 美元，期间 2026 年第二季度。'
+  const envelope = { ...v8Envelope(v8Input(indicator, { raw })), themeHint: theme.name }
+  const progress = []
+  v8Accepted(await v8Ingest(envelope, { onProgress: (event) => progress.push(event) }), 1)
+  v8Assert.ok(progress.length > 0, '摄入须报告进度')
+  v8Assert.equal(store.allChannels().length, 0, '零配置不创建通道')
+  const reading = store.allReadings()[0]
+  v8Assert.equal(reading.indicatorId, indicator.id)
+  v8Assert.deepEqual(reading.period, v8Period)
+  v8Assert.equal(reading.status, 'current')
+  v8Assert.equal(store.getReading(reading.id).value, 100)
+  v8Assert.equal(store.getRaw(reading.rawId).text, raw)
+  v8Assert.match(reading.hash, /^[a-f0-9]{64}$/)
+  const source = store.allSources().find((item) => item.id === reading.sourceId)
+  v8Assert.equal(source.url, envelope.readings[0].source.url)
+  v8Assert.ok(source.readingIds.includes(reading.id))
+  v8Assert.equal(source.pushCount, 1)
+  v8Assert.ok(source.firstSeenAt && source.lastSeenAt)
+  const sourceSnapshot = JSON.stringify(store.allSources())
+  v8Accepted(await v8Ingest(envelope), 0, 1)
+  v8Assert.equal(store.allReadings().length, 1)
+  v8Assert.equal(JSON.stringify(store.allSources()), sourceSnapshot, '重放不能赚来源声誉')
+  v8Assert.equal(store.rawStats().count, 1)
+  store.appendRaw({ kind: '一手数据', text: '无人引用的原文' })
+  const pruned = store.pruneRaw()
+  v8Assert.equal(pruned.removed, 1)
+  v8Assert.equal(store.getRaw(reading.rawId).text, raw, '仅由读数引用的原文不可清理')
+  const observation = v8OnlyObservation(indicator.id)
+  v8Assert.equal(observation.currentReadingId, reading.id)
+  v8Assert.equal(observation.pending, false)
+  v8Assert.equal(observation.sourceCount, 1)
+  v8Assert.equal(observation.readingCount, 1)
+  v8ChainOk(observation.chainKey, 1)
+  v8Assert.ok(store.allTraces().some((trace) => JSON.stringify(trace).includes(reading.id)), '摄入留下可定位读数的 trace')
+})
+
+await v8Test('独立来源同值交叉；同平台或同域名不虚增信任', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator))), 1)
+  const initial = v8OnlyObservation(indicator.id).trust.score
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { source: v8Source('issuer.example', { label: '同站另一页', url: 'https://issuer.example/other', platform: '另一客户端' }) }))), 1)
+  v8Assert.equal(v8OnlyObservation(indicator.id).trust.crossCount, 1)
+  v8Assert.equal(v8OnlyObservation(indicator.id).trust.score, initial)
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { source: v8Source('mirror.example', { platform: 'issuer.example' }) }))), 1)
+  v8Assert.equal(v8OnlyObservation(indicator.id).trust.crossCount, 1, '转载同平台不独立')
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { source: v8Source('independent.example') }))), 1)
+  const observation = v8OnlyObservation(indicator.id)
+  v8Assert.equal(observation.trust.crossCount, 2)
+  v8Assert.ok(observation.trust.score > initial)
+  v8Assert.equal(observation.readingCount, 4)
+  v8Assert.equal(store.allConflicts().filter((conflict) => !conflict.resolved).length, 0)
+})
+
+for (const verdict of ['a', 'b', 'both']) {
+  await v8Test(`异源异值不静默；裁决 ${verdict} 追加记录且保留证据`, async () => {
+    const { indicator } = v8Reset()
+    const a = v8Add(indicator)
+    const b = v8Add(indicator, { value: 120, source: v8Source('other.example') })
+    const observation = v8OnlyObservation(indicator.id)
+    v8Assert.equal(observation.status, 'conflicted')
+    v8Assert.equal(observation.currentReadingId, null, '冲突不得擅自选当前值')
+    v8Assert.equal(store.getReading(a.id).status, 'conflicted')
+    v8Assert.equal(store.getReading(b.id).status, 'conflicted')
+    const conflicts = store.allConflicts().filter((conflict) => conflict.type === 'reading' && !conflict.resolved)
+    v8Assert.equal(conflicts.length, 1)
+    v8Assert.deepEqual(new Set([conflicts[0].a, conflicts[0].b]), new Set([a.id, b.id]))
+    const journalPath = join(DATA, 'readings.jsonl')
+    const beforeJournal = v8Fs.readFileSync(journalPath, 'utf8')
+    const oldHashes = [store.getReading(a.id).hash, store.getReading(b.id).hash]
+    const decision = store.resolveConflict(conflicts[0].id, verdict)
+    v8Assert.equal(decision.resolved, verdict)
+    const afterJournal = v8Fs.readFileSync(journalPath, 'utf8')
+    v8Assert.ok(afterJournal.startsWith(beforeJournal) && afterJournal.length > beforeJournal.length, '人工裁决应追加可追溯记录而非覆盖数值')
+    v8Assert.ok(afterJournal.slice(beforeJournal.length).includes(conflicts[0].id), '裁决记录应指向原冲突')
+    v8Assert.equal(store.getReading(a.id).value, 100)
+    v8Assert.equal(store.getReading(b.id).value, 120)
+    v8Assert.deepEqual([store.getReading(a.id).hash, store.getReading(b.id).hash], oldHashes)
+    const after = v8OnlyObservation(indicator.id)
+    if (verdict !== 'both') {
+      v8Assert.equal(after.value, verdict === 'a' ? 100 : 120)
+      v8Assert.notEqual(after.status, 'conflicted')
+      v8Assert.ok(after.currentReadingId)
+    }
+    v8Assert.equal(store.allConflicts().filter((conflict) => !conflict.resolved).length, 0)
+    v8ChainOk(after.chainKey, store.allReadings().length)
+  })
+}
+
+await v8Test('同来源同 accn 异值为修正；相同 accn 的异源仍冲突', async () => {
+  const { indicator } = v8Reset()
+  const source = v8Source('issuer.example', { accn: 'filing-2026-q2' })
+  const old = v8Add(indicator, { source })
+  const revised = v8Add(indicator, { source, value: 110 })
+  v8Assert.equal(store.getReading(old.id).status, 'superseded')
+  v8Assert.equal(store.getReading(old.id).value, 100)
+  v8Assert.equal(revised.supersedes, old.id)
+  v8Assert.equal(v8OnlyObservation(indicator.id).currentReadingId, revised.id)
+  v8Assert.equal(store.allConflicts().length, 0)
+  v8Assert.equal(store.addReading({ ...v8Input(indicator), indicatorId: indicator.id, source, value: 110 }).added, false)
+  v8Add(indicator, { source: v8Source('outsider.example', { accn: source.accn }), value: 90 })
+  v8Assert.equal(v8OnlyObservation(indicator.id).status, 'conflicted')
+  v8Assert.equal(store.allConflicts().filter((conflict) => !conflict.resolved).length, 1)
+  v8ChainOk(v8OnlyObservation(indicator.id).chainKey, 3)
+})
+
+await v8Test('期间、单位、口径分开；不能错误交叉或互相冲突', async () => {
+  const { indicator } = v8Reset()
+  const entries = [
+    v8Input(indicator),
+    v8Input(indicator, { period: { start: '2026-01-01', end: '2026-06-30' } }),
+    v8Input(indicator, { unit: 'CNY' }),
+    v8Input(indicator, { basis: 'estimated' }),
+  ]
+  v8Accepted(await v8Ingest(v8Envelope(...entries)), 4)
+  const page = store.readingsPage({ indicatorId: indicator.id, limit: 10 })
+  v8Assert.equal(page.total, 4)
+  v8Assert.equal(new Set(page.items.map((item) => item.id)).size, 4)
+  v8Assert.ok(page.items.every((item) => item.trust.crossCount === 1 && item.readingCount === 1))
+  v8Assert.equal(store.allConflicts().length, 0)
+})
+
+await v8Test('自报 tier 作先验采信，超过 0.6 必须靠第二个独立来源', async () => {
+  const { indicator } = v8Reset()
+  // 契约里夹带 trust 也不该改写判定——分数只能由账本按公式算
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { tier: 'structured', trust: { score: 1, crossCount: 99 } }))), 1)
+  const external = v8OnlyObservation(indicator.id)
+  v8Assert.equal(external.trust.crossCount, 1)
+  // 自报 structured 采信为先验：单一来源 = base 1.0 × 0.6 = 0.6
+  // 曾经这里一律压成 'agent'，外部数据天花板只有 0.24，信任分失去区分度
+  v8Assert.equal(external.trust.score, 0.6, '自报来路作先验采信')
+  // 公式本身就是那道线：base 上限 1.0，单一来源过不了 0.6。想更高必须有第二个独立来源。
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, {
+    tier: 'agent',
+    source: v8Source('other.example', { kind: '独立媒体', label: '另一个平台' }),
+  }))), 1)
+  const corroborated = v8OnlyObservation(indicator.id)
+  v8Assert.ok(corroborated.trust.crossCount >= 2, '第二个独立来源被计入')
+  v8Assert.ok(corroborated.trust.score > external.trust.score, '佐证让分数超过单来源上限')
+  // 内置 fetcher 同样受公式约束——来路可验证不构成豁免，豁免会让 SEC 这类单一权威源失真
+  const internal = store.addNode({ themeId: indicator.themeId, kind: 'lemma', type: 'observation', title: '内置收入' })
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(internal, { tier: 'structured' })), { trusted: true }), 1)
+  const trusted = v8OnlyObservation(internal.id)
+  v8Assert.ok(trusted.trust.score >= 0.6 && trusted.trust.score <= 1)
+})
+
+await v8Test('历史异常跳变标记并降信任，但不丢弃事实', async () => {
+  const { indicator } = v8Reset()
+  const stable = [100, 102, 101, 103].map((value, index) => {
+    const day = `2026-0${index + 1}-01`
+    return v8Input(indicator, { value, period: { start: day, end: day } })
+  })
+  v8Accepted(await v8Ingest(v8Envelope(...stable)), 4)
+  const baseline = store.readingsPage({ indicatorId: indicator.id, limit: 10 }).items
+  v8Assert.ok(baseline.every((item) => !item.trust.flags.includes('jump')))
+  const period = { start: '2026-05-01', end: '2026-05-01' }
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { value: 200, period }))), 1)
+  const jump = store.readingsPage({ indicatorId: indicator.id, limit: 10 }).items.find((item) => item.period.end === period.end)
+  v8Assert.equal(jump.value, 200)
+  v8Assert.ok(jump.trust.flags.includes('jump'))
+  v8Assert.ok(jump.trust.score < baseline[0].trust.score)
+  v8Assert.equal(store.allReadings().length, 5)
+  v8ChainOk(jump.chainKey, 5)
+})
+
+await v8Test('严格字段校验逐条报索引和理由；非法读数不能污染库', async () => {
+  const { indicator } = v8Reset()
+  const invalid = [
+    { value: NaN }, { value: Infinity }, { value: '100' }, { value: null },
+    { indicator: '' }, { unit: '' }, { basis: 'invented' }, { tier: 'root' },
+    { period: { start: '2026-07-01', end: '2026-06-30' } },
+    { period: { start: '2026-02-30', end: '2026-03-01' } },
+    { period: { start: 'yesterday', end: 'tomorrow' } },
+    { source: null }, { raw: { text: '不是字符串' } },
+  ]
+  const result = await v8Ingest(v8Envelope(v8Input(indicator), ...invalid.map((patch) => v8Input(indicator, patch))))
+  v8Assert.equal(result.total, invalid.length + 1)
+  v8Assert.equal(result.accepted, 1)
+  v8Assert.equal(result.duplicates, 0)
+  v8Assert.deepEqual(result.rejected.map((item) => item.index), invalid.map((_, i) => i + 1))
+  v8Assert.ok(result.rejected.every((item) => typeof item.reason === 'string' && item.reason.length > 0))
+  v8Assert.equal(store.allReadings().length, 1)
+  v8Assert.equal(store.allSources().length, 1)
+  for (const envelope of [null, {}, { schema: 'other', readings: [] }, { schema: 'meridian.reading.v1', readings: {} }]) {
+    const bad = await v8Ingest(envelope)
+    v8Assert.equal(bad.ok, false)
+    v8Assert.equal(bad.accepted, 0)
+  }
+  v8Assert.equal(store.allReadings().length, 1)
+  for (const value of [NaN, Infinity, null, '100']) {
+    const bad = store.addReading({ ...v8Input(indicator), indicatorId: indicator.id, value })
+    v8Assert.equal(bad.added, false)
+    v8Assert.ok(bad.error, 'store 入口也必须防御非法数值')
+  }
+})
+
+await v8Test('无法归位不丢、不进收件箱；人工归位后可查询和验链', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { indicator: '完全未知的月球矿石产量' }))), 1)
+  const reading = store.allReadings()[0]
+  v8Assert.equal(reading.indicatorId, null)
+  v8Assert.equal(store.allInbox().length, 0)
+  const pending = store.readingsPage({ limit: 10 }).items[0]
+  v8Assert.equal(pending.pending, true)
+  v8ChainOk(pending.chainKey, 1)
+  store.assignReading(reading.id, indicator.id)
+  const assigned = v8OnlyObservation(indicator.id)
+  v8Assert.equal(assigned.pending, false)
+  v8Assert.equal(assigned.value, reading.value)
+  const evidence = store.readingEvidence({ observationId: assigned.id, limit: 10 })
+  v8Assert.ok(evidence.items.some((item) => item.value === reading.value))
+  const check = store.verifyReadingChain(assigned.chainKey)
+  v8Assert.equal(check.ok, true, JSON.stringify(check))
+})
+
+// ---- 回归：总览层对「待归位」失明 ----
+// 曾经 latest 只按 indicatorId 建索引，indicatorId 为 null 的观测进不去，
+// latestReadings() 一个都回不来——树内 inline 和总览层完全看不到待归位的读数，
+// 而它们恰恰是最该被提醒去归位的。
+
+await v8Test('待归位读数进入 latestReadings，可被总览层看见', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { indicator: '无人认领的遥远指标' }))), 1)
+  const latest = store.latestReadings()
+  const pending = latest.items.find((r) => r.pending)
+  v8Assert.ok(pending, '待归位读数必须出现在 latestReadings')
+  v8Assert.equal(pending.indicatorId, null)
+  v8Assert.equal(pending.title, '无人认领的遥远指标')
+  v8Assert.ok(latest.pending >= 1, '返回值带待归位计数')
+  // 已归位的排在待归位前面——树的主体是归位数据，待归位是待办
+  const firstPending = latest.items.findIndex((r) => r.pending)
+  v8Assert.ok(latest.items.slice(0, firstPending).every((r) => !r.pending))
+})
+
+await v8Test('冲突观测暴露竞争值，而不是只给一个 null', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(
+    v8Input(indicator, { value: 100 }),
+    v8Input(indicator, { value: 140, source: v8Source('other.example', { kind: '独立媒体' }) }),
+  )), 2)
+  const conflicted = v8OnlyObservation(indicator.id)
+  v8Assert.equal(conflicted.status, 'conflicted')
+  v8Assert.equal(conflicted.value, null, '冲突时不假装有当前值')
+  v8Assert.deepEqual(conflicted.values, [100, 140], '竞争值必须可读，否则界面只能干说待裁决')
+  // 裁决后恢复单一当前值，values 清空
+  const conflict = store.allConflicts().find((c) => c.type === 'reading')
+  store.resolveConflict(conflict.id, 'a')
+  const resolved = v8OnlyObservation(indicator.id)
+  v8Assert.notEqual(resolved.status, 'conflicted')
+  v8Assert.equal(resolved.values, null)
+  v8Assert.ok(Number.isFinite(resolved.value))
+})
+
+await v8Test('旧格式期间回填，sources 显式导入，读数和原文完整往返', async () => {
+  const { indicator } = v8Reset()
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { raw: '可往返的原文' }))), 1)
+  const snapshot = store.exportAll()
+  const before = JSON.parse(snapshot)
+  v8Assert.equal(before.sources.length, 1)
+  v8Reset()
+  store.importAll(snapshot)
+  v8Assert.deepEqual(store.allSources(), before.sources)
+  const imported = store.getReading(before.readings[0].id)
+  v8Assert.equal(imported.hash, before.readings[0].hash)
+  v8Assert.equal(store.getRaw(imported.rawId).text, '可往返的原文')
+  v8Accepted(await v8Ingest(v8Envelope(v8Input(indicator, { raw: '可往返的原文' }))), 0, 1)
+  v8ChainOk(v8OnlyObservation(indicator.id).chainKey, 1)
+  store.importAll(JSON.stringify({ nodes: [], themes: [], readings: [{ id: 'legacy-v8', metric: 'legacy.revenue', value: 12, unit: 'USD', at: '2026-07-01', source: { kind: '财报 / 公告', start: v8Period.start, end: v8Period.end, accn: 'legacy' } }] }))
+  const legacy = store.getReading('legacy-v8')
+  v8Assert.deepEqual(legacy.period, v8Period)
+  v8Assert.equal(legacy.asOf, v8Period.end)
+  v8Assert.equal(legacy.value, 12)
+  v8Assert.ok(legacy.sourceId && store.allSources().some((source) => source.id === legacy.sourceId))
+  v8Assert.equal(store.readingsPage({ limit: 10 }).items.length, 1)
+  const standalone = { id: 'imported-source-only', kind: '财报 / 公告', label: '独立导入来源', url: 'https://archive.example/report', platform: 'archive', firstSeenAt: '2026-01-01', lastSeenAt: '2026-06-30', pushCount: 8, trust: 0.82, flags: ['once-contradicted'], readingIds: [] }
+  store.importAll(JSON.stringify({ nodes: [], themes: [], readings: [], sources: [standalone] }))
+  v8Assert.deepEqual(store.allSources().find((source) => source.id === standalone.id), standalone, '不能仅从 readings 反推来源而遗漏 sources 集合')
+})
+
+await v8Test('证据分页游标完整且不串观测；来源分页有界', async () => {
+  const { indicator } = v8Reset()
+  const entries = Array.from({ length: 7 }, (_, i) => v8Input(indicator, { source: v8Source(`witness-${i}.example`) }))
+  v8Accepted(await v8Ingest(v8Envelope(...entries)), 7)
+  v8Add(indicator, { period: { start: '2026-07-01', end: '2026-09-30' }, value: 200 })
+  const observation = store.readingsPage({ indicatorId: indicator.id, limit: 10 }).items.find((item) => item.period.end === v8Period.end)
+  const seen = new Set()
+  let cursor = null
+  let pages = 0
+  do {
+    const page = store.readingEvidence({ observationId: observation.id, cursor, limit: 2 })
+    v8Assert.ok(page.items.length > 0 && page.items.length <= 2)
+    v8Assert.ok(Array.isArray(page.judgments))
+    for (const item of page.items) {
+      v8Assert.equal(item.period.end, v8Period.end)
+      v8Assert.equal(seen.has(item.id), false)
+      seen.add(item.id)
+    }
+    if (page.nextCursor != null) v8Assert.notEqual(page.nextCursor, cursor)
+    cursor = page.nextCursor
+    v8Assert.ok(++pages <= 4, '游标必须前进')
+  } while (cursor != null)
+  v8Assert.equal(seen.size, 7)
+  const sourceIds = new Set()
+  cursor = null
+  pages = 0
+  do {
+    const page = store.sourcesPage({ cursor, limit: 3 })
+    v8Assert.equal(page.total, store.allSources().length)
+    v8Assert.ok(page.items.length > 0 && page.items.length <= 3)
+    for (const source of page.items) {
+      v8Assert.equal(sourceIds.has(source.id), false)
+      sourceIds.add(source.id)
+    }
+    cursor = page.nextCursor
+    v8Assert.ok(++pages <= 3)
+  } while (cursor != null)
+  v8Assert.equal(sourceIds.size, store.allSources().length)
+})
+
+await v8Test('意图导出含树、标签库和未结算判断；零配置也有到期指标', async () => {
+  const { theme, branch, indicator } = v8Reset()
+  store.updateTheme(theme.id, { tags: ['经营'], tagLibrary: [{ id: 'v8-tag', name: '收入', synonyms: ['营收'], threshold: 0.6 }] })
+  const judgment = store.addNode({ themeId: theme.id, parentId: branch.id, kind: 'lemma', type: 'hypothesis', title: '收入将超过 90', confidence: 85, settlement: { date: '2026-12-31', resolved: null } })
+  store.updateNode(indicator.id, { parentId: judgment.id })
+  const closed = store.addNode({ themeId: theme.id, parentId: branch.id, kind: 'lemma', type: 'hypothesis', title: '已经结算的判断', settlement: { date: '2026-01-01', resolved: true } })
+  const intent = store.exportIntent()
+  const exported = intent.themes.find((item) => item.id === theme.id)
+  v8Assert.equal(exported.name, theme.name)
+  v8Assert.ok(exported.tags.includes('经营'))
+  v8Assert.ok(exported.tagLibrary.some((tag) => tag.name === '收入' && tag.synonyms.includes('营收')))
+  v8Assert.ok(JSON.stringify(exported.tree).includes(indicator.title))
+  const open = intent.openJudgments.find((item) => item.claim === judgment.title)
+  v8Assert.equal(open.confidence, 85)
+  v8Assert.equal(open.settlesOn, '2026-12-31')
+  v8Assert.ok(open.indicators.includes(indicator.title))
+  v8Assert.ok(!intent.openJudgments.some((item) => item.claim === closed.title))
+  v8Assert.equal(store.allChannels().length, 0)
+  v8Assert.ok(store.dueIndicators().some((item) => item.id === indicator.id))
+  v8Add(indicator)
+  v8Assert.ok(!store.dueIndicators().some((item) => item.id === indicator.id), '刚摄入不应立即再次到期')
+  v8Assert.ok(store.dueIndicators(Date.now() + 366 * 864e5).some((item) => item.id === indicator.id), '经过 cadence 后再次到期')
+  const evidence = store.readingEvidence({ indicatorId: indicator.id, limit: 10 })
+  v8Assert.ok(JSON.stringify(evidence.judgments).includes(judgment.title), '证据关联正在等它的判断')
+  v8Assert.ok(!JSON.stringify(intent).includes('apiKey'))
+})
+
+// 子进程只载入 store 和 Electron 替身，绝不 import 真实 main、启应用或触达真实 userData。
+const v8Reload = (expression) => {
+  const code = `
+    globalThis.__electron = await import(${JSON.stringify(new URL('./electron-stub.mjs', import.meta.url).href)})
+    const store = await import(${JSON.stringify(new URL('../src/main/store.js', import.meta.url).href)})
+    store.load()
+    console.log(JSON.stringify(${expression}))
+  `
+  const child = v8SpawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, MERIDIAN_TEST_DATA: DATA }, encoding: 'utf8', timeout: 10000 })
+  v8Assert.equal(child.status, 0, child.stderr || String(child.error || ''))
+  return JSON.parse(child.stdout.trim().split('\n').at(-1))
+}
+
+await v8Test('JSONL 追加持久化、重启索引、坏索引重建及历史修改检测', async () => {
+  const { indicator } = v8Reset()
+  const first = v8Add(indicator)
+  const file = join(DATA, 'readings.jsonl')
+  const prefix = v8Fs.readFileSync(file, 'utf8')
+  v8Assert.ok(prefix.includes(first.id))
+  const second = v8Add(indicator, { period: { start: '2026-07-01', end: '2026-09-30' }, value: 105 })
+  v8Assert.ok(v8Fs.readFileSync(file, 'utf8').startsWith(prefix), '新增读数不能重写历史行')
+  v8Assert.equal(second.prevHash, first.hash)
+  const key = store.readingsPage({ indicatorId: indicator.id, limit: 1 }).items[0].chainKey
+  v8ChainOk(key, 2)
+  // store 的元数据 debounce 为 120ms；此处明确等待落盘边界，不用轮询掩盖错误。
+  await new Promise((resolve) => setTimeout(resolve, 180))
+  const metadata = JSON.parse(v8Fs.readFileSync(join(DATA, 'meridian.json'), 'utf8'))
+  v8Assert.ok(!metadata.readings || metadata.readings.length === 0, '主 JSON 不能继续存全量读数')
+  const indexFile = join(DATA, 'readings-index.json')
+  v8Assert.ok(v8Fs.existsSync(indexFile))
+  const indexText = v8Fs.readFileSync(indexFile, 'utf8')
+  v8Assert.doesNotThrow(() => JSON.parse(indexText))
+  const reloaded = v8Reload(`({ reading: store.getReading(${JSON.stringify(first.id)}), check: store.verifyReadingChain(${JSON.stringify(key)}), total: store.readingsPage({ limit: 1 }).total })`)
+  v8Assert.equal(reloaded.reading.value, 100)
+  v8Assert.equal(reloaded.reading.hash, first.hash)
+  v8Assert.equal(reloaded.total, 2)
+  v8Assert.equal(reloaded.check.ok, true)
+  const original = v8Fs.readFileSync(file, 'utf8')
+  try {
+    v8Fs.writeFileSync(indexFile, '{broken index')
+    const rebuilt = v8Reload(`({ total: store.readingsPage({ limit: 1 }).total, check: store.verifyReadingChain(${JSON.stringify(key)}) })`)
+    v8Assert.equal(rebuilt.total, 2)
+    v8Assert.equal(rebuilt.check.ok, true)
+    // 修改真正的磁盘历史，不改 API 返回对象，避免误测副本或缓存。
+    let changed = 0
+    let changedLine = 0
+    const tampered = original.split('\n').map((line, index) => {
+      if (!line.trim()) return line
+      const entry = JSON.parse(line)
+      // 兼容每行直接存 reading 和事实 + 裁决事件封装；只动事实值，不重算校验。
+      const fact = entry.fact || entry
+      if (fact.id === first.id) { fact.value = 999; changed++; changedLine = index + 1 }
+      return JSON.stringify(entry)
+    }).join('\n')
+    v8Assert.equal(changed, 1)
+    v8Fs.writeFileSync(file, tampered)
+    const broken = store.verifyReadingChain(key)
+    v8Assert.equal(broken.ok, false, '已热缓存和索引也不能掩盖磁盘数据修改')
+    v8Assert.equal(broken.firstInvalid, changedLine, '应指出第一个被修改的历史位置')
+  } finally {
+    v8Fs.writeFileSync(file, original)
+    v8Fs.writeFileSync(indexFile, indexText)
+  }
+  v8Fs.appendFileSync(file, '{"id":"interrupted')
+  try {
+    const partial = v8Reload(`({ total: store.readingsPage({ limit: 1 }).total, reading: store.getReading(${JSON.stringify(first.id)}) })`)
+    v8Assert.equal(partial.total, 2, '崩溃半行不影响已有记录')
+    v8Assert.equal(partial.reading.value, 100)
+    v8Assert.equal(partial.reading.hash, first.hash)
+  } finally {
+    v8Fs.writeFileSync(file, original)
+    v8Fs.writeFileSync(indexFile, indexText)
+  }
+})
+
+await v8Test('批量 1000 条 <2s；10000 条观测分页有界、不漏不重', async () => {
+  const { indicator } = v8Reset()
+  const entries = Array.from({ length: 10000 }, (_, i) => {
+    const day = new Date(Date.UTC(1990, 0, 1 + i)).toISOString().slice(0, 10)
+    return v8Input(indicator, { period: { start: day, end: day }, value: 100 + i / 10000 })
+  })
+  const started = performance.now()
+  for (const input of entries.slice(0, 1000)) v8Add(indicator, input)
+  const elapsed = performance.now() - started
+  v8Assert.ok(elapsed < 2000, `1000 条 addReading 实际 ${elapsed.toFixed(1)}ms`)
+  let yielded = false
+  const tick = setTimeout(() => { yielded = true }, 0)
+  const progress = []
+  try {
+    v8Accepted(await v8Ingest(v8Envelope(...entries.slice(1000, 2000)), { onProgress: (event) => progress.push(event) }), 1000)
+    v8Assert.equal(yielded, true, '批量摄入必须让出事件循环')
+    v8Assert.ok(progress.length > 1, '批量不能只在完成时发一次进度')
+  } finally { clearTimeout(tick) }
+  for (const input of entries.slice(2000)) v8Add(indicator, input)
+  v8Assert.equal(store.allReadings().length, 10000)
+  const latest = store.latestReadings()
+  v8Assert.equal(latest.total, 1)
+  v8Assert.equal(latest.items.length, 1, '树内仅取每指标最新一条')
+  v8Assert.equal(latest.items[0].period.end, entries.at(-1).period.end)
+  const seen = new Set()
+  const cursors = new Set()
+  let cursor = null
+  let pages = 0
+  do {
+    const page = store.readingsPage({ indicatorId: indicator.id, limit: 127, cursor })
+    v8Assert.equal(page.total, 10000)
+    v8Assert.ok(page.items.length > 0 && page.items.length <= 127)
+    v8Assert.ok(Buffer.byteLength(JSON.stringify(page)) < 256 * 1024, '一页不能夹带全量历史')
+    for (const observation of page.items) {
+      v8Assert.equal(observation.indicatorId, indicator.id)
+      v8Assert.equal(seen.has(observation.id), false)
+      seen.add(observation.id)
+    }
+    cursor = page.nextCursor
+    if (cursor != null) {
+      v8Assert.equal(cursors.has(cursor), false)
+      cursors.add(cursor)
+    }
+    v8Assert.ok(++pages <= 79)
+  } while (cursor != null)
+  v8Assert.equal(seen.size, 10000)
+  v8Assert.equal(pages, 79)
+  const oversized = store.readingsPage({ limit: 1000000 })
+  v8Assert.ok(oversized.items.length > 0 && oversized.items.length <= 1000, '恶意 limit 也不能回传全量')
+  const defaults = store.readingsPage()
+  v8Assert.ok(defaults.items.length > 0 && defaults.items.length <= 1000)
+  v8Assert.ok(defaults.nextCursor)
+  v8Assert.equal(store.readingsPage({ indicatorId: 'missing-v8', limit: 10 }).total, 0)
+  v8Assert.equal(store.readingsPage({ since: '2999-01-01', limit: 10 }).total, 0)
+  const evidence = store.readingEvidence({ indicatorId: indicator.id, limit: 17 })
+  v8Assert.equal(evidence.items.length, 17)
+  v8Assert.ok(evidence.nextCursor)
+})
+
+const v8Http = (server, path, { method = 'GET', body, token = server.token, origin } = {}) => new Promise((resolve, reject) => {
+  const headers = {}
+  if (token != null) headers.Authorization = `Bearer ${token}`
+  if (origin) headers.Origin = origin
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const req = v8Request({ host: '127.0.0.1', port: server.port, path, method, headers, agent: false }, (res) => {
+    const chunks = []
+    res.on('data', (chunk) => chunks.push(chunk))
+    res.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8')
+      let json = null
+      try { json = JSON.parse(text) } catch {}
+      resolve({ status: res.statusCode, json, text })
+    })
+  })
+  req.setTimeout(5000, () => req.destroy(new Error('本地 HTTP 请求超时')))
+  req.on('error', reject)
+  req.end(body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body))
+})
+const v8WithServer = async (run) => {
+  const { startAgentServer } = await import('../src/main/agent-server.js')
+  const directory = v8Fs.mkdtempSync(join(DATA, 'agent-'))
+  let server
+  let changed = 0
+  let calls = 0
+  let closed = false
+  const close = async () => {
+    if (server && !closed) { await server.close(); closed = true }
+  }
+  try {
+    server = await startAgentServer({ userData: directory, ingest: async (...args) => { calls++; return v8Ingest(...args) }, getIntent: () => store.exportIntent(), onChanged: () => { changed++ } })
+    await run(server, directory, () => ({ changed, calls }), close)
+  } finally {
+    await close()
+    v8Fs.rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+await v8Test('HTTP 同端口发现、0600 token、鉴权、Origin、体积与 schema 防御', async () => {
+  const { indicator } = v8Reset()
+  await v8WithServer(async (server, directory, counts) => {
+    v8Assert.equal(server.host, '127.0.0.1')
+    v8Assert.ok(Number.isInteger(server.port) && server.port > 0 && server.port <= 65535)
+    v8Assert.ok(typeof server.token === 'string' && server.token.length >= 32)
+    const discoveryPath = join(directory, 'agent-port.json')
+    const discovery = JSON.parse(v8Fs.readFileSync(discoveryPath, 'utf8'))
+    v8Assert.equal(discovery.port, server.port)
+    v8Assert.equal(discovery.token, server.token)
+    v8Assert.equal(v8Fs.statSync(discoveryPath).mode & 0o777, 0o600)
+    for (const path of ['/intent', '/readings', '/mcp']) {
+      const method = path === '/intent' ? 'GET' : 'POST'
+      v8Assert.equal((await v8Http(server, path, { method, token: null, body: method === 'POST' ? {} : undefined })).status, 401)
+      v8Assert.equal((await v8Http(server, path, { method, token: 'wrong-token', body: method === 'POST' ? {} : undefined })).status, 401)
+      v8Assert.equal((await v8Http(server, path, { method, origin: 'https://evil.example', body: method === 'POST' ? {} : undefined })).status, 403)
+    }
+    v8Assert.equal(counts().calls, 0, '鉴权失败不能进入摄入')
+    const tooLarge = 'x'.repeat(1024 * 1024 + 1)
+    for (const path of ['/readings', '/mcp']) v8Assert.equal((await v8Http(server, path, { method: 'POST', body: tooLarge })).status, 413)
+    v8Assert.equal((await v8Http(server, '/readings', { method: 'POST', body: '{invalid' })).status, 400)
+    const invalid = await v8Http(server, '/readings', { method: 'POST', body: { schema: 'bad', readings: [] } })
+    v8Assert.ok([400, 422].includes(invalid.status), '非法 schema 必须是客户端错误，不能 2xx')
+    v8Assert.equal(invalid.json.ok, false)
+    v8Assert.equal(store.allReadings().length, 0)
+    const payload = v8Envelope(v8Input(indicator, { tier: 'structured' }))
+    const pushed = await v8Http(server, '/readings', { method: 'POST', body: payload })
+    v8Assert.equal(pushed.status, 200)
+    v8Accepted(pushed.json, 1)
+    // 外部自报 structured 作先验采信，但单一来源封顶 0.6——越不过这条线
+    v8Assert.ok(v8OnlyObservation(indicator.id).trust.score > 0.4)
+    v8Assert.ok(v8OnlyObservation(indicator.id).trust.score <= 0.6)
+    v8Accepted((await v8Http(server, '/readings', { method: 'POST', body: payload })).json, 0, 1)
+    v8Assert.ok(counts().changed >= 1)
+    const intent = await v8Http(server, '/intent')
+    v8Assert.equal(intent.status, 200)
+    v8Assert.deepEqual(intent.json, store.exportIntent())
+    v8Assert.ok(!intent.text.includes(server.token))
+    v8Assert.equal((await v8Http(server, '/not-a-route')).status, 404)
+  })
+})
+
+await v8Test('MCP initialize、三工具、真实 push 与 JSON-RPC 错误', async () => {
+  const { indicator } = v8Reset()
+  await v8WithServer(async (server) => {
+    let id = 0
+    const rpc = async (method, params = {}) => {
+      const requestId = ++id
+      const response = await v8Http(server, '/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: requestId, method, params } })
+      v8Assert.equal(response.status, 200)
+      v8Assert.equal(response.json.jsonrpc, '2.0')
+      v8Assert.equal(response.json.id, requestId)
+      return response.json
+    }
+    const initialized = await rpc('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'meridian-test', version: '0.8' } })
+    v8Assert.ok(initialized.result.protocolVersion)
+    v8Assert.ok(initialized.result.capabilities.tools)
+    v8Assert.ok(initialized.result.serverInfo.name)
+    const listed = await rpc('tools/list')
+    v8Assert.deepEqual(listed.result.tools.map((tool) => tool.name).sort(), ['list_open_judgments', 'list_themes', 'push_readings'])
+    v8Assert.ok(listed.result.tools.every((tool) => tool.inputSchema?.type === 'object'))
+    const decode = (response) => {
+      v8Assert.ok(!response.error && !response.result.isError, JSON.stringify(response))
+      const content = response.result.content.find((item) => item.type === 'text')
+      return JSON.parse(content.text)
+    }
+    const pushed = decode(await rpc('tools/call', { name: 'push_readings', arguments: v8Envelope(v8Input(indicator)) }))
+    v8Accepted(pushed, 1)
+    v8Assert.equal(store.allReadings().length, 1)
+    const themes = decode(await rpc('tools/call', { name: 'list_themes', arguments: {} }))
+    v8Assert.ok(JSON.stringify(themes).includes('v0.8 零配置产业链'))
+    const judgments = decode(await rpc('tools/call', { name: 'list_open_judgments', arguments: {} }))
+    v8Assert.deepEqual(judgments, store.exportIntent().openJudgments)
+    v8Assert.equal((await rpc('missing-method')).error.code, -32601)
+    const unknown = await rpc('tools/call', { name: 'not_a_tool', arguments: {} })
+    v8Assert.ok(unknown.error || unknown.result?.isError, '未知工具不能报告成功')
+    const malformed = await v8Http(server, '/mcp', { method: 'POST', body: '{broken' })
+    v8Assert.equal(malformed.json.error.code, -32700)
+    const badRequest = await v8Http(server, '/mcp', { method: 'POST', body: { jsonrpc: '1.0', id: 77, method: 'tools/list' } })
+    v8Assert.equal(badRequest.json.error.code, -32600)
+    v8Assert.equal(store.allReadings().length, 1)
+  })
+})
+
+await v8Test('文件投递缺失、半行、坏行、重放；close 真正释放监听', async () => {
+  const { indicator } = v8Reset()
+  await v8WithServer(async (server, directory, counts, close) => {
+    await server.pollFile()
+    v8Assert.equal(counts().calls, 0)
+    const inbox = join(directory, 'inbox-readings.jsonl')
+    const a = JSON.stringify(v8Envelope(v8Input(indicator)))
+    const b = JSON.stringify(v8Envelope(v8Input(indicator, { period: { start: '2026-07-01', end: '2026-09-30' }, value: 101 })))
+    const split = Math.floor(b.length / 2)
+    v8Fs.writeFileSync(inbox, `${a}\nnot-json\n${b.slice(0, split)}`)
+    await server.pollFile()
+    v8Assert.equal(store.allReadings().length, 1)
+    v8Assert.equal(server.stats.badLines, 1)
+    v8Assert.ok(v8Fs.readFileSync(inbox, 'utf8').endsWith(b.slice(0, split)), '半行必须留在文件，不能只藏内存')
+    await server.pollFile()
+    v8Assert.equal(store.allReadings().length, 1)
+    v8Assert.equal(server.stats.badLines, 1, '坏行消费后不重复计数')
+    v8Fs.appendFileSync(inbox, `${b.slice(split)}\n${a}\n`)
+    await server.pollFile()
+    v8Assert.equal(store.allReadings().length, 2)
+    v8Assert.equal(server.stats.badLines, 1)
+    v8Assert.ok(counts().changed >= 1)
+    const remaining = v8Fs.readFileSync(inbox, 'utf8')
+    const calls = counts().calls
+    await server.pollFile()
+    v8Assert.equal(counts().calls, calls)
+    await close()
+    await v8Assert.rejects(v8Http(server, '/intent'), (error) => error.code === 'ECONNREFUSED')
+    // 游标按路径分别记——多个投递点互不干扰
+    const checkpoint = JSON.parse(v8Fs.readFileSync(join(directory, 'inbox-readings-cursor.json'), 'utf8'))
+    v8Assert.equal(checkpoint[inbox].offset, Buffer.byteLength(remaining), '用持久游标消费完整行，避免截断并发追加的数据')
+  })
+})
+
+await v8Test('打开数据目录用 handle，成功路径和 shell 错误均可见', async () => {
+  const ipc = v8Fs.readFileSync(join(ROOT, 'src/main/ipc.js'), 'utf8')
+  v8Assert.match(ipc, /ipcMain\.handle\(['"]io:openDataDir['"]/)
+  v8Assert.doesNotMatch(ipc, /ipcMain\.on\(['"]io:openDataDir['"]/)
+  const original = stub.shell.openPath
+  const opened = []
+  try {
+    stub.shell.openPath = async (path) => { opened.push(path); return '' }
+    const success = await fire('io:openDataDir')
+    v8Assert.equal(success.ok, true)
+    v8Assert.equal(success.path, DATA)
+    v8Assert.deepEqual(opened, [DATA])
+    stub.shell.openPath = async () => '测试路径不可访问'
+    const failure = await fire('io:openDataDir')
+    v8Assert.equal(failure.ok, false)
+    v8Assert.equal(failure.error, '测试路径不可访问')
+  } finally { stub.shell.openPath = original }
+  v8Assert.equal(v8Fs.readFileSync(join(ROOT, 'src/main/preload.js'), 'utf8'), v8Fs.readFileSync(join(ROOT, 'src/main/preload.cjs'), 'utf8'))
+})
+
+await v8Test('新版存证导出不能删除事件后冒充旧数据导入', async () => {
+  const { indicator } = v8Reset()
+  v8Add(indicator)
+  const backup = JSON.parse(store.exportAll())
+  delete backup.readingJournal
+  backup.readings[0].value = 999
+  v8Assert.throws(() => store.importAll(JSON.stringify(backup)), /存证/)
+  delete backup.readingFormat
+  v8Assert.throws(() => store.importAll(JSON.stringify(backup)), /存证/)
+  v8Assert.equal(store.allReadings()[0].value, 100)
+})
+
+await v8Test('归位整组作证而不复活被修正的旧值', async () => {
+  const { indicator } = v8Reset()
+  const source = v8Source('revision.example', { accn: 'revision-1' })
+  const old = store.addReading(v8Input({ title: '尚未识别的收入' }, { source, value: 10 })).reading
+  const current = store.addReading(v8Input({ title: '尚未识别的收入' }, { source, value: 20 })).reading
+  v8Assert.equal(store.getReading(old.id).status, 'superseded')
+  v8Assert.equal(store.assignReading(old.id, indicator.id).ok, true)
+  v8Assert.equal(store.getReading(old.id).status, 'superseded')
+  v8Assert.equal(store.getReading(current.id).indicatorId, indicator.id)
+  v8Assert.equal(v8OnlyObservation(indicator.id).value, 20)
+  v8ChainOk(old.chainKey, 2)
+})
+
+const v8Scope = () => {
+  const { theme, indicator: total } = v8Reset()
+  store.updateNode(total.id, { measurement: { role: 'total', scope: 'revenue' } })
+  const component = name => store.addNode({ themeId: theme.id, parentId: total.id, title: name, type: 'observation', measurement: { role: 'component', scope: 'revenue' } })
+  return { total, a: component('分部甲收入'), b: component('分部乙收入') }
+}
+await v8Test('分部修正清除整个范围旧冲突，先入账后归位也检验加和', async () => {
+  const { total, a, b } = v8Scope()
+  v8Add(total)
+  v8Add(a, { value: 60 })
+  const source = v8Source('component.example', { accn: 'component-1' })
+  v8Add(b, { value: 50, source })
+  v8Assert.equal(store.allConflicts().filter(c => !c.resolved).length, 1)
+  v8Add(b, { value: 30, source })
+  v8Assert.equal(store.allConflicts().filter(c => !c.resolved).length, 0)
+  for (const node of [total, a, b]) v8Assert.equal(v8OnlyObservation(node.id).status, 'current')
+  const fixture = v8Scope()
+  v8Add(fixture.total)
+  v8Add(fixture.a, { value: 60 })
+  const pending = store.addReading(v8Input({ title: '未识别分部' }, { value: 50 })).reading
+  v8Assert.equal(store.assignReading(pending.id, fixture.b.id).ok, true)
+  for (const node of [fixture.total, fixture.a, fixture.b]) v8Assert.equal(v8OnlyObservation(node.id).status, 'conflicted')
+  const conflict = store.allConflicts().find(c => !c.resolved)
+  v8Assert.equal(conflict.comparison.sum, 110)
+  store.resolveConflict(conflict.id, 'both')
+  for (const node of [fixture.total, fixture.a, fixture.b]) v8Assert.equal(v8OnlyObservation(node.id).status, 'current')
+  v8Assert.equal(store.allConflicts().filter(c => !c.resolved).length, 0)
+})
+
+await v8Test('来源台账超过五十条仍可分页查看全部作证', async () => {
+  const { indicator } = v8Reset()
+  for (let i = 0; i < 65; i++) {
+    const day = new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10)
+    v8Add(indicator, { period: { start: day, end: day }, value: i })
+  }
+  const source = store.allSources()[0]
+  v8Assert.equal(source.pushCount, 65)
+  const ids = new Set()
+  let cursor
+  do {
+    const page = store.readingEvidence({ sourceId: source.id, cursor, limit: 10 })
+    page.items.forEach(r => ids.add(r.id))
+    cursor = page.nextCursor
+  } while (cursor)
+  v8Assert.equal(ids.size, 65)
+})
+
+await v8Test('旧无效数值仍保留并标记，不阻止整份旧账本迁移', async () => {
+  v8Reset()
+  store.importAll(JSON.stringify({ nodes: [], themes: [], readings: [{ id: 'old-null', at: '2026-06-30', asOf: '2026-06-30', metric: 'old.value', value: null, source: {} }] }))
+  const r = store.getReading('old-null')
+  v8Assert.equal(r.value, null)
+  v8Assert.equal(r.status, 'rejected')
+  v8Assert.ok(r.trust.flags.includes('legacy-invalid-value'))
+  v8Assert.equal(store.readingsPage({}).total, 1)
+  v8ChainOk(r.chainKey, 1)
+  const backup = store.exportAll()
+  store.importAll(backup)
+  v8Assert.equal(store.getReading('old-null').status, 'rejected')
+})
+
+await v8Test('内置取数器走统一契约并可沿已有通道自动归位', async () => {
+  const { indicator } = v8Reset()
+  const channel = store.addChannel({ name: '自动采集名称', query: 'aave', fetch: 'defillamaProtocol', metric: 'tvl', kind: '一手数据' })
+  store.updateNode(indicator.id, { channelIds: [channel.id] })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({ tvl: [{ date: Date.UTC(2026, 5, 30) / 1000, totalLiquidityUSD: 123 }] }), { status: 200 })
+  try {
+    const fetched = await (await import('../src/main/fetchers.js')).fetchChannel(channel)
+    v8Assert.equal(fetched.error, null)
+    v8Assert.equal(fetched.readings.added, 1)
+    const r = store.allReadings()[0]
+    v8Assert.equal(r.indicatorId, indicator.id)
+    v8Assert.equal(r.value, 123)
+    v8Assert.equal(r.effectiveTier, 'structured')
+    v8Assert.ok(r.hash && r.sourceId)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+await v8Test('等长篡改后退出不能洗白索引，重启后禁止继续追加', async () => {
+  const { ReadingStore } = await import('../src/main/reading-store.js')
+  const directory = v8Fs.mkdtempSync(join(DATA, 'tamper-'))
+  let journal = new ReadingStore(directory)
+  try {
+    const source = { id: 'proof-source', label: '验证', url: 'https://proof.example/report' }
+    const fact = journal.makeFact({ indicatorId: 'proof-node', chainKey: 'proof-node', sourceId: source.id, source, dedupeKey: 'proof-key', value: 10, unit: 'USD', period: v8Period, basis: 'reported', tier: 'agent', effectiveTier: 'agent', status: 'current', trust: { score: 0.24, crossCount: 1, flags: [] } })
+    journal.commit({ fact, source, event: { kind: 'ingest', patches: [{ id: fact.id, indicatorId: fact.indicatorId, status: fact.status, trust: fact.trust }], conflicts: [] } })
+    journal.flush()
+    const bytes = v8Fs.readFileSync(journal.file, 'utf8')
+    const stat = v8Fs.statSync(journal.file)
+    const changed = bytes.replace('"value":10', '"value":11')
+    v8Assert.notEqual(changed, bytes)
+    v8Assert.equal(changed.length, bytes.length)
+    v8Fs.writeFileSync(journal.file, changed)
+    v8Fs.utimesSync(journal.file, stat.atime, new Date(stat.mtimeMs + 2000))
+    journal.close()
+    journal = new ReadingStore(directory)
+    v8Assert.equal(journal.verify('proof-node').ok, false)
+    v8Assert.throws(() => journal.commit({ event: { kind: 'conflict', patches: [], conflicts: [] } }), /禁止追加/)
+    v8Assert.equal(v8Fs.readFileSync(journal.file, 'utf8'), changed)
+  } finally { journal.close() }
+})
+
+await v8Test('文件单轮最多一百行，MCP 拒绝非法初始化参数', async () => {
+  const { indicator } = v8Reset()
+  await v8WithServer(async (server, directory, counts) => {
+    const row = JSON.stringify(v8Envelope(v8Input(indicator))) + '\n'
+    v8Fs.writeFileSync(join(directory, 'inbox-readings.jsonl'), row.repeat(250))
+    await server.pollFile()
+    v8Assert.equal(counts().calls, 100)
+    await server.pollFile()
+    v8Assert.equal(counts().calls, 200)
+    await server.pollFile()
+    v8Assert.equal(counts().calls, 250)
+    const response = await v8Http(server, '/mcp', { method: 'POST', body: { jsonrpc: '2.0', id: 1, method: 'initialize', params: 17 } })
+    v8Assert.equal(response.json.error.code, -32602)
+  })
+})
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

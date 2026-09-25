@@ -31,6 +31,9 @@ const LLM_TIMEOUT_MS = 15000
  *  输出量是其它调用的十倍以上。共用 15s 会稳定超时——实测三次全部卡在 15001-15010ms，
  *  结果每次都用兜底模板盖掉 LLM 真生成的结构，标签却生成了，看着像模型只干了一半。 */
 const SKELETON_TIMEOUT_MS = 90000
+/** 标签库要产 8-15 个标签、每个带 3-6 个中英同义词，输出量同样远超 15s 的舒适区。
+ *  实测有一次正好卡在 15004ms 超时，而失败是静默的——用户只看到「骨架已生成」。 */
+const LIBRARY_TIMEOUT_MS = 60000
 
 function errorReason(e) {
   return e?.name === 'TimeoutError' ? 'timeout' : (e.message || String(e))
@@ -163,7 +166,7 @@ export async function generateThemeTags(settings, description) {
     res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(LIBRARY_TIMEOUT_MS),
       body: JSON.stringify({
         model,
         temperature: 0.2,
@@ -226,7 +229,7 @@ export async function generateTagLibrary(settings, description, branchTitles = [
     res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(LIBRARY_TIMEOUT_MS),
       body: JSON.stringify({
         model,
         temperature: 0.2,

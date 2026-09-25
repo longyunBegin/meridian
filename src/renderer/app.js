@@ -18,17 +18,20 @@ export const state = {
   open: new Set(),
   query: '',
   nodes: [],
-  readings: [],
+  latestByNode: new Map(),
+  pendingReadings: [],
+  readingsError: false,
   themes: [],
   settings: {},
   loadedTheme: null,
 }
 
+// 「脉络」没有顶栏入口：点左侧主题就进那个主题的脉络，再放一个顶栏按钮是同一目的两个入口，
+// 而且会同时亮两个选中态（顶栏的脉络 + 侧栏的主题），用户看不出自己到底在看哪。
 const NAV = [
   { id: 'today', label: '今日', icon: 'settle', key: '⌘1' },
-  { id: 'lattice', label: '脉络', icon: 'lattice', key: '⌘2' },
-  { id: 'sources', label: '数据源', icon: 'export', key: '⌘3' },
-  { id: 'readings', label: '读数', icon: 'export', key: '⌘4', count: 'readings' },
+  { id: 'sources', label: '数据源', icon: 'export', key: '⌘2' },
+  { id: 'readings', label: '读数', icon: 'export', key: '⌘3', count: 'readings' },
 ]
 
 /** 审计五视图。台账性质，不是工作面——收在侧栏一组里，默认收起。 */
@@ -56,10 +59,25 @@ async function boot() {
   if (state.themeId) await loadNodes()
   render()
   m.onChanged(() => refresh())
+  let intakeStatus = null
+  let intakeTimer = null
+  m.onReadingProgress?.((progress) => {
+    if (!progress.total || progress.total < 2) return
+    clearTimeout(intakeTimer)
+    if (!intakeStatus?.isConnected) {
+      intakeStatus = h('div', { class: 'toast', role: 'status', 'aria-live': 'polite' })
+      document.body.append(intakeStatus)
+    }
+    const done = progress.processed >= progress.total
+    intakeStatus.textContent = done
+      ? `读数检验完成：${progress.accepted || 0} 条入账，${progress.duplicates || 0} 条已记录，${progress.rejected?.length || 0} 条未接收`
+      : `正在检验读数 ${progress.processed || 0} / ${progress.total}`
+    if (done) intakeTimer = setTimeout(() => intakeStatus?.remove(), 4000)
+  })
   // 骨架铺完的通知——建主题是异步的，这里负责收尾刷新
   m.onThemeScaffolded(async (info) => {
     await refresh()
-    if (info?.skipped === 'has-branches') return
+    if (info?.skipped === 'complete') return
     if (info?.degraded) {
       // 分清楚是没配 key 还是配了但调用失败——后者值得用户立刻看见并重试
       const why = !info.hasKey
@@ -68,6 +86,12 @@ async function boot() {
       toast(`骨架没生成：${why}。可在脉络页点「重新生成」重试。`, 'var(--red)')
     }
     else if (info?.themeId) toast('骨架已生成')
+    // 标签库是归位的依据，缺了读数匹配不上指标。它的失败以前是静默的——
+    // 骨架成功就报「已生成」，用户只看到标签库是 0，根本不知道去哪补。
+    if (info && !info.degraded && info.tagLibraryOk === false) {
+      const why = { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.tagLibraryReason] || `调用失败（${info.tagLibraryReason}）`
+      toast(`标签库没生成：${why}。归位会受影响，可再点一次「重新生成」只补标签库。`, 'var(--red)')
+    }
   })
   m.onInboxPaste(captureText)
   m.onInboxPruned((info) => {
@@ -129,12 +153,43 @@ function applyUrlParams() {
   }
 }
 
+let nodesRequest = 0
 async function loadNodes() {
-  if (!state.themeId) { state.nodes = []; state.readings = []; return }
-  state.nodes = await m.nodes(state.themeId)
-  // 读数随节点一起加载——脉络树要 inline 显示指标的最新读数
-  state.readings = await m.allReadings()
-  state.loadedTheme = state.themeId
+  const request = ++nodesRequest
+  const themeId = state.themeId
+  if (!themeId) { state.nodes = []; state.latestByNode = new Map(); state.pendingReadings = []; return }
+  const [nodes, latest] = await Promise.all([
+    m.nodes(themeId),
+    m.latestReadings().catch(() => null),
+  ])
+  if (request !== nodesRequest || state.themeId !== themeId) return
+  state.nodes = nodes
+  state.readingsError = !latest
+  const byNode = new Map()
+  const byChannel = new Map()
+  // 待归位的读数单独放——它们没有指标节点可挂，但必须让人看见，否则永远等不到归位
+  const pending = []
+  // 仅保留服务端已判定的最新快照，不按时间猜当前值。
+  const put = (map, key, reading) => {
+    if (!key) return
+    const previous = map.get(key)
+    map.set(key, previous ? { ...reading, status: 'conflicted' } : reading)
+  }
+  for (const reading of latest?.items || []) {
+    if (reading.pending || !reading.indicatorId) { pending.push(reading); continue }
+    put(byNode, reading.indicatorId, reading)
+  }
+  // 兼容旧通道关联，只在建索引时解析一次；树每行只做 Map.get。
+  for (const node of nodes) {
+    if (node.type !== 'observation' || byNode.has(node.id)) continue
+    for (const id of node.channelIds || []) {
+      const reading = byChannel.get(id)
+      if (reading) put(byNode, node.id, reading)
+    }
+  }
+  state.latestByNode = byNode
+  state.pendingReadings = pending
+  state.loadedTheme = themeId
 }
 
 export async function refresh() {
@@ -265,7 +320,9 @@ function renderThemes() {
     const count = lemmaCount(t.id)
     const itemBtn = h('button', {
       class: 'theme-item',
-      'aria-selected': state.themeId === t.id ? 'true' : 'false',
+      // 只有正停留在该主题的脉络页时才亮。曾经只看 themeId，
+      // 于是切到读数/数据源后主题还高亮着——一个已经不在看的页面里的选中态。
+      'aria-selected': state.view === 'lattice' && state.themeId === t.id ? 'true' : 'false',
       onclick: () => selectTheme(t.id),
     }, h('span', { class: 'sw', style: { background: themeColor(t.id) } }), h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null)
 
@@ -389,8 +446,13 @@ export function renderThemeCreator(opts = {}) {
 
   // 异步：主题立即建好并切过去，骨架在后台铺。用户不用对着转圈等——
   // 可以先去别处看，铺完由 theme:scaffolded 通知刷新。
+  // 必须防重入：Enter 键和按钮是两个入口，且都只禁自己不禁对方。
+  // 用户输完按回车、手指又点到按钮，就会建出两个同名主题、各跑一遍骨架——
+  // 实测数据里出现过两个「光互连」，各 34 个环节。
+  let submitting = false
   const submitDesc = async (desc) => {
-    if (!desc) return
+    if (!desc || submitting) return
+    submitting = true
     const submitBtn = wrap.querySelector('.btn-primary')
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '创建中…' }
     try {
@@ -403,6 +465,7 @@ export function renderThemeCreator(opts = {}) {
       if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架和标签库。')
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
+      submitting = false
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '开始跟踪' }
     }
   }
@@ -485,7 +548,7 @@ function renderMid() {
 function emptyState() {
   return h('div', { class: 'empty' },
     h('h2', {}, '从一个主题开始'),
-    h('p', {}, '说一句话，模型搭骨架，自动配通道——你直接进今日页看结果。'),
+    h('p', {}, '说一句话，模型搭好骨架。写下判断，账本帮你记录证据。'),
     renderThemeCreator(),
   )
 }
@@ -502,7 +565,7 @@ function renderInspector() {
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey
   if (!mod) return
-  const map = { ',': 'settings', '1': 'today', '2': 'lattice', '3': 'sources', '4': 'readings' }
+  const map = { ',': 'settings', '1': 'today', '2': 'sources', '3': 'readings' }
   if (map[e.key]) { e.preventDefault(); setView(map[e.key]) }
 })
 

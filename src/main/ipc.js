@@ -16,7 +16,9 @@ import {
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
   traceIndexByHash, recordLabelAggregate, pruneInbox, lastInboxPrune, INBOX_TTL_DAYS,
   allChannels, addChannel, updateChannel, removeChannel,
-  addReading, allReadings, indicatorsForReading, latestReadingByChannel,
+  addReading, indicatorsForReading, latestReadingByChannel,
+  getReading, readingsPage, readingEvidence, latestReadings, sourcesPage,
+  assignReading, verifyReadingChain, exportIntent,
   updateTheme, rankChannelsByTags, kindToTags, sicToTags,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
@@ -32,6 +34,7 @@ import { discoverTags, deriveChannelTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { proposeChannelLinks } from './propose.js'
 import { createHash } from 'node:crypto'
+import { ingestReadings } from './reading-ingest.js'
 
 function hashText(text) {
   return createHash('sha256').update(text).digest('hex').slice(0, 16)
@@ -513,7 +516,7 @@ function tokenOverlap(a, b) {
 /**
  * 窗口相关的东西由 main.js 注入，不在这里 import。
  */
-function register({ getMainWindow }) {
+function register({ getMainWindow, getAgentConnection = () => ({ available: false }) }) {
   ipcMain.handle('db:stats', () => stats())
   ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
   ipcMain.handle('db:allNodes', () => allNodes())
@@ -525,7 +528,12 @@ function register({ getMainWindow }) {
   ipcMain.handle('db:falseKillByChannel', (_, days) => falseKillByChannel(days))
   ipcMain.handle('db:events', () => propagationEvents(14).slice(0, 40))
   ipcMain.handle('db:conflicts', () => allConflicts().filter((c) => !c.resolved))
-  ipcMain.handle('db:resolveConflict', (_, id, verdict) => resolveConflict(id, verdict))
+  ipcMain.handle('db:resolveConflict', (_, id, verdict) => {
+    if (!['a', 'b', 'both'].includes(verdict)) return { ok: false, error: '请选择有效的裁决' }
+    const result = resolveConflict(id, verdict)
+    if (result) getMainWindow?.()?.webContents.send('db:changed')
+    return result
+  })
   ipcMain.handle('db:verdicts', () => allVerdicts())
   ipcMain.handle('db:premises', () => sharedPremises())
   ipcMain.handle('db:spawn', (_, branchId) => spawnFromScaffold(branchId))
@@ -551,11 +559,16 @@ function register({ getMainWindow }) {
   ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
 
   async function scaffoldTheme(themeId, description, s) {
-    // 幂等：主题已经有环节就不要再铺。兜底模板没有去重，连点几次「生成」
+    // 幂等：骨架铺过就不再重铺。兜底模板没有去重，连点几次「生成」
     // 就会 instantiate 好几遍——实测同一个主题下摞了三套上中下游。
     // theme:regenerate 是先删后建，走到底下时已经是空树，不受这里挡。
-    if (allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')) {
-      return { degraded: false, channelCount: 0, skipped: 'has-branches' }
+    // 但标签库缺了仍然要补：它是归位的依据，缺了读数匹配不上指标节点。
+    // 曾经这里只要看到环节就整体返回，结果「环节已有、标签库为空」的主题
+    // 永远补不上标签库——用户点多少次生成都没用。
+    const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
+    const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
+    if (hasBranches && hasTagLibrary) {
+      return { degraded: false, channelCount: 0, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
     }
 
     const library = channelLibrary()
@@ -565,7 +578,9 @@ function register({ getMainWindow }) {
       tracked('pickChannelsFromLibrary', () => pickChannelsFromLibrary(s, description, library), { themeId }),
     ])
 
-    if (skeletonResult.ok) {
+    if (hasBranches) {
+      // 这一轮只补标签库，骨架、通道、指标节点都不重铺
+    } else if (skeletonResult.ok) {
       const walk = (node, parentId) => {
         const n = addNode({
           themeId, parentId, kind: 'branch', title: node.title,
@@ -583,13 +598,27 @@ function register({ getMainWindow }) {
       if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
     }
 
-    for (const ch of channelResult.channels || []) {
-      addChannel({
+    const available = new Set(availableFetchers())
+    const automaticChannels = []
+    if (!hasBranches) for (const ch of channelResult.channels || []) {
+      if (!available.has(ch.fetch)) continue
+      automaticChannels.push(addChannel({
         name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
         metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
         cadence: ch.cadence, themeId, tags: ch.tags || [],
         enabled: !ch.needsKey,
-      })
+      }))
+    }
+    if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
+      for (const spec of branch.scaffold?.indicators || []) {
+        const name = typeof spec === 'string' ? spec : spec.name
+        if (!name || allNodes().some((n) => n.themeId === themeId && n.parentId === branch.id && n.title === name && n.status !== 'dead')) continue
+        const linked = automaticChannels.filter((ch) => METRIC_FETCHERS.includes(ch.fetch) && ch.name === name)
+        addNode({
+          themeId, parentId: branch.id, title: name, type: 'observation', by: 'model',
+          cadence: spec.cadence || '季度', channelIds: linked.map((ch) => ch.id),
+        })
+      }
     }
 
     if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
@@ -710,7 +739,13 @@ function register({ getMainWindow }) {
 
   // ---- 订阅源（已统一为通道，见 channel:* handler）----
 
-  ipcMain.on('io:openDataDir', () => shell.openPath(app.getPath('userData')))
+  ipcMain.handle('io:openDataDir', async () => {
+    const path = app.getPath('userData')
+    try {
+      const error = await shell.openPath(path)
+      return error ? { ok: false, error } : { ok: true, path }
+    } catch (e) { return { ok: false, error: e.message || '无法打开数据目录' } }
+  })
   ipcMain.handle('io:openExternal', (_, url) => {
     if (typeof url !== 'string') return false
     try {
@@ -1087,10 +1122,33 @@ function register({ getMainWindow }) {
   })
 
   // ---- 读数层 ----
-  ipcMain.handle('reading:add', (_, input) => addReading(input))
-  ipcMain.handle('reading:all', () => allReadings())
+  ipcMain.handle('reading:add', (_, input) => addReading({
+    metric: input?.metric, value: input?.value, unit: input?.unit, asOf: input?.asOf,
+    period: input?.period, basis: input?.basis, source: input?.source,
+    channelId: input?.channelId, nodeId: input?.nodeId, tier: 'agent',
+  }))
   ipcMain.handle('reading:indicatorsFor', (_, reading) => indicatorsForReading(reading))
   ipcMain.handle('reading:latestByChannel', (_, channelId) => latestReadingByChannel(channelId))
+  ipcMain.handle('reading:get', (_, id) => getReading(id))
+  ipcMain.handle('reading:page', (_, opts) => readingsPage(opts))
+  ipcMain.handle('reading:evidence', (_, opts) => readingEvidence(opts))
+  ipcMain.handle('reading:latest', () => latestReadings())
+  ipcMain.handle('source:page', (_, opts) => sourcesPage(opts))
+  ipcMain.handle('reading:assign', (_, id, nodeId) => {
+    const result = assignReading(id, nodeId)
+    if (result.ok) getMainWindow?.()?.webContents.send('db:changed')
+    return result
+  })
+  ipcMain.handle('reading:verify', (_, key) => verifyReadingChain(key))
+  ipcMain.handle('reading:push', async (_, envelope) => {
+    const result = await ingestReadings(envelope, {
+      onProgress: (progress) => getMainWindow?.()?.webContents.send('reading:progress', progress),
+    })
+    if (result.accepted) getMainWindow?.()?.webContents.send('db:changed')
+    return result
+  })
+  ipcMain.handle('agent:intent', () => exportIntent())
+  ipcMain.handle('agent:connection', () => getAgentConnection())
 
   // ---- 研究观点 ----
   ipcMain.handle('research:add', (_, input) => addResearchNote(input))

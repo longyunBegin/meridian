@@ -28,6 +28,7 @@ mkdirSync(TMP_DIR, { recursive: true })
 writeFileSync(CRYPTO_TMP, readFileSync(CRYPTO_SRC, 'utf8'))
 // store.js 现在依赖 llmlog.js（账本落库接口注入），副本目录里也要有一份
 writeFileSync(join(TMP_DIR, 'llmlog.js'), readFileSync(join(ROOT, 'src/main/llmlog.js'), 'utf8'))
+writeFileSync(join(TMP_DIR, 'reading-store.js'), readFileSync(join(ROOT, 'src/main/reading-store.js'), 'utf8'))
 writeFileSync(TMP, readFileSync(SRC, 'utf8').replace(
   "const { app } = globalThis.__electron",
   `const app = { getPath: () => ${JSON.stringify(DATA)} }`,

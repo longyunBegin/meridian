@@ -80,45 +80,53 @@ export function dueChannels(channels, now, failCounts = new Map(), fetchers = []
  * @param {function} [opts.fetchers] - () => 已实现取数器列表
  * @returns {function} stop 函数
  */
-export function startScheduler({ due, notify, badge, onClick, channels, runChannel, fetchers }) {
+export function startScheduler({ due, notify, badge, onClick, channels, runChannel, fetchers, indicators, metricFetchers = [] }) {
   const notified = new Set()
   const failCounts = new Map()
+  let running = false
+  let stopped = false
 
   const tick = async () => {
-    // 到期结算
-    const items = due() || []
-    if (badge) badge(items.length)
+    if (running || stopped) return
+    running = true
+    try {
+      const items = due() || []
+      if (badge) badge(items.length)
 
-    if (items.length > 0 && !isQuietHours()) {
-      const fresh = dueToNotify(items, notified)
-      if (fresh.length > 0) {
-        for (const d of fresh) notified.add(d.id)
-        const n = buildNotification(fresh)
-        if (n && notify) notify(n, onClick)
-      }
-    }
-
-    // 通道轮询：每个 tick 有内容预算，超出的通道等下个 tick（lastFetch 不推进）
-    if (channels && runChannel && !isQuietHours()) {
-      const all = channels() || []
-      const avail = fetchers ? fetchers() : []
-      const due_ = dueChannels(all, Date.now(), failCounts, avail)
-      let budget = MAX_ITEMS_PER_TICK
-      for (const ch of due_) {
-        if (budget <= 0) break
-        try {
-          const r = await runChannel(ch)
-          budget -= typeof r === 'number' ? r : (Number(r?.processed) || 0)
-        } catch {
-          budget--
-          failCounts.set(ch.id, (failCounts.get(ch.id) || 0) + 1)
+      if (items.length > 0 && !isQuietHours()) {
+        const fresh = dueToNotify(items, notified)
+        if (fresh.length > 0) {
+          for (const d of fresh) notified.add(d.id)
+          const n = buildNotification(fresh)
+          if (n && notify) notify(n, onClick)
         }
       }
-    }
+
+      if (channels && runChannel && !isQuietHours()) {
+        const all = channels() || []
+        const avail = fetchers ? fetchers() : []
+        const dueIds = indicators ? new Set((indicators(Date.now()) || []).flatMap((n) => n.channelIds || [])) : null
+        const eligible = dueIds ? all.filter((ch) => !metricFetchers.includes(ch.fetch) || dueIds.has(ch.id)) : all
+        const due_ = dueChannels(eligible, Date.now(), failCounts, avail)
+        let budget = MAX_ITEMS_PER_TICK
+        for (const ch of due_) {
+          if (budget <= 0 || stopped) break
+          try {
+            const r = await runChannel(ch)
+            budget -= Math.max(1, typeof r === 'number' ? r : (Number(r?.processed) || 0) + (Number(r?.readings?.total) || 0))
+            if (r?.error || r?.readings?.ok === false) failCounts.set(ch.id, (failCounts.get(ch.id) || 0) + 1)
+            else failCounts.delete(ch.id)
+          } catch {
+            budget--
+            failCounts.set(ch.id, (failCounts.get(ch.id) || 0) + 1)
+          }
+        }
+      }
+    } finally { running = false }
   }
 
-  tick().catch(() => { /* 单次 tick 失败不该杀掉定时器 */ })
-  const timer = setInterval(tick, TICK_MS)
+  tick().catch(() => {})
+  const timer = setInterval(() => tick().catch(() => {}), TICK_MS)
 
-  return () => clearInterval(timer)
+  return () => { stopped = true; clearInterval(timer) }
 }

@@ -115,9 +115,23 @@ contextBridge.exposeInMainWorld('meridian', {
 
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),
-  allReadings: () => ipcRenderer.invoke('reading:all'),
   indicatorsForReading: (reading) => ipcRenderer.invoke('reading:indicatorsFor', reading),
   latestReadingByChannel: (channelId) => ipcRenderer.invoke('reading:latestByChannel', channelId),
+  getReading: (id) => ipcRenderer.invoke('reading:get', id),
+  readingsPage: (opts) => ipcRenderer.invoke('reading:page', opts),
+  readingEvidence: (opts) => ipcRenderer.invoke('reading:evidence', opts),
+  latestReadings: () => ipcRenderer.invoke('reading:latest'),
+  sourcesPage: (opts) => ipcRenderer.invoke('source:page', opts),
+  assignReading: (id, nodeId) => ipcRenderer.invoke('reading:assign', id, nodeId),
+  verifyReadingChain: (key) => ipcRenderer.invoke('reading:verify', key),
+  pushReadings: (envelope) => ipcRenderer.invoke('reading:push', envelope),
+  exportIntent: () => ipcRenderer.invoke('agent:intent'),
+  agentConnection: () => ipcRenderer.invoke('agent:connection'),
+  onReadingProgress: (cb) => {
+    const listener = (_, progress) => cb(progress)
+    ipcRenderer.on('reading:progress', listener)
+    return () => ipcRenderer.removeListener('reading:progress', listener)
+  },
 
   // ---- 研究观点
   addResearch: (input) => ipcRenderer.invoke('research:add', input),

@@ -1,7 +1,9 @@
 const { app, BrowserWindow, globalShortcut, clipboard } = globalThis.__electron
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { load, settings, lastInboxPrune } from './store.js'
+import { load, settings, lastInboxPrune, dueIndicators, exportIntent } from './store.js'
+import { startAgentServer } from './agent-server.js'
+import { ingestReadings } from './reading-ingest.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -16,6 +18,11 @@ if (!isMac) {
 }
 
 let mainWin = null
+let agentServer = null
+let stopScheduler = null
+let closing = false
+let closed = false
+let agentError = null
 
 // ---------------------------------------------------------------- windows
 
@@ -52,11 +59,11 @@ function createMain() {
 import { register } from './ipc.js'
 import { startScheduler } from './scheduler.js'
 import { dueSettlements, allChannels } from './store.js'
-import { availableFetchers } from './fetchers.js'
+import { availableFetchers, METRIC_FETCHERS } from './fetchers.js'
 
 // ---------------------------------------------------------------- boot
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (isMac) {
     const { session } = globalThis.__electron
     const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
@@ -79,10 +86,31 @@ app.whenReady().then(() => {
       mainWin.webContents.send('inbox:pruned', pruned)
     })
   }
-  const { runChannelFetch } = register({ getMainWindow: () => mainWin })
+  const { runChannelFetch } = register({
+    getMainWindow: () => mainWin,
+    getAgentConnection: () => ({
+      available: !!agentServer, host: '127.0.0.1', port: agentServer?.port || null,
+      path: join(app.getPath('userData'), 'agent-port.json'),
+      inboxPaths: agentServer?.inboxPaths || [],
+      error: agentError,
+    }),
+  })
+  try {
+    agentServer = await startAgentServer({
+      userData: app.getPath('userData'), ingest: ingestReadings, getIntent: exportIntent,
+      onChanged: () => mainWin?.webContents.send('db:changed'),
+      // 默认投递点之外，用户自己配的路径——助手输出在哪儿就读哪儿
+      inboxPaths: settings().readingInboxPaths || [],
+    })
+    agentServer.pollFile()
+    app.on('browser-window-focus', () => agentServer?.pollFile())
+  } catch (e) {
+    agentError = e.message || '本地摄入服务未启动'
+    console.error('[meridian] 本地摄入服务未启动：', agentError)
+  }
 
   // 到期结算通知 + 通道轮询
-  startScheduler({
+  stopScheduler = startScheduler({
     due: () => dueSettlements(),
     notify: (n, onClick) => {
       const { Notification } = globalThis.__electron
@@ -102,7 +130,9 @@ app.whenReady().then(() => {
       }
     },
     channels: () => allChannels(),
-    runChannel: async (ch) => { await runChannelFetch(ch.id) },
+    indicators: (now) => dueIndicators(now),
+    metricFetchers: METRIC_FETCHERS,
+    runChannel: async (ch) => runChannelFetch(ch.id),
     fetchers: () => availableFetchers(),
   })
 
@@ -120,5 +150,13 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMain() })
 })
 
+app.on('before-quit', (event) => {
+  stopScheduler?.()
+  if (closed || !agentServer) return
+  event.preventDefault()
+  if (closing) return
+  closing = true
+  agentServer.close().finally(() => { closed = true; app.quit() })
+})
 app.on('will-quit', () => globalShortcut.unregisterAll())
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

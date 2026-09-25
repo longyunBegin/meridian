@@ -1,7 +1,10 @@
-import { h, icon, clear, add, $, toast, confirmToast } from '../lib/dom.js'
-import { state, selectTheme, selectNode, setView } from '../app.js'
-import { confColor, TYPE_LABEL, nodePath, todayStr as today } from './shared.js'
+import { h, clear, toast } from '../lib/dom.js'
+import { state, selectNode, setView } from '../app.js'
+import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { SCENARIO_LABELS } from '../../main/llmlog.js'
+
+export { renderReadings, renderSources } from './readings.js'
+import { fmtValue, periodLabel, safeSourceLink, trustMark } from './readings.js'
 
 const m = window.meridian
 
@@ -78,41 +81,57 @@ export async function renderVault(mid, kind) {
 }
 
 async function renderConflicts(mid, meta) {
-  const conflicts = await m.conflicts()
-  const all = await m.allNodes()
-  const byId = new Map(all.map((n) => [n.id, n]))
-
-  mid.append(h('div', { class: 'page' },
-    h('div', { class: 'page-head' },
-      h('h1', {}, meta.title),
-      h('p', {}, meta.note),
-    ),
-    conflicts.length
-      ? h('section', { class: 'sect' },
-          h('div', { class: 'sect-h' }, h('h2', {}, '待你裁决'), h('em', {}, String(conflicts.length))),
-          h('div', { class: 'sect-b' },
-            ...conflicts.map((c) => {
-              const a = byId.get(c.a)
-              const b = byId.get(c.b)
-              if (!a || !b) return null
-              return h('div', { class: 'conflict' },
-                h('div', { class: 'note' }, `${c.note} · 发现于 ${c.at}`),
-                h('div', { class: 'pair' },
-                  side(a, 'A'),
-                  h('span', { class: 'vs' }, 'vs'),
-                  side(b, 'B'),
-                ),
-                h('div', { class: 'acts' },
-                  h('button', { class: 'btn', onclick: async () => { await m.resolveConflict(c.id, 'a'); await renderVault(mid, 'conflicts') } }, 'A 成立'),
-                  h('button', { class: 'btn', onclick: async () => { await m.resolveConflict(c.id, 'b'); await renderVault(mid, 'conflicts') } }, 'B 成立'),
-                  h('button', { class: 'btn', onclick: async () => { await m.resolveConflict(c.id, 'both'); await renderVault(mid, 'conflicts') } }, '两者都对（我搞错了）'),
-                ),
-              )
-            }).filter(Boolean),
-          ),
-        )
-      : empty(meta),
-  ))
+  const page = h('div', { class: 'page' }, h('div', { class: 'page-head' }, h('h1', {}, meta.title), h('p', {}, meta.note)))
+  const list = h('div', {}, h('p', { role: 'status' }, '正在读取冲突…'))
+  page.append(list)
+  mid.append(page)
+  try {
+    const [conflicts, all] = await Promise.all([m.conflicts(), m.allNodes()])
+    if (!page.isConnected) return
+    const byId = new Map(all.map(n => [n.id, n]))
+    clear(list)
+    if (!conflicts.length) { list.append(empty(meta)); return }
+    for (const c of conflicts) {
+      const card = h('div', { class: 'conflict', dataset: { id: c.id, type: c.type || 'node' } })
+      list.append(card)
+      const loadPair = async () => {
+        clear(card).append(h('p', { role: 'status' }, '正在读取双方记录…'))
+        try {
+          const reading = c.type === 'reading'
+          const [a, b] = reading
+            ? await Promise.all([m.getReading(c.readingA || c.a), m.getReading(c.readingB || c.b)])
+            : [byId.get(c.a), byId.get(c.b)]
+          if (!a || !b) throw new Error('missing-record')
+          const readingSide = (r, label) => h('div', { class: 'side' }, h('b', {}, label),
+            h('strong', { class: 'reading-number' }, `${fmtValue(r.value)} ${r.unit || ''}`),
+            h('span', {}, periodLabel(r)), h('span', {}, r.source?.label || '未命名来源'), trustMark(r), safeSourceLink(r.source?.url))
+          const actions = h('div', { class: 'acts' })
+          for (const [choice, label] of [['a', 'A 成立'], ['b', 'B 成立'], ['both', '两者都对（我搞错了）']]) {
+            actions.append(h('button', { class: 'btn', onclick: async () => {
+              actions.querySelectorAll('button').forEach(button => { button.disabled = true })
+              try {
+                const result = await m.resolveConflict(c.id, choice)
+                if (result?.ok === false) throw new Error('resolve-failed')
+                if (page.isConnected) await renderVault(mid, 'conflicts')
+              } catch { toast('裁决未保存，请重试', 'var(--red)') }
+              finally { actions.querySelectorAll('button').forEach(button => { button.disabled = false }) }
+            } }, label))
+          }
+          const sumSide = c.comparison ? h('div', { class: 'side' }, h('b', {}, 'B · 分部之和'),
+            h('strong', { class: 'reading-number' }, `${fmtValue(c.comparison.sum)} ${c.comparison.unit || ''}`),
+            h('span', {}, periodLabel(b)), h('span', {}, `${c.componentIds?.length || 0} 条分部作证；选择 A 将驳回这些分部作证，选择 B 将驳回总计作证。`)) : null
+          clear(card).append(h('div', { class: 'note' }, `${c.note || (reading ? '同一期间出现不同数值，等待你裁决' : '判断不一致')} · 发现于 ${c.at || '未记录'}`),
+            h('div', { class: 'pair' }, reading ? readingSide(a, c.comparison ? 'A · 总计' : 'A') : side(a, 'A'), h('span', { class: 'vs' }, 'vs'), sumSide || (reading ? readingSide(b, 'B') : side(b, 'B'))), actions)
+        } catch {
+          clear(card).append(h('p', { role: 'status' }, '双方记录暂时无法读取。'), h('button', { class: 'btn', onclick: loadPair }, '重试'))
+        }
+      }
+      await loadPair()
+      if (!page.isConnected) return
+    }
+  } catch {
+    clear(list).append(h('p', { role: 'status' }, '冲突读取失败。'), h('button', { class: 'btn', onclick: () => renderVault(mid, 'conflicts') }, '重试'))
+  }
 }
 
 function side(n, label) {
@@ -347,493 +366,6 @@ async function renderReview(mid) {
       ),
     ))
   }
-}
-
-// ------------------------------------------------------------------ 读数展示
-
-const FOLD_THRESHOLD = 10
-
-/** R15 · 取数器中文化。select 里不再出现 edgarConcept 这类实现名——
- *  用户该看到的是「这个通道从哪拿数据」，不是「调了哪个函数」。 */
-const FETCH_LABELS = {
-  manual: '手动粘贴',
-  rss: 'RSS 订阅',
-  web: '网页抓取',
-  edgarConcept: 'SEC EDGAR（财报标签）',
-  edgarFilings: 'SEC EDGAR（公告列表）',
-  cninfo: '巨潮资讯',
-  eastmoneyReport: '东方财富研报',
-  defillamaProtocol: 'DefiLlama（协议数据）',
-  defillamaStablecoins: 'DefiLlama（稳定币）',
-  blockchainChart: 'Blockchain.com（链上指标）',
-  tavily: 'Tavily 搜索',
-  'grok-x-search': 'Grok X 搜索',
-  jina: 'Jina 网页解析',
-}
-const fetchLabel = (f) => FETCH_LABELS[f] || f
-
-
-function fmtValue(v) {
-  if (typeof v !== 'number') return String(v ?? '—')
-  return v.toLocaleString('en-US')
-}
-
-/**
- * 读数行——历史期紧凑网格。
- *
- * 最新一期已由卡片头的摘要区独占视觉焦点，这里只做密集参考列表：
- * caption 级、行高 32px、四列。重述标记是行内 caption 而非独立网格列——
- * 原来它是第 5 个 grid 子元素，但 grid-template-columns 只定义了 4 列，会被挤出去。
- */
-function readingRow(r, prev, opts = {}) {
-  const restated = !!opts.restated
-  // 环比 = 当期 / 上期 − 1。上期缺失或为 0 时给占位，不出 NaN。
-  let change = null
-  if (prev && Number(prev.value) > 0 && Number.isFinite(Number(r.value))) {
-    const ratio = Number(r.value) / Number(prev.value) - 1
-    if (Number.isFinite(ratio)) change = ratio
-  }
-  const changeLabel = change == null
-    ? '—'
-    : `${change >= 0 ? '+' : '\u2212'}${Math.abs(change * 100).toFixed(1)}%`
-  const changeTone = change == null ? 'flat' : change >= 0 ? 'up' : 'down'
-
-  return h('div', { class: 'reading-row', dataset: { latest: String(!!opts.latest), restated: String(restated) } },
-    h('span', { class: 'rc-asof' }, r.asOf || '无期间'),
-    h('span', { class: 'rc-basis' }, r.basis === 'estimated' ? '估算' : '财报口径'),
-    h('span', { class: 'rc-delta', dataset: { tone: changeTone } }, changeLabel),
-    h('span', { class: 'rc-value' }, fmtValue(r.value)),
-    restated ? h('span', { class: 'rc-restated', title: '同一数据期的后续申报修正了旧值' }, '已被修正') : null,
-  )
-}
-
-/**
- * 读数流水——按抓取时间倒序，一行一条。
- *
- * 原实现按 metric 分卡片，是「对账单」视角：一次一屏 1-2 张卡，
- * 且卡内按 asOf 排序，看不出「最近进了什么」。
- *
- * 流水视角回答的是另一个问题：今天我的通道给我带来了什么。
- * 一行一条，按天分组；点行就地展开该 metric 的完整历史。
- */
-function readingsFeed(readings, channels, gaapLabels) {
-  const byDay = new Map()
-  for (const r of readings) {
-    const day = (r.at || '').slice(0, 10) || '未知日期'
-    if (!byDay.has(day)) byDay.set(day, [])
-    byDay.get(day).push(r)
-  }
-  const days = [...byDay.keys()].sort((a, b) => b.localeCompare(a))
-
-  const nameOf = (r) => {
-    const ch = channels.find((c) => c.id === r.channelId)
-    return ch?.name || gaapLabels.find(({ tag }) => r.metric.endsWith(tag))?.label || r.metric
-  }
-  const sourceOf = (r) => {
-    const ch = channels.find((c) => c.id === r.channelId)
-    if (!ch) return r.source?.kind || '未知来源'
-    return ch.kind || r.source?.kind || '未知来源'
-  }
-
-  // 每个 metric 的历史（点行展开时用）
-  const historyByMetric = new Map()
-  for (const r of readings) {
-    if (!historyByMetric.has(r.metric)) historyByMetric.set(r.metric, [])
-    historyByMetric.get(r.metric).push(r)
-  }
-
-  return h('div', { class: 'feed-rows' },
-    ...days.map((day) => h('div', { class: 'feed-day' },
-      h('div', { class: 'feed-day-h' },
-        h('span', {}, day === today() ? '今天' : day.slice(5)),
-        h('span', { class: 'feed-day-n' }, `${byDay.get(day).length} 条`),
-      ),
-      ...byDay.get(day).map((r) => {
-        const hist = historyByMetric.get(r.metric) || []
-        const prev = hist.find((x) => x.asOf && r.asOf && x.asOf < r.asOf)
-        let change = null
-        if (prev && Number(prev.value) > 0 && Number.isFinite(Number(r.value))) {
-          const ratio = Number(r.value) / Number(prev.value) - 1
-          if (Number.isFinite(ratio)) change = ratio
-        }
-        const detail = h('div', { class: 'feed-detail', style: { display: 'none' } })
-
-        const row = h('div', { class: 'feed-row' },
-          h('span', { class: 'feed-name' }, nameOf(r)),
-          h('span', { class: 'feed-value' }, fmtValue(r.value)),
-          r.unit ? h('span', { class: 'feed-unit' }, r.unit) : null,
-          h('span', {
-            class: 'feed-delta',
-            dataset: { tone: change == null ? 'flat' : change >= 0 ? 'up' : 'down' },
-          }, change == null ? '—' : `${change >= 0 ? '+' : '\u2212'}${Math.abs(change * 100).toFixed(1)}%`),
-          h('span', { class: 'feed-src' }, sourceOf(r)),
-          h('span', { class: 'feed-chev' }, '\u203a'),
-        )
-        row.onclick = () => {
-          detail.style.display = detail.style.display === 'none' ? 'block' : 'none'
-          if (detail.style.display === 'block' && !detail.childNodes.length) {
-            detail.append(h('div', { class: 'feed-detail-h' }, `${nameOf(r)} · ${hist.length} 期`),
-              h('div', { class: 'feed-detail-grid' },
-                ...hist.map((x) => h('div', { class: 'feed-detail-row' },
-                  h('span', {}, x.asOf || '无期间'),
-                  h('span', {}, x.basis === 'estimated' ? '估算' : '财报口径'),
-                  h('b', {}, fmtValue(x.value)),
-                )),
-              ),
-              h('div', { class: 'feed-detail-meta' },
-                `技术名 ${r.metric}`,
-                r.source?.url ? h('button', {
-                  class: 'btn', style: { padding: '1px 6px', fontSize: 'var(--t-caption)' },
-                  onclick: (e) => { e.stopPropagation(); m.openExternal(r.source.url) },
-                }, '原文链接') : null,
-              ),
-            )
-          }
-        }
-        return h('div', {}, row, detail)
-      }),
-    )),
-  )
-}
-
-
-export async function renderReadings(mid) {
-  clear(mid)
-  const [all, channels, nodes, gaapLabels] = await Promise.all([
-    m.allReadings(), m.channelList(), m.allNodes(), m.commonUsGaap(),
-  ])
-  // 异步返回时用户可能已经切走——不往别人的页面里写东西
-  if (state.view !== 'readings') return
-  const page = h('div', { class: 'page' })
-  mid.append(page)
-
-  // 空态
-  if (!all.length) {
-    page.append(h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '读数')),
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'q' }, h('div', { class: 'q-body' },
-          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } },
-            '现在是空的。读数来自取数器抓取的结构化财务数字——在「数据源」里配一个 EDGAR 通道并点「拉取」，读数就会落在这里。'),
-        )),
-      ),
-    ))
-    return
-  }
-
-  const channelIds = new Set(all.map((r) => r.channelId).filter(Boolean))
-  const indicators = nodes.filter((n) =>
-    n.type === 'observation' && n.status !== 'dead' && (n.channelIds || []).some((id) => channelIds.has(id)))
-
-  let currentFilter = null
-  let currentIndicator = null
-
-  const filterBar = (label, options, select, marginBottom) => {
-    if (options.length <= 1) return null
-    const bar = h('div', { class: 'sect-b', style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom } })
-    for (const option of [{ label, value: null }, ...options]) {
-      const button = h('button', {
-        class: 'btn', style: { padding: '2px 10px' }, 'aria-selected': String(option.value === null),
-        onclick: () => {
-          for (const child of bar.children) child.setAttribute('aria-selected', String(child === button))
-          select(option.value)
-          refresh()
-        },
-      }, option.label)
-      bar.append(button)
-    }
-    return bar
-  }
-
-  function refresh() {
-    let filtered = all
-    if (currentIndicator) {
-      const ind = indicators.find((n) => n.id === currentIndicator)
-      if (ind) filtered = filtered.filter((r) => (ind.channelIds || []).includes(r.channelId))
-    }
-    if (currentFilter) {
-      filtered = filtered.filter((r) => r.channelId === currentFilter)
-    }
-    const list = $('#readings-list', mid)
-    if (list) {
-      clear(list)
-      add(list, readingsFeed(
-        [...filtered].sort((a, b) => (b.at || '').localeCompare(a.at || '')),
-        channels, gaapLabels,
-      ))
-    }
-  }
-
-  // 按抓取时间倒序——流水视角，「最近进了什么」在第一眼
-  const feed = [...all].sort((a, b) => (b.at || '').localeCompare(a.at || ''))
-  page.append(h('section', { class: 'sect' },
-    h('div', { class: 'sect-h' },
-      h('h2', {}, '读数'),
-      h('span', { class: 'spacer' }),
-      h('em', {}, `${all.length} 条 · ${new Set(all.map((r) => r.metric)).size} 个指标`),
-    ),
-    filterBar('全部指标', indicators.map((n) => ({ label: n.title, value: n.id })),
-      (value) => { currentIndicator = value }, '10px'),
-    filterBar('全部通道', [...channelIds].map((id) => ({ label: channels.find((c) => c.id === id)?.name || id, value: id })),
-      (value) => { currentFilter = value }, '6px'),
-    h('div', { id: 'readings-list' },
-      readingsFeed(feed, channels, gaapLabels),
-    ),
-  ))
-}
-
-// ============================================================
-// 数据源：通道管理
-// ============================================================
-
-const FETCH_OPTIONS = [
-  'manual', 'rss', 'web', 'edgarConcept', 'edgarFilings',
-  'cninfo', 'eastmoneyReport', 'jina', 'tavily', 'grok-x-search',
-]
-
-const KIND_OPTIONS = [
-  '财报 / 公告', '一手数据', '券商研报', '独立媒体', '自媒体',
-]
-
-const EDGAR_FETCHES = new Set(['edgarConcept', 'edgarFilings'])
-
-export async function renderSources(mid) {
-  clear(mid)
-  const [channels, fetchers, metricFetchers, matchRates] = await Promise.all([
-    m.channelList(), m.availableFetchers(), m.metricFetchers(), m.channelMatchRates(30),
-  ])
-  const rateById = new Map((matchRates || []).map((r) => [r.channelId, r]))
-
-  const flash = h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', marginLeft: '8px' } }, '')
-  const showFlash = (msg, color = 'var(--text-2)') => {
-    flash.textContent = msg
-    flash.style.color = color
-    setTimeout(() => { flash.textContent = '' }, 4000)
-  }
-
-  mid.append(h('div', { class: 'page' },
-    h('div', { class: 'page-head' },
-      h('h1', {}, '数据源'),
-      h('p', {}, '通道描述符：按内容类型选取数器。已实现的取数器：' + fetchers.join('、') + '。'),
-      h('p', {}, '「未匹配」= 近 30 天该通道进入收件箱、但没被抽取的比例（低质 / 未命中标签库 / 未达阈值）——只作参考，不会自动停用通道。'),
-      flash,
-    ),
-
-    // R15 · 三段式行：状态点 + 名称/说明 + 右簇 + ›
-    channels.length ? h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '通道'), h('span', { class: 'spacer' }), h('em', {}, String(channels.length))),
-      h('div', { class: 'channel-rows' },
-        ...channels.map((ch) => {
-          const rate = rateById.get(ch.id)
-          const hasError = !!ch.lastError
-          const matchRate = rate?.total ? Math.round(rate.rate * 100) : null
-          const detailOpen = h('div', { class: 'channel-detail' })
-          const chev = h('span', { class: 'channel-chev', dataset: { open: 'false' } }, '›')
-          const toggleDetail = () => { detailOpen.hidden = !detailOpen.hidden; chev.dataset.open = String(!detailOpen.hidden) }
-
-          const row = h('div', { class: 'channel-row', dataset: { state: hasError ? 'error' : ch.enabled ? 'on' : 'off' } },
-            // ① 状态点：三态，出错最重
-            h('span', { class: 'channel-dot', title: hasError ? '拉取出错' : ch.enabled ? '启用中' : '已停用' }),
-            // ② 名称 + 说明 caption
-            h('div', { class: 'channel-main' },
-              h('div', { class: 'channel-name' }, ch.name),
-              h('div', { class: 'channel-desc' }, `${ch.kind} · 每 ${ch.interval || 60} 分钟`),
-              // ⑤ 出错态：名称下红色 caption，不降级进 tooltip
-              hasError ? h('div', { class: 'channel-err' }, `错误：${ch.lastError}`) : null,
-            ),
-            // ③ 右簇：恒定宽度，扫读时成列
-            h('div', { class: 'channel-right' },
-              matchRate != null ? h('span', {
-                class: 'channel-rate', dataset: { high: String(matchRate >= 50) },
-                title: `近 30 天 ${rate.unmatched}/${rate.total} 条进入收件箱但没被抽取`,
-              }, `未匹配 ${matchRate}%`) : null,
-              h('button', {
-                class: 'channel-pill', dataset: { on: String(ch.enabled) },
-                onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
-              }, ch.enabled ? '启用' : '停用'),
-              h('button', { class: 'channel-link', onclick: toggleDetail }, '详情'),
-              h('button', {
-                class: 'channel-link is-danger',
-                onclick: async () => {
-                  if (!await confirmToast(`删除通道「${ch.name}」？`, '删除')) return
-                  await m.channelRemove(ch.id)
-                  await renderSources(mid)
-                },
-              }, '删除'),
-              chev,
-            ),
-          )
-          chev.onclick = toggleDetail
-
-          // ⑥ 工程字段收纳进详情区——默认行上只留名称/类型/间隔/未匹配/启停
-          detailOpen.append(h('div', { class: 'channel-detail-grid' },
-            h('div', {}, h('span', {}, '取数器'), h('b', {}, fetchLabel(ch.fetch))),
-            h('div', {}, h('span', {}, 'query'), h('b', {}, ch.query || '—')),
-            ch.metric ? h('div', {}, h('span', {}, '指标标签'), h('b', {}, ch.metric)) : null,
-            h('div', {}, h('span', {}, '归属'), h('b', {}, ch.themeId ? (state.themes.find((t) => t.id === ch.themeId)?.name || '主题') : '全局')),
-            h('div', {}, h('span', {}, '最后拉取'), h('b', {}, ch.lastFetch || '从未')),
-            h('div', {}, h('span', {}, '拿到条数'), h('b', {}, ch.lastCount != null ? String(ch.lastCount) : '—')),
-            ch.failCount > 0 ? h('div', {}, h('span', {}, '连续失败'), h('b', {}, String(ch.failCount))) : null,
-          ), h('div', { class: 'channel-detail-acts' },
-            fetchers.includes(ch.fetch) ? h('button', {
-              class: 'btn',
-              onclick: async () => {
-                showFlash(`正在拉取「${ch.name}」…`)
-                const r = await m.channelFetch(ch.id)
-                if (r.error) { showFlash(`拉取失败：${r.error}`, 'var(--red)'); return }
-                if (r.readings) {
-                  showFlash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
-                } else {
-                  showFlash(`拉取到 ${r.items.length} 条`)
-                }
-              },
-            }, '立即拉取') : h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '取数器未实现'),
-            h('select', {
-              class: 'txt', style: { width: 'auto' },
-              onchange: async (e) => {
-                const newFetch = e.target.value
-                const patch = { fetch: newFetch }
-                // edgar ↔ 其他：query/metric 语义不同，清掉不相干字段
-                if (EDGAR_FETCHES.has(ch.fetch) && !EDGAR_FETCHES.has(newFetch)) {
-                  patch.metric = null
-                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}，已清空指标标签，请重新填写`)
-                } else if (!EDGAR_FETCHES.has(ch.fetch) && EDGAR_FETCHES.has(newFetch)) {
-                  patch.metric = null
-                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}，已清空指标标签，请重新填写`)
-                } else {
-                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}`)
-                }
-                await m.channelUpdate(ch.id, patch)
-                await renderSources(mid)
-              },
-            },
-              ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: ch.fetch === f }, fetchLabel(f))),
-            ),
-          ))
-          detailOpen.hidden = true
-
-          return h('div', { class: 'channel-cell' }, row, detailOpen)
-        }),
-      ),
-    ) : null,
-
-    h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '新增通道')),
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'field', style: { marginTop: '8px' } },
-          h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'flex-end' } },
-            ...(() => {
-              const inputs = { kind: '独立媒体', fetch: 'manual', themeId: state.themeId || null }
-              // metric 输入框引用，供标签选择回填
-              let metricInput = null
-              let metricRow = null
-              // 发现标签按钮（仅 EDGAR 类型显示）
-              const discoverBtn = h('button', {
-                class: 'btn', style: { display: 'none', padding: '4px 8px', fontSize: 'var(--t-caption)' },
-                onclick: async () => {
-                  if (!inputs.query) { showFlash('请先填 query (ticker)', 'var(--red)'); return }
-                  showFlash(`正在发现标签…`)
-                  const result = await m.discoverTags(inputs.query)
-                  if (result.error) { showFlash(`发现失败：${result.error}`, 'var(--red)'); return }
-                  showFlash(result.entityName ? `${result.entityName} · ${result.tags.length} 个标签` : `${result.tags.length} 个标签`)
-                  renderTagPanel(result.tags, metricInput)
-                },
-              }, '发现标签')
-              // 标签面板容器
-              const tagPanel = h('div', { style: { marginTop: '8px', width: '100%' } })
-              function renderTagPanel(tags, inputEl) {
-                clear(tagPanel)
-                if (!tags.length) { tagPanel.append(h('p', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '没有标签')); return }
-                // 过滤框
-                let filterText = ''
-                const filterInput = h('input', { class: 'txt', placeholder: '过滤标签…', style: { width: '100%', marginBottom: '6px' }, oninput: (e) => { filterText = e.target.value.toLowerCase(); refreshList() } })
-                const listBox = h('div', { style: { maxHeight: '200px', overflowY: 'auto', border: '1px solid var(--border, #e0e0e0)', borderRadius: 'var(--r-sm)' } })
-                function refreshList() {
-                  clear(listBox)
-                  const filtered = filterText
-                    ? tags.filter((t) => t.tag.toLowerCase().includes(filterText) || (t.label && t.label.includes(filterText)))
-                    : tags
-                  for (const t of filtered) {
-                    const display = t.label ? `${t.label}（${t.tag}）` : t.tag
-                    const row = h('div', {
-                      style: { padding: '3px 8px', cursor: t.periods > 0 ? 'pointer' : 'default', fontSize: 'var(--t-caption)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border, #f0f0f0)' },
-                      onclick: t.periods > 0 ? () => {
-                        if (inputEl) { inputEl.value = t.tag; inputs.metric = t.tag }
-                        clear(tagPanel)
-                      } : null,
-                    },
-                      h('span', { style: { color: t.periods > 0 ? 'var(--text-2)' : 'var(--text-3)', fontWeight: t.common ? '600' : '400' } }, display),
-                      h('span', { style: { color: 'var(--text-3)', fontSize: 'var(--t-caption)' } }, String(t.periods)),
-                    )
-                    listBox.append(row)
-                  }
-                }
-                refreshList()
-                tagPanel.append(filterInput, listBox)
-              }
-              return [
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '名称'),
-                  h('input', { class: 'txt', placeholder: '名称', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.name = e.target.value }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, 'query (URL/CIK/ticker)'),
-                  h('input', { class: 'txt', placeholder: 'query', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.query = e.target.value }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '取数器'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => {
-                    inputs.fetch = e.target.value
-                    const needsMetric = metricFetchers.includes(e.target.value)
-                    metricRow.style.display = needsMetric ? '' : 'none'
-                    discoverBtn.style.display = e.target.value === 'edgarConcept' ? '' : 'none'
-                    if (!needsMetric) { inputs.metric = ''; if (metricInput) metricInput.value = '' }
-                  } },
-                    ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: f === 'manual' }, f)),
-                  ),
-                ),
-                (metricRow = h('div', { style: { display: 'none', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, 'metric'),
-                  h('div', { style: { display: 'flex', gap: '4px', alignItems: 'flex-end' } },
-                    (metricInput = h('input', { class: 'txt', placeholder: 'metric', style: { flex: '1', minWidth: '120px' }, oninput: (e) => inputs.metric = e.target.value })),
-                    discoverBtn,
-                  ),
-                )),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '来源类型'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.kind = e.target.value },
-                    ...KIND_OPTIONS.map((k) => h('option', { value: k, selected: k === '独立媒体' }, k)),
-                  ),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '间隔 (分钟)'),
-                  h('input', { class: 'txt', type: 'number', value: '60', min: '15', style: { width: '80px' }, oninput: (e) => inputs.interval = Number(e.target.value) || 60 }),
-                ),
-                h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-                  h('label', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '所属主题'),
-                  h('select', { class: 'txt', style: { width: 'auto' }, onchange: (e) => inputs.themeId = e.target.value || null },
-                    h('option', { value: '' }, '全局（所有主题可用）'),
-                    ...state.themes.map((t) => h('option', { value: t.id, selected: t.id === state.themeId }, t.name)),
-                  ),
-                ),
-                h('button', {
-                  class: 'btn btn-primary',
-                  onclick: async () => {
-                    if (!inputs.name) { showFlash('请填名称', 'var(--red)'); return }
-                    if (metricFetchers.includes(inputs.fetch) && !inputs.metric?.trim()) { showFlash('该取数器必须填 metric', 'var(--red)'); return }
-                    await m.channelAdd({ name: inputs.name, query: inputs.query || '', fetch: inputs.fetch, metric: inputs.metric || null, kind: inputs.kind, interval: Math.max(15, Number(inputs.interval) || 60), themeId: inputs.themeId || null })
-                    showFlash('已添加通道')
-                    await renderSources(mid)
-                  },
-                }, '添加'),
-                tagPanel,
-              ]
-            })(),
-          ),
-        ),
-      ),
-    ),
-  ))
 }
 
 function empty(meta) {

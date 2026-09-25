@@ -10,7 +10,7 @@
 
 import { fetchFeed } from './feeds.js'
 import { fetchUrl } from './fetcher.js'
-import { addReading } from './store.js'
+import { ingestReadings } from './reading-ingest.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -18,6 +18,31 @@ import { join } from 'node:path'
 export const UA = 'Meridian/0.6 (contact: meridian@example.com)'
 
 const { app } = globalThis.__electron
+
+async function submitReadings(channel, inputs) {
+  const result = await ingestReadings({
+    schema: 'meridian.reading.v1',
+    readings: inputs.map((input) => ({
+      indicator: channel.name || input.metric,
+      metric: input.metric,
+      value: input.value,
+      unit: input.unit || '个',
+      period: { start: input.source?.start || input.asOf, end: input.source?.end || input.asOf },
+      basis: input.basis || 'reported',
+      tier: 'structured',
+      source: {
+        kind: input.source?.kind, label: input.source?.label || channel.name || input.metric,
+        url: input.source?.url, platform: input.source?.platform,
+        accn: input.source?.accn, filed: input.source?.filed, form: input.source?.form,
+      },
+    })),
+  }, { trusted: true, channelId: channel.id })
+  return {
+    items: [],
+    readings: { ok: result.rejected.length === 0, added: result.accepted, skipped: result.duplicates || 0, total: inputs.length, rejected: result.rejected },
+    error: result.rejected.length ? `有 ${result.rejected.length} 条读数未通过验证：${result.rejected[0].reason}` : null,
+  }
+}
 
 /** ticker → CIK 内存缓存 */
 let tickerCache = null
@@ -127,14 +152,17 @@ async function fetchEdgarConcept(channel) {
   if (!res.ok) return { items: [], readings: { ok: false, error: `HTTP ${res.status}` }, error: null }
   const data = await res.json()
   const readingInputs = convertEdgarConcept(data, channel, cik, channel.query.toUpperCase().trim(), title)
+  if (!readingInputs.length) return { items: [], readings: { ok: true, added: 0, skipped: 0, total: 0 }, error: null }
   let added = 0
   let skipped = 0
-  for (const input of readingInputs) {
-    const result = addReading(input)
-    if (result.added) added++
-    else skipped++
+  const rejected = []
+  for (let i = 0; i < readingInputs.length; i += 500) {
+    const result = await submitReadings(channel, readingInputs.slice(i, i + 500))
+    added += result.readings.added
+    skipped += result.readings.skipped
+    rejected.push(...result.readings.rejected.map((r) => ({ ...r, index: r.index + i })))
   }
-  return { items: [], readings: { ok: true, added, skipped, total: readingInputs.length }, error: null }
+  return { items: [], readings: { ok: !rejected.length, added, skipped, total: readingInputs.length, rejected }, error: rejected.length ? `${rejected.length} 条读数未通过验证` : null }
 }
 
 /**
@@ -221,12 +249,11 @@ async function fetchDefiLlamaProtocol(channel) {
     const value = data?.total24h ?? data?.totalDataChart?.slice(-1)?.[0]?.[1]
     if (value == null) return { items: [], readings: { ok: false, error: '响应缺少 total24h' }, error: null }
     const asOf = unixToDate(data?.totalDataChart?.slice(-1)?.[0]?.[0]) || new Date().toISOString().slice(0, 10)
-    const result = addReading({
+    return submitReadings(channel, [{
       metric: metricName, value, unit: 'USD', asOf,
       source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: `https://defillama.com/protocol/${slug}` },
       basis: 'reported', channelId: channel.id,
-    })
-    return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+    }])
   }
 
   // tvl
@@ -236,12 +263,11 @@ async function fetchDefiLlamaProtocol(channel) {
   const tvlHistory = data?.tvl
   if (!Array.isArray(tvlHistory) || !tvlHistory.length) return { items: [], readings: { ok: false, error: '响应缺少 tvl 数组' }, error: null }
   const latest = tvlHistory[tvlHistory.length - 1]
-  const result = addReading({
-    metric: metricName, value: latest.total, unit: 'USD', asOf: unixToDate(latest.date),
+  return submitReadings(channel, [{
+    metric: metricName, value: latest.totalLiquidityUSD ?? latest.total, unit: 'USD', asOf: unixToDate(latest.date),
     source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: `https://defillama.com/protocol/${slug}` },
     basis: 'reported', channelId: channel.id,
-  })
-  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+  }])
 }
 
 /**
@@ -264,12 +290,11 @@ async function fetchDefiLlamaStablecoins(channel) {
   } else {
     value = coins.reduce((s, c) => s + (c?.circulating?.peggedUSD || 0), 0)
   }
-  const result = addReading({
+  return submitReadings(channel, [{
     metric: metricName, value, unit: 'USD', asOf: new Date().toISOString().slice(0, 10),
     source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: 'https://defillama.com/stablecoins' },
     basis: 'reported', channelId: channel.id,
-  })
-  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+  }])
 }
 
 /**
@@ -287,12 +312,11 @@ async function fetchBlockchainChart(channel) {
   const points = data?.values
   if (!Array.isArray(points) || !points.length) return { items: [], readings: { ok: false, error: '响应缺少 values 数组' }, error: null }
   const latest = points[points.length - 1]
-  const result = addReading({
+  return submitReadings(channel, [{
     metric: metricName, value: latest.y, unit: metric === 'hash-rate' ? 'TH/s' : null, asOf: unixToDate(latest.x),
     source: { kind: channel.kind || '一手数据', platform: 'Blockchain.com', url: `https://www.blockchain.com/explorer/charts/${metric}` },
     basis: 'reported', channelId: channel.id,
-  })
-  return { items: [], readings: { ok: true, added: result.added ? 1 : 0, skipped: result.added ? 0 : 1, total: 1 }, error: null }
+  }])
 }
 
 const FETCHERS = {
@@ -356,9 +380,11 @@ const FETCHERS = {
  */
 export async function fetchChannel(channel) {
   const fn = FETCHERS[channel.fetch]
-  if (!fn) return { items: [], readings: null, error: null }
+  if (!fn) return { items: [], readings: null, error: '此采集方式尚不可用' }
   try {
-    return await fn(channel)
+    const result = await fn(channel)
+    if (result.readings?.ok === false && !result.error) result.error = result.readings.error || '读数未通过验证'
+    return result
   } catch (e) {
     return { items: [], readings: null, error: e.message || String(e) }
   }

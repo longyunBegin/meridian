@@ -1,8 +1,19 @@
-import { h, clear, confirmToast } from '../lib/dom.js'
+import { h, clear, confirmToast, toast } from '../lib/dom.js'
 import { state } from '../app.js'
 import { confColor } from './shared.js'
 
 const m = window.meridian
+
+async function openDataDirectory(event) {
+  const button = event.currentTarget
+  button.disabled = true
+  try {
+    const result = await m.openDataDir()
+    if (!result?.ok) toast(`无法打开数据目录：${result?.error || '请稍后重试'}`, 'var(--red)')
+  } catch (error) {
+    toast(`无法打开数据目录：${error.message || '请稍后重试'}`, 'var(--red)')
+  } finally { button.disabled = false }
+}
 
 const planPurge = (scope, dryRunResult, confirmed) => {
   if (dryRunResult.removed === 0) return { willDelete: false, scope, reason: 'empty' }
@@ -266,7 +277,7 @@ export async function renderSettings(mid) {
           '判断在 meridian.json，原文在 raw.jsonl。原文可以随便清——清掉不影响任何一条命题，只是以后复盘不了当初读的是什么。'),
         // 安全操作区：常规颜色
         h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-          h('button', { class: 'btn', onclick: () => m.openDataDir() }, '打开数据目录'),
+          h('button', { class: 'btn', onclick: openDataDirectory }, '打开数据目录'),
           h('button', {
             class: 'btn',
             onclick: async () => {
@@ -377,6 +388,63 @@ export async function renderSettings(mid) {
       ),
     ) : null,
 
+    // ---- 界面
+    h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '界面')),
+      h('div', { class: 'sect-b' },
+        // 文件投递路径：默认读数据目录下的 inbox-readings.jsonl，
+        // 助手的输出在别处就加进来——曾经只有一个写死的位置，用户只能挪文件
+        field('投递路径', (() => {
+          const box = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', width: '100%' } })
+          const render = async () => {
+            clear(box)
+            const paths = (settings.readingInboxPaths || [])
+            if (!paths.length) box.append(h('p', { style: { margin: '0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '只用数据目录下的 inbox-readings.jsonl。'))
+            for (const p of paths) {
+              box.append(h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
+                h('span', { style: { flex: '1', minWidth: '0', fontSize: 'var(--t-caption)', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: p }, p),
+                h('button', {
+                  class: 'btn', style: { flex: 'none' },
+                  onclick: async () => {
+                    await m.saveSettings({ readingInboxPaths: paths.filter((x) => x !== p) })
+                    settings.readingInboxPaths = paths.filter((x) => x !== p)
+                    render()
+                  },
+                }, '移除'),
+              ))
+            }
+            const input = h('input', { class: 'txt', placeholder: '/Users/…/readings.jsonl', style: { flex: '1', minWidth: '0' } })
+            box.append(h('div', { style: { display: 'flex', gap: '6px' } }, input,
+              h('button', {
+                class: 'btn btn-primary', style: { flex: 'none' },
+                onclick: async () => {
+                  const v = input.value.trim()
+                  if (!v || paths.includes(v)) return
+                  const next = [...paths, v]
+                  await m.saveSettings({ readingInboxPaths: next })
+                  settings.readingInboxPaths = next
+                  render()
+                },
+              }, '添加'),
+            ))
+          }
+          render()
+          return box
+        })(), '助手往这些路径追加 JSONL（一行一条），30 秒内自动入账。改完重启 app 生效。'),
+        field('图的缩放', (() => {
+          const value = Number(settings.graphZoom) || 1
+          const out = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', minWidth: '44px' } }, `${value.toFixed(1)}×`)
+          const input = h('input', {
+            type: 'range', min: '0.2', max: '3', step: '0.1', value: String(value),
+            style: { flex: '1' },
+            oninput: (e) => { out.textContent = `${Number(e.target.value).toFixed(1)}×` },
+            onchange: (e) => m.saveSettings({ graphZoom: Number(e.target.value) || 1 }),
+          })
+          return h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, input, out)
+        })(), '产业链图的滚轮灵敏度。触控板一次滚动会连发多个小步进，觉得跳得太快就调小。'),
+      ),
+    ),
+
     // ---- 数据管理
     h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '数据管理')),
@@ -412,7 +480,7 @@ export async function renderSettings(mid) {
           }, '导入 JSON'),
           h('button', {
             class: 'btn',
-            onclick: () => m.openDataDir(),
+            onclick: openDataDirectory,
           }, '打开数据目录'),
         ),
       ),

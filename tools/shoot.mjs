@@ -8,26 +8,28 @@
  * 所以这里整体包在 whenReady().then() 里。
  *
  * 运行：npm run shoot
- * 输出：/tmp/meridian-shots/*.png
+ * 输出：每次独立的临时目录，实际路径见日志
  */
 import { createRequire } from 'node:module'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 const require = createRequire(import.meta.url)
 globalThis.__electron = require('electron')
 const { app, BrowserWindow, ipcMain } = globalThis.__electron
 
-let load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel
+let load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict
 let settleLemma, allNodes, addInboxItem, allInbox, genericFallback, instantiate, register, recordLlmUsage
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 const RENDERER = join(ROOT, 'src/renderer/index.html')
 const HUD = join(ROOT, 'src/renderer/capture.html')
-const OUT = '/tmp/meridian-shots'
-const DATA = '/tmp/meridian-shoot-data'
+const RUN = mkdtempSync(join(tmpdir(), 'meridian-shoot-'))
+const OUT = join(RUN, 'shots')
+const DATA = join(RUN, 'data')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const check = (condition, label) => {
@@ -93,7 +95,7 @@ Promise.all([
   import('../src/main/ipc.js'),
 ]).then(([store, templates, ipc]) => {
   ({
-    load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel,
+    load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict,
     settleLemma, allNodes, addInboxItem, allInbox, recordLlmUsage,
   } = store)
   genericFallback = templates.genericFallback
@@ -102,16 +104,26 @@ Promise.all([
   return app.whenReady()
 }).then(async () => {
   // 独立数据目录，绝不碰真实数据
-  rmSync(DATA, { recursive: true, force: true })
-  rmSync(OUT, { recursive: true, force: true })
-  mkdirSync(OUT, { recursive: true })
+  mkdirSync(DATA)
+  mkdirSync(OUT)
+  console.log('本次隔离数据：', DATA, '\n截图输出：', OUT)
   app.setPath('userData', DATA)
 
   load()
   const registeredHandlers = new Map()
   const registerHandler = ipcMain.handle.bind(ipcMain)
   ipcMain.handle = (channel, handler) => { registeredHandlers.set(channel, handler); registerHandler(channel, handler) }
-  register({ resizeCapture: () => {} })
+  // 接入信息在真实 app 里由 main.js 起服务后提供；这里给个等价的假值，
+  // 否则 agent:connection 抛错，三种接入方式的说明渲染不出来。
+  register({
+    resizeCapture: () => {},
+    getAgentConnection: () => ({
+      available: true, host: '127.0.0.1', port: 54321,
+      path: '/tmp/meridian-shoot-data/agent-port.json',
+      inboxPaths: ['/tmp/meridian-shoot-data/inbox-readings.jsonl'],
+      error: null,
+    }),
+  })
   ipcMain.handle = registerHandler
 
   const inTheme = (t) => allNodes().filter((n) => n.themeId === t.id)
@@ -171,11 +183,6 @@ Promise.all([
   const miner = branchOf(crypto, '上游')
   addNode({ themeId: crypto.id, parentId: miner.id, kind: 'lemma', title: '矿机关机价随电价上移', type: 'observation', confidence: 66, tags: ['能源成本', '半导体周期'] })
   addNode({ themeId: crypto.id, parentId: null, kind: 'lemma', title: '稳定币净发行回升', type: 'observation', confidence: 71, tags: ['美元流动性'] })
-
-  const rateChannel = addChannel({
-    name: '失败状态示例', fetch: 'rss', kind: '独立媒体', query: 'https://example.com/feed',
-    themeId: ai.id, lastError: '连接超时',
-  })
 
   // 触发一次传导：环节有子节点，拖动它的确信度才会向下游衰减
   updateNode(opt.id, { confidence: 78 })
@@ -365,28 +372,7 @@ Promise.all([
 
   await win.loadFile(RENDERER, { query: { view: 'lattice', select: l1.id } })
   await sleep(700)
-  check(await win.webContents.executeJavaScript(`document.body.textContent.includes('让 LLM 提议')`), '空指标显示单指标 LLM 提议')
-
-  await win.loadFile(RENDERER, { query: { view: 'sources' } })
-  await sleep(700)
-  const channelState = await win.webContents.executeJavaScript(`({
-    lastError: document.body.textContent.includes('连接超时'),
-    noReview: !document.body.textContent.includes('免复审') && !document.body.textContent.includes('需复审'),
-  })`)
-  check(channelState.lastError, '数据源显示 lastError')
-  check(channelState.noReview, '数据源无复审状态控件')
-
-  // C6：通道未匹配率——显示用参考，不自动停用通道
-  const rateItem = addInboxItem({
-    title: '未匹配率验收：低质转载', text: '低质转载内容，未抽取。',
-    extracted: false, matchScore: 0, skipped: 'low-quality',
-    provenance: { channelId: rateChannel.id, platform: '本地验收' },
-  })
-  await win.loadFile(RENDERER, { query: { view: 'sources' } })
-  await sleep(400)
-  check(await win.webContents.executeJavaScript(`document.body.textContent.includes('只作参考，不会自动停用通道') &&
-    document.body.textContent.includes('未匹配 100%')`), 'C6: 通道未匹配率只作参考，不自动停用通道')
-  await registeredHandlers.get('inbox:resolve')({}, rateItem.id, 'reject')
+  check(await win.webContents.executeJavaScript(`!!document.querySelector('.manual-reading') && !document.body.textContent.includes('挂通道')`), '空指标可直接记读数，无通道配置')
 
   // 原文层：选中刚入库的那条，点开「看原文」
   if (win) {
@@ -861,65 +847,251 @@ Promise.all([
   await sleep(100)
   writeFileSync(join(OUT, '24-audit-groups.png'), (await win.webContents.capturePage()).toPNG())
 
-  await win.webContents.executeJavaScript(`(async () => {
-    const m = window.meridian
-    const ch = await m.channelAdd({ name: 'NVDA 总收入', fetch: 'manual', kind: '财报 / 公告', themeId: '${ai.id}' })
-    await m.addNode({ themeId: '${ai.id}', kind: 'lemma', type: 'observation', title: 'NVDA 数据中心营收及指引', channelIds: [ch.id] })
-    for (let i = 0; i < 12; i++) {
-      await m.addReading({
-        metric: 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax', value: 16675000000 + i,
-        unit: 'USD', asOf: (2020 + Math.floor(i / 2)) + '-12-31', basis: 'reported', channelId: ch.id,
-        source: { kind: '财报 / 公告', url: 'https://example.com/filing', accn: 'reading-test-' + i },
-      })
+  // v0.8：只走真实 preload 契约，数据全部位于本次 RUN；不访问生产账本。
+  const waitDom = async (expression) => win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const started = performance.now()
+    const check = () => {
+      try { if (${expression}) { resolve(true); return } } catch {}
+      if (performance.now() - started > 10000) { reject(new Error('等待界面超时：' + ${JSON.stringify(expression)})); return }
+      requestAnimationFrame(check)
     }
+    check()
+  })`)
+  const v08 = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const theme = await m.addTheme('零配置读数验收')
+    const judgment = await m.addNode({ themeId: theme.id, kind: 'lemma', type: 'hypothesis', title: '验收收入超过一千万元', confidence: 75, settlement: { date: '2026-12-31', resolved: null, correct: null } })
+    const node = await m.addNode({ themeId: theme.id, parentId: judgment.id, kind: 'lemma', type: 'observation', title: '验收季度收入', confidence: 75 })
+    return { theme, judgment, node, channels: (await m.channelList()).length }
+  })()`)
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
+  await waitDom("!!document.querySelector('.theme-item')")
+  await win.webContents.executeJavaScript(`(async () => {
+    const { state, refresh, selectNode } = await import('./app.js')
+    state.themeId = '${v08.theme.id}'
+    state.open.add('${v08.judgment.id}')
+    await refresh()
+    selectNode('${v08.node.id}')
+    document.querySelector('.manual-reading summary').click()
+    const form = document.querySelector('.reading-form')
+    for (const [name, value] of Object.entries({ value: '1200', unit: '万元', start: '2026-07-01', end: '2026-09-30', label: '人工验收原始公告', kind: '财报 / 公告', platform: '本地验收', url: 'https://example.com/v08/a', raw: '人工原文 <不可作为 HTML 执行>' })) {
+      form.elements[name].value = value
+      form.elements[name].dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    form.elements.start.value = '2026-10-01'
+    form.requestSubmit()
+  })()`)
+  check(await win.webContents.executeJavaScript(`document.querySelector('.reading-form').textContent.includes('期间开始不能晚于结束')`), 'v0.8: 人工读数拒绝颠倒期间并保留表单')
+  await win.webContents.executeJavaScript(`(() => {
+    const form = document.querySelector('.reading-form')
+    form.elements.start.value = '2026-07-01'
+    form.requestSubmit()
+  })()`)
+  await waitDom("document.querySelector('.row-reading')?.textContent.includes('1.2K')")
+  const manual = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const page = await m.readingsPage({ indicatorId: '${v08.node.id}' })
+    const evidence = await m.readingEvidence({ observationId: page.items[0].id })
+    const reading = evidence.items[0]
+    return { item: page.items[0], tier: reading.tier, trust: reading.trust, channels: (await m.channelList()).length }
+  })()`)
+  check(manual.item.value === 1200 && manual.tier === 'agent' && manual.trust.score < 0.6 && manual.channels === v08.channels,
+    'v0.8: 人工填写公告类型仍按外部提供检验，不创建通道，树显示读数')
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
+  await waitDom("!!document.querySelector('.source-record')")
+  // 三种接入方式都必须让用户知道——MCP 实现了却长期不在界面上出现
+  await win.webContents.executeJavaScript(`(() => { const d = document.querySelector('.reading-connection'); d.open = true; d.dispatchEvent(new Event('toggle')) })()`)
+  await sleep(1500)
+  const ingestText = await win.webContents.executeJavaScript(`document.querySelector('.reading-connection')?.textContent || ''`)
+  const ingestMissing = ['MCP', 'HTTP', '文件投递'].filter(k => !ingestText.includes(k))
+  check(!ingestMissing.length, '三种接入方式都在数据源页说明' + (ingestMissing.length ? '，缺：' + ingestMissing.join('/') : ''))
+
+
+
+  const downloaded = new Promise((resolve) => {
+    win.webContents.session.once('will-download', (_, item) => {
+      item.setSavePath(join(OUT, 'v08-intent.json'))
+      item.once('done', (_, status) => resolve(status === 'completed'))
+    })
+  })
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-connection summary').click(); document.querySelector('.export-intent').click()`)
+  check(await downloaded, 'v0.8: 点击导出主题与待裁定判断，生成意图文件')
+  const sourceUi = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const intent = await m.exportIntent()
+    const connection = await m.agentConnection()
+    const text = document.body.innerText
+    return { intent: intent.themes.some(t => t.name === '零配置读数验收'), noToken: !connection.token || !text.includes(connection.token), noConfig: !document.querySelector('.channel-row') && !/新增通道|取数器|发现标签|query|metric/.test(text) }
+  })()`)
+  check(sourceUi.intent && sourceUi.noToken && sourceUi.noConfig, 'v0.8: 来源页无配置面和凭据泄漏，意图包含新主题')
+  await win.webContents.executeJavaScript(`document.querySelector('.source-record summary').click()`)
+  await waitDom("!!document.querySelector('.source-proof-link')")
+  await win.webContents.executeJavaScript(`document.querySelector('.source-proof-link').click()`)
+  await waitDom("!!document.querySelector('.reading-dialog .reading-raw')")
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog .reading-raw').click()`)
+  await waitDom("document.querySelector('.reading-dialog .raw-text')?.textContent.includes('人工原文')")
+  check(await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog .raw-text').children.length === 0`), 'v0.8: 来源可反查作证与原文，文本不作为 HTML 执行')
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog').close()`)
+
+  await win.webContents.executeJavaScript(`(async () => {
+    const result = await window.meridian.pushReadings({ schema: 'meridian.reading.v1', themeHint: '零配置读数验收', readings: [{
+      indicator: '验收季度收入', value: 1200, unit: '万元', period: { start: '2026-07-01', end: '2026-09-30' }, basis: 'reported', tier: 'agent',
+      source: { kind: '一手数据', label: '独立来源乙', platform: '复核平台', url: 'https://example.org/v08/b' }, raw: '另一来源的独立作证',
+    }] })
+    if (!result.ok || result.accepted !== 1) throw new Error('第二来源未接受')
   })()`)
   await win.loadFile(RENDERER, { query: { view: 'readings' } })
-  await sleep(300)
-  const readingUi = await win.webContents.executeJavaScript(`(() => {
-    const rows = [...document.querySelectorAll('#readings-list .feed-row')]
-    const dayHeads = [...document.querySelectorAll('#readings-list .feed-day-h')].map(el => el.textContent.trim())
-    const first = rows[0]
-    return {
-      rowCount: rows.length,
-      dayCount: dayHeads.length,
-      hasName: !!first?.querySelector('.feed-name'),
-      hasValue: !!first?.querySelector('.feed-value'),
-      hasDelta: !!first?.querySelector('.feed-delta'),
-      hasSrc: !!first?.querySelector('.feed-src'),
-      // camelCase 只在展开区的技术名里，不在行上
-      rowTextNoCamel: rows.every(r => !r.textContent.includes('nvda.Revenue')),
-      nameText: first?.querySelector('.feed-name')?.textContent || '',
-    }
-  })()`)
-  console.log('读数流水:', JSON.stringify(readingUi))
-  check(readingUi.rowCount >= 10 && readingUi.hasName && readingUi.hasValue && readingUi.hasDelta && readingUi.hasSrc,
-    'R14-feed: 流水行含名称/值/环比/来源 ' + JSON.stringify(readingUi))
-  check(readingUi.rowTextNoCamel, 'R14-feed: 行上无 camelCase 技术名')
-  check(readingUi.dayCount >= 1, 'R14-feed: 按抓取时间分组 ' + readingUi.dayCount + ' 天')
-  writeFileSync(join(OUT, '25-readings-initial.png'), (await win.webContents.capturePage()).toPNG())
+  await waitDom("document.querySelector('.feed-row .trust-mark')?.textContent.includes('2 源一致')")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.feed-row').length === 1 && document.querySelector('.feed-row .trust-mark').dataset.state === 'verified'`), 'R14-v0.8: 同期同值双源合为一行，实心信任标记与文字一致')
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-row').focus()`)
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+  win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+  await waitDom("document.querySelectorAll('.reading-dialog .reading-proof').length === 2")
+  check(await win.webContents.executeJavaScript(`(async () => {
+    const text = document.querySelector('.reading-judgments').textContent
+    const judgment = await window.meridian.getNode('${v08.judgment.id}')
+    return text.includes('不会自动结算') && text.includes('验收收入超过一千万元') && judgment.settlement.resolved == null
+  })()`), 'v0.8: 键盘打开懒加载作证，真实关联判断可见且没有自动结算')
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-verify').click()`)
+  await waitDom("document.querySelector('.reading-dialog').textContent.includes('序列完整')")
+  writeFileSync(join(OUT, '25-readings-evidence.png'), (await win.webContents.capturePage()).toPNG())
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+  await waitDom("!document.querySelector('.reading-dialog')")
+  check(await win.webContents.executeJavaScript(`document.activeElement.matches('.feed-row')`), 'v0.8: Escape 关闭详情并归还焦点')
 
-  // 点第一行 → 展开该 metric 的完整历史
-  const feedExpand = await win.webContents.executeJavaScript(`(() => {
-    const row = document.querySelector('#readings-list .feed-row')
-    row.click()
-    const detail = row.nextElementSibling
-    return {
-      opened: detail?.style.display === 'block',
-      hasHistory: !!detail?.querySelector('.feed-detail-grid'),
-      hasTechName: (detail?.textContent || '').includes('nvda.Revenue'),
-      rows: detail ? detail.querySelectorAll('.feed-detail-row').length : 0,
-    }
+  await win.webContents.executeJavaScript(`(async () => {
+    const result = await window.meridian.pushReadings({ schema: 'meridian.reading.v1', themeHint: '零配置读数验收', readings: [{
+      indicator: '验收季度收入', value: 1500, unit: '万元', period: { start: '2026-07-01', end: '2026-09-30' }, basis: 'reported', tier: 'agent',
+      source: { kind: '一手数据', label: '分歧来源丙', platform: '另一平台', url: 'https://example.net/v08/c' }, raw: '不同数值需人工裁定',
+    }] })
+    if (!result.ok) throw new Error('分歧读数未接受')
+    const { refresh } = await import('./app.js')
+    await refresh()
   })()`)
-  console.log('展开:', JSON.stringify(feedExpand))
-  check(feedExpand.opened && feedExpand.hasHistory && feedExpand.rows >= 10, 'R14-feed: 点行展开完整历史 ' + JSON.stringify(feedExpand))
-  check(feedExpand.hasTechName, 'R14-feed: 技术名收在展开区')
-
+  await waitDom("document.querySelector('.feed-row')?.dataset.status === 'conflicted'")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.feed-row').length === 1 && document.querySelector('.feed-value').textContent === '待裁决' && document.querySelector('.trust-mark').dataset.state === 'warning'`), 'v0.8: 异值冲突不显示唯一当前值，文字与警示形状齐全')
+  const readingConflict = await win.webContents.executeJavaScript(`(async () => {
+    const list = await window.meridian.conflicts()
+    const conflict = list.find(c => c.type === 'reading')
+    return conflict
+  })()`)
+  check(!!readingConflict, 'v0.8: 异值推送进入真实冲突队列')
+  await win.webContents.executeJavaScript(`(async () => {
+    const { state, refresh } = await import('./app.js')
+    state.themeId = '${v08.theme.id}'
+    state.view = 'lattice'
+    state.shape = 'tree'
+    state.open.add('${v08.judgment.id}')
+    await refresh()
+  })()`)
+  await waitDom("document.querySelector('.row-reading')?.textContent.includes('待裁决')")
+  check(await win.webContents.executeJavaScript(`!document.querySelector('.row-reading').textContent.includes('1.5K') && document.querySelector('.row-reading .trust-mark').dataset.state === 'warning'`), 'v0.8: 树内冲突也不冒充唯一当前值')
+  await win.loadFile(RENDERER, { query: { view: 'audit', audit: 'conflicts' } })
+  await waitDom("!!document.querySelector('.conflict[data-type=\"reading\"] .pair')")
   check(await win.webContents.executeJavaScript(`(() => {
-    const button = [...document.querySelectorAll('#mid .sect-b .btn')].find(el => el.textContent === '第二数据源')
-    if (!button) return 'no-filter-button'
-    button.click()
-    return button.getAttribute('aria-selected') === 'true' && document.querySelectorAll('#readings-list .reading-row').length === 1
-  })()`), 'C6: 多通道筛选仍然工作')
+    const card = document.querySelector('.conflict[data-type="reading"]')
+    return card.querySelectorAll('.acts button').length === 3 && card.querySelectorAll('.reading-number').length === 2
+  })()`), 'v0.8: 读数冲突展示真实 A/B 与原三种裁决')
+  await win.webContents.executeJavaScript(`document.querySelector('.conflict[data-type="reading"] .acts button').click()`)
+  await waitDom(`!document.querySelector('.conflict[data-id="${readingConflict.id}"]')`)
+  check(await win.webContents.executeJavaScript(`(async () => !(await window.meridian.conflicts()).some(c => c.id === '${readingConflict.id}'))()`), 'v0.8: 点击裁决经后端落库，不是仅移除界面')
+
+  const pending = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    await m.pushReadings({ schema: 'meridian.reading.v1', readings: [{ indicator: '尚未命名的遥远观测验收', value: 42, unit: '件', period: { start: '2026-09-01', end: '2026-09-01' }, basis: 'reported', tier: 'agent', source: { kind: '其他', label: '待归位来源', url: 'https://example.com/pending' } }] })
+    return (await m.readingsPage({ limit: 50 })).items.find(r => r.pending || !r.indicatorId)
+  })()`)
+  check(!!pending, 'v0.8: 未匹配读数留在流水中待归位')
+  await win.loadFile(RENDERER, { query: { view: 'readings' } })
+  await waitDom("!!document.querySelector('.feed-row[data-pending=\"true\"]')")
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-row[data-pending="true"]').click()`)
+  await waitDom("!!document.querySelector('.reading-assign')")
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-assign').click()`)
+  await waitDom("!!document.querySelector('.reading-assignment select')")
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-assignment select').value = '${v08.node.id}'; document.querySelector('.reading-assignment .btn-primary').click()`)
+  await waitDom("!document.querySelector('.reading-dialog')")
+  check(await win.webContents.executeJavaScript(`(async () => (await window.meridian.getReading('${pending.currentReadingId || pending.id}')).indicatorId === '${v08.node.id}')()`), 'v0.8: 待归位动作写入所选指标')
+
+  // 同一次观测的作证也分页，翻页只保留当前十条。
+  const manyEvidence = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const result = await m.pushReadings({ schema: 'meridian.reading.v1', themeHint: '零配置读数验收', readings: Array.from({ length: 12 }, (_, i) => ({
+      indicator: '验收季度收入', value: 1100, unit: '万元', period: { start: '2026-04-01', end: '2026-06-30' }, basis: 'reported', tier: 'agent',
+      source: { kind: '其他', label: '作证分页来源 ' + i, platform: '独立复核平台 ' + i, url: 'https://proof' + i + '.example.org/report' },
+    })) })
+    if (result.accepted !== 12) throw new Error('作证分页样本未接受')
+    return (await m.readingsPage({ indicatorId: '${v08.node.id}', limit: 50 })).items.find(r => r.period.end === '2026-06-30')
+  })()`)
+  await win.loadFile(RENDERER, { query: { view: 'readings' } })
+  await waitDom(`!!document.querySelector('.feed-row[data-id="${manyEvidence.id}"]')`)
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-row[data-id="${manyEvidence.id}"]').click()`)
+  await waitDom("document.querySelectorAll('.reading-dialog .reading-proof').length === 10")
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog .reading-pagination button:last-child').click()`)
+  await waitDom("document.querySelector('.reading-dialog .reading-pagination').textContent.includes('第 2 页')")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.reading-dialog .reading-proof').length === 2`), 'v0.8: 作证分页不重复追加，第二页仅两条')
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog').close()`)
+
+  // 大组、翻页、来源声誉分页都使用真实摄入；不把全部历史读数留在渲染状态。
+  const batch = await win.webContents.executeJavaScript(`(async () => {
+    const readings = Array.from({ length: 130 }, (_, i) => {
+      const day = new Date(Date.UTC(2025, 0, 1 + i)).toISOString().slice(0, 10)
+      return { indicator: '验收季度收入', value: 1000 + i, unit: '万元', period: { start: day, end: day }, basis: 'reported', tier: 'agent', source: { kind: '其他', label: '分页来源 ' + i, url: 'https://source' + i + '.example.com/data' } }
+    })
+    return window.meridian.pushReadings({ schema: 'meridian.reading.v1', themeHint: '零配置读数验收', readings })
+  })()`)
+  check(batch.accepted === 130, 'v0.8: 批量推送 130 个历史期间无需配置')
+  await win.loadFile(RENDERER, { query: { view: 'readings' } })
+  await waitDom("!!document.querySelector('.feed-day-more')")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.feed-row').length === 10`), 'v0.8: 单天初始只渲染十条')
+  const firstPageIds = await win.webContents.executeJavaScript(`[...document.querySelectorAll('.feed-row')].map(r => r.dataset.id)`)
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-day-more').click()`)
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.feed-row').length <= 17 && !!document.querySelector('.feed-group-scroll')`), 'v0.8: 展开大组仍为有限行窗口')
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-group-scroll').scrollTop = 99999`)
+  await waitDom("document.querySelector('.feed-group-scroll').scrollTop > 0")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.feed-row').length <= 17`), 'v0.8: 大组滚到底仍不积累 DOM')
+  await win.webContents.executeJavaScript(`document.querySelector('#readings-list .reading-pagination button:last-child').click()`)
+  await waitDom("document.querySelector('#readings-list .reading-pagination').textContent.includes('第 2 页')")
+  const secondPageIds = await win.webContents.executeJavaScript(`[...document.querySelectorAll('.feed-row')].map(r => r.dataset.id)`)
+  check(secondPageIds.length > 0 && secondPageIds.every(id => !firstPageIds.includes(id)), 'v0.8: 下一页使用游标替换数据，不重复追加')
+  await win.webContents.executeJavaScript(`document.querySelector('#readings-list .reading-pagination button:first-child').click()`)
+  await waitDom("document.querySelector('#readings-list .reading-pagination').textContent.includes('第 1 页')")
+  check(await win.webContents.executeJavaScript(`document.querySelector('.feed-row').dataset.id`) === firstPageIds[0], 'v0.8: 上一页能恢复相同稳定观测')
+  check(await win.webContents.executeJavaScript(`(async () => {
+    const { state } = await import('./app.js')
+    const number = document.querySelector('.feed-value')
+    return !('readings' in state) && state.latestByNode instanceof Map && getComputedStyle(number).fontVariantNumeric.includes('tabular-nums') && getComputedStyle(number).textAlign === 'right'
+  })()`), 'v0.8: app 只有最新快照索引，数字右对齐且等宽')
+  writeFileSync(join(OUT, '25b-readings-paged.png'), (await win.webContents.capturePage()).toPNG())
+  await win.webContents.executeJavaScript(`document.querySelector('.feed-row').click()`)
+  await waitDom("!!document.querySelector('.reading-history')")
+  check(await win.webContents.executeJavaScript(`!document.querySelector('.reading-history .reading-pager')`), 'v0.8: 历史期间展开前不加载列表')
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-history summary').click()`)
+  await waitDom("document.querySelectorAll('.reading-history .feed-row').length === 10")
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-history .reading-pagination button:last-child').click()`)
+  await waitDom("document.querySelector('.reading-history .reading-pagination').textContent.includes('第 2 页')")
+  check(await win.webContents.executeJavaScript(`document.querySelectorAll('.reading-history .feed-row').length === 10`), 'v0.8: 指标历史也分页，翻页后 DOM 不增长')
+  await win.webContents.executeJavaScript(`document.querySelector('.reading-dialog').close()`)
+  await win.loadFile(RENDERER, { query: { view: 'sources' } })
+  await waitDom("document.querySelectorAll('.source-record').length === 50")
+  const sourceFirst = await win.webContents.executeJavaScript(`document.querySelector('.source-record').dataset.sourceId`)
+  await win.webContents.executeJavaScript(`document.querySelector('.sources-page .reading-pagination button:last-child').click()`)
+  await waitDom("document.querySelector('.sources-page .reading-pagination').textContent.includes('第 2 页')")
+  check(await win.webContents.executeJavaScript(`document.querySelector('.source-record').dataset.sourceId`) !== sourceFirst, 'R15-v0.8: 来源声誉使用真实分页，不提供新增或删除通道')
+  writeFileSync(join(OUT, '26-sources-reputation.png'), (await win.webContents.capturePage()).toPNG())
+
+  // B1 失败回包：真实按钮必须 await 并显示原因，不在拍摄过程中打开 Finder。
+  check(registeredHandlers.has('io:openDataDir'), 'B1: 打开数据目录注册为 invoke handler')
+  ipcMain.removeHandler('io:openDataDir')
+  ipcMain.handle('io:openDataDir', async () => ({ ok: false, error: '验收目录无法打开' }))
+  await win.loadFile(RENDERER, { query: { view: 'settings' } })
+  await waitDom("[...document.querySelectorAll('button')].some(b => b.textContent === '打开数据目录')")
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent === '打开数据目录').click()`)
+  await waitDom("document.querySelector('.toast-error')?.textContent.includes('验收目录无法打开')")
+  check(true, 'B1: 失败返回值显示错误 toast')
+  ipcMain.removeHandler('io:openDataDir')
+  ipcMain.handle('io:openDataDir', registeredHandlers.get('io:openDataDir'))
 
   // C4/C5：复盘页 LLM 账本（按天聚合 + 场景分布 + 失败明细）
   const llmDay = recordLlmUsage('extract', { ok: true, tokens: 1200 })
@@ -1051,8 +1223,9 @@ Promise.all([
     auditExpanded: document.querySelector('.audit-head')?.getAttribute('aria-expanded'),
     readingsCount: document.getElementById('vc-readings')?.textContent,
   }))()`)
-  check(navShape.nav.includes('数据源') && navShape.hasReadings && !navShape.nav.some(t => t === '库'),
-    '顶栏是 今日/脉络/数据源/读数，无「库」：' + navShape.nav.join('/'))
+  check(navShape.nav.includes('数据源') && navShape.hasReadings
+    && !navShape.nav.some(t => t === '库') && !navShape.nav.some(t => t === '脉络'),
+    '顶栏只有 今日/数据源/读数，脉络走主题进入：' + navShape.nav.join('/'))
   check(navShape.auditHead && navShape.auditSubs === 0,
     '审计默认收起，五个台账视图不外露')
   check(!!navShape.readingsCount, '读数计数跟着升到顶栏：' + navShape.readingsCount)
@@ -1067,72 +1240,86 @@ Promise.all([
   check(auditOpen.subs.length === 5 && auditOpen.expanded === 'true',
     '审计展开显示 5 个台账视图：' + auditOpen.subs.join('/'))
 
+  // 图的问号：缩放手感因人而异，悬浮要能指向设置项
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'graph' } })
+  await sleep(500)
+  const graphHelp = await win.webContents.executeJavaScript(`(() => {
+    const b = document.querySelector('.graph-help')
+    if (!b) return { found: false }
+    const tip = document.querySelector('.graph-help-tip')
+    const br = b.getBoundingClientRect()
+    const hit = document.elementFromPoint(br.left + br.width / 2, br.top + br.height / 2)
+    const tr = tip?.getBoundingClientRect()
+    const hint = document.querySelector('.graph-hint')
+    return {
+      found: true, label: b.getAttribute('aria-label'), tipText: tip?.textContent || '',
+      hintPointerEvents: getComputedStyle(hint).pointerEvents,
+      hintPosition: getComputedStyle(hint).position,
+      hitIsButton: hit === b || b.contains(hit),
+      tipInViewport: tr ? (tr.top >= 0 && tr.left >= 0 && tr.right <= window.innerWidth) : false,
+      tipAboveButton: tr ? tr.bottom <= br.top + 1 : false,
+    }
+  })()`)
+  check(graphHelp.found && !!graphHelp.label, '图上有问号入口')
+  check(graphHelp.tipText.includes('设置') && graphHelp.tipText.includes('缩放'), '问号提示指向设置项：' + graphHelp.tipText)
+  // overlay 是 pointer-events: none，提示条不开回来问号就既点不动也 hover 不出浮层；
+  // 提示条没有 position: relative 时，浮层会以整个 overlay 为基准飞到图外
+  check(graphHelp.hintPointerEvents === 'auto' && graphHelp.hintPosition === 'relative',
+    `问号可交互且浮层有定位基准（${graphHelp.hintPointerEvents}/${graphHelp.hintPosition}）`)
+  check(graphHelp.hitIsButton, '问号真的能命中，不是被 overlay 挡住')
+  check(graphHelp.tipInViewport && graphHelp.tipAboveButton, '浮层贴在问号上方且在视口内')
+  // 真实移动鼠标，确认 :hover 生效
+  const hoverBox = await win.webContents.executeJavaScript(`(() => { const r = document.querySelector('.graph-help').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
+  const dbg = await win.webContents.debugger
+  await dbg.attach('1.3')
+  await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverBox.x, y: hoverBox.y })
+  await sleep(350)
+  const hoverOpacity = await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.graph-help-tip')).opacity`)
+  await dbg.detach()
+  check(hoverOpacity === '1', '鼠标悬浮问号后浮层显示：opacity=' + hoverOpacity)
+
   // R9 环节层降权
   await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
   await sleep(300)
+
+  // 选中态唯一：切到非脉络视图时，主题不该继续高亮
+  const selection = await win.webContents.executeJavaScript(`(() => {
+    const sel = () => [...document.querySelectorAll('[aria-selected="true"]')].map(el => el.className + ':' + el.textContent.trim().slice(0, 12))
+    const theme = document.querySelector('.theme-item')
+    theme.click()
+    const inLattice = sel()
+    const readingsBtn = [...document.querySelectorAll('#nav .nav-item')].find(b => b.textContent.includes('读数'))
+    readingsBtn.click()
+    return { inLattice, inReadings: sel(), themeStillLit: !!document.querySelector('.theme-item[aria-selected="true"]') }
+  })()`)
+  await sleep(400)
+  const sel2 = await win.webContents.executeJavaScript(`(() => ({
+    lit: [...document.querySelectorAll('[aria-selected="true"]')].map(el => el.className),
+    themeStillLit: !!document.querySelector('.theme-item[aria-selected="true"]'),
+  }))()`)
+  check(selection.inLattice.some(t => t.startsWith('theme-item')), '进脉络时主题高亮：' + selection.inLattice.join(' | '))
+  check(!sel2.themeStillLit, '切到读数后主题不再高亮（选中态唯一）')
+  check(sel2.lit.filter(c => c.includes('nav-item')).length === 1, '同时只有一个导航项高亮：' + sel2.lit.join(','))
+
+
+  // v0.8 回归：脉络头部的「未接数据」必须数服务端判定的最新快照，不是数 channelIds——
+  // 读数早就不通过通道挂了，数 channelIds 会让这个数永远是满的。
+  // 上面的选中态检查把视图切到了读数，这里先回脉络。
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
+  await sleep(400)
+  const latticeHead = await win.webContents.executeJavaScript(`(() => {
+    const head = document.querySelector('.mid-head')
+    return { text: head?.textContent || '', hasPendingLink: !!head?.querySelector('.link-btn') }
+  })()`)
+  check(/\d+ 个指标 · \d+ 个未接数据/.test(latticeHead.text), '脉络头部按最新快照数未接指标：' + latticeHead.text.trim())
+  check(!latticeHead.hasPendingLink || latticeHead.text.includes('待归位'), '待归位入口与计数同时出现')
+
   const stage = await win.webContents.executeJavaScript(`(() => {
     const el = document.querySelector('.row-stage')
     if (!el) return null
     return { bg: getComputedStyle(el).backgroundImage }
   })()`)
   check(stage && stage.bg === 'none', 'R9: 环节层去掉渐变底色，不再和命题行抢权重')
-
-
-  // ---------------------------------------------------------------- R15 · 数据源页
-  await win.loadFile(RENDERER, { query: { view: 'sources' } })
-  await sleep(400)
-  const ch15 = await win.webContents.executeJavaScript(`(async () => {
-    const m = window.meridian
-    const before = (await m.channelList()).length
-    const ch = await m.channelAdd({ name: '待删除通道', fetch: 'manual', kind: '财报 / 公告', themeId: null })
-    const rows = () => [...document.querySelectorAll('.channel-row')]
-    const findRow = () => rows().find(r => r.querySelector('.channel-name')?.textContent === '待删除通道')
-    // 新建通道不自动重绘——重新加载
-    location.reload()
-    return { before, chId: ch.id }
-  })()`)
-  await win.loadFile(RENDERER, { query: { view: 'sources' } })
-  await sleep(400)
-  const r15 = await win.webContents.executeJavaScript(`(async () => {
-    const m = window.meridian
-    const rows = () => [...document.querySelectorAll('.channel-row')]
-    const row = rows().find(r => r.querySelector('.channel-name')?.textContent === '待删除通道')
-    if (!row) return { error: 'no-row', names: rows().map(r => r.querySelector('.channel-name')?.textContent) }
-    const hasDot = !!row.querySelector('.channel-dot')
-    const hasDesc = !!row.querySelector('.channel-desc')
-    const right = row.querySelector('.channel-right')
-    const rightCount = right ? right.children.length : -1
-    const rateEl = right?.querySelector('.channel-rate')
-    const rateWidth = rateEl ? getComputedStyle(rateEl).minWidth : null
-    // 工程字段不应外露到行上
-    const leak = ['最后拉取', '拿到条数', '连续失败', 'query'].filter(w => row.textContent.includes(w))
-    // 详情区应收纳它们
-    const detail = row.closest('.channel-cell')?.querySelector('.channel-detail')
-    const detailHidden = detail ? detail.hidden : null
-    const detailHas = detail ? ['取数器', 'query'].filter(w => detail.textContent.includes(w)) : []
-    // 删除链路
-    const delBtn = [...row.querySelectorAll('.channel-link')].find(b => b.textContent === '删除')
-    if (!delBtn) return { error: 'no-delete', hasDot, hasDesc, rightCount }
-    delBtn.click()
-    await new Promise(r => setTimeout(r, 150))
-    const toastBtn = document.querySelector('.toast-btn')
-    if (!toastBtn) return { error: 'no-toast', hasDot, hasDesc }
-    toastBtn.click()
-    await new Promise(r => setTimeout(r, 350))
-    const after = (await m.channelList()).length
-    return {
-      before: (await m.channelList()).length + 1, after, hasDot, hasDesc, rightCount, rateWidth, leak,
-      detailHidden, detailHas,
-      gone: !rows().some(r => r.querySelector('.channel-name')?.textContent === '待删除通道'),
-    }
-  })()`)
-  console.log('R15:', JSON.stringify(r15))
-  check(r15.hasDot && r15.hasDesc && r15.rightCount >= 4, 'R15: 三段式行（状态点 + 名称/说明 + 右簇）')
-  // 无未匹配数据的通道没有 rate 元素；有数据时列宽必须恒定（扫读成列）
-  check(r15.rateWidth === null || r15.rateWidth === '76px', 'R15: 未匹配列宽恒定或该通道无数据：' + r15.rateWidth)
-  check(r15.leak.length === 0, 'R15: 工程字段不外露到行上：' + (r15.leak || []).join(','))
-  check(r15.detailHidden === true && r15.detailHas.length === 2, 'R15: 工程字段收纳进默认收起的详情区')
-  check(r15.gone && r15.after === r15.before - 1, 'R15: 删除通道生效且列表刷新 ' + JSON.stringify({ before: r15.before, after: r15.after }))
 
 
   // ------------------------------------------- 审计 · 冷库 / 墓碑区 / 待裁决冲突
@@ -1225,6 +1412,39 @@ Promise.all([
   check(conflictCheck.acts.includes('A 成立') && conflictCheck.acts.includes('B 成立') && conflictCheck.acts.includes('两者都对（我搞错了）'),
     '审计·冲突：三种裁决入口齐全：' + (conflictCheck.acts || []).join('/'))
   check(conflictCheck.unresolved, '审计·冲突：未裁决的不预设立场')
+
+  const stress = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const theme = await m.addTheme('读数容量验收')
+    await m.addNode({ themeId: theme.id, title: '容量验收读数', type: 'observation' })
+    let accepted = 0
+    const started = performance.now()
+    for (let offset = 0; offset < 10000; offset += 1000) {
+      const readings = Array.from({ length: 1000 }, (_, j) => {
+        const i = offset + j
+        const date = new Date(Date.UTC(2000, 0, i + 1)).toISOString().slice(0, 10)
+        return { indicator: '容量验收读数', value: 100 + i / 10000, unit: 'USD', period: { start: date, end: date }, basis: 'reported', tier: 'agent', source: { kind: '一手数据', label: '容量验收', platform: '容量验收', url: 'https://capacity.example/record' } }
+      })
+      const result = await m.pushReadings({ schema: 'meridian.reading.v1', themeHint: theme.name, readings })
+      if (result.rejected.length) throw new Error(result.rejected[0].reason)
+      accepted += result.accepted
+    }
+    const app = await import('./app.js')
+    const start = performance.now()
+    app.setView('readings')
+    await new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('读数首屏超时')), 5000)
+      const check = () => {
+        if (document.querySelector('.feed-row')) { clearTimeout(deadline); resolve() }
+        else setTimeout(check, 0)
+      }
+      check()
+    })
+    return { accepted, ingestMs: performance.now() - started, renderMs: performance.now() - start, domRows: document.querySelectorAll('.feed-row').length }
+  })()`)
+  console.log('万条读数实测：', JSON.stringify(stress))
+  check(stress.accepted === 10000 && stress.renderMs < 1000 && stress.domRows <= 50, 'v0.8: 一万条数据下首屏低于 1 秒，DOM 有界')
+  writeFileSync(join(OUT, '27-readings-10000.png'), (await win.webContents.capturePage()).toPNG())
 
   console.log('\n完成\n')
   app.exit(0)

@@ -1,7 +1,8 @@
 import { h, icon, clear, toast, confirmToast } from '../lib/dom.js'
-import { state, refresh, selectNode, setShape, deleteNodeWithUndo } from '../app.js'
+import { state, refresh, selectNode, setShape, setView, deleteNodeWithUndo } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
+import { isConflicted, trustMark, periodLabel } from './readings.js'
 
 const m = window.meridian
 
@@ -243,12 +244,24 @@ export function renderLattice(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
   const isGraph = state.shape === 'graph'
   const indicators = state.nodes.filter((node) => node.type === 'observation' && node.status !== 'dead')
-  const unlinked = indicators.filter((node) => !node.channelIds?.length).length
+  // 有没有读数看的是「服务端判定的最新快照里有没有这个节点」。
+  // 曾经数的是 channelIds——读数早就不通过通道挂了，那个数永远是满的。
+  const unlinked = indicators.filter((node) => !state.latestByNode.has(node.id)).length
+  const pendingCount = state.pendingReadings.length
+  const headStats = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
+    `${indicators.length} 个指标 · ${unlinked} 个未接数据`,
+    // 待归位的读数没有节点可挂，树里永远排不下它——给个入口跳去读数页处理
+    pendingCount ? h('button', {
+      class: 'link-btn', style: { marginLeft: '6px' },
+      onclick: () => setView('readings'),
+      title: '有待归位的读数，去读数页把它们挂到指标上',
+    }, `· ${pendingCount} 个待归位`) : null,
+  )
 
   // 树形管逐条编辑，图管看清结构——同一个主题、同一个选中项，来回切不丢上下文
   const head = h('div', { class: 'mid-head hairline-b' },
     h('h1', {}, theme ? theme.name : ''),
-    h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, `${indicators.length} 个指标 · ${unlinked} 个未接数据`),
+    h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, headStats),
     h('div', { class: 'spacer' }),
     // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动。
     // 破坏性操作——先提示会删掉原有环节和命题，确认后才动。异步执行，不卡界面。
@@ -427,10 +440,8 @@ function paint(container) {
       // 一行摆 8-9 个同权重元素时，用户找不到该看哪个。
       // 指标节点 inline 显示最新读数——总览层：打开树就看见所有指标当前站哪，
       // 不用切去读数页。读数是流水，这里是快照，两个视角不重叠。
-      const latestReading = isLemma && node.type === 'observation' && node.channelIds?.length
-        ? state.readings
-            .filter((r) => node.channelIds.includes(r.channelId))
-            .sort((a, b) => (b.at || '').localeCompare(a.at || ''))[0]
+      const latestReading = isLemma && node.type === 'observation'
+        ? state.latestByNode.get(node.id)
         : null
       const meta = h('span', { class: 'row-meta' },
         // ① 裁决状态：结算旗 / 已证伪 / 环节的待结算数，合并成一个图标位
@@ -441,9 +452,10 @@ function paint(container) {
           : a.due ? h('span', { class: 'chip chip-due', title: `${a.due} 条待结算` }, icon('flag', 9), String(a.due)) : null,
         // ② 信心：唯一组件，条 + 数字一体
         isLemma || a.avg != null ? confCell(isLemma ? conf : a.avg, { agg: !isLemma }) : null,
-        latestReading ? h('span', { class: 'row-reading', title: `${latestReading.asOf || '无期间'} · 抓于 ${(latestReading.at || '').slice(5)}` },
-          `${fmtCompact(latestReading.value)}${latestReading.unit ? ' ' + latestReading.unit : ''}`,
-        ) : null,
+        latestReading ? h('span', { class: 'row-reading', title: periodLabel(latestReading), dataset: { status: latestReading.status || '' } },
+          isConflicted(latestReading) ? '待裁决' : `${fmtCompact(latestReading.value)}${latestReading.unit ? ' ' + latestReading.unit : ''}`,
+          trustMark(latestReading),
+        ) : isLemma && node.type === 'observation' ? h('span', { class: 'row-reading' }, state.readingsError ? '读数暂不可用' : '尚无读数') : null,
         // ③ 源计数
         srcs > 1 ? h('span', { class: 'src-chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
         // 以下都只是 hover：类型徽章、冷库、传导、scaffold 进度
