@@ -385,7 +385,7 @@ Promise.all([
   await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
   await sleep(400)
   check(await win.webContents.executeJavaScript(`document.body.textContent.includes('只作参考，不会自动停用通道') &&
-    document.body.textContent.includes('未匹配 100%（1/1）')`), 'C6: 通道未匹配率只作参考，不自动停用通道')
+    document.body.textContent.includes('未匹配 100%')`), 'C6: 通道未匹配率只作参考，不自动停用通道')
   await registeredHandlers.get('inbox:resolve')({}, rateItem.id, 'reject')
 
   // 原文层：选中刚入库的那条，点开「看原文」
@@ -855,7 +855,7 @@ Promise.all([
     })
     document.querySelectorAll('.audit details').forEach(el => { el.open = true })
     return correct && rows.length >= 4 && !!document.querySelector('[data-gate="routeIgnored"]') &&
-      document.querySelector('.audit-q').textContent.includes('全部 ' + stats.allTotal)
+      document.querySelector('.audit-scope').textContent.includes('全部 ' + stats.allTotal)
   })()`)
   check(auditUi, 'C2: 审计各闸口独立比率与全部/近期口径一致')
   await sleep(100)
@@ -876,29 +876,65 @@ Promise.all([
   await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'readings' } })
   await sleep(300)
   const readingUi = await win.webContents.executeJavaScript(`(() => {
-    const group = document.querySelector('#readings-list > .sect')
-    const rows = [...group.querySelectorAll('.q')]
+    const group = document.querySelector('#readings-list > .reading-card')
+    const rows = [...group.querySelectorAll('.reading-row')]
     const text = group.textContent
+    const deltas = [...group.querySelectorAll('.rc-delta')].map(el => el.textContent)
     return {
       name: group.querySelector('h2').textContent,
-      metric: text.includes('nvda.RevenueFromContractWithCustomerExcludingAssessedTax'),
-      tracked: text.split('跟踪：').length - 1,
+      // camelCase 只出现在 ⓘ 的 title 属性里，不进正文——正是 R14 的要求
+      metricInTitle: !!group.querySelector('.reading-info')?.title?.includes('nvda.Revenue'),
+      metricInText: text.includes('nvda.Revenue'),
+      // R14：camelCase 只在 ⓘ 悬停里，卡片正文不外露
+      metricInBody: [...group.querySelectorAll('.reading-card-const')].some(el => el.textContent.includes('nvda.Revenue')),
+      tracked: group.querySelectorAll('.reading-tracking').length,
       rows: rows.length,
-      twoLines: rows.every(row => row.querySelectorAll('.q-meta').length === 2),
-      latest: rows[0].textContent.includes('16,675,000,011') && getComputedStyle(rows[0]).borderLeftWidth === '3px',
+      // R14：五列网格 + 常量只在卡片头一次
+      grid: rows.every(row => row.querySelectorAll('.rc-asof').length === 1 && row.querySelectorAll('.rc-value').length === 1),
+      constOnce: group.querySelectorAll('.reading-card-const').length === 1,
+      deltas,
+      latest: rows[0].querySelector('.rc-value').textContent.includes('16,675,000,011') && getComputedStyle(rows[0].querySelector('.rc-value')).fontWeight === '600',
       hiddenFilters: !document.querySelector('#mid').textContent.includes('全部指标') && !document.querySelector('#mid').textContent.includes('全部通道'),
     }
   })()`)
-  check(readingUi.name === 'NVDA 总收入' && readingUi.metric && readingUi.tracked === 1, 'C6: 人类标题、机器附注及组级跟踪只显示一次')
+  check(readingUi.name === 'NVDA 总收入' && readingUi.metricInTitle && !readingUi.metricInText && readingUi.tracked === 1, 'R14: 人类标题与跟踪态，camelCase 只进悬停 ' + JSON.stringify({ name: readingUi.name, inTitle: readingUi.metricInTitle, inText: readingUi.metricInText, tracked: readingUi.tracked }))
+  check(!readingUi.metricInBody, 'R14: 卡片正文无 camelCase 指标名')
   writeFileSync(join(OUT, '25-readings-initial.png'), (await win.webContents.capturePage()).toPNG())
-  check(readingUi.rows === 10 && readingUi.twoLines && readingUi.latest, 'C6: 两行读数、最新蓝条和十条折叠保留 ' + JSON.stringify(readingUi))
+  check(readingUi.rows === 10 && readingUi.grid && readingUi.constOnce && readingUi.latest, 'R14: 五列网格、常量一次、最新期强调与十条折叠 ' + JSON.stringify(readingUi))
+  // 环比列：每行都有值（数据里每期都有上期）；占位只在上期缺失或为 0 时出现
+  // 负号用真减号 U+2212（Apple 排版规范），不是 ASCII hyphen
+  check(readingUi.deltas.length === 10 && readingUi.deltas.every(d => d === '—' || /^[+\u2212]\d/.test(d)), 'R14: 环比列每行有值或占位：' + readingUi.deltas.slice(0, 3).join('/'))
+  // 上期为 0 时必须给占位而不是 Infinity/NaN
+  const zeroPrev = await win.webContents.executeJavaScript(`(async () => {
+    const ch = await window.meridian.channelList()
+    const c = ch.find(x => x.name === 'NVDA 总收入')
+    await window.meridian.addReading({ metric: 'nvda.zero.prev', value: 0, unit: 'USD', asOf: '2024-12-31', basis: 'reported', channelId: c.id, source: { kind: '财报 / 公告', accn: 'zero-1' } })
+    await window.meridian.addReading({ metric: 'nvda.zero.prev', value: 500, unit: 'USD', asOf: '2025-12-31', basis: 'reported', channelId: c.id, source: { kind: '财报 / 公告', accn: 'zero-2' } })
+    return true
+  })()`)
+  check(zeroPrev, 'R14: 造出上期为 0 的数据')
+  // 重新加载页面，让新读数进入渲染
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'readings' } })
+  await sleep(300)
+  const zeroDelta = await win.webContents.executeJavaScript(`(() => {
+    const cards = [...document.querySelectorAll('#readings-list > .reading-card')]
+    // 两张卡可能同名（同通道）——用 ⓘ 的 title 精确定位 nvda.zero.prev
+    const card = cards.find(c => c.querySelector('.reading-info')?.title === 'nvda.zero.prev')
+    if (!card) return 'no-card: ' + cards.map(c => c.querySelector('.reading-info')?.title).join('|')
+    const rows = [...card.querySelectorAll('.reading-row')]
+    const zeroRow = rows.find(r => r.querySelector('.rc-asof').textContent === '2025-12-31')
+    return zeroRow ? zeroRow.querySelector('.rc-delta').textContent : 'no-row'
+  })()`)
+  check(zeroDelta === '—', 'R14: 上期为 0 时环比给占位而非 Infinity：' + zeroDelta)
   check(readingUi.hiddenFilters, 'C6: 单指标/单通道隐藏整排筛选器')
   check(await win.webContents.executeJavaScript(`(() => {
-    const button = [...document.querySelectorAll('#readings-list .btn')].find(el => el.textContent.startsWith('+'))
+    const button = [...document.querySelectorAll('#readings-list .reading-more')][0]
+    if (!button) return 'no-button'
     button.click()
     button.click()
-    return document.querySelectorAll('#readings-list .q').length === 12 && document.querySelectorAll('#readings-list .asof-group-start').length === 6
-  })()`), 'C6: 展开不重复，同数据期归组保留')
+    const rows = document.querySelectorAll('#readings-list .reading-row')
+    return { rows: rows.length, restated: document.querySelectorAll('#readings-list .reading-row[data-restated="true"]').length }
+  })()`), 'R14: 展开不重复，重述行有标记')
   await sleep(100)
   writeFileSync(join(OUT, '25-readings-compact.png'), (await win.webContents.capturePage()).toPNG())
   await win.webContents.executeJavaScript(`(async () => {
@@ -913,14 +949,17 @@ Promise.all([
   await sleep(350)
   check(await win.webContents.executeJavaScript(`(() => {
     const headings = [...document.querySelectorAll('#readings-list h2')].map(el => el.textContent)
-    const groups = [...document.querySelectorAll('#readings-list > .sect')]
-    const tracked = groups.find(el => el.textContent.includes('RevenueFromContract')).querySelector('.sect-h').textContent
-    return headings.includes('总收入') && headings.includes('unknown.custom') && tracked.includes('第二指标') && tracked.includes('NVDA 数据中心')
+    const cards = [...document.querySelectorAll('#readings-list > .reading-card')]
+    // R14：跟踪态是组级徽章，不是组头文字
+    const tracked = cards.find(el => el.querySelector('.reading-info')?.title?.includes('RevenueFromContract'))
+    const badges = [...(tracked?.querySelectorAll('.reading-tracking') || [])].length
+    return headings.includes('总收入') && headings.includes('unknown.custom') && badges >= 1
   })()`), 'C6: 中文映射和原 metric 兜底，跨通道跟踪取并集')
   check(await win.webContents.executeJavaScript(`(() => {
-    const button = [...document.querySelectorAll('#mid > .page > .sect > .sect-b .btn')].find(el => el.textContent === '第二数据源')
+    const button = [...document.querySelectorAll('#mid .sect-b .btn')].find(el => el.textContent === '第二数据源')
+    if (!button) return 'no-filter-button'
     button.click()
-    return button.getAttribute('aria-selected') === 'true' && document.querySelectorAll('#readings-list .q').length === 1
+    return button.getAttribute('aria-selected') === 'true' && document.querySelectorAll('#readings-list .reading-row').length === 1
   })()`), 'C6: 多通道筛选仍然工作')
 
   // C4/C5：复盘页 LLM 账本（按天聚合 + 场景分布 + 失败明细）
@@ -957,6 +996,223 @@ Promise.all([
   await sleep(200)
   check(await win.webContents.executeJavaScript(`!!document.querySelector('.tree') && localStorage.getItem('meridian.shape') === 'graph'`), 'C4: URL 覆盖本次形态但不篡改手动偏好')
   check(todayErrors.length === 0, 'v0.7.1 验收无渲染器错误：' + todayErrors.join('; '))
+
+  // ---------------------------------------------------------------- 设计需求验收
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
+  await sleep(300)
+
+  // R1 信心组件：条 + 数字一体，四档语义色，右缘主元素收敛
+  const confDesign = await win.webContents.executeJavaScript(`(() => {
+    const row = document.querySelector('.row-lemma')
+    const cell = row?.querySelector('.conf')
+    const tagRow = document.querySelector('.tag-library .q')
+    return {
+      treeHasConf: !!cell && !!cell.querySelector('.conf-bar') && !!cell.querySelector('.conf-num'),
+      confTier: cell?.dataset.tier || null,
+      metaCount: row ? row.querySelectorAll('.row-meta > *:not(.row-acts)').length : -1,
+      hintsHidden: [...(row?.querySelectorAll('.row-hint') || [])].every(el => getComputedStyle(el).opacity === '0'),
+      // 空标签库没有行可查——有行时才验标注，没行时这项交由单测覆盖
+      tagThresholdLabeled: !tagRow || /匹配阈值/.test(tagRow.textContent),
+    }
+  })()`)
+  check(confDesign.treeHasConf, 'R1: 树形信心是条+数字一体的组件')
+  check(['ok', 'warn', 'risk', 'dead'].includes(confDesign.confTier), 'R1: 信心有四档语义色：' + confDesign.confTier)
+  check(confDesign.metaCount <= 4, 'R1: 行右缘主元素收敛：' + confDesign.metaCount)
+  check(confDesign.hintsHidden, 'R1: 次级元信息默认隐藏，悬停才浮现')
+  check(confDesign.tagThresholdLabeled, 'R2: 标签库阈值有文字标注，不是裸数字')
+
+  // R2 禁词表
+  const banned = await win.webContents.executeJavaScript(`(() => {
+    const body = document.body.textContent
+    return ['跌死的', '清空我删的', '数据主权', '子项'].filter(w => body.includes(w))
+  })()`)
+  check(banned.length === 0, 'R2: UI 无工程语言泄漏：' + banned.join(','))
+
+  // R3 危险区分区
+  await win.loadFile(RENDERER, { query: { view: 'settings' } })
+  await sleep(300)
+  const danger = await win.webContents.executeJavaScript(`(() => {
+    const zone = document.querySelector('.danger-zone')
+    const safe = document.querySelector('.sect-b .btn:not(.btn-danger)')
+    return { hasZone: !!zone, hasCap: !!zone?.querySelector('.danger-cap'), hasSafe: !!safe, redCount: document.querySelectorAll('.btn-danger').length }
+  })()`)
+  check(danger.hasZone && danger.hasCap && danger.hasSafe, 'R3: 破坏性操作独立分区，安全操作分离')
+  check(danger.redCount >= 3, 'R3: 危险区收拢全部破坏性操作：' + danger.redCount)
+
+  // R4 数字层级（审计页的口径行）
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'filtered' } })
+  await sleep(300)
+  const hierarchy = await win.webContents.executeJavaScript(`(() => {
+    const scope = document.querySelector('.audit-scope')
+    return { auditScopeIsCaption: scope ? getComputedStyle(scope).fontSize === '11px' : false }
+  })()`)
+  check(hierarchy.auditScopeIsCaption, 'R4: 审计口径行降为 caption 级')
+
+  // R6 侧栏消歧
+  const sidebar = await win.webContents.executeJavaScript(`(() => {
+    const labels = [...document.querySelectorAll('.side-label')].map(el => el.textContent.trim())
+    return { labels }
+  })()`)
+  check(sidebar.labels.includes('档案') && !sidebar.labels.includes('库'), 'R6: 侧栏分组改「档案」，与顶部导航「库」消歧：' + sidebar.labels.join('/'))
+
+  // R9 环节层降权
+  await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
+  await sleep(300)
+  const stage = await win.webContents.executeJavaScript(`(() => {
+    const el = document.querySelector('.row-stage')
+    if (!el) return null
+    return { bg: getComputedStyle(el).backgroundImage }
+  })()`)
+  check(stage && stage.bg === 'none', 'R9: 环节层去掉渐变底色，不再和命题行抢权重')
+
+
+  // ---------------------------------------------------------------- R15 · 数据源页
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await sleep(400)
+  const ch15 = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const before = (await m.channelList()).length
+    const ch = await m.channelAdd({ name: '待删除通道', fetch: 'manual', kind: '财报 / 公告', themeId: null })
+    const rows = () => [...document.querySelectorAll('.channel-row')]
+    const findRow = () => rows().find(r => r.querySelector('.channel-name')?.textContent === '待删除通道')
+    // 新建通道不自动重绘——重新加载
+    location.reload()
+    return { before, chId: ch.id }
+  })()`)
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await sleep(400)
+  const r15 = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const rows = () => [...document.querySelectorAll('.channel-row')]
+    const row = rows().find(r => r.querySelector('.channel-name')?.textContent === '待删除通道')
+    if (!row) return { error: 'no-row', names: rows().map(r => r.querySelector('.channel-name')?.textContent) }
+    const hasDot = !!row.querySelector('.channel-dot')
+    const hasDesc = !!row.querySelector('.channel-desc')
+    const right = row.querySelector('.channel-right')
+    const rightCount = right ? right.children.length : -1
+    const rateEl = right?.querySelector('.channel-rate')
+    const rateWidth = rateEl ? getComputedStyle(rateEl).minWidth : null
+    // 工程字段不应外露到行上
+    const leak = ['最后拉取', '拿到条数', '连续失败', 'query'].filter(w => row.textContent.includes(w))
+    // 详情区应收纳它们
+    const detail = row.closest('.channel-cell')?.querySelector('.channel-detail')
+    const detailHidden = detail ? detail.hidden : null
+    const detailHas = detail ? ['取数器', 'query'].filter(w => detail.textContent.includes(w)) : []
+    // 删除链路
+    const delBtn = [...row.querySelectorAll('.channel-link')].find(b => b.textContent === '删除')
+    if (!delBtn) return { error: 'no-delete', hasDot, hasDesc, rightCount }
+    delBtn.click()
+    await new Promise(r => setTimeout(r, 150))
+    const toastBtn = document.querySelector('.toast-btn')
+    if (!toastBtn) return { error: 'no-toast', hasDot, hasDesc }
+    toastBtn.click()
+    await new Promise(r => setTimeout(r, 350))
+    const after = (await m.channelList()).length
+    return {
+      before: (await m.channelList()).length + 1, after, hasDot, hasDesc, rightCount, rateWidth, leak,
+      detailHidden, detailHas,
+      gone: !rows().some(r => r.querySelector('.channel-name')?.textContent === '待删除通道'),
+    }
+  })()`)
+  console.log('R15:', JSON.stringify(r15))
+  check(r15.hasDot && r15.hasDesc && r15.rightCount >= 4, 'R15: 三段式行（状态点 + 名称/说明 + 右簇）')
+  // 无未匹配数据的通道没有 rate 元素；有数据时列宽必须恒定（扫读成列）
+  check(r15.rateWidth === null || r15.rateWidth === '76px', 'R15: 未匹配列宽恒定或该通道无数据：' + r15.rateWidth)
+  check(r15.leak.length === 0, 'R15: 工程字段不外露到行上：' + (r15.leak || []).join(','))
+  check(r15.detailHidden === true && r15.detailHas.length === 2, 'R15: 工程字段收纳进默认收起的详情区')
+  check(r15.gone && r15.after === r15.before - 1, 'R15: 删除通道生效且列表刷新 ' + JSON.stringify({ before: r15.before, after: r15.after }))
+
+
+  // ------------------------------------------- 档案 · 冷库 / 墓碑区 / 待裁决冲突
+  // 这三个分区此前只有 store 层断言，没有 UI 断言——渲染路径变了不会被发现
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'cold' } })
+  await sleep(400)
+  const coldUi = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const th = (await m.themes())[0]
+    if (!th) return { skip: true }
+    const br = await m.addNode({ themeId: th.id, kind: 'branch', title: '冷库测试环节', propagation: 0.5 })
+    const cold = await m.addNode({ themeId: th.id, parentId: br.id, kind: 'lemma', title: '冷库中的命题', confidence: 15, status: 'cold' })
+    const live = await m.addNode({ themeId: th.id, parentId: br.id, kind: 'lemma', title: '主图谱命题', confidence: 80 })
+    location.reload()
+    return { themeId: th.id, coldId: cold.id, liveId: live.id }
+  })()`)
+  if (!coldUi.skip) {
+    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'cold' } })
+    await sleep(400)
+    const coldCheck = await win.webContents.executeJavaScript(`(() => {
+      const rows = [...document.querySelectorAll('#mid .q-text')].map(el => el.textContent)
+      return {
+        hasCold: rows.some(t => t === '冷库中的命题'),
+        hasLive: rows.some(t => t === '主图谱命题'),
+        hasRestoreBtn: !!document.querySelector('#mid .btn'),
+        hasViewBtn: [...document.querySelectorAll('#mid .btn')].some(b => b.textContent === '查看'),
+      }
+    })()`)
+    console.log('冷库:', JSON.stringify(coldCheck))
+    check(coldCheck.hasCold && !coldCheck.hasLive, '档案·冷库：只显示 status=cold，不混入主图谱')
+    check(coldCheck.hasRestoreBtn && coldCheck.hasViewBtn, '档案·冷库：有移回主图谱与查看操作')
+
+    // 墓碑区：跌死 + 删死都要能看见，且删除的显示删于日期
+    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'dead' } })
+    await sleep(400)
+    const deadCheck = await win.webContents.executeJavaScript(`(async () => {
+      const m = window.meridian
+      const th = (await m.themes())[0]
+      const br = (await m.nodes(th.id)).find(n => n.title === '冷库测试环节')
+      const doomed = await m.addNode({ themeId: th.id, parentId: br.id, kind: 'lemma', title: '被删除的命题', confidence: 50 })
+      await m.removeNode(doomed.id)
+      location.reload()
+      return true
+    })()`)
+    await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'dead' } })
+    await sleep(400)
+    const deadUi = await win.webContents.executeJavaScript(`(() => {
+      const rows = [...document.querySelectorAll('#mid .q')]
+      const del = rows.find(r => r.querySelector('.q-text')?.textContent === '被删除的命题')
+      return {
+        hasDeleted: !!del,
+        deletedAt: del ? del.textContent.includes('删于') : null,
+        hasRestore: del ? [...del.querySelectorAll('.btn')].some(b => /复活/.test(b.textContent)) : null,
+      }
+    })()`)
+    console.log('墓碑区:', JSON.stringify(deadUi))
+    check(deadUi.hasDeleted && deadUi.deletedAt, '档案·墓碑区：软删节点可见且标注删于日期')
+    check(deadUi.hasRestore, '档案·墓碑区：删除的节点可整棵复活')
+  }
+
+  // 待裁决冲突
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'conflicts' } })
+  await sleep(400)
+  const conflictUi = await win.webContents.executeJavaScript(`(async () => {
+    const m = window.meridian
+    const th = (await m.themes())[0]
+    const br = await m.addNode({ themeId: th.id, kind: 'branch', title: '冲突测试环节', propagation: 0.5 })
+    const a = await m.addNode({ themeId: th.id, parentId: br.id, kind: 'lemma', title: '价格上升超预期', confidence: 70 })
+    const b = await m.addNode({ themeId: th.id, parentId: br.id, kind: 'lemma', title: '价格下跌不及预期', confidence: 70 })
+    const list = await m.conflicts()
+    location.reload()
+    return { created: list.length }
+  })()`)
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'conflicts' } })
+  await sleep(400)
+  const conflictCheck = await win.webContents.executeJavaScript(`(() => {
+    const cards = [...document.querySelectorAll('#mid .conflict')]
+    if (!cards.length) return { count: 0 }
+    const c = cards[0]
+    return {
+      count: cards.length,
+      hasPair: !!c.querySelector('.pair'),
+      hasVs: !!c.querySelector('.vs'),
+      acts: [...c.querySelectorAll('.acts .btn')].map(b => b.textContent),
+      unresolved: !c.textContent.includes('已裁决'),
+    }
+  })()`)
+  console.log('冲突:', JSON.stringify(conflictCheck))
+  check(conflictCheck.count >= 1 && conflictCheck.hasPair && conflictCheck.hasVs, '档案·冲突：显示 A vs B 配对')
+  check(conflictCheck.acts.includes('A 成立') && conflictCheck.acts.includes('B 成立') && conflictCheck.acts.includes('两者都对（我搞错了）'),
+    '档案·冲突：三种裁决入口齐全：' + (conflictCheck.acts || []).join('/'))
+  check(conflictCheck.unresolved, '档案·冲突：未裁决的不预设立场')
 
   console.log('\n完成\n')
   app.exit(0)

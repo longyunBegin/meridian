@@ -18,7 +18,7 @@
  * 0.5px 发丝线、能用 CSS 变量跟着深浅色模式走、命中测试免费。
  */
 import { h } from '../lib/dom.js'
-import { state, refresh, selectNode } from '../app.js'
+import { state, refresh, selectNode, setShape } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 
 const m = window.meridian
@@ -140,8 +140,15 @@ export function renderGraph(wrap) {
   const nodes = state.nodes
   if (!nodes.length) {
     focusFn = null
+    // R5 空状态三要素：图标 + 一句人话（陈述状态，不下指令）+ 一个主按钮
     wrap.append(h('div', { class: 'graph-empty' },
-      h('p', {}, '这个主题还没有环节。切到树形新建，或先生成骨架。'),
+      h('div', { class: 'empty-ic' }, icon('lattice', 44)),
+      h('p', { class: 'empty-title' }, '这个主题还没有环节'),
+      h('p', { class: 'empty-sub' }, '生成骨架后，这里会画出产业链的传导关系'),
+      h('button', {
+        class: 'btn btn-primary',
+        onclick: () => { document.querySelector('.app')?.setAttribute('data-view', 'lattice'); setShape('tree') },
+      }, '切到树形'),
     ))
     return
   }
@@ -270,7 +277,7 @@ export function renderGraph(wrap) {
       tooltip: null,
     }
     svg.setPointerCapture(e.pointerId)
-    weightDrag.tooltip = h('div', { class: 'weight-tip' }, `×${weightDrag.startW.toFixed(2)}`)
+    weightDrag.tooltip = h('div', { class: 'weight-tip' }, `传导 ${Math.round(weightDrag.startW * 100)}%`)
     wrap.append(weightDrag.tooltip)
   })
   svg.addEventListener('pointermove', (e) => {
@@ -285,7 +292,7 @@ export function renderGraph(wrap) {
     const ea = (0.15 + 0.43 * nw).toFixed(2)
     edgeEl.setAttribute('stroke', `rgba(${er},${eg},${eb},${ea})`)
     edgeEl.setAttribute('stroke-width', (0.5 + nw * 2.0).toFixed(2))
-    weightDrag.tooltip.textContent = `×${nw.toFixed(2)}`
+    weightDrag.tooltip.textContent = `传导 ${Math.round(nw * 100)}%`
     weightDrag.nw = nw
   })
   const endWeightDrag = async (e) => {
@@ -445,12 +452,14 @@ export function renderGraph(wrap) {
         }
       }
     } else {
-      const pw = (n.propagation ?? 0.5).toFixed(2)
-      g.append(s('text', { class: 'node-strip node-prop', x: sx, y: sy, text: `×${pw}` }))
-      sx += textW(`×${pw}`, 8.5, 500) + 10
+      // 传导权重用人话：内部系数 ×0.60 是工程语言，用户要知道的是「传下去多少」
+      const pw = Math.round((n.propagation ?? 0.5) * 100)
+      const pwLabel = `传导 ${pw}%`
+      g.append(s('text', { class: 'node-strip node-prop', x: sx, y: sy, text: pwLabel }))
+      sx += textW(pwLabel, 8.5, 500) + 10
       const cc = (kids.get(n.id) || []).length
       if (cc) {
-        g.append(s('text', { class: 'node-strip node-sub', x: sx, y: sy, text: `${cc} 子项` }))
+        g.append(s('text', { class: 'node-strip node-sub', x: sx, y: sy, text: `${cc} 个下游` }))
       }
       if (n.tickers?.length) {
         const codes = n.tickers.slice(0, 2).map(t => t.code).join(' · ')

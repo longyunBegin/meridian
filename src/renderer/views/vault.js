@@ -1,4 +1,4 @@
-import { h, icon, clear, add, $, toast } from '../lib/dom.js'
+import { h, icon, clear, add, $, toast, confirmToast } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { groupReadings } from '../../shared/readings.js'
@@ -354,29 +354,57 @@ async function renderReview(mid) {
 
 const FOLD_THRESHOLD = 10
 
+/** R15 · 取数器中文化。select 里不再出现 edgarConcept 这类实现名——
+ *  用户该看到的是「这个通道从哪拿数据」，不是「调了哪个函数」。 */
+const FETCH_LABELS = {
+  manual: '手动粘贴',
+  rss: 'RSS 订阅',
+  web: '网页抓取',
+  edgarConcept: 'SEC EDGAR（财报标签）',
+  edgarFilings: 'SEC EDGAR（公告列表）',
+  cninfo: '巨潮资讯',
+  eastmoneyReport: '东方财富研报',
+  defillamaProtocol: 'DefiLlama（协议数据）',
+  defillamaStablecoins: 'DefiLlama（稳定币）',
+  blockchainChart: 'Blockchain.com（链上指标）',
+  tavily: 'Tavily 搜索',
+  'grok-x-search': 'Grok X 搜索',
+  jina: 'Jina 网页解析',
+}
+const fetchLabel = (f) => FETCH_LABELS[f] || f
+
+
 function fmtValue(v) {
   if (typeof v !== 'number') return String(v ?? '—')
   return v.toLocaleString('en-US')
 }
 
-function readingRow(r, isLatest) {
-  return h('div', { class: 'q', style: isLatest ? { borderLeft: '3px solid var(--blue, #0071e3)' } : {} },
-    h('div', { class: 'q-body' },
-      h('div', { class: 'q-meta reading-main', style: { display: 'flex', alignItems: 'baseline', gap: '6px' } },
-        h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text)', fontWeight: isLatest ? '600' : '400' } }, fmtValue(r.value)),
-        r.unit ? h('span', {}, r.unit) : null,
-        h('span', {}, `数据期 ${r.asOf || '—'}`),
-        h('span', {}, `· ${r.basis || 'reported'}`),
-        r.source?.url ? h('button', {
-          class: 'btn', style: { padding: '1px 6px', fontSize: 'var(--t-caption)' },
-          onclick: () => m.openExternal(r.source.url),
-        }, '来源') : null,
-      ),
-      h('div', { class: 'q-meta' },
-        h('span', {}, `抓于 ${r.at || '—'}`),
-        h('span', { style: { marginLeft: '6px' } }, `· ${r.source?.kind || '未知'}`),
-      ),
-    ),
+/**
+ * 读数行——历史期紧凑网格。
+ *
+ * 最新一期已由卡片头的摘要区独占视觉焦点，这里只做密集参考列表：
+ * caption 级、行高 32px、四列。重述标记是行内 caption 而非独立网格列——
+ * 原来它是第 5 个 grid 子元素，但 grid-template-columns 只定义了 4 列，会被挤出去。
+ */
+function readingRow(r, prev, opts = {}) {
+  const restated = !!opts.restated
+  // 环比 = 当期 / 上期 − 1。上期缺失或为 0 时给占位，不出 NaN。
+  let change = null
+  if (prev && Number(prev.value) > 0 && Number.isFinite(Number(r.value))) {
+    const ratio = Number(r.value) / Number(prev.value) - 1
+    if (Number.isFinite(ratio)) change = ratio
+  }
+  const changeLabel = change == null
+    ? '—'
+    : `${change >= 0 ? '+' : '\u2212'}${Math.abs(change * 100).toFixed(1)}%`
+  const changeTone = change == null ? 'flat' : change >= 0 ? 'up' : 'down'
+
+  return h('div', { class: 'reading-row', dataset: { latest: String(!!opts.latest), restated: String(restated) } },
+    h('span', { class: 'rc-asof' }, r.asOf || '无期间'),
+    h('span', { class: 'rc-basis' }, r.basis === 'estimated' ? '估算' : '财报口径'),
+    h('span', { class: 'rc-delta', dataset: { tone: changeTone } }, changeLabel),
+    h('span', { class: 'rc-value' }, fmtValue(r.value)),
+    restated ? h('span', { class: 'rc-restated', title: '同一数据期的后续申报修正了旧值' }, '已被修正') : null,
   )
 }
 
@@ -384,51 +412,97 @@ function metricCard(group, indicators, channels, gaapLabels) {
   const channelIds = new Set(group.items.map((r) => r.channelId).filter(Boolean))
   const tracked = indicators.filter((n) => (n.channelIds || []).some((id) => channelIds.has(id)))
   const channelName = group.items.map((r) => channels.find((c) => c.id === r.channelId)?.name).find((name) => name?.trim())
-  const title = channelName || gaapLabels.find(({ tag }) => group.metric.endsWith(tag))?.label || group.metric
-  const isFolded = group.count > FOLD_THRESHOLD
-  const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
-  const hiddenCount = group.count - FOLD_THRESHOLD
-  const asOfGroups = new Map()
-  for (const r of group.items) {
-    const key = r.asOf || '—'
-    if (!asOfGroups.has(key)) asOfGroups.set(key, [])
-    asOfGroups.get(key).push(r)
+  const gaapLabel = gaapLabels.find(({ tag }) => group.metric.endsWith(tag))?.label
+  const title = channelName || gaapLabel || group.metric
+
+  // 常量只在卡片头出现一次：单位、来源类型、抓取时间
+  const latest = group.latest || group.items[0]
+  const unit = group.items.map((r) => r.unit).find(Boolean)
+  const kind = latest?.source?.kind || '未知来源'
+  const fetchedAt = (latest?.at || '').slice(0, 10)
+
+  // 最新一期的环比：上期 = items 里排在它后面的那条
+  const latestIdx = group.items.indexOf(latest)
+  const latestPrev = latestIdx >= 0 ? group.items[latestIdx + 1] : null
+  let latestChange = null
+  if (latestPrev && Number(latestPrev.value) > 0 && Number.isFinite(Number(latest.value))) {
+    const ratio = Number(latest.value) / Number(latestPrev.value) - 1
+    if (Number.isFinite(ratio)) latestChange = ratio
   }
 
-  const renderRow = (r) => {
-    const row = readingRow(r, r === group.latest)
-    const samePeriod = asOfGroups.get(r.asOf || '—')
-    if (samePeriod.length > 1 && samePeriod[0] === r) row.classList.add('asof-group-start')
-    return row
+  const isFolded = group.count > FOLD_THRESHOLD
+  const visible = isFolded ? group.items.slice(0, FOLD_THRESHOLD) : group.items
+
+  // 重述检测：同一 asOf 出现多次 → 只留最新一条为当前值
+  const byAsOf = new Map()
+  for (const r of group.items) {
+    const key = r.asOf || '\u2014'
+    if (!byAsOf.has(key)) byAsOf.set(key, [])
+    byAsOf.get(key).push(r)
   }
-  const body = h('div', { class: 'sect-b' }, ...visible.map(renderRow))
+  const restatedSet = new Set()
+  for (const list of byAsOf.values()) {
+    if (list.length < 2) continue
+    for (const r of list.slice(1)) restatedSet.add(r.id)
+  }
+
+  const renderRow = (r, i) => {
+    const prev = group.items[i + 1]
+    return readingRow(r, prev, { latest: r === group.latest, restated: restatedSet.has(r.id) })
+  }
+  const body = h('div', { class: 'reading-grid' }, ...visible.map(renderRow))
 
   if (isFolded) {
     let expanded = false
     const moreBtn = h('button', {
-      class: 'btn', style: { margin: '6px 0' },
+      class: 'reading-more',
       onclick: () => {
         if (expanded) return
         expanded = true
-        for (const r of group.items.slice(FOLD_THRESHOLD)) {
-          body.append(renderRow(r))
-        }
+        for (let i = FOLD_THRESHOLD; i < group.items.length; i++) body.append(renderRow(group.items[i], i))
         moreBtn.remove()
       },
-    }, `+${hiddenCount} 条`)
+    }, `显示其余 ${group.count - FOLD_THRESHOLD} 期`)
     body.append(moreBtn)
   }
 
-  return h('section', { class: 'sect' },
-    h('div', { class: 'sect-h' },
-      h('div', {},
+  const latestChangeLabel = latestChange == null
+    ? '—'
+    : `${latestChange >= 0 ? '+' : '\u2212'}${Math.abs(latestChange * 100).toFixed(1)}%`
+
+  return h('section', { class: 'reading-card' },
+    // 卡片头：人读标题 + 跟踪态 + ⓘ 悬停看 camelCase
+    h('div', { class: 'reading-card-h' },
+      h('div', { class: 'reading-card-title' },
         h('h2', {}, title),
-        title !== group.metric ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, group.metric) : null,
-        tracked.length ? h('div', { class: 'q-meta' }, `跟踪：${tracked.map((n) => n.title).join('、')}`) : null,
+        tracked.length ? h('span', { class: 'reading-tracking' }, '跟踪中') : null,
+        h('span', { class: 'reading-info', title: group.metric }, '\u24d8'),
       ),
-      h('em', {}, String(group.count)),
+      h('div', { class: 'reading-card-const' },
+        h('span', {}, `${group.count} 期`),
+        unit ? h('span', {}, unit) : null,
+        h('span', {}, kind),
+        fetchedAt ? h('span', {}, `抓于 ${fetchedAt}`) : null,
+      ),
+    ),
+    // 最新一期摘要：扫读的第一落点，大字号 + 语义色环比
+    h('div', { class: 'reading-hero' },
+      h('div', { class: 'reading-hero-main' },
+        h('span', { class: 'reading-hero-value' }, fmtValue(latest?.value)),
+        unit ? h('span', { class: 'reading-hero-unit' }, unit) : null,
+      ),
+      h('div', { class: 'reading-hero-side' },
+        h('span', {
+          class: 'reading-hero-delta',
+          dataset: { tone: latestChange == null ? 'flat' : latestChange >= 0 ? 'up' : 'down' },
+        }, latestChangeLabel),
+        h('span', { class: 'reading-hero-asof' }, `${latest?.asOf || '无期间'} · ${latest?.basis === 'estimated' ? '估算' : '财报口径'}`),
+      ),
     ),
     body,
+    h('div', { class: 'reading-card-foot' },
+      '技术名、原文链接和每次抓取的明细，收在悬停与展开里。',
+    ),
   )
 }
 
@@ -546,39 +620,75 @@ export async function renderSources(mid) {
       flash,
     ),
 
+    // R15 · 三段式行：状态点 + 名称/说明 + 右簇 + ›
     channels.length ? h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '通道列表'), h('em', {}, String(channels.length))),
-      h('div', { class: 'sect-b' },
-        ...channels.map((ch) => h('div', { class: 'q' },
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, ch.name),
-            h('div', { class: 'q-meta' },
-              h('span', {}, `${ch.kind} · ${ch.fetch}${ch.metric ? ' · ' + ch.metric : ''} · 间隔 ${ch.interval || 60} 分钟 · ${ch.enabled ? '启用' : '停用'}`),
-              ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
-              ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
-              ch.lastCount != null ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 拉到 ${ch.lastCount} 条`) : null,
-              rateById.get(ch.id)?.total
-                ? h('span', { style: { marginLeft: '6px', color: rateById.get(ch.id).rate >= 0.5 ? 'var(--orange)' : 'var(--text-3)' } },
-                    `· 未匹配 ${Math.round(rateById.get(ch.id).rate * 100)}%（${rateById.get(ch.id).unmatched}/${rateById.get(ch.id).total}）`)
-                : null,
-              ch.failCount > 0 ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 连续失败 ${ch.failCount}`) : null,
-              ch.lastError ? h('span', { style: { marginLeft: '6px', color: 'var(--red)' } }, `· 错误：${ch.lastError}`) : null,
-              fetchers.includes(ch.fetch) ? h('button', {
-                class: 'btn', style: { marginLeft: '8px', padding: '2px 8px' },
-                onclick: async () => {
-                  showFlash(`正在拉取「${ch.name}」…`)
-                  const r = await m.channelFetch(ch.id)
-                  if (r.error) { showFlash(`拉取失败：${r.error}`, 'var(--red)'); return }
-                  if (r.readings) {
-                    showFlash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
-                  } else {
-                    showFlash(`拉取到 ${r.items.length} 条`)
-                  }
-                },
-              }, '拉取') : h('span', { style: { marginLeft: '8px', color: 'var(--text-3)' } }, '（未实现）'),
+      h('div', { class: 'sect-h' }, h('h2', {}, '通道'), h('span', { class: 'spacer' }), h('em', {}, String(channels.length))),
+      h('div', { class: 'channel-rows' },
+        ...channels.map((ch) => {
+          const rate = rateById.get(ch.id)
+          const hasError = !!ch.lastError
+          const matchRate = rate?.total ? Math.round(rate.rate * 100) : null
+          const detailOpen = h('div', { class: 'channel-detail' })
+          const chev = h('span', { class: 'channel-chev', dataset: { open: 'false' } }, '›')
+          const toggleDetail = () => { detailOpen.hidden = !detailOpen.hidden; chev.dataset.open = String(!detailOpen.hidden) }
+
+          const row = h('div', { class: 'channel-row', dataset: { state: hasError ? 'error' : ch.enabled ? 'on' : 'off' } },
+            // ① 状态点：三态，出错最重
+            h('span', { class: 'channel-dot', title: hasError ? '拉取出错' : ch.enabled ? '启用中' : '已停用' }),
+            // ② 名称 + 说明 caption
+            h('div', { class: 'channel-main' },
+              h('div', { class: 'channel-name' }, ch.name),
+              h('div', { class: 'channel-desc' }, `${ch.kind} · 每 ${ch.interval || 60} 分钟`),
+              // ⑤ 出错态：名称下红色 caption，不降级进 tooltip
+              hasError ? h('div', { class: 'channel-err' }, `错误：${ch.lastError}`) : null,
             ),
-          ),
-          h('div', { class: 'q-acts' },
+            // ③ 右簇：恒定宽度，扫读时成列
+            h('div', { class: 'channel-right' },
+              matchRate != null ? h('span', {
+                class: 'channel-rate', dataset: { high: String(matchRate >= 50) },
+                title: `近 30 天 ${rate.unmatched}/${rate.total} 条进入收件箱但没被抽取`,
+              }, `未匹配 ${matchRate}%`) : null,
+              h('button', {
+                class: 'channel-pill', dataset: { on: String(ch.enabled) },
+                onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
+              }, ch.enabled ? '启用' : '停用'),
+              h('button', { class: 'channel-link', onclick: toggleDetail }, '详情'),
+              h('button', {
+                class: 'channel-link is-danger',
+                onclick: async () => {
+                  if (!await confirmToast(`删除通道「${ch.name}」？`, '删除')) return
+                  await m.channelRemove(ch.id)
+                  await renderSources(mid)
+                },
+              }, '删除'),
+              chev,
+            ),
+          )
+          chev.onclick = toggleDetail
+
+          // ⑥ 工程字段收纳进详情区——默认行上只留名称/类型/间隔/未匹配/启停
+          detailOpen.append(h('div', { class: 'channel-detail-grid' },
+            h('div', {}, h('span', {}, '取数器'), h('b', {}, fetchLabel(ch.fetch))),
+            h('div', {}, h('span', {}, 'query'), h('b', {}, ch.query || '—')),
+            ch.metric ? h('div', {}, h('span', {}, '指标标签'), h('b', {}, ch.metric)) : null,
+            h('div', {}, h('span', {}, '归属'), h('b', {}, ch.themeId ? (state.themes.find((t) => t.id === ch.themeId)?.name || '主题') : '全局')),
+            h('div', {}, h('span', {}, '最后拉取'), h('b', {}, ch.lastFetch || '从未')),
+            h('div', {}, h('span', {}, '拿到条数'), h('b', {}, ch.lastCount != null ? String(ch.lastCount) : '—')),
+            ch.failCount > 0 ? h('div', {}, h('span', {}, '连续失败'), h('b', {}, String(ch.failCount))) : null,
+          ), h('div', { class: 'channel-detail-acts' },
+            fetchers.includes(ch.fetch) ? h('button', {
+              class: 'btn',
+              onclick: async () => {
+                showFlash(`正在拉取「${ch.name}」…`)
+                const r = await m.channelFetch(ch.id)
+                if (r.error) { showFlash(`拉取失败：${r.error}`, 'var(--red)'); return }
+                if (r.readings) {
+                  showFlash(`拉到 ${r.readings.total} 条，新增 ${r.readings.added}，跳过 ${r.readings.skipped}`)
+                } else {
+                  showFlash(`拉取到 ${r.items.length} 条`)
+                }
+              },
+            }, '立即拉取') : h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '取数器未实现'),
             h('select', {
               class: 'txt', style: { width: 'auto' },
               onchange: async (e) => {
@@ -587,40 +697,26 @@ export async function renderSources(mid) {
                 // edgar ↔ 其他：query/metric 语义不同，清掉不相干字段
                 if (EDGAR_FETCHES.has(ch.fetch) && !EDGAR_FETCHES.has(newFetch)) {
                   patch.metric = null
-                  showFlash(`已设 ${ch.name} → ${newFetch}，已清空 metric，请重新填写`)
+                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}，已清空指标标签，请重新填写`)
                 } else if (!EDGAR_FETCHES.has(ch.fetch) && EDGAR_FETCHES.has(newFetch)) {
                   patch.metric = null
-                  showFlash(`已设 ${ch.name} → ${newFetch}，已清空 metric，请重新填写`)
+                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}，已清空指标标签，请重新填写`)
                 } else {
-                  showFlash(`已设 ${ch.name} → ${newFetch}`)
+                  showFlash(`已设 ${ch.name} → ${fetchLabel(newFetch)}`)
                 }
                 await m.channelUpdate(ch.id, patch)
                 await renderSources(mid)
               },
             },
-              ...FETCH_OPTIONS.map((f) =>
-                h('option', { value: f, selected: ch.fetch === f }, f),
-              ),
+              ...FETCH_OPTIONS.map((f) => h('option', { value: f, selected: ch.fetch === f }, fetchLabel(f))),
             ),
-            h('button', {
-              class: 'btn',
-              onclick: async () => { await m.channelUpdate(ch.id, { enabled: !ch.enabled }); await renderSources(mid) },
-            }, ch.enabled ? '停用' : '启用'),
-            h('button', {
-              class: 'btn', style: { color: 'var(--red)' },
-              onclick: async () => { await m.channelRemove(ch.id); showFlash('已删除通道'); await renderSources(mid) },
-            }, '删除'),
-          ),
-        )),
+          ))
+          detailOpen.hidden = true
+
+          return h('div', { class: 'channel-cell' }, row, detailOpen)
+        }),
       ),
-    ) : h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '通道列表')),
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'q' }, h('div', { class: 'q-body' },
-          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '还没有通道。下面添加一个。'),
-        )),
-      ),
-    ),
+    ) : null,
 
     h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '新增通道')),

@@ -139,7 +139,7 @@ export async function renderSettings(mid) {
             h('span', { class: 'kind-q' }, q.toFixed(2)),
           )),
         ),
-        h('div', { class: 'sect-h', style: { marginTop: '18px' } }, h('h2', { style: { fontSize: 'var(--t-body)' } }, '试一段')),
+        h('div', { class: 'sect-h', style: { marginTop: '18px' } }, h('h2', { style: { fontSize: 'var(--t-body)' } }, '试一段文本')),
         testBox,
         h('button', { class: 'btn', style: { marginTop: '6px' }, onclick: runTest }, '打标看看'),
         testOut,
@@ -158,11 +158,26 @@ export async function renderSettings(mid) {
     h('section', { class: 'sect' },
 
       h('div', { class: 'sect-b' },
-        h('div', { class: 'q-meta', style: { marginBottom: '10px' } },
-          `${stats.themes} 主题 · ${stats.lemmas} 命题（${stats.live} 主图谱 / ${stats.cold} 冷库 / ${stats.dead} 墓碑）· ` +
-          `${stats.verdicts} 条裁决 · ${stats.conflicts} 待裁决冲突 · ${stats.due} 待结算 · ${stats.readings} 读数`),
+        // L3 caption 带。七个数字零层级读不出「哪个需要我操心」——
+        // 所以非零的异常项（待裁决冲突 / 待结算）单独升格并上语义色
+        h('div', { class: 'stat-band' },
+          h('span', {}, `${stats.themes} 主题`),
+          h('span', {}, `${stats.lemmas} 命题`),
+          h('span', {}, `${stats.verdicts} 裁决`),
+          h('span', {}, `${stats.readings} 读数`),
+          stats.conflicts > 0
+            ? h('b', { class: 'stat-alert' }, `${stats.conflicts} 待裁决冲突`)
+            : h('span', {}, '无待裁决冲突'),
+          stats.due > 0
+            ? h('b', { class: 'stat-alert' }, `${stats.due} 待结算`)
+            : h('span', {}, '无待结算'),
+          (stats.cold || stats.dead)
+            ? h('span', {}, `${stats.cold} 冷库 / ${stats.dead} 墓碑`)
+            : null,
+        ),
         h('p', { style: { margin: '0 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6' } },
           '判断在 meridian.json，原文在 raw.jsonl。原文可以随便清——清掉不影响任何一条命题，只是以后复盘不了当初读的是什么。'),
+        // 安全操作区：常规颜色
         h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
           h('button', { class: 'btn', onclick: () => m.openDataDir() }, '打开数据目录'),
           h('button', {
@@ -173,39 +188,46 @@ export async function renderSettings(mid) {
               await renderSettings(mid)
             },
           }, '清理无引用原文'),
-          h('button', {
-            class: 'btn', style: { color: 'var(--red)' },
-            onclick: async () => {
-              if (!await confirmToast('清空全部原文？判断会保留，但所有原文引用会失效。', '清空')) return
-              const r = await m.rawClear()
-              flash(`已清空 ${r.removed} 条原文，摘除 ${r.unlinked} 处引用`)
-              await renderSettings(mid)
-            },
-          }, '清空全部原文'),
-          h('button', {
-            class: 'btn', style: { color: 'var(--red)' },
-            onclick: async () => {
-              const preview = await m.purgeDead('user', { dryRun: true })
-              const confirmed = preview.removed > 0 && await confirmToast(`真删 ${preview.removed} 条你删的节点？此操作不可恢复。`, '真删')
-              const plan = planPurge('user', preview, confirmed)
-              if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有你删的节点'); return }
-              const r = await m.purgeDead(plan.scope)
-              flash(`已真删 ${r.removed} 条你删的节点`)
-              await renderSettings(mid)
-            },
-          }, `清空我删的（${purgePreview.userDeleted}）`),
-          h('button', {
-            class: 'btn', style: { color: 'var(--red)' },
-            onclick: async () => {
-              const preview = await m.purgeDead('auto', { dryRun: true })
-              const confirmed = preview.removed > 0 && await confirmToast(`真删 ${preview.removed} 条自动进墓的节点？此操作不可恢复。`, '真删')
-              const plan = planPurge('auto', preview, confirmed)
-              if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有跌死的节点'); return }
-              const r = await m.purgeDead(plan.scope)
-              flash(`已真删 ${r.removed} 条跌死的节点`)
-              await renderSettings(mid)
-            },
-          }, `清空跌死的（${purgePreview.autoDead}）`),
+        ),
+        // 危险区：细线分隔 + caption 说明，区内统一红色纵向排列。
+        // 破坏性操作和安全操作平铺时，用户会顺手点到不该点的那个。
+        h('div', { class: 'danger-zone' },
+          h('div', { class: 'danger-cap' }, '以下操作不可撤销'),
+          h('div', { class: 'danger-list' },
+            h('button', {
+              class: 'btn btn-danger',
+              onclick: async () => {
+                if (!await confirmToast('清空全部原文？判断会保留，但所有原文引用会失效。', '清空')) return
+                const r = await m.rawClear()
+                flash(`已清空 ${r.removed} 条原文，摘除 ${r.unlinked} 处引用`)
+                await renderSettings(mid)
+              },
+            }, '清空全部原文'),
+            h('button', {
+              class: 'btn btn-danger',
+              onclick: async () => {
+                const preview = await m.purgeDead('user', { dryRun: true })
+                const confirmed = preview.removed > 0 && await confirmToast(`彻底移除 ${preview.removed} 条已删除的节点？此操作不可恢复。`, '移除')
+                const plan = planPurge('user', preview, confirmed)
+                if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有已删除的节点'); return }
+                const r = await m.purgeDead(plan.scope)
+                flash(`已彻底移除 ${r.removed} 条已删除的节点`)
+                await renderSettings(mid)
+              },
+            }, `彻底移除已删除的节点（${purgePreview.userDeleted}）`),
+            h('button', {
+              class: 'btn btn-danger',
+              onclick: async () => {
+                const preview = await m.purgeDead('auto', { dryRun: true })
+                const confirmed = preview.removed > 0 && await confirmToast(`彻底移除 ${preview.removed} 条信心跌破的节点？此操作不可恢复。`, '移除')
+                const plan = planPurge('auto', preview, confirmed)
+                if (!plan.willDelete) { if (plan.reason === 'empty') flash('没有信心跌破的节点'); return }
+                const r = await m.purgeDead(plan.scope)
+                flash(`已彻底移除 ${r.removed} 条信心跌破的节点`)
+                await renderSettings(mid)
+              },
+            }, `彻底移除信心跌破的节点（${purgePreview.autoDead}）`),
+          ),
         ),
       ),
     ),
@@ -268,9 +290,9 @@ export async function renderSettings(mid) {
       ),
     ) : null,
 
-    // ---- 数据主权
+    // ---- 数据管理
     h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '数据主权')),
+      h('div', { class: 'sect-h' }, h('h2', {}, '数据管理')),
       h('div', { class: 'sect-b' },
         h('div', { class: 'row', style: { gap: '8px' } },
           h('button', {

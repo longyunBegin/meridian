@@ -71,9 +71,9 @@ function renderTagLibraryBand(theme) {
         h('div', { class: 'q-body' },
           h('div', { class: 'q-text' }, tag.name),
           h('div', { class: 'q-meta' },
-            h('span', {}, `同义 ${tag.synonyms?.length || 0}`),
-            h('span', {}, `· 命中 ${tag.hits || 0}`),
-            h('span', {}, `· ${tag.threshold}`),
+            h('span', {}, `${tag.synonyms?.length || 0} 个同义词`),
+            h('span', {}, `· 命中 ${tag.hits || 0} 次`),
+            h('span', {}, `· 匹配阈值 ${tag.threshold}`),
           ),
         ),
         h('span', { style: { color: 'var(--text-3)', marginLeft: '4px' } }, '▸'),
@@ -129,9 +129,9 @@ function renderTagLibraryBand(theme) {
         h('div', { class: 'q-body' },
           h('div', { class: 'q-text' }, tag.name),
           h('div', { class: 'q-meta' },
-            h('span', {}, `同义 ${tag.synonyms?.length || 0}`),
-            h('span', {}, `· 命中 ${tag.hits || 0}`),
-            h('span', {}, `· ${tag.threshold}`),
+            h('span', {}, `${tag.synonyms?.length || 0} 个同义词`),
+            h('span', {}, `· 命中 ${tag.hits || 0} 次`),
+            h('span', {}, `· 匹配阈值 ${tag.threshold}`),
           ),
         ),
       ))
@@ -338,11 +338,24 @@ function aggregate(byParent, id) {
   return { avg: n ? Math.round(sum / n) : null, count: n, due }
 }
 
-/** 连续细条确信度计：24×3px，按值填色，比分段更安静 */
-function meter(value, wide = false) {
+/**
+ * 信心组件——全产品唯一形态。
+ *
+ * 档位 + 悬停精确值：扫读时看档位（四档色），校准要的数值在 hover/选中时给出。
+ * 条和数字是同一个元素，不再是两个同权重的元信息。
+ */
+function confCell(value, opts = {}) {
   const v = Math.max(0, Math.min(100, Math.round(value)))
-  return h('span', { class: `bar${wide ? ' bar-wide' : ''}`, title: `确信度 ${v}` },
-    h('i', { style: { width: `${v}%`, background: confColorContinuous(v) } }))
+  const tier = v >= 70 ? 'ok' : v >= 45 ? 'warn' : v >= 20 ? 'risk' : 'dead'
+  return h('span', {
+    class: `conf${opts.agg ? ' conf-agg' : ''}`,
+    dataset: { tier },
+    title: `信心 ${v} / 100`,
+  },
+    // 填充量走 CSS 变量——::after 读它，元素本身只做轨道
+    h('i', { class: 'conf-bar', style: { '--w': `${v}%` } }),
+    h('b', { class: 'conf-num' }, String(v)),
+  )
 }
 
 function paint(container) {
@@ -406,26 +419,26 @@ function paint(container) {
 
       const sc = node.scaffold
       const scSum = !isLemma && sc ? scaffoldSummary(node) : null
+      // 右缘只留三样，优先级固定：裁决状态 > 信心 > 源计数。其余全部降为 hover 提示——
+      // 一行摆 8-9 个同权重元素时，用户找不到该看哪个。
       const meta = h('span', { class: 'row-meta' },
+        // ① 裁决状态：结算旗 / 已证伪 / 环节的待结算数，合并成一个图标位
         isLemma
-          ? h('span', { class: `badge badge-${node.type}` }, TYPE_LABEL[node.type])
+          ? (node.settlement?.resolved != null && !node.settlement?.correct
+              ? h('span', { class: 'verdict-ic is-cf', title: '已证伪' }, icon('flag', 11))
+              : h('span', { class: 'verdict-ic', dataset: { due: String(!!due) }, title: due ? '已到结算日' : '有结算日' }, icon('flag', 11)))
           : a.due ? h('span', { class: 'chip chip-due', title: `${a.due} 条待结算` }, icon('flag', 9), String(a.due)) : null,
+        // ② 信心：唯一组件，条 + 数字一体
+        isLemma || a.avg != null ? confCell(isLemma ? conf : a.avg, { agg: !isLemma }) : null,
+        // ③ 源计数
         srcs > 1 ? h('span', { class: 'src-chip', title: `${srcs} 个独立来源` }, `${srcs} 源`) : null,
-        cold ? h('span', { class: 'chip', title: '冷库' }, '冷') : null,
-        propagated ? h('span', { class: 'dot', style: { background: 'var(--orange)' }, title: '14 天内有传导' }) : null,
-        isLemma ? meter(conf) : a.avg != null ? meter(a.avg, true) : null,
-        isLemma || a.avg != null
-          ? h('span', {
-              class: `row-conf${isLemma ? '' : ' row-conf-agg'}`,
-              style: isLemma ? null : { color: confColorContinuous(a.avg) },
-            }, String(isLemma ? conf : a.avg))
-          : null,
-        isLemma ? h('span', { class: 'flag-ic', title: due ? '已到结算日' : '结算标记' }, icon('flag', 11)) : null,
-        scSum ? h('span', { class: 'scaffold-sum', title: `已回答 ${scSum.answered} / ${scSum.total} 题 · ${scSum.indicators} 项指标` },
-            `${scSum.answered}/${scSum.total}`
+        // 以下都只是 hover：类型徽章、冷库、传导、scaffold 进度
+        isLemma ? h('span', { class: 'row-hint', title: `类型：${TYPE_LABEL[node.type]}` }, TYPE_LABEL[node.type]) : null,
+        cold ? h('span', { class: 'row-hint', title: '在冷库' }, '冷') : null,
+        propagated ? h('span', { class: 'row-hint', title: '14 天内有传导' }, '传导') : null,
+        scSum ? h('span', { class: 'row-hint', title: `已回答 ${scSum.answered} / ${scSum.total} 题 · ${scSum.indicators} 项指标` },
+            `已答 ${scSum.answered}/${scSum.total}`
           ) : null,
-        node.settlement?.resolved != null && !node.settlement?.correct
-          ? h('span', { class: 'cf', title: '已证伪' }, 'cf') : null,
         // 悬停操作：删除、加子项、切换冷库。不用点到右边栏
         h('span', { class: 'row-acts' },
           h('button', {

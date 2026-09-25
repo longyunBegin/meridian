@@ -95,16 +95,6 @@ export async function renderToday(mid) {
         h('span', { class: 'today-metric-num', style: { color: due.length ? 'var(--orange)' : 'var(--text-3)' } }, String(due.length)),
         h('span', { class: 'today-metric-label' }, '今日结算'),
       ),
-      h('div', { class: 'today-metric-spacer' }),
-      // 校准曲线小图常驻
-      h('div', { class: 'today-calib-mini' },
-        calib.length ? h('div', { class: 'calib mini' },
-          ...calib.map((b) => h('div', {},
-            h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } }),
-          )),
-        ) : h('div', { class: 'today-calib-empty' }, '—'),
-        h('span', { class: 'today-calib-label' }, '校准曲线'),
-      ),
     ),
 
     renderInboxWorkspace(mid, seq, themeNodes, allNodes),
@@ -174,7 +164,12 @@ export async function renderToday(mid) {
 
     // ---- 校准曲线详情
     h('section', { class: 'card' },
-      h('div', { class: 'card-h' }, h('h2', {}, '命题校准曲线'),
+      h('div', { class: 'card-h' },
+        h('h2', {}, '命题校准曲线'),
+        // sparkline 归属到这一组——孤立在最右缘时它是个没有归属的装饰
+        calib.length ? h('span', { class: 'calib-sig', title: '各信心档位的命中率' },
+          ...calib.map((b) => h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } })),
+        ) : null,
         h('em', {}, calib.length ? `${calib.reduce((s, b) => s + b.total, 0)} 条已结算` : '尚无数据')),
       h('div', { class: 'sect-b' },
         calib.length
@@ -213,7 +208,7 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   const items = inboxItems
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
-      h('h2', {}, '待确认'), h('p', {}, '已抽取的核对归位，未抽取的留档待命'),
+      h('h2', {}, '待确认'),
       h('span', { class: 'spacer' }), h('em', {}, `${inboxTotal} 条待审阅`),
     ),
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
@@ -357,9 +352,8 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   const remaining = Math.max(0, inboxTotal - inboxItems.length)
   const loadMore = remaining > 0 ? h('button', {
     class: 'btn inbox-load-more',
-    onclick: async (e) => {
-      e.target.disabled = true
-      e.target.textContent = '加载中…'
+    onclick: async () => {
+      // 不能动 e.target——renderToday 会清空重画，那时按钮已经不在 DOM 里
       const page = await m.inboxList({ limit: inboxLimit, offset: inboxItems.length })
       if (seq === renderSeq && state.view === 'today') {
         inboxItems = [...inboxItems, ...page.items]

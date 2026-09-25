@@ -2962,7 +2962,8 @@ ok('R1: vault.js 有数据期', vaultSrcER.includes('数据期'))
 ok('R1: vault.js 有抓于', vaultSrcER.includes('抓于'))
 ok('R1: vault.js 有跟踪', vaultSrcER.includes('跟踪'))
 ok('R1: 跟踪按整组通道集合计算', vaultSrcER.includes('const tracked = indicators.filter') && vaultSrcER.includes('channelIds.has(id)') && !vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard')).includes('跟踪'))
-ok('R1: vault.js 有 asof-group-start', vaultSrcER.includes('asof-group-start'))
+// R14 之后同 asOf 重述用 data-restated 标记，不再依赖 CSS class
+ok('R1: 重述行有标记', vaultSrcER.includes('restatedSet') && vaultSrcER.includes("restated: String(restated)"))
 
 // R1 端到端：读数显示跟踪指标
 const r1Theme = store.addTheme('R1 测试主题')
@@ -3211,9 +3212,15 @@ ok('C3: Windows 字体在 Mac 字体之后', stylesSrcS45.indexOf('Segoe UI') > 
 ok('C3: mica 仅用于 win32', cleanupMain.includes("process.platform === 'win32' ? { backgroundMaterial: 'mica' }"))
 ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree'") && appSrcER.includes("localStorage.setItem('meridian.shape', shape)"))
 ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
-ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:[^;]*\dpx/.test(stylesSrcS45) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))
+// 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」
+ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:\s*[1-9]\d*px(?!\s*;)/.test(stylesSrcS45.replace(/border-radius:\s*50%/g, '')) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))
 const cleanupReadingRow = vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard'))
-ok('C6: 每条只有两行 meta，跟踪不重复', (cleanupReadingRow.match(/class: 'q-meta/g) || []).length === 2 && !cleanupReadingRow.includes('跟踪'))
+// R14 之后行是五列网格，常量已上移卡片头；跟踪仍只算一次
+const metricCardSrc = vaultSrcER.slice(vaultSrcER.indexOf('function metricCard'))
+ok('C6/R14: 行是网格且不含重复常量与跟踪',
+  cleanupReadingRow.includes('rc-value') && metricCardSrc.includes('reading-grid') &&
+  !cleanupReadingRow.includes('跟踪') && !cleanupReadingRow.includes('单位') &&
+  !cleanupReadingRow.includes('来源') && !cleanupReadingRow.includes('抓于'))
 ok('C6: 单项筛选整排隐藏', vaultSrcER.includes('if (options.length <= 1) return null'))
 
 // ============================================================

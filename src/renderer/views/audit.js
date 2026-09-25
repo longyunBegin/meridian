@@ -15,7 +15,8 @@ export async function renderAudit(mid) {
   if (a.byGate.other.total) keys.push('other')
   const card = h('div', { class: 'audit' },
     h('div', { class: 'audit-tag' }, '误杀审计 · 30 天周期'),
-    h('div', { class: 'audit-q' }, `全部 ${a.allTotal} 条 · 近 30 天 ${a.total} 条`),
+    // L3 caption：这两个数字是过滤器的副产物，不是内容——不该占首屏最显眼处
+    h('div', { class: 'audit-scope' }, `近 30 天 ${a.total} 条 · 全部 ${a.allTotal} 条`),
     h('div', { class: 'sub' }, `近期裁决中误杀 ${a.missed} 条，误杀率 ${percent(a.rate)}。归位提议忽略单独统计，不计入裁决总数或误杀率分母。`),
     ...keys.map((key) => {
       const group = a.byGate[key]

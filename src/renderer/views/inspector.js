@@ -342,8 +342,9 @@ export function renderInspectorLattice(aside) {
   const node = state.nodes.find((n) => n.id === state.selectedId)
   if (!node) {
     aside.append(h('div', { class: 'empty' },
-      h('h2', {}, '选中一条命题'),
-      h('p', {}, '回车新建，Tab 向下拆一层，方向键移动。'),
+      h('div', { class: 'empty-ic' }, icon('lattice', 36)),
+      h('h2', {}, '还没有选中命题'),
+      h('p', {}, '在左侧选择一条命题，这里会显示它的论证结构、来源和判断依据。'),
     ))
     return
   }
