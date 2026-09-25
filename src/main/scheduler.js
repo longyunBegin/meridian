@@ -7,6 +7,9 @@ const TICK_MS = 15 * 60 * 1000
 const QUIET_START = 22
 const QUIET_END = 9
 
+/** 每个 tick 最多处理多少条内容——订阅源一次回几十条的防爆阀 */
+export const MAX_ITEMS_PER_TICK = 10
+
 /** 是否在静默时段（22:00–次日 9:00） */
 export function isQuietHours(date = new Date()) {
   const h = date.getHours()
@@ -34,6 +37,16 @@ export function buildNotification(items) {
 }
 
 /**
+ * 通道抖动：interval 相同的通道会在同一分钟集体到期，用 id 的稳定 hash 错开。
+ * 同一通道每次结果一致；抖动只影响调度判定，不改存储的 interval。
+ */
+export function channelJitter(channelId) {
+  let sum = 0
+  for (const ch of String(channelId || '')) sum += ch.charCodeAt(0)
+  return sum % 10
+}
+
+/**
  * 筛出该拉取的通道。纯函数，无 I/O。
  * @param {Array} channels 全部通道
  * @param {number} now Date.now()
@@ -47,7 +60,9 @@ export function dueChannels(channels, now, failCounts = new Map(), fetchers = []
     if (!fetchers.includes(c.fetch)) return false
     const fails = failCounts.get(c.id) || 0
     const backoff = fails > 0 ? Math.min(60, c.interval) * Math.pow(2, Math.min(fails, 5)) : 0
-    const wait = c.interval * 60000 + backoff * 60000
+    const wait = (c.interval + channelJitter(c.id)) * 60000 + backoff * 60000
+    // 老数据里 lastFetch 只存日期（'2026-09-24'），Date.parse 会还原成当天 00:00，于是每次 tick 都到期。
+    // 不做迁移：这类通道会先被判到期、拉一次，lastFetch 随即被改写成完整时间，之后 interval 才真正生效。
     const last = c.lastFetch ? Date.parse(c.lastFetch) : 0
     return now - last >= wait
   })
@@ -69,7 +84,7 @@ export function startScheduler({ due, notify, badge, onClick, channels, runChann
   const notified = new Set()
   const failCounts = new Map()
 
-  const tick = () => {
+  const tick = async () => {
     // 到期结算
     const items = due() || []
     if (badge) badge(items.length)
@@ -83,21 +98,26 @@ export function startScheduler({ due, notify, badge, onClick, channels, runChann
       }
     }
 
-    // 通道轮询
+    // 通道轮询：每个 tick 有内容预算，超出的通道等下个 tick（lastFetch 不推进）
     if (channels && runChannel && !isQuietHours()) {
       const all = channels() || []
       const avail = fetchers ? fetchers() : []
       const due_ = dueChannels(all, Date.now(), failCounts, avail)
+      let budget = MAX_ITEMS_PER_TICK
       for (const ch of due_) {
-        runChannel(ch).catch(() => {
-          const c = (failCounts.get(ch.id) || 0) + 1
-          failCounts.set(ch.id, c)
-        })
+        if (budget <= 0) break
+        try {
+          const r = await runChannel(ch)
+          budget -= typeof r === 'number' ? r : (Number(r?.processed) || 0)
+        } catch {
+          budget--
+          failCounts.set(ch.id, (failCounts.get(ch.id) || 0) + 1)
+        }
       }
     }
   }
 
-  tick()
+  tick().catch(() => { /* 单次 tick 失败不该杀掉定时器 */ })
   const timer = setInterval(tick, TICK_MS)
 
   return () => clearInterval(timer)

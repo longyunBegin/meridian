@@ -2,6 +2,8 @@
  * 抽取：把一段原文变成可独立成立的命题。
  * 走 OpenAI 兼容接口；没有 key 时调用方降级为手工录入。
  */
+import { readUsage, __testHooks } from './llmlog.js'
+
 const SYSTEM = `你是一个严谨的研究助理。从用户粘贴的原文中抽取「可独立成立的最小命题」。
 
 硬规则：
@@ -33,6 +35,7 @@ function errorReason(e) {
 export async function extractLemmas(settings, text, branchHints = []) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
+  if (__testHooks.run) return __testHooks.run('extract', { settings, text, branchHints })
 
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -48,13 +51,14 @@ export async function extractLemmas(settings, text, branchHints = []) {
   })
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty' }
+  if (!raw) return { ok: false, reason: 'empty', usage }
 
   const lemmas = parseLemmas(raw)
-  if (!lemmas.length) return { ok: false, reason: 'unparsable' }
-  return { ok: true, lemmas }
+  if (!lemmas.length) return { ok: false, reason: 'unparsable', usage }
+  return { ok: true, lemmas, usage }
 }
 
 function parseLemmas(raw) {
@@ -96,6 +100,7 @@ const SOCRATIC_SYSTEM = `你是一个苏格拉底式的研究助理。针对用�
 export async function socraticQuestions(settings, lemma, context = '') {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
+  if (__testHooks.run) return __testHooks.run('socratic', { settings, lemma, context })
 
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -111,13 +116,14 @@ export async function socraticQuestions(settings, lemma, context = '') {
   })
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty' }
+  if (!raw) return { ok: false, reason: 'empty', usage }
 
   const questions = parseQuestions(raw)
-  if (!questions.length) return { ok: false, reason: 'unparsable' }
-  return { ok: true, questions }
+  if (!questions.length) return { ok: false, reason: 'unparsable', usage }
+  return { ok: true, questions, usage }
 }
 
 function parseQuestions(raw) {
@@ -146,6 +152,7 @@ const THEME_TAGS_SYSTEM = `你是一个产业链分析专家。根据用户给�
 export async function generateThemeTags(settings, description) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
+  if (__testHooks.run) return __testHooks.run('themeTags', { settings, description })
 
   let res
   try {
@@ -167,13 +174,14 @@ export async function generateThemeTags(settings, description) {
   }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty' }
+  if (!raw) return { ok: false, reason: 'empty', usage }
 
   const tags = parseThemeTags(raw)
-  if (!tags.length) return { ok: false, reason: 'unparsable' }
-  return { ok: true, tags }
+  if (!tags.length) return { ok: false, reason: 'unparsable', usage }
+  return { ok: true, tags, usage }
 }
 
 function parseThemeTags(raw) {
@@ -206,6 +214,7 @@ const TAG_LIBRARY_SYSTEM = `你是一个领域分析专家。根据主题描述�
 export async function generateTagLibrary(settings, description, branchTitles = []) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
+  if (__testHooks.run) return __testHooks.run('tagLibrary', { settings, description, branchTitles })
 
   const userContent = `主题：${description}\n环节树标题：${branchTitles.join('、') || '（无）'}`
   let res
@@ -228,13 +237,14 @@ export async function generateTagLibrary(settings, description, branchTitles = [
   }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty' }
+  if (!raw) return { ok: false, reason: 'empty', usage }
 
   const lib = parseTagLibrary(raw)
-  if (!lib.length) return { ok: false, reason: 'unparsable' }
-  return { ok: true, tagLibrary: lib }
+  if (!lib.length) return { ok: false, reason: 'unparsable', usage }
+  return { ok: true, tagLibrary: lib, usage }
 }
 
 function parseTagLibrary(raw) {
@@ -272,6 +282,7 @@ export async function pickChannelsFromLibrary(settings, description, library) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key', channels: [] }
   if (!library.length) return { ok: true, channels: [] }
+  if (__testHooks.run) return __testHooks.run('pickChannels', { settings, description, library })
 
   const candidates = library.map((ch) => ({
     id: ch.id,
@@ -302,21 +313,22 @@ export async function pickChannelsFromLibrary(settings, description, library) {
   }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, channels: [] }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty', channels: [] }
+  if (!raw) return { ok: false, reason: 'empty', channels: [], usage }
 
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) return { ok: false, reason: 'unparsable', channels: [] }
+  if (start < 0 || end <= start) return { ok: false, reason: 'unparsable', channels: [], usage }
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1))
-    if (!Array.isArray(parsed.channelIds)) return { ok: false, reason: 'unparsable', channels: [] }
+    if (!Array.isArray(parsed.channelIds)) return { ok: false, reason: 'unparsable', channels: [], usage }
     const byId = new Map(library.map((ch) => [ch.id, ch]))
     const ids = [...new Set(parsed.channelIds.filter((id) => typeof id === 'string'))]
-    return { ok: true, channels: ids.map((id) => byId.get(id)).filter(Boolean) }
+    return { ok: true, channels: ids.map((id) => byId.get(id)).filter(Boolean), usage }
   } catch {
-    return { ok: false, reason: 'unparsable', channels: [] }
+    return { ok: false, reason: 'unparsable', channels: [], usage }
   }
 }
 
@@ -352,6 +364,7 @@ function normalizeAnswers(answer) {
 export async function generateSkeleton(settings, description) {
   const { baseUrl, apiKey, model } = settings
   if (!apiKey) return { ok: false, reason: 'no-key' }
+  if (__testHooks.run) return __testHooks.run('skeleton', { settings, description })
 
   let res
   try {
@@ -373,13 +386,14 @@ export async function generateSkeleton(settings, description) {
   }
 
   if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty' }
+  if (!raw) return { ok: false, reason: 'empty', usage }
 
   const skeleton = parseSkeleton(raw)
-  if (!skeleton) return { ok: false, reason: 'unparsable' }
-  return { ok: true, skeleton }
+  if (!skeleton) return { ok: false, reason: 'unparsable', usage }
+  return { ok: true, skeleton, usage }
 }
 
 function parseSkeleton(raw) {

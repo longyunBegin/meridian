@@ -76,7 +76,13 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
   inboxUndoAutoImport: (intakeEventId) => ipcRenderer.invoke('inbox:undoAutoImport', intakeEventId),
   inboxLastAutoImport: () => ipcRenderer.invoke('inbox:lastAutoImport'),
+  inboxExtract: (ids) => ipcRenderer.invoke('inbox:extract', ids),
+  inboxClearUnextracted: () => ipcRenderer.invoke('inbox:clearUnextracted'),
   intakeSeries: (sinceDays) => ipcRenderer.invoke('intake:series', sinceDays),
+
+  // ---- LLM 账本 + 通道未匹配率
+  llmUsage: () => ipcRenderer.invoke('llm:usage'),
+  channelMatchRates: () => ipcRenderer.invoke('channel:matchRates'),
 
   // ---- 骨架生成
   generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),

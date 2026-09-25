@@ -20,7 +20,7 @@ globalThis.__electron = require('electron')
 const { app, BrowserWindow, ipcMain } = globalThis.__electron
 
 let load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel
-let settleLemma, allNodes, addInboxItem, allInbox, genericFallback, instantiate, register
+let settleLemma, allNodes, addInboxItem, allInbox, genericFallback, instantiate, register, recordLlmUsage
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
@@ -94,7 +94,7 @@ Promise.all([
 ]).then(([store, templates, ipc]) => {
   ({
     load, addTheme, addNode, updateNode, addVerdict, markPromoted, addConflict, addChannel,
-    settleLemma, allNodes, addInboxItem, allInbox,
+    settleLemma, allNodes, addInboxItem, allInbox, recordLlmUsage,
   } = store)
   genericFallback = templates.genericFallback
   instantiate = templates.instantiate
@@ -172,7 +172,7 @@ Promise.all([
   addNode({ themeId: crypto.id, parentId: miner.id, kind: 'lemma', title: '矿机关机价随电价上移', type: 'observation', confidence: 66, tags: ['能源成本', '半导体周期'] })
   addNode({ themeId: crypto.id, parentId: null, kind: 'lemma', title: '稳定币净发行回升', type: 'observation', confidence: 71, tags: ['美元流动性'] })
 
-  addChannel({
+  const rateChannel = addChannel({
     name: '失败状态示例', fetch: 'rss', kind: '独立媒体', query: 'https://example.com/feed',
     themeId: ai.id, lastError: '连接超时',
   })
@@ -375,6 +375,18 @@ Promise.all([
   })`)
   check(channelState.lastError, '数据源显示 lastError')
   check(channelState.noReview, '数据源无复审状态控件')
+
+  // C6：通道未匹配率——显示用参考，不自动停用通道
+  const rateItem = addInboxItem({
+    title: '未匹配率验收：低质转载', text: '低质转载内容，未抽取。',
+    extracted: false, matchScore: 0, skipped: 'low-quality',
+    provenance: { channelId: rateChannel.id, platform: '本地验收' },
+  })
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'feeds' } })
+  await sleep(400)
+  check(await win.webContents.executeJavaScript(`document.body.textContent.includes('只作参考，不会自动停用通道') &&
+    document.body.textContent.includes('未匹配 100%（1/1）')`), 'C6: 通道未匹配率只作参考，不自动停用通道')
+  await registeredHandlers.get('inbox:resolve')({}, rateItem.id, 'reject')
 
   // 原文层：选中刚入库的那条，点开「看原文」
   if (win) {
@@ -749,6 +761,51 @@ Promise.all([
   await win.webContents.executeJavaScript(`document.querySelector('#due-section .btn-hit').click()`)
   await sleep(400)
   check(await win.webContents.executeJavaScript(`document.querySelector('.app').dataset.view === 'lattice' && !!document.querySelector('.graph-wrap .node')`), '结算后跳转脉络不会被今日的异步渲染清空')
+
+  // 三态收件箱：已抽取 / 待抽取（弱命中）/ 未匹配（留档不抽取）
+  const waitItem = addInboxItem({
+    title: '待抽取验收：锗价上行但证据不足',
+    text: '锗价近期持续上行，但暂未找到一手证据。',
+    extracted: false, matchScore: 0.52,
+  })
+  addInboxItem({
+    title: '未匹配验收：团队建设通知',
+    text: '本周五下午团队建设，地点另行通知。',
+    extracted: false, matchScore: 0, skipped: 'low-quality',
+  })
+  const keptItem = addInboxItem({
+    title: '已抽取验收：光模块排产饱满',
+    text: '光模块排产饱满，交期延长。',
+    lemmas: [{ title: '光模块排产饱满', type: 'observation', confidence: 60 }],
+  })
+  await win.loadFile(RENDERER, { query: { view: 'today' } })
+  await sleep(500)
+  const groupOf = (label) => `[...document.querySelectorAll('.inbox-group-head')].find((el) => el.querySelector('.inbox-group-label').textContent === '${label}')`
+  const inboxGroups = await win.webContents.executeJavaScript(`[...document.querySelectorAll('.inbox-group-head')]
+    .map((el) => el.querySelector('.inbox-group-label').textContent + ':' + el.querySelector('.inbox-group-count').textContent)`)
+  check(inboxGroups.join('|') === '已抽取:1|待抽取:1|未匹配:1', 'D: 未抽取条目按标签库命中情况分组')
+  await win.webContents.executeJavaScript(`document.querySelector('.inbox-item[data-id="${waitItem.id}"] .inbox-body').click()`)
+  const waitDetail = await win.webContents.executeJavaScript(`(() => ({
+    disabled: document.querySelector('.inbox-confirm').disabled,
+    label: document.querySelector('.inbox-confirm').textContent,
+    ck: document.querySelector('.inbox-item[data-id="${waitItem.id}"] .inbox-ck').disabled,
+    note: document.querySelector('.inbox-detail-scroll').textContent,
+    footer: document.querySelector('.inbox-action-note').textContent,
+  }))()`)
+  writeFileSync(join(OUT, '23b-today-inbox-groups.png'), (await win.webContents.capturePage()).toPNG())
+  check(waitDetail.disabled && waitDetail.ck && waitDetail.label.includes('抽取后入库') &&
+    waitDetail.note.includes('未达该标签阈值') && waitDetail.footer.includes('原文已留档'), 'D: 未抽取条目不提供归位表单并说明留档原因')
+  let extractRequest = null
+  ipcMain.removeHandler('inbox:extract')
+  ipcMain.handle('inbox:extract', (_, ids) => { extractRequest = ids; return { ok: true, extracted: ids.length } })
+  await win.webContents.executeJavaScript(`${groupOf('待抽取')}.querySelector('.btn').click()`)
+  await sleep(250)
+  check(extractRequest?.length === 1 && extractRequest[0] === waitItem.id, 'D: 「抽取这 N 条」只把未抽取条目交给模型')
+  ipcMain.removeHandler('inbox:extract')
+  ipcMain.handle('inbox:extract', registeredHandlers.get('inbox:extract'))
+  await win.webContents.executeJavaScript(`${groupOf('未匹配')}.querySelector('.btn').click()`)
+  await sleep(300)
+  check(allInbox().length === 1 && allInbox()[0].id === keptItem.id, 'D: 「清空未匹配」清掉未抽取条目且保留已抽取内容')
   check(todayErrors.length === 0, '今日交互无渲染器错误：' + todayErrors.join('; '))
 
   ipcMain.removeHandler('inbox:capture')
@@ -865,6 +922,26 @@ Promise.all([
     button.click()
     return button.getAttribute('aria-selected') === 'true' && document.querySelectorAll('#readings-list .q').length === 1
   })()`), 'C6: 多通道筛选仍然工作')
+
+  // C4/C5：复盘页 LLM 账本（按天聚合 + 场景分布 + 失败明细）
+  const llmDay = recordLlmUsage('extract', { ok: true, tokens: 1200 })
+  recordLlmUsage('extract', { ok: false, tokens: 0, error: 'HTTP 429', latency: 820 })
+  recordLlmUsage('label', { ok: true, tokens: 90, degraded: true })
+  await win.loadFile(RENDERER, { query: { view: 'vault', vault: 'review' } })
+  await sleep(400)
+  const llmCard = await win.webContents.executeJavaScript(`(() => {
+    const card = [...document.querySelectorAll('.card')].find(el => el.querySelector('h2')?.textContent === 'LLM 调用')
+    return {
+      head: card?.querySelector('.card-h em')?.textContent || '',
+      today: card?.querySelector('.review-metric-num')?.textContent || '',
+      scenarios: [...card.querySelectorAll('.llm-scenarios .badge')].map(el => el.textContent),
+      failures: card.querySelector('.llm-failures')?.textContent || '',
+    }
+  })()`)
+  check(llmCard.head.includes(`${llmDay.calls} 次`) && llmCard.today === String(llmDay.calls) &&
+    llmCard.scenarios.includes(`抽取 ${llmDay.byScenario.extract}`) && llmCard.failures.includes('HTTP 429'),
+    'C4/C5: 复盘页按天聚合调用并按场景与失败原因展开')
+  writeFileSync(join(OUT, '24b-review-llm.png'), (await win.webContents.capturePage()).toPNG())
 
   await win.webContents.executeJavaScript(`localStorage.removeItem('meridian.shape')`)
   await win.loadFile(RENDERER, { query: { view: 'lattice' } })

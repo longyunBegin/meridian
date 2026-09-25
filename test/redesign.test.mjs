@@ -2047,6 +2047,7 @@ ok('tie-break: readings.js 用 > 取后加的', readingsSrc.includes('a.at > b.a
 console.log('\n— R5: 轮询器 —')
 
 const { dueChannels } = await import('../src/main/scheduler.js')
+const { channelJitter, MAX_ITEMS_PER_TICK } = await import('../src/main/scheduler.js')
 
 // --- dueChannels 纯函数全分支 ---
 
@@ -2073,9 +2074,14 @@ ok('R5: 从未拉取的通道 due', dueChannels([chFresh], NOW, new Map(), FETCH
 const chRecent = { id: 'r1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 10 * 60000).toISOString() }
 ok('R5: 间隔未到不 due', dueChannels([chRecent], NOW, new Map(), FETCHERS).length === 0)
 
-// 6) 间隔已到 → due
-const chStale = { id: 's1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
+// 6) 间隔 + 抖动已到 → due
+const chStale = { id: 's1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 70 * 60000).toISOString() }
 ok('R5: 间隔已到 due', dueChannels([chStale], NOW, new Map(), FETCHERS).length === 1)
+
+// 6b) C2：抖动把同 interval 的通道错开——落在抖动窗口内还不该拉
+const jitterStale = new Date(NOW - (60 + channelJitter('s1')) * 60000 + 60000).toISOString()
+ok('R5: 抖动窗口内不 due', dueChannels([{ ...chStale, lastFetch: jitterStale }], NOW, new Map(), FETCHERS).length === 0)
+ok('R5: 同 id 抖动稳定可复现', channelJitter('s1') === channelJitter('s1'))
 
 // 7) failCount 退避：失败 1 次 → 退避 2 倍 interval
 const fails1 = new Map([['b1', 1]])
@@ -3195,6 +3201,251 @@ ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:[^
 const cleanupReadingRow = vaultSrcER.slice(vaultSrcER.indexOf('function readingRow'), vaultSrcER.indexOf('function metricCard'))
 ok('C6: 每条只有两行 meta，跟踪不重复', (cleanupReadingRow.match(/class: 'q-meta/g) || []).length === 2 && !cleanupReadingRow.includes('跟踪'))
 ok('C6: 单项筛选整排隐藏', vaultSrcER.includes('if (options.length <= 1) return null'))
+
+// ============================================================
+// LLM 成本治理：A（lastFetch 精度）B（免费过滤层）C（节流与归因）D（收件箱三态）
+// ============================================================
+
+console.log('\n— 成本治理：A/B 免费过滤层 —')
+
+const { readUsage, __testHooks: llmHooks, SCENARIO_LABELS } = await import('../src/main/llmlog.js')
+const { startScheduler, isQuietHours: govQuiet } = await import('../src/main/scheduler.js')
+const ipcSrcGov = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const vaultSrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const todaySrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8')
+const storeSrcGov = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+const schedulerSrcGov = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
+const pjGov = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
+const pcGov = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+
+// ---- C4：token 读取（原来 9 个调用点一处都没读 usage）----
+
+const usageRes = new Response(JSON.stringify({ usage: { total_tokens: 42 }, choices: [] }), { headers: { 'content-type': 'application/json' } })
+ok('C4: readUsage 读 total_tokens', await readUsage(usageRes) === 42)
+ok('C4: readUsage 不消费原响应体', (await usageRes.json())?.usage?.total_tokens === 42)
+ok('C4: readUsage 无 usage 返回 0', await readUsage(new Response('{}', { headers: { 'content-type': 'application/json' } })) === 0)
+ok('C4: readUsage 解析失败返回 0', await readUsage(new Response('not json', { headers: { 'content-type': 'application/json' } })) === 0)
+ok('C4: 调用点只在 tracked 里记账', ipcSrcGov.includes('tracked(') && !ipcSrcGov.includes('recordLlmUsage'))
+
+const usageToday = () => store.llmUsage().daily.find((d) => d.date === store.today()) || { calls: 0, failed: 0, degraded: 0, tokens: 0, byScenario: {} }
+// 账本是同一个对象，比较前先拍快照，否则 before/after 是同一个引用
+const usageSnapshot = () => { const d = usageToday(); return { calls: d.calls, failed: d.failed, degraded: d.degraded, tokens: d.tokens, byScenario: { ...d.byScenario } } }
+const c4Before = usageSnapshot()
+store.recordLlmUsage('extract', { ok: true, tokens: 120 })
+store.recordLlmUsage('extract', { ok: false, error: 'timeout', latency: 15000 })
+const c4After = usageSnapshot()
+ok('C4: 按天聚合调用次数', c4After.calls === c4Before.calls + 2)
+ok('C4: 按天累计 token', c4After.tokens === c4Before.tokens + 120)
+ok('C4: 失败计数', c4After.failed === c4Before.failed + 1)
+ok('C4: 按场景分组', (c4After.byScenario.extract || 0) === (c4Before.byScenario.extract || 0) + 2)
+ok('C4: 失败明细带场景与耗时', store.llmUsage().recent[0].scenario === 'extract' && store.llmUsage().recent[0].error === 'timeout' && store.llmUsage().recent[0].latency === 15000)
+ok('C4: 同一天只有一条账', store.llmUsage().daily.filter((d) => d.date === store.today()).length === 1)
+
+for (let i = 0; i < 60; i++) store.recordLlmUsage('extract', { ok: false, error: `boom-${i}` })
+ok('C4: 失败明细封顶 50 条', store.llmUsage().recent.length === 50, `实际 ${store.llmUsage().recent.length}`)
+ok('C4: 封顶保留最新', store.llmUsage().recent[0].error === 'boom-59')
+ok('C4: 账本过迁移仍是对象', (() => { const dbRaw = store.load(); return typeof dbRaw.llmUsage === 'object' && Array.isArray(dbRaw.llmUsage.daily) })())
+
+// ---- A：lastFetch 存完整时间，interval 才真正生效 ----
+
+const aGeo = store.addTheme('成本治理主题')
+const aCh = store.addChannel({ name: 'A-精度通道', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/a.xml', themeId: aGeo.id })
+const aRealFetch = globalThis.fetch
+globalThis.fetch = async () => { throw new Error('测试不允许外网请求') }
+await fire('channel:fetch', aCh.id)
+globalThis.fetch = aRealFetch
+const aAfter = store.allChannels().find((c) => c.id === aCh.id)
+ok('A: 拉取后 lastFetch 是完整时间', typeof aAfter.lastFetch === 'string' && aAfter.lastFetch.includes('T') && Date.parse(aAfter.lastFetch) > Date.now() - 60000, `实际 ${aAfter.lastFetch}`)
+ok('A: 刚拉过的通道不 due', dueChannels([aAfter], Date.now(), new Map(), ['rss']).length === 0)
+ok('A: ipc.js 不再写日期型 lastFetch', !ipcSrcGov.includes('lastFetch: today()') && ipcSrcGov.includes('lastFetch: new Date().toISOString()'))
+ok('A: 老日期型数据不迁移，注释说明', schedulerSrcGov.includes('不做迁移'))
+
+// ---- 让成本治理主题成为默认主题，装上可控抽取桩 ----
+
+const aLemmaCount = (id) => store.allNodes().filter((n) => n.themeId === id && n.kind === 'lemma' && n.status !== 'dead').length
+const aMaxOther = Math.max(0, ...store.allThemes().filter((t) => t.id !== aGeo.id).map((t) => aLemmaCount(t.id)))
+const aBranch = store.addNode({ themeId: aGeo.id, kind: 'branch', title: '成本治理环节', propagation: 0.5 })
+for (let i = 0; i <= aMaxOther; i++) {
+  store.addNode({ themeId: aGeo.id, parentId: aBranch.id, kind: 'lemma', title: `治理基线${i}`, confidence: 50 })
+}
+ok('B: 成本治理主题成为默认主题', store.bestThemeContext()?.id === aGeo.id, `实际 ${store.bestThemeContext()?.name}`)
+
+const realRunHook = llmHooks.run
+let extractCalls = 0
+let stubTitle = null
+llmHooks.run = async (scenario, args) => {
+  if (scenario === 'extract') {
+    extractCalls++
+    return { ok: true, lemmas: [{ title: stubTitle || `治理抽取命题·${String(args.text).slice(0, 10)}`, type: 'observation', confidence: 70, parentHint: null, tags: [], sourceKind: '一手数据' }], usage: 321 }
+  }
+  return { ok: false, reason: 'no-key' }
+}
+store.saveSettings({ apiKey: 'sk-gov-test', labeler: 'table' })
+
+// ---- B1：同 hash 第二次进来零调用 ----
+
+const b1Text = '成本治理测试：某公司发布新一代交换机，端口密度提升一倍。'
+const b1TokensBefore = usageToday().tokens
+const b1CallsBefore = usageToday().byScenario.extract || 0
+const b1First = await fire('inbox:capture', b1Text)
+ok('B1: 首次捕获走抽取', extractCalls === 1 && b1First?.ok === true)
+ok('B1: 抽取写进账本并带上 token', (usageToday().tokens === b1TokensBefore + 321) && (usageToday().byScenario.extract || 0) === b1CallsBefore + 1, `token 增量 ${usageToday().tokens - b1TokensBefore}`)
+const b1Second = await fire('inbox:capture', b1Text)
+ok('B1: 同 hash 第二次零调用', extractCalls === 1, `实际 ${extractCalls}`)
+ok('B1: 走的是复用路径', store.allTraces().some((t) => t.stage === 'extract' && t.actor?.by === 'reuse'))
+ok('B1: 复用不产生新的账本调用', (usageToday().byScenario.extract || 0) === b1CallsBefore + 1)
+ok('B1: 复用仍返回结论', b1Second?.ok === true && (b1Second?.item || b1Second?.autoImported))
+
+// ---- B3：高相似（≥0.85）直接并源，不抽 ----
+
+const b3Node = store.addNode({ themeId: aGeo.id, parentId: aBranch.id, kind: 'lemma', title: '铜连接在短距离内可替代光模块', confidence: 50, type: 'hypothesis' })
+const b3CallsBefore = extractCalls
+const b3VerdictsBefore = store.allVerdicts().filter((v) => v.textHash).length
+const b3 = await fire('inbox:capture', '铜连接在短距离内可替代光模块，成本更低。')
+ok('B3: 高相似不调用模型', extractCalls === b3CallsBefore)
+ok('B3: 命题原样合并，不新建', store.getNode(b3Node.id).sources.length === 1)
+ok('B3: 合并的判定记进误杀审计（带 textHash）', store.allVerdicts().filter((v) => v.textHash).length > b3VerdictsBefore)
+ok('B3: 未抽取低质结论', b3?.skipped !== 'low-quality' && store.getNode(b3Node.id).status !== 'dead')
+
+// 0.7 落在 0.6–0.85 之间：不预合并（宁可多抽一次），抽完由分流层合并
+const b3Mid = store.addNode({ themeId: aGeo.id, parentId: aBranch.id, kind: 'lemma', title: '铜连接 在短距离 可替代光模块', confidence: 50, type: 'hypothesis' })
+const b3MidScore = store.findSimilar('铜连接 可替代光模块 成本更低', aGeo.id).find((r) => r.node.id === b3Mid.id)?.score
+ok('B3: 0.7 灰区相似度成立', b3MidScore >= 0.6 && b3MidScore < 0.85, `实际 ${b3MidScore}`)
+stubTitle = b3Mid.title
+const b3MidCap = await fire('inbox:capture', '铜连接 可替代光模块 成本更低')
+stubTitle = null
+ok('B3: 灰区照常抽取', extractCalls === b3CallsBefore + 1)
+const b3MidMerged = b3MidCap?.autoImported
+  ? (b3MidCap.imported?.[0]?.action === 'merge' && b3MidCap.imported?.[0]?.id === b3Mid.id)
+  : (b3MidCap?.lemmas?.[0]?.action === 'merge' && b3MidCap?.lemmas?.[0]?.mergeInto === b3Mid.id)
+ok('B3: 灰区由分流层合并', b3MidMerged, `autoImported=${b3MidCap?.autoImported}`)
+
+// ---- B2：通道已知低质，不抽 ----
+
+const b2Text = '道听途说测试：某厂产能砍半，听说的。'
+const b2CallsBefore = extractCalls
+const b2 = await fire('inbox:capture', b2Text, { kind: '道听途说', channelId: 'gov-ch-1' })
+ok('B2: 低质通道直接留档不抽取', b2?.skipped === 'low-quality' && b2?.item?.extracted === false)
+ok('B2: 低质不调用模型', extractCalls === b2CallsBefore)
+ok('B2: 原文与质量分完整保留', b2?.item?.text === b2Text && b2?.item?.label?.quality === 0.2)
+ok('B2: matchScore 为 0 → 未匹配态', b2?.item?.matchScore === 0)
+ok('B2: 不加价（via channel）', b2?.item?.label?.via === 'channel')
+ok('B2: 拦截留痕可回查', store.allTraces().some((t) => t.stage === 'gate' && t.decision?.skipped === 'low-quality'))
+
+// ---- B4：标签库分级闸门 ----
+
+store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.5, hits: 0, lastHitAt: null }] })
+const b4aCalls = extractCalls
+const b4a = await fire('inbox:capture', '光模块行业月度跟踪：出货量环比回升。')
+ok('B4: score === threshold 放行（不是 >）', extractCalls === b4aCalls + 1 && !b4a?.skipped)
+
+store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.6, hits: 0, lastHitAt: null }] })
+const b4bCalls = extractCalls
+const b4bText = '光模块渠道调研：价格企稳，库存正常。'
+const b4b = await fire('inbox:capture', b4bText)
+ok('B4: 未达阈值不抽取', b4b?.skipped === 'weak-tags' && b4b?.item?.extracted === false)
+ok('B4: 未达阈值记下命中分', b4b?.item?.matchScore === 0.5, `实际 ${b4b?.item?.matchScore}`)
+ok('B4: 未达阈值零调用', extractCalls === b4bCalls)
+ok('B4: 弱匹配原文留着', b4b?.item?.text === b4bText)
+
+const b4cCalls = extractCalls
+const b4c = await fire('inbox:capture', '完全无关的话题：周末去爬山，天气不错。')
+ok('B4: 未命中标签库不抽取', b4c?.skipped === 'no-tags' && b4c?.item?.matchScore === 0)
+ok('B4: 未命中零调用', extractCalls === b4cCalls)
+
+store.updateTheme(aGeo.id, { tagLibrary: [] })
+const b4dCalls = extractCalls
+const b4d = await fire('inbox:capture', '完全无关的话题二：周末在家煮咖啡。')
+ok('B4: 空词库全部放行（没声明过关心什么就不筛）', extractCalls === b4dCalls + 1 && !b4d?.skipped)
+
+// ---- D：收件箱三态 + 主动抽取 + 清空未匹配 ----
+
+store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.6, hits: 0, lastHitAt: null }] })
+const dText = '未匹配三态测试：本地咖啡馆换了新豆子。'
+const d1 = await fire('inbox:capture', dText)
+ok('D: 未匹配条目进箱且标注未抽取', d1?.item?.extracted === false && d1?.item?.matchScore === 0 && d1?.item?.text === dText)
+const dCallsBefore = extractCalls
+const dExtract = await fire('inbox:extract', [d1.item.id])
+ok('D: 抽取这 N 条按需调用模型', dExtract?.extracted === 1 && extractCalls === dCallsBefore + 1)
+const dAfter = store.allInbox().find((i) => i.id === d1.item.id)
+ok('D: 抽取后转为已抽取并带上命题', dAfter?.extracted === true && dAfter?.lemmas?.length === 1)
+
+const dExtractAgain = await fire('inbox:extract', [d1.item.id])
+ok('D: 抽过的不会被重复抽取（不重复花钱）', dExtractAgain?.extracted === 0 && extractCalls === dCallsBefore + 1)
+
+const d2 = await fire('inbox:capture', '未匹配三态测试二：社区团购又涨价了。')
+const dKept = store.allInbox().filter((i) => i.extracted !== false).length
+const dPending = store.allInbox().filter((i) => i.extracted === false).length
+const dCleared = await fire('inbox:clearUnextracted')
+ok('D: 清空未匹配清掉全部未抽取条目', dCleared === dPending, `实际 ${dCleared} / ${dPending}`)
+ok('D: 已抽取条目一条未动', store.allInbox().filter((i) => i.extracted !== false).length === dKept)
+ok('D: 未抽取条目清空后归零', store.allInbox().filter((i) => i.extracted === false).length === 0)
+ok('D: 被清的确实是未匹配那条', d2?.item?.extracted === false && !store.allInbox().some((i) => i.id === d2.item.id))
+
+const dStale = store.addInboxItem({ text: '过期未匹配内容', title: '过期未匹配内容', lemmas: [], extracted: false, matchScore: 0 })
+const dDb = store.load()
+dDb.inbox.find((i) => i.id === dStale.id).createdAt = '2026-07-01'
+ok('D: 未匹配 30 天后自动过期', !store.allInbox().some((i) => i.id === dStale.id))
+ok('D: 过期条目仍在库里（内容不丢）', dDb.inbox.some((i) => i.id === dStale.id))
+dDb.inbox = dDb.inbox.filter((i) => i.id !== dStale.id)
+
+// ---- C1：每 tick 预算 ----
+
+ok('C1: 预算常量 = 10 条', MAX_ITEMS_PER_TICK === 10)
+const budgetCalls = []
+const stopBudget = startScheduler({
+  due: () => [],
+  channels: () => [
+    { id: 'govc1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
+    { id: 'govc2', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
+    { id: 'govc3', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
+  ],
+  runChannel: async (ch) => { budgetCalls.push(ch.id); return 5 },
+  fetchers: () => ['rss'],
+})
+await new Promise((r) => setTimeout(r, 20))
+stopBudget()
+if (govQuiet()) {
+  ok('C1: 静默时段整段不轮询', budgetCalls.length === 0)
+} else {
+  ok('C1: 一个 tick 最多处理 10 条（5+5 后停手）', budgetCalls.length === 2, `实际 ${budgetCalls.length}`)
+}
+
+// ---- C6：通道未匹配率（只展示，不自动停用）----
+
+const c6Ch = store.addChannel({ name: 'C6-未匹配率通道', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/c6.xml', themeId: aGeo.id })
+store.addInboxItem({ text: 'c6-a', title: 'c6-a', lemmas: [], provenance: { channelId: c6Ch.id }, extracted: false, matchScore: 0 })
+store.addInboxItem({ text: 'c6-b', title: 'c6-b', lemmas: [{ title: 'c6-b' }], provenance: { channelId: c6Ch.id }, extracted: true, matchScore: 0.8 })
+const c6Rates = await fire('channel:matchRates')
+const c6Mine = c6Rates.find((r) => r.channelId === c6Ch.id)
+ok('C6: 未匹配率按通道聚合', c6Mine?.total === 2 && c6Mine?.unmatched === 1 && Math.abs(c6Mine.rate - 0.5) < 1e-9, `实际 ${JSON.stringify(c6Mine)}`)
+ok('C6: 只统计不改通道状态', store.allChannels().find((c) => c.id === c6Ch.id).enabled === true)
+ok('C6: 未匹配率函数不写通道', !storeSrcGov.slice(storeSrcGov.indexOf('export function channelMatchRates'), storeSrcGov.indexOf('export function channelMatchRates') + 900).includes('updateChannel'))
+ok('C6: 界面说明只作参考不停用', vaultSrcGov.includes('不会自动停用通道'))
+
+// ---- C5：复盘页 LLM 段 ----
+
+const c5Usage = await fire('llm:usage')
+ok('C5: llm:usage 返回按天账本', Array.isArray(c5Usage?.daily) && Array.isArray(c5Usage?.recent))
+ok('C5: 账本里有今天的调用', c5Usage.daily.some((d) => d.date === store.today() && d.calls > 0))
+ok('C5: 复盘页有 LLM 段', vaultSrcGov.includes('LLM 调用') && vaultSrcGov.includes('今日 token') && vaultSrcGov.includes('SCENARIO_LABELS'))
+ok('C5: 复盘页说明 token 来源', vaultSrcGov.includes('模型不返回时按 0 计'))
+ok('C5: 场景名有中文映射', Object.keys(SCENARIO_LABELS).includes('extract') && SCENARIO_LABELS.extract === '抽取')
+
+// ---- D：界面与 IPC 接线 ----
+
+ok('D: today.js 三态分组', todaySrcGov.includes("groupHead('已抽取'") && todaySrcGov.includes("groupHead('待抽取'") && todaySrcGov.includes("groupHead('未匹配'"))
+ok('D: today.js 有「抽取这 N 条」「清空未匹配」', todaySrcGov.includes('`抽取这 ${waitItems.length} 条`') && todaySrcGov.includes('清空未匹配'))
+ok('D: 未抽取条目不可勾选入库', todaySrcGov.includes('const isSelectable = (item) => item.extracted !== false'))
+ok('D: 未抽取详情不给归位表单', todaySrcGov.includes('const unextracted = item.extracted === false') && todaySrcGov.includes('const editable = !unextracted'))
+ok('D: 三态样式就位', stylesSrcS45.includes('.inbox-group-head'))
+ok('D: preload 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))
+ok('C5/C6: preload 有 llmUsage / channelMatchRates', pjGov.includes('llmUsage:') && pjGov.includes('channelMatchRates'))
+ok('C5/C6: 两份 preload 仍然完全同步', pjGov === pcGov && pjGov.includes('inboxExtract') === pcGov.includes('inboxExtract'))
+
+// 收尾：恢复抽取桩与设置，别把 stub 留给后面的断言
+llmHooks.run = realRunHook
+store.saveSettings({ apiKey: '' })
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

@@ -1,4 +1,5 @@
 import { rankChannelsByTags } from './store.js'
+import { readUsage, __testHooks } from './llmlog.js'
 
 export function sanitize(proposals, validIndicatorIds, validChannelIds) {
   return proposals.filter((p) =>
@@ -34,6 +35,7 @@ export async function proposeChannelLinks(settings, indicatorNode, channels) {
   if (!indicatorNode || indicatorNode.type !== 'observation' || indicatorNode.status === 'dead') {
     return { ok: false, error: 'indicator not found' }
   }
+  if (__testHooks.run) return __testHooks.run('propose', { settings, indicatorNode, channels })
 
   const ranked = rankChannelsByTags(channels || [], indicatorNode.tags || [])
   if (!ranked.length) {
@@ -73,20 +75,21 @@ ${channelLines}`
   }
 
   if (!response.ok) return { ok: false, error: `HTTP ${response.status}` }
+  const usage = await readUsage(response)
   const body = await response.json()
   const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, error: 'empty' }
+  if (!raw) return { ok: false, error: 'empty', usage }
 
   const parsed = parseProposal(raw)
-  if (!parsed) return { ok: false, error: 'unparsable' }
+  if (!parsed) return { ok: false, error: 'unparsable', usage }
 
   const proposals = sanitize(
     [parsed],
     new Set([indicatorNode.id]),
     new Set((channels || []).map((channel) => channel.id)),
   )
-  if (!proposals.length) return { ok: false, error: 'invalid proposal' }
-  return { ok: true, proposal: proposals[0] }
+  if (!proposals.length) return { ok: false, error: 'invalid proposal', usage }
+  return { ok: true, proposal: proposals[0], usage }
 }
 
 function parseProposal(raw) {

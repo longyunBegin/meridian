@@ -12,6 +12,7 @@
  * 否则换一个模型，整条校准曲线的基准就漂移了。
  */
 import { SOURCE_QUALITY } from './store.js'
+import { readUsage } from './llmlog.js'
 
 const KINDS = SOURCE_QUALITY.map(([k]) => k)
 const QUALITY = new Map(SOURCE_QUALITY)
@@ -63,10 +64,11 @@ export async function jevLabel(settings, text) {
   })
   if (!res.ok) return { ok: false, why: `HTTP ${res.status}` }
 
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = body?.choices?.[0]?.message?.content
   const parsed = parseJson(raw)
-  if (!parsed) return { ok: false, why: 'unparsable' }
+  if (!parsed) return { ok: false, why: 'unparsable', usage }
 
   const idx = Math.round(Number(parsed.choice))
   const kind = KINDS[idx - 1] || tableLabel(text).kind
@@ -78,6 +80,7 @@ export async function jevLabel(settings, text) {
     jevScore: clamp01(Number(parsed.score)),
     noul: clamp01(Number(parsed.noul)),
     via: 'jev',
+    usage,
   }
 }
 
@@ -98,10 +101,11 @@ export async function llmLabel(settings, text) {
     }),
   })
   if (!res.ok) return { ok: false, why: `HTTP ${res.status}` }
+  const usage = await readUsage(res)
   const body = await res.json()
   const raw = (body?.choices?.[0]?.message?.content || '').trim()
   const kind = KINDS.find((k) => raw.includes(k)) || tableLabel(text).kind
-  return { ok: true, kind, quality: QUALITY.get(kind), via: 'llm' }
+  return { ok: true, kind, quality: QUALITY.get(kind), via: 'llm', usage }
 }
 
 /**

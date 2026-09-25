@@ -206,7 +206,7 @@ function renderInboxWorkspace(themeNodes, allNodes) {
   const items = inboxItems
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
-      h('h2', {}, '待确认'), h('p', {}, '核对信息，再归位到脉络'),
+      h('h2', {}, '待确认'), h('p', {}, '已抽取的核对归位，未抽取的留档待命'),
       h('span', { class: 'spacer' }), h('em', {}, `${items.length} 条待审阅`),
     ),
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
@@ -223,10 +223,11 @@ function renderInboxWorkspace(themeNodes, allNodes) {
   const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
+  const isSelectable = (item) => item.extracted !== false && item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes)
   const pickAll = h('button', {
     class: 'btn inbox-pick-all',
     onclick: () => {
-      const available = items.filter((item) => item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes))
+      const available = items.filter(isSelectable)
       const allPicked = available.every((item) => picked.has(item.id))
       for (const item of available) allPicked ? picked.delete(item.id) : picked.add(item.id)
       updateBatch()
@@ -239,22 +240,23 @@ function renderInboxWorkspace(themeNodes, allNodes) {
 
   function updateBatch() {
     for (const item of items) if (!hasValidInboxRoute(item, themeNodes)) picked.delete(item.id)
-    const available = items.filter((item) => item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes))
+    const available = items.filter(isSelectable)
     pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
     pickAll.disabled = !available.length
     count.textContent = `已选 ${picked.size} 条`
     importPicked.disabled = !state.themeId || !picked.size || items.some((item) => picked.has(item.id) && resolving.has(item.id))
-    for (const row of list.children) {
+    for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
+      if (!item) continue
       row.dataset.on = String(picked.has(item.id))
       row.querySelector('.inbox-ck').checked = picked.has(item.id)
-      row.querySelector('.inbox-ck').disabled = !item.lemmas?.length || resolving.has(item.id) || !hasValidInboxRoute(item, themeNodes)
+      row.querySelector('.inbox-ck').disabled = !isSelectable(item)
     }
   }
 
   function select(id) {
     selectedInboxId = id
-    for (const row of list.children) {
+    for (const row of list.querySelectorAll('.inbox-item')) {
       const selected = row.dataset.id === id
       row.dataset.sel = String(selected)
       row.querySelector('.inbox-body').setAttribute('aria-pressed', String(selected))
@@ -291,18 +293,58 @@ function renderInboxWorkspace(themeNodes, allNodes) {
     }
   }
 
-  for (const item of items) {
-    list.append(renderInboxItem(item, () => select(item.id), (checked) => {
-      checked ? picked.add(item.id) : picked.delete(item.id)
-      updateBatch()
-    }, (direction) => {
-      const next = items[Math.max(0, Math.min(items.length - 1, items.indexOf(item) + direction))]
-      select(next.id)
-      const row = [...list.children].find((el) => el.dataset.id === next.id)
-      row.querySelector('.inbox-body').focus({ preventScroll: true })
-      row.scrollIntoView({ block: 'nearest' })
-    }))
+  // 三态分组：已抽取（现有行为）/ 待抽取（弱匹配）/ 未匹配（标签库不认，但内容留着）
+  const extractedItems = items.filter((item) => item.extracted !== false)
+  const waitItems = items.filter((item) => item.extracted === false && item.matchScore > 0)
+  const unmatchedItems = items.filter((item) => item.extracted === false && !(item.matchScore > 0))
+  const groupHead = (label, n, caption, actions = []) => h('div', { class: 'inbox-group-head' },
+    h('span', { class: 'inbox-group-label' }, label),
+    h('span', { class: 'inbox-group-count' }, String(n)),
+    caption && !actions.length ? h('span', { class: 'inbox-group-caption' }, caption) : null,
+    h('span', { style: { flex: 1 } }),
+    ...actions,
+  )
+  const extractAll = h('button', {
+    class: 'btn', disabled: inboxLoading,
+    onclick: async () => {
+      extractAll.disabled = true
+      extractAll.textContent = '抽取中…'
+      const res = await m.inboxExtract(waitItems.map((item) => item.id))
+      if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
+      await refresh()
+      await renderToday(mid)
+    },
+  }, `抽取这 ${waitItems.length} 条`)
+  const clearUnmatched = h('button', {
+    class: 'btn',
+    onclick: async () => {
+      const removed = await m.inboxClearUnextracted()
+      toast(`已清空 ${removed} 条未匹配`)
+      await refresh()
+      await renderToday(mid)
+    },
+  }, '清空未匹配')
+
+  const appendItems = (group, opts = {}) => {
+    if (!group.length) return
+    if (opts.head) list.append(opts.head)
+    for (const item of group) {
+      list.append(renderInboxItem(item, () => select(item.id), (checked) => {
+        checked ? picked.add(item.id) : picked.delete(item.id)
+        updateBatch()
+      }, (direction) => {
+        const next = group[Math.max(0, Math.min(group.length - 1, group.indexOf(item) + direction))]
+        select(next.id)
+        const row = [...list.querySelectorAll('.inbox-item')].find((el) => el.dataset.id === next.id)
+        row.querySelector('.inbox-body').focus({ preventScroll: true })
+        row.scrollIntoView({ block: 'nearest' })
+      }))
+    }
   }
+
+  appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '核对信息，再归位到脉络') })
+  appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
+  appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [clearUnmatched]) })
   section.append(h('div', { class: 'inbox-split' },
     h('div', { class: 'inbox-list-pane' },
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
@@ -322,7 +364,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate) {
   return h('div', { class: 'inbox-item', dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
-      disabled: !lemmas.length || resolving.has(item.id),
+      disabled: item.extracted === false || !lemmas.length || resolving.has(item.id),
       onchange: (e) => onPick(e.target.checked),
     }),
     h('button', {
@@ -339,19 +381,30 @@ function renderInboxItem(item, onSelect, onPick, onNavigate) {
       h('span', { class: 'inbox-title' }, title),
       h('span', { class: 'inbox-excerpt' }, item.text || lemmas[0]?.title || '暂无原文'),
       h('span', { class: 'inbox-meta' },
-        h('span', {}, `${lemmas.length} 条命题`),
-        lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
-        lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
+        item.extracted === false
+          ? h('span', {}, item.matchScore > 0
+            ? `命中 ${item.matchScore.toFixed(2)} · 未达阈值`
+            : (item.skipped === 'low-quality' ? '低质来源 · 未抽取' : '标签库未匹配'))
+          : h('span', {}, `${lemmas.length} 条命题`),
+        item.extracted !== false && lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
+        item.extracted !== false && lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
         resolving.has(item.id) ? h('span', {}, '处理中…') : null,
       ),
     ),
   )
 }
 
+function unextractedNote(item) {
+  if (item.skipped === 'low-quality') return '来源质量低于闸门，留档不抽取。'
+  if (item.matchScore > 0) return `标签库命中 ${item.matchScore.toFixed(2)}，未达该标签阈值，留档不抽取。`
+  return '标签库没有命中，留档不抽取。'
+}
+
 function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRouteChange) {
   clear(panel)
+  const unextracted = item.extracted === false
   const lemmas = item.lemmas || []
-  const editable = lemmas.some((lemma) => lemma.action !== 'merge')
+  const editable = !unextracted && lemmas.some((lemma) => lemma.action !== 'merge')
   const label = item.label || {}
   const ov = overrides.get(overrideKey(item.id)) || {}
   const busy = resolving.has(item.id)
@@ -361,7 +414,7 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
   const confirm = h('button', {
     class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
     onclick: () => onResolve([item], 'accept'),
-  }, editable ? '确认入库' : '合并来源')
+  }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
   const routeNote = h('p', { class: 'inbox-detail-note inbox-route-warning', hidden: hasValidInboxRoute(item, themeNodes) },
     '建议挂点不属于当前主题，请重新选择目标环节。')
   const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
@@ -407,7 +460,11 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
         h('h4', { class: 'inbox-section-title' }, '原文'),
         h('p', { class: 'inbox-original-text' }, item.text || '这条信息没有附带原文。'),
       ),
-      h('section', { class: 'inbox-detail-section' },
+      unextracted ? h('section', { class: 'inbox-detail-section' },
+        h('h4', { class: 'inbox-section-title' }, '未抽取'),
+        h('p', { class: 'inbox-detail-note' }, unextractedNote(item)),
+        h('p', { class: 'inbox-detail-note' }, '原文已留在本地。需要时在列表的「待抽取」分组点「抽取这 N 条」。'),
+      ) : h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, `提取的命题 · ${lemmas.length}`),
         lemmas.length ? h('ol', { class: 'inbox-proposals' },
           ...lemmas.map((lemma) => h('li', {},
@@ -444,7 +501,7 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
       ) : null,
     ),
     h('footer', { class: 'inbox-detail-actions' },
-      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : `${lemmas.length} 条命题待核对`),
+      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : unextracted ? '未抽取 · 原文已留档' : `${lemmas.length} 条命题待核对`),
       h('button', { class: 'btn inbox-reject', disabled: busy, onclick: () => onResolve([item], 'reject') }, '忽略'),
       confirm,
     ),

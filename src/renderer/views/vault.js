@@ -2,6 +2,7 @@ import { h, icon, clear, add, $, toast } from '../lib/dom.js'
 import { state, selectTheme, selectNode, setView } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { groupReadings } from '../../shared/readings.js'
+import { SCENARIO_LABELS } from '../../main/llmlog.js'
 
 const m = window.meridian
 
@@ -130,15 +131,26 @@ function side(n, label) {
 async function renderReview(mid) {
   clear(mid)
 
-  const [series, filterCalib, verdicts, byChannel, channels, vsData] = await Promise.all([
+  const [series, filterCalib, verdicts, byChannel, channels, vsData, llm] = await Promise.all([
     m.intakeSeries(30),
     m.filterCalibration(),
     m.verdicts(),
     m.falseKillByChannel(30),
     m.channelList(),
     m.vsInstitution(90),
+    m.llmUsage(),
   ])
   const chName = (id) => channels.find((c) => c.id === id)?.kind || id
+
+  // LLM 账本：按天聚合，今天与近 30 天两个口径
+  const llmDays = llm?.daily || []
+  const todayKey = new Date().toISOString().slice(0, 10)
+  const llmToday = llmDays.find((d) => d.date === todayKey) || { calls: 0, failed: 0, degraded: 0, tokens: 0, byScenario: {} }
+  const llmTotals = llmDays.reduce((a, d) => ({
+    calls: a.calls + d.calls, failed: a.failed + d.failed, degraded: a.degraded + d.degraded, tokens: a.tokens + d.tokens,
+  }), { calls: 0, failed: 0, degraded: 0, tokens: 0 })
+  const llmScenarios = Object.entries(llmToday.byScenario || {}).sort((a, b) => b[1] - a[1])
+  const llmRecent = llm?.recent || []
 
   // 聚合最近 30 天
   const agg = series.reduce((a, b) => ({
@@ -189,6 +201,49 @@ async function renderReview(mid) {
         ),
       ),
     ),
+
+    // LLM 成本账本
+    llmDays.length ? h('section', { class: 'card' },
+      h('div', { class: 'card-h' }, h('h2', {}, 'LLM 调用'), h('em', {}, `近 ${llmDays.length} 天 · ${llmTotals.calls} 次`)),
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'review-funnel' },
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num' }, String(llmToday.calls)),
+            h('div', { class: 'review-metric-label' }, '今日调用'),
+            h('div', { class: 'review-metric-raw', style: { color: llmToday.failed ? 'var(--orange)' : 'var(--text-3)' } },
+              `${llmToday.failed} 失败 · ${llmToday.degraded} 降级`),
+          ),
+          h('div', { class: 'review-metric' },
+            h('div', { class: 'review-metric-num' }, llmToday.tokens.toLocaleString('en-US')),
+            h('div', { class: 'review-metric-label' }, '今日 token'),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `近 30 天 ${llmTotals.tokens.toLocaleString('en-US')}`),
+          ),
+        ),
+        llmScenarios.length
+          ? h('div', { class: 'llm-scenarios' },
+              ...llmScenarios.map(([scene, n]) => h('span', { class: 'badge' }, `${SCENARIO_LABELS[scene] || scene} ${n}`)),
+            )
+          : h('div', { class: 'q' }, h('div', { class: 'q-body' },
+              h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '今天还没有调用模型。'),
+            )),
+        h('p', { class: 'llm-note' }, 'token 数取自响应的 usage；模型不返回时按 0 计。'),
+        llmRecent.length ? h('details', { class: 'llm-failures' },
+          h('summary', {}, `最近失败 · ${llmRecent.length} 条（上限 50）`),
+          ...llmRecent.slice(0, 8).map((f) => h('div', { class: 'q' },
+            h('div', { class: 'q-body' },
+              h('div', { class: 'q-text', style: { fontSize: 'var(--t-body)' } },
+                `${SCENARIO_LABELS[f.scenario] || f.scenario} · ${f.error || '失败'}`),
+              h('div', { class: 'q-meta' },
+                h('span', {}, String(f.at || '').replace('T', ' ').slice(0, 16)),
+                h('span', {}, `· ${f.latency} ms`),
+                f.channelId ? h('span', {}, `· 通道 ${chName(f.channelId)}`) : null,
+              ),
+            ),
+          )),
+          llmRecent.length > 8 ? h('div', { class: 'q-meta', style: { padding: '6px 0' } }, `还有 ${llmRecent.length - 8} 条未展开`) : null,
+        ) : null,
+      ),
+    ) : null,
 
     // 每日趋势
     series.length ? h('section', { class: 'card' },
@@ -471,7 +526,10 @@ const EDGAR_FETCHES = new Set(['edgarConcept', 'edgarFilings'])
 
 export async function renderSources(mid) {
   clear(mid)
-  const [channels, fetchers, metricFetchers] = await Promise.all([m.channelList(), m.availableFetchers(), m.metricFetchers()])
+  const [channels, fetchers, metricFetchers, matchRates] = await Promise.all([
+    m.channelList(), m.availableFetchers(), m.metricFetchers(), m.channelMatchRates(30),
+  ])
+  const rateById = new Map((matchRates || []).map((r) => [r.channelId, r]))
 
   const flash = h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', marginLeft: '8px' } }, '')
   const showFlash = (msg, color = 'var(--text-2)') => {
@@ -484,6 +542,7 @@ export async function renderSources(mid) {
     h('div', { class: 'page-head' },
       h('h1', {}, '数据源'),
       h('p', {}, '通道描述符：按内容类型选取数器。已实现的取数器：' + fetchers.join('、') + '。'),
+      h('p', {}, '「未匹配」= 近 30 天该通道进入收件箱、但没被抽取的比例（低质 / 未命中标签库 / 未达阈值）——只作参考，不会自动停用通道。'),
       flash,
     ),
 
@@ -498,6 +557,10 @@ export async function renderSources(mid) {
               ch.themeId ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· ${state.themes.find((t) => t.id === ch.themeId)?.name || '主题'}`) : null,
               ch.lastFetch ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 最后拉取 ${ch.lastFetch}`) : null,
               ch.lastCount != null ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 拉到 ${ch.lastCount} 条`) : null,
+              rateById.get(ch.id)?.total
+                ? h('span', { style: { marginLeft: '6px', color: rateById.get(ch.id).rate >= 0.5 ? 'var(--orange)' : 'var(--text-3)' } },
+                    `· 未匹配 ${Math.round(rateById.get(ch.id).rate * 100)}%（${rateById.get(ch.id).unmatched}/${rateById.get(ch.id).total}）`)
+                : null,
               ch.failCount > 0 ? h('span', { style: { marginLeft: '6px', color: 'var(--text-3)' } }, `· 连续失败 ${ch.failCount}`) : null,
               ch.lastError ? h('span', { style: { marginLeft: '6px', color: 'var(--red)' } }, `· 错误：${ch.lastError}`) : null,
               fetchers.includes(ch.fetch) ? h('button', {

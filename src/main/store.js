@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmS
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
+import { __testHooks as llmHooks } from './llmlog.js'
 const { app } = globalThis.__electron
 
 const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
@@ -140,6 +141,7 @@ const blank = () => ({
   intakeEvents: [], // 采集漏斗：每次捕获一条记录
   readings: [], // 读数：结构化财务数字，只追加不覆盖
   researchNotes: [], // 研究观点：外部机构对命题的判断，不产生 node、不进校准
+  llmUsage: { daily: [], recent: [] }, // LLM 账本：按天聚合 + 最近失败明细
 })
 
 let db = null
@@ -168,6 +170,15 @@ function normalizeTagLibrary(tagLibrary) {
   return Array.isArray(tagLibrary) ? tagLibrary : []
 }
 
+/** LLM 账本：schema 只加不改，老数据没有就补空账本 */
+function normalizeLlmUsage(llmUsage) {
+  const u = llmUsage && typeof llmUsage === 'object' ? llmUsage : {}
+  return {
+    daily: Array.isArray(u.daily) ? u.daily : [],
+    recent: Array.isArray(u.recent) ? u.recent : [],
+  }
+}
+
 export function load() {
   if (db) return db
   const file = DATA_FILE()
@@ -192,6 +203,7 @@ function migrate(d) {
   d.intakeEvents = d.intakeEvents || []
   d.readings = d.readings || []
   d.researchNotes = d.researchNotes || []
+  d.llmUsage = normalizeLlmUsage(d.llmUsage)
   for (const t of d.themes || []) {
     t.tags = Array.isArray(t.tags) ? t.tags : []
     t.tagLibrary = normalizeTagLibrary(t.tagLibrary)
@@ -634,6 +646,7 @@ export function addVerdict(v) {
     ...(v.nodeId ? { nodeId: v.nodeId } : {}),
     ...(v.themeId ? { themeId: v.themeId } : {}),
     ...(v.channelId ? { channelId: v.channelId } : {}),
+    ...(v.textHash ? { textHash: v.textHash } : {}),
   }
   db.verdicts.push(verdict)
   persist()
@@ -641,6 +654,50 @@ export function addVerdict(v) {
 }
 
 export function allVerdicts() { return load().verdicts }
+
+// ------------------------------------------------------------------ LLM 账本
+
+const LLM_RECENT_LIMIT = 50
+
+/**
+ * 记一次 LLM 调用。按天聚合、失败明细只留最近 50 条。
+ * 每条调用存一行会把 meridian.json 撑爆——那个文件每次 persist() 全量重写。
+ */
+export function recordLlmUsage(scenario, info = {}) {
+  const u = load().llmUsage
+  const date = today()
+  let day = u.daily.find((d) => d.date === date)
+  if (!day) {
+    day = { date, calls: 0, failed: 0, degraded: 0, tokens: 0, byScenario: {}, byChannel: {} }
+    u.daily.push(day)
+  }
+  day.calls++
+  if (!info.ok) day.failed++
+  if (info.degraded) day.degraded++
+  day.tokens += Math.max(0, Math.round(Number(info.tokens) || 0))
+  day.byScenario[scenario] = (day.byScenario[scenario] || 0) + 1
+  if (info.channelId) day.byChannel[info.channelId] = (day.byChannel[info.channelId] || 0) + 1
+  if (!info.ok) {
+    u.recent.unshift({
+      at: new Date().toISOString(),
+      scenario,
+      error: info.error || 'failed',
+      latency: Math.round(Number(info.latency) || 0),
+      themeId: info.themeId || null,
+      channelId: info.channelId || null,
+    })
+    if (u.recent.length > LLM_RECENT_LIMIT) u.recent.length = LLM_RECENT_LIMIT
+  }
+  persist()
+  return day
+}
+
+export function llmUsage() {
+  return load().llmUsage
+}
+
+// llmlog.tracked 的落库接口：模块级注入，避免 llmlog → store 的循环依赖
+llmHooks.track = (scenario, info) => recordLlmUsage(scenario, info)
 
 /** 同一条 claim 后来从别的源进了图谱 → 回填 promotedTo，记为一次误杀 */
 export function markPromoted(verdictId, nodeId) {
@@ -1268,7 +1325,7 @@ export function exportAll({ withRaw = true } = {}) {
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [] }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage) }
   migrate(db)
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
   if (Array.isArray(parsed.raw)) {
@@ -1288,8 +1345,17 @@ export function importAll(json) {
  * 摩擦按批摊薄：十条从 10 次热键 + 10 次 round-trip + 10 次审阅
  * 变成 1 次粘贴 + 1 次 round-trip + 1 次批量勾选。
  */
+/** 未匹配（没花过钱）的内容超过 30 天自动过期 */
+const UNMATCHED_TTL_DAYS = 30
+
+function isExpiredUnmatched(i) {
+  if (i.extracted !== false || i.matchScore > 0) return false
+  const age = (Date.now() - Date.parse(i.createdAt || today())) / 864e5
+  return age > UNMATCHED_TTL_DAYS
+}
+
 export function allInbox() {
-  return load().inbox.filter((i) => i.status === 'pending' && !i.ignored)
+  return load().inbox.filter((i) => i.status === 'pending' && !i.ignored && !isExpiredUnmatched(i))
 }
 
 export function ignoredInbox() {
@@ -1307,6 +1373,10 @@ export function addInboxItem(item) {
     noulCompared: item.noulCompared || 0,
     noulMaxScore: item.noulMaxScore || 0,
     provenance: item.provenance || null,
+    // 三态由此推导，不存状态字符串：抽了 / 待抽取（弱匹配）/ 未匹配
+    extracted: item.extracted !== false,
+    matchScore: Number(item.matchScore) || 0,
+    ...(item.skipped ? { skipped: item.skipped } : {}),
     ...(item.kind ? { kind: item.kind } : {}),
     ...(item.matchedTheme ? { matchedTheme: item.matchedTheme } : {}),
     ...(item.matchedTags ? { matchedTags: item.matchedTags } : {}),
@@ -1343,12 +1413,47 @@ export function resolveInboxItem(id, action) {
   return item
 }
 
-export function clearInbox() {
+/**
+ * 清收件箱。onlyUnextracted: true 时只清「没花过钱」的未抽取条目——
+ * 已抽取的仍在等人裁决，批量清掉会丢内容。
+ */
+export function clearInbox({ onlyUnextracted = false } = {}) {
   const db = load()
   const before = db.inbox.length
-  db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored)
+  if (onlyUnextracted) {
+    db.inbox = db.inbox.filter((i) => i.extracted !== false || i.ignored)
+  } else {
+    db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored)
+  }
   persist()
   return before - db.inbox.length
+}
+
+/** 用户主动点「抽取这 N 条」后，把抽取结果写回条目 */
+export function setInboxExtraction(id, { extracted, matchScore, lemmas }) {
+  const item = load().inbox.find((i) => i.id === id)
+  if (!item) return null
+  item.extracted = extracted !== false
+  if (matchScore != null) item.matchScore = Number(matchScore) || 0
+  if (Array.isArray(lemmas)) item.lemmas = lemmas
+  persist()
+  return item
+}
+
+/** 通道未匹配率：近 N 天该通道进收件箱的条目里，多少条没被抽取（低质 / 未命中标签库 / 未达阈值） */
+export function channelMatchRates(days = 30) {
+  const since = Date.parse(today()) - days * 864e5
+  const byChannel = new Map()
+  for (const i of load().inbox) {
+    const channelId = i.provenance?.channelId
+    if (!channelId) continue
+    if (Date.parse(i.createdAt || today()) < since) continue
+    if (!byChannel.has(channelId)) byChannel.set(channelId, { channelId, total: 0, unmatched: 0 })
+    const row = byChannel.get(channelId)
+    row.total++
+    if (i.extracted === false) row.unmatched++
+  }
+  return [...byChannel.values()].map((r) => ({ ...r, rate: r.total ? r.unmatched / r.total : 0 }))
 }
 
 export function inboxCount() {

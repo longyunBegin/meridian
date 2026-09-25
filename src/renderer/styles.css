@@ -1123,6 +1123,20 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
   display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0;
   overflow-y: auto; overscroll-behavior-y: contain; padding: 2px 6px 8px;
 }
+.inbox-group-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 6px; flex: none;
+  padding: 8px 10px 7px; margin-bottom: 2px;
+  background: var(--bg); font-size: var(--t-caption); color: var(--text-2);
+}
+.inbox-group-label { flex: none; font-weight: 600; color: var(--text-2); }
+.inbox-group-count {
+  flex: none; min-width: 16px; padding: 0 5px; border-radius: var(--r-sm);
+  background: var(--hover); color: var(--text-3); text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.inbox-group-caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+.inbox-group-head .btn { flex: none; height: 24px; padding: 0 8px; font-size: var(--t-caption); }
 .inbox-item {
   display: flex; align-items: flex-start; flex: none; gap: 10px; min-width: 0;
   padding: 12px 10px; border-radius: var(--r-sm);
@@ -1295,6 +1309,11 @@ select.inbox-parent-select {
 .review-day-bar { flex: 1; height: 8px; border-radius: var(--r-sm); background: var(--surface-2); display: flex; overflow: hidden; }
 .review-day-bar i { height: 100%; }
 .review-day-group { padding: 4px 0; }
+
+.llm-scenarios { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.llm-note { margin: 10px 0 0; font-size: var(--t-caption); color: var(--text-3); line-height: 1.7; }
+.llm-failures { margin-top: 10px; }
+.llm-failures > summary { font-size: var(--t-caption); color: var(--text-2); cursor: pointer; }
 
 /* ------------- toast 提示栏 ------------- */
 .toast {

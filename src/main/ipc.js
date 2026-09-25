@@ -10,10 +10,10 @@ import {
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
-  bestThemeContext,
-  addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence,
+  bestThemeContext, channelMatchRates,
+  addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
   allChannels, addChannel, updateChannel, removeChannel,
   addReading, allReadings, indicatorsForReading, latestReadingByChannel,
   updateTheme, rankChannelsByTags, kindToTags, sicToTags,
@@ -22,7 +22,8 @@ import {
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary, pickChannelsFromLibrary } from './extract.js'
-import { labelSource } from './labeler.js'
+import { labelSource, jevLabel, llmLabel } from './labeler.js'
+import { tracked } from './llmlog.js'
 import { genericFallback, channelLibrary, instantiate } from './templates.js'
 
 import { fetchChannel, availableFetchers, METRIC_FETCHERS } from './fetchers.js'
@@ -62,98 +63,105 @@ function pathOf(id) {
   return out.join(' / ')
 }
 
+// ============================================================
+// 抽取前的免费过滤层
+// 四层全免费：hash 是 O(1)，通道质量分是查表，findSimilar 和标签匹配都是内存遍历。
+// 只有四层都过不了的才花钱调模型；拦下的内容一律有去处（收件箱或 verdict）。
+// ============================================================
+
+const LOW_QUALITY_GATE = 0.35 // 与现有闸门同值，不引入新阈值
+const SIMILAR_DUPLICATE = 0.85 // 比抽完再合并的 0.6 严：宁可漏合，不可错合
+
+/** 本主题标签库的最高匹配分。没命中返回 0；主题没词库返回 hasLibrary: false */
+function targetTagScore(themeId, text) {
+  const theme = allThemes().find((t) => t.id === themeId)
+  if (!theme?.tagLibrary?.length) return { score: 0, hasLibrary: false, threshold: 0.6 }
+  const top = matchTagLibrary(text, theme.tagLibrary)[0]
+  if (!top) return { score: 0, hasLibrary: true, threshold: 0.6 }
+  const tag = theme.tagLibrary.find((t) => t.id === top.tagId)
+  return { score: top.score, hasLibrary: true, threshold: tag?.threshold ?? 0.6 }
+}
+
 /**
- * 捕获流水线：打标 → 抽取 → 去重 → 冲突检测 → 分拣
- * 每一步失败都单独降级，不让整条链路断掉。
+ * 命中过的内容查留痕：抽取成功的复用当次结果，被拦下的原样回到收件箱。
+ * 两种都零 LLM 调用——这是同 hash 内容第二次进来不花钱的关键。
  */
-async function processCapture(text, themeId, channelMeta) {
-  const s = settings()
-  // URL 抓取：粘贴 URL 时自动抓取网页正文，推断通道元数据
-  let actualText = text
-  let actualChannel = channelMeta
-  let fromUrl = null
-  if (isUrl(text)) {
-    fromUrl = text
-    const ch = inferChannel(text)
-    if (ch) {
-      actualChannel = channelMeta
-        ? { ...channelMeta, url: text, platform: ch.platform || channelMeta.platform }
-        : ch
+function findReuse(h, themeId = null) {
+  const traces = allTraces()
+  for (let i = traces.length - 1; i >= 0; i--) {
+    const t = traces[i]
+    if (t.input?.textHash !== h) continue
+    if (t.stage === 'extract' && t.decision?.lemmas) {
+      // 只复用同主题的抽取结果——别的主题的挂点在当前主题里是悬空的
+      const traced = t.target?.themeId || null
+      if (traced && themeId && traced !== themeId) continue
+      return { kind: 'lemmas', lemmas: t.decision.lemmas, themeId: traced }
     }
-    const fetched = await fetchUrl(text).catch(() => null)
-    if (fetched && fetched.length > 50) {
-      actualText = fetched
-      actualChannel = { ...actualChannel, fetchedAt: new Date().toISOString() }
+    if (t.stage === 'gate' && t.decision?.skipped) {
+      return { kind: 'skipped', skipped: t.decision.skipped, matchScore: t.decision.matchScore || 0 }
     }
   }
+  return null
+}
 
-  const label = await labelSource(settings(), actualText, actualChannel)
+/** 拦截留痕：让同 hash 的内容第二次进来时直接被 B1 拦下 */
+function recordGateTrace({ h, text, skip, matchScore, channel }) {
+  addTrace({
+    target: { type: 'inbox', id: null },
+    stage: 'gate',
+    actor: { by: 'free-filter', model: null, promptVersion: 'v1' },
+    input: { textHash: h, textLen: String(text || '').length, channelMeta: channel || null },
+    output: { skipped: skip, matchScore },
+    decision: { skipped: skip, matchScore },
+    reason: `免费过滤层拦下：${skip}`,
+  })
+}
 
-  // 标签库跨主题匹配
-  const tagMatches = crossThemeMatch(actualText)
-  const routeProposals = []
-  for (const m of tagMatches) {
-    const tag = allThemes().find((t) => t.id === m.themeId)?.tagLibrary?.find((t) => t.id === m.tagId)
-    const threshold = tag?.threshold ?? 0.6
-    if (m.score >= threshold && m.themeId !== themeId) {
-      routeProposals.push({
-        type: 'route-proposal',
-        text: actualText,
-        matchedTheme: { id: m.themeId, name: m.themeName },
-        matchedTags: [{ name: m.name, score: m.score, tagId: m.tagId }],
-        bestScore: m.score,
-        originChannel: actualChannel || null,
-        at: today(),
-      })
-      recordTagHits(m.themeId, [m.tagId])
-    }
+/**
+ * 四层免费过滤。返回 { action }：
+ *   'reuse'  → 命中留痕，零调用
+ *   'skip'   → 不值得花钱，内容进收件箱
+ *   'dup'    → 同一 claim 已有来源，直接加源
+ *   'extract'→ 四层都过，可以抽了
+ */
+function captureGate({ text, h, themeId, label }) {
+  const seen = findReuse(h, themeId)
+  if (seen) return { action: 'reuse', seen }
+
+  // B2 · 通道元数据已经告诉我们这是低质源，抽它干什么
+  if (label.via === 'channel' && label.quality < LOW_QUALITY_GATE) {
+    return { action: 'skip', skip: 'low-quality', matchScore: 0 }
   }
 
-  // 留痕：打标阶段
-  addTrace({
-    target: { type: 'inbox', id: null },
-    stage: 'label',
-    actor: { by: label.via || 'table', model: s.model || null, promptVersion: 'v1' },
-    input: { textHash: hashText(actualText), textLen: actualText.length, channelMeta: actualChannel || null },
-    output: { kind: label.kind, quality: label.jevScore ?? null, via: label.via },
-    decision: { kind: label.kind, quality: label.quality },
-    reason: label.jevScore != null && label.jevScore !== label.quality
-      ? `表值 ${label.quality} ≠ 模型值 ${label.jevScore}` : null,
-  })
+  // B3 · 文本级预判：高相似度直接并源，不抽
+  const dup = findSimilar(text, themeId)[0]
+  if (dup && dup.score >= SIMILAR_DUPLICATE) {
+    return { action: 'dup', dup }
+  }
 
-  const hints = branchTitles(themeId)
-  const ex = await extractLemmas(settings(), actualText, hints)
+  // B4 · 标签库分级：只有 score >= threshold 才为它花钱
+  const { score, hasLibrary, threshold } = targetTagScore(themeId, text)
+  if (hasLibrary) {
+    if (score <= 0) return { action: 'skip', skip: 'no-tags', matchScore: 0 }
+    if (score < threshold) return { action: 'skip', skip: 'weak-tags', matchScore: score }
+  }
+  // 词库为空的主题全部放行：没有声明过关心什么，就不该替用户过滤
 
-  // 留痕：抽取阶段
-  addTrace({
-    target: { type: 'inbox', id: null },
-    stage: 'extract',
-    actor: { by: ex.ok ? 'model' : 'table', model: s.model || null, promptVersion: 'v1' },
-    input: { textHash: hashText(actualText), textLen: actualText.length, channelMeta: actualChannel || null },
-    output: ex.ok ? { lemmas: ex.lemmas, model: ex.model || null } : { error: ex.error || 'no-key' },
-    decision: ex.ok ? { lemmas: ex.lemmas } : { degraded: true },
-    reason: ex.ok ? null : '无 API key 或抽取失败，降级为单条 observation',
-  })
+  return { action: 'extract', matchScore: score }
+}
 
-  const lemmas = ex.ok ? ex.lemmas : [{
-    title: firstSentence(actualText),
-    type: 'observation',
-    confidence: 50,
-    parentHint: null,
-    tags: [],
-    sourceKind: label.kind,
-  }]
-  const degraded = !ex.ok
-
+/**
+ * 命题分流：去重 → 归位 → 冲突检测 → 被筛掉的留裁决。
+ * 复用重建的捕获结果也走这里，保证和首次抽取同一套判定。
+ */
+function routeLemmas({ lemmas, themeId, label, channelId, textHash = null }) {
   const rejected = []
   const out = []
   let noulMaxScore = 0
-  let noulCompared = 0
 
-  const themeLemmas = themeId
-    ? allNodes().filter((n) => n.themeId === themeId && n.kind === 'lemma' && n.status !== 'dead')
-    : []
-  noulCompared = themeLemmas.length
+  const noulCompared = themeId
+    ? allNodes().filter((n) => n.themeId === themeId && n.kind === 'lemma' && n.status !== 'dead').length
+    : 0
 
   for (const l of lemmas) {
     // 1) 去重：同一条 claim 已有独立来源 → 不新建，只 +1 源
@@ -192,31 +200,191 @@ async function processCapture(text, themeId, channelMeta) {
   }
 
   // 4) 分拣记录：被筛掉的只留判断，不留原文
-  const verdictChannelId = actualChannel?.channelId || channelMeta?.channelId || null
   for (const l of lemmas) {
     const dup = findSimilar(l.title, themeId)[0]
     if (dup && dup.score >= 0.6) {
       const v = addVerdict({
         gate: 'dedup', reason: 'duplicate', summary: l.title,
         score: label.quality, choice: label.kind, themeId,
-        ...(verdictChannelId ? { channelId: verdictChannelId } : {}),
+        ...(channelId ? { channelId } : {}),
+        ...(textHash ? { textHash } : {}),
       })
       rejected.push({ id: v.id, summary: l.title, why: `重复 · 已有 ${dup.node.sources.length} 个独立源` })
       continue
     }
-    if (label.quality < 0.35 && l.confidence < 45) {
+    if (label.quality < LOW_QUALITY_GATE && l.confidence < 45) {
       const v = addVerdict({
         gate: 'source', reason: 'low-quality', summary: l.title,
         score: label.quality, choice: label.kind, themeId,
-        ...(verdictChannelId ? { channelId: verdictChannelId } : {}),
+        ...(channelId ? { channelId } : {}),
+        ...(textHash ? { textHash } : {}),
       })
       rejected.push({ id: v.id, summary: l.title, why: `低质 · ${label.kind} Score ${label.quality}` })
     }
   }
 
+  return { out, rejected, noulMaxScore, noulCompared }
+}
+
+/**
+ * 捕获流水线：免费过滤 → 打标 → 抽取 → 去重 → 冲突检测 → 分拣
+ * 每一步失败都单独降级，不让整条链路断掉。
+ */
+async function processCapture(text, themeId, channelMeta, { forceExtract = false } = {}) {
+  const s = settings()
+  // URL 抓取：粘贴 URL 时自动抓取网页正文，推断通道元数据
+  let actualText = text
+  let actualChannel = channelMeta
+  let fromUrl = null
+  if (isUrl(text)) {
+    fromUrl = text
+    const ch = inferChannel(text)
+    if (ch) {
+      actualChannel = channelMeta
+        ? { ...channelMeta, url: text, platform: ch.platform || channelMeta.platform }
+        : ch
+    }
+    const fetched = await fetchUrl(text).catch(() => null)
+    if (fetched && fetched.length > 50) {
+      actualText = fetched
+      actualChannel = { ...actualChannel, fetchedAt: new Date().toISOString() }
+    }
+  }
+
+  // 打标大多走免费层（通道元数据 / 表 / 关键词）；只有配了 jev 或 llm 才真的花钱
+  const label = await tracked(
+    'label',
+    () => labelSource(settings(), actualText, actualChannel),
+    { themeId },
+  )
+
+  const h = hashText(actualText)
+  // forceExtract（用户主动点「抽取这 N 条」）越过闸门，但不重复付钱：
+  // 同主题同 hash 已经抽过的，直接复用那次结果。
+  const seen = forceExtract ? findReuse(h, themeId) : null
+  const gate = forceExtract
+    ? (seen?.kind === 'lemmas'
+        ? { action: 'reuse', seen }
+        : { action: 'extract', matchScore: targetTagScore(themeId, actualText).score })
+    : captureGate({ text: actualText, h, themeId, label })
+
+  if (gate.action === 'skip') {
+    recordGateTrace({ h, text: actualText, skip: gate.skip, matchScore: gate.matchScore, channel: actualChannel })
+    return {
+      ok: true,
+      skipped: gate.skip,
+      extracted: false,
+      matchScore: gate.matchScore || 0,
+      label,
+      lemmas: [],
+      rejected: [],
+      resolvedText: actualText,
+      resolvedChannel: actualChannel,
+      fromUrl,
+      routeProposals: [],
+    }
+  }
+
+  if (gate.action === 'dup') {
+    // 合成一条命题直接走分流：该加的来源会加上，该记的 verdict 也会记
+    const { out, rejected, noulMaxScore, noulCompared } = routeLemmas({
+      lemmas: [{ title: gate.dup.node.title, type: gate.dup.node.type || 'observation', confidence: gate.dup.node.confidence ?? 50 }],
+      themeId, label, channelId: channelMeta?.channelId || null, textHash: h,
+    })
+    return {
+      ok: true,
+      skipped: 'duplicate',
+      // 不是「未匹配」：命题已经有了，这里只是多一个来源。留可勾选状态让用户确认合并。
+      extracted: true,
+      matchScore: gate.dup.score,
+      mergedInto: gate.dup.node.id,
+      label,
+      lemmas: out,
+      rejected,
+      noulCompared,
+      noulMaxScore: Math.round(noulMaxScore * 100) / 100,
+      resolvedText: actualText,
+      resolvedChannel: actualChannel,
+      fromUrl,
+      routeProposals: [],
+    }
+  }
+
+  // 标签库跨主题匹配
+  const tagMatches = crossThemeMatch(actualText)
+  const routeProposals = []
+  for (const m of tagMatches) {
+    const tag = allThemes().find((t) => t.id === m.themeId)?.tagLibrary?.find((t) => t.id === m.tagId)
+    const threshold = tag?.threshold ?? 0.6
+    if (m.score >= threshold && m.themeId !== themeId) {
+      routeProposals.push({
+        type: 'route-proposal',
+        text: actualText,
+        matchedTheme: { id: m.themeId, name: m.themeName },
+        matchedTags: [{ name: m.name, score: m.score, tagId: m.tagId }],
+        bestScore: m.score,
+        originChannel: actualChannel || null,
+        at: today(),
+      })
+      recordTagHits(m.themeId, [m.tagId])
+    }
+  }
+
+  // 留痕：打标阶段
+  addTrace({
+    target: { type: 'inbox', id: null },
+    stage: 'label',
+    actor: { by: label.via || 'table', model: s.model || null, promptVersion: 'v1' },
+    input: { textHash: h, textLen: actualText.length, channelMeta: actualChannel || null },
+    output: { kind: label.kind, quality: label.jevScore ?? null, via: label.via },
+    decision: { kind: label.kind, quality: label.quality },
+    reason: label.jevScore != null && label.jevScore !== label.quality
+      ? `表值 ${label.quality} ≠ 模型值 ${label.jevScore}` : null,
+  })
+
+  const hints = branchTitles(themeId)
+  const reused = gate.action === 'reuse'
+  const ex = reused
+    ? { ok: true, lemmas: gate.seen.lemmas, reused: true }
+    : await tracked(
+        'extract',
+        () => extractLemmas(settings(), actualText, hints),
+        { themeId, channelId: channelMeta?.channelId || null },
+      )
+
+  // 留痕：抽取阶段
+  addTrace({
+    target: { type: 'inbox', id: null, themeId },
+    stage: 'extract',
+    actor: { by: reused ? 'reuse' : (ex.ok ? 'model' : 'table'), model: s.model || null, promptVersion: 'v1' },
+    input: { textHash: h, textLen: actualText.length, channelMeta: actualChannel || null },
+    output: ex.ok ? { lemmas: ex.lemmas, model: ex.model || null, reused } : { error: ex.reason || 'no-key' },
+    decision: ex.ok ? { lemmas: ex.lemmas } : { degraded: true },
+    reason: reused ? '同 hash 内容复用上次抽取结果，零调用'
+      : (ex.ok ? null : '无 API key 或抽取失败，降级为单条 observation'),
+  })
+
+  const lemmas = ex.ok && ex.lemmas.length ? ex.lemmas : [{
+    title: firstSentence(actualText),
+    type: 'observation',
+    confidence: 50,
+    parentHint: null,
+    tags: [],
+    sourceKind: label.kind,
+  }]
+  const degraded = !ex.ok
+
+  const { out, rejected, noulMaxScore, noulCompared } = routeLemmas({
+    lemmas, themeId, label, channelId: channelMeta?.channelId || null, textHash: h,
+  })
+  const extracted = true
+
   return {
     ok: true,
     degraded,
+    extracted,
+    matchScore: gate.matchScore || 0,
+    reused,
     label: {
       kind: label.kind,
       quality: label.quality,
@@ -388,9 +556,9 @@ function register({ getMainWindow }) {
   async function scaffoldTheme(themeId, description, s) {
     const library = channelLibrary()
     const [skeletonResult, tagResult, channelResult] = await Promise.all([
-      generateSkeleton(s, description),
-      generateThemeTags(s, description),
-      pickChannelsFromLibrary(s, description, library),
+      tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
+      tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
+      tracked('pickChannels', () => pickChannelsFromLibrary(s, description, library), { themeId }),
     ])
 
     if (skeletonResult.ok) {
@@ -419,7 +587,7 @@ function register({ getMainWindow }) {
 
     if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
     const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
-    const tagLibraryResult = await generateTagLibrary(s, description, titles)
+    const tagLibraryResult = await tracked('tagLibrary', () => generateTagLibrary(s, description, titles), { themeId })
     if (tagLibraryResult.ok) updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary })
 
     return {
@@ -461,7 +629,7 @@ function register({ getMainWindow }) {
     const node = allNodes().find((n) => n.id === nodeId)
     if (!node) return { ok: false, reason: 'not-found' }
     const context = node.parentId ? pathOf(node.parentId) : ''
-    return socraticQuestions(settings(), node.title, context)
+    return tracked('socratic', () => socraticQuestions(settings(), node.title, context), { themeId: node.themeId })
   })
 
   // ---- 标的映射：只做可见性，不做信号 ----
@@ -483,8 +651,8 @@ function register({ getMainWindow }) {
   })
 
   // ---- 收件箱 ----
-  // ⌘⇧V 粘贴 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
-  ipcMain.handle('inbox:capture', async (_, text, channelMeta) => {
+  // ⌘⇧V 粘贴 → 免费过滤 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
+  const runCapture = async (text, channelMeta) => {
     const bestTheme = bestThemeContext()
     const defaultThemeId = bestTheme?.id || null
     const result = await processCapture(text, defaultThemeId, channelMeta)
@@ -510,6 +678,8 @@ function register({ getMainWindow }) {
           originChannel: rp.originChannel,
           bestScore: rp.bestScore,
           provenance: result.resolvedChannel || channel,
+          extracted: true,
+          matchScore: rp.bestScore || 0,
         })
         items.push(item)
       }
@@ -552,7 +722,7 @@ function register({ getMainWindow }) {
       }
     }
 
-    // 未通过闸门 → 进收件箱等人裁决
+    // 未通过闸门（或免费过滤层拦下）→ 进收件箱等人裁决
     const item = addInboxItem({
       text: result.resolvedText || text,
       title: firstSentence(result.resolvedText || text),
@@ -562,6 +732,9 @@ function register({ getMainWindow }) {
       noulCompared: result.noulCompared,
       noulMaxScore: result.noulMaxScore,
       provenance: result.resolvedChannel || channel,
+      extracted: result.extracted !== false,
+      matchScore: result.matchScore || 0,
+      ...(result.skipped ? { skipped: result.skipped } : {}),
     })
     // 采集漏斗记录
     addIntakeEvent({
@@ -573,6 +746,8 @@ function register({ getMainWindow }) {
       label: result.label,
       gate: { pass: false, reasons: gate.reasons },
       outcome: 'inbox',
+      extracted: result.extracted !== false,
+      matchScore: result.matchScore || 0,
       lemmas: result.lemmas.map((l) => ({
         title: l.title, action: l.action || 'new',
         nodeId: null,
@@ -581,8 +756,13 @@ function register({ getMainWindow }) {
       })),
       degraded, inboxItemId: item.id,
     })
-    return { ok: true, autoImported: false, item, gateReasons: gate.reasons }
-  })
+    return { ok: true, autoImported: false, item, gateReasons: gate.reasons, skipped: result.skipped || null }
+  }
+
+  ipcMain.handle('inbox:capture', (_, text, channelMeta) => runCapture(text, channelMeta))
+  // 复盘页：LLM 账本 + 通道未匹配率
+  ipcMain.handle('llm:usage', () => llmUsage())
+  ipcMain.handle('channel:matchRates', () => channelMatchRates(30))
 
   ipcMain.handle('inbox:list', () => allInbox())
   ipcMain.handle('inbox:ignored', () => ignoredInbox())
@@ -669,6 +849,22 @@ function register({ getMainWindow }) {
     return { ok: true, results }
   })
 
+  // 主动决定：把「待抽取」组批量过一遍模型——让花费从自动变成主动的那个按钮
+  ipcMain.handle('inbox:extract', async (_, ids) => {
+    const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id))
+    let extracted = 0
+    for (const item of targets) {
+      if (item.extracted) continue
+      const result = await processCapture(item.text, bestThemeContext()?.id || null, item.provenance, { forceExtract: true })
+      if (!result.lemmas.length) continue
+      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas })
+      extracted++
+    }
+    getMainWindow?.()?.webContents.send('db:changed')
+    return { ok: true, extracted }
+  })
+
+  ipcMain.handle('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
   ipcMain.handle('inbox:clear', () => clearInbox())
 
   // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch
@@ -747,16 +943,20 @@ function register({ getMainWindow }) {
     if (!ch) return { items: [], readings: null, error: 'channel not found' }
     const result = await fetchChannel(ch)
     if (result.error) {
-      updateChannel(channelId, { lastError: result.error, lastFetch: today(), failCount: (ch.failCount || 0) + 1 })
+      // lastFetch 必须是完整时间：只存日期会被 Date.parse 还原成当天 00:00，interval 形同虚设
+      updateChannel(channelId, { lastError: result.error, lastFetch: new Date().toISOString(), failCount: (ch.failCount || 0) + 1 })
       return result
     }
     const count = (result.readings?.added || 0) + (result.items?.length || 0)
-    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: today(), lastCount: count, failCount: 0 })
+    // lastOk / lastError 仍是日期——那是给人看的，不需要精度
+    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: new Date().toISOString(), lastCount: count, failCount: 0 })
     // Path B：有 items 需要走 processCapture 产命题
+    let processed = 0
     if (result.items && result.items.length) {
       const themeId = ch.themeId || bestThemeContext()?.id || null
       for (const item of result.items) {
         if (!themeId) continue
+        processed++
         const cap = await processCapture(item.text, themeId, {
           kind: item.kind || ch.kind,
           platform: item.platform || null,
@@ -764,7 +964,7 @@ function register({ getMainWindow }) {
           channelId: ch.id,
         })
         const gate = gateCheck(cap)
-        if (gate.pass && cap.lemmas.length > 0) {
+        if (cap.extracted !== false && gate.pass && cap.lemmas.length > 0) {
           autoImport(cap, themeId, gate.reasons, uid(), uid())
         } else {
           addInboxItem({
@@ -776,11 +976,15 @@ function register({ getMainWindow }) {
             noulCompared: cap.noulCompared,
             noulMaxScore: cap.noulMaxScore,
             provenance: { platform: item.platform || null, url: item.url || null, channelId: ch.id },
+            extracted: cap.extracted !== false,
+            matchScore: cap.matchScore || 0,
+            ...(cap.skipped ? { skipped: cap.skipped } : {}),
           })
         }
       }
     }
-    return result
+    // processed：本轮处理的条数（含被免费过滤层拦下的），轮询器据此扣 tick 预算
+    return { ...result, processed }
   }
 
   ipcMain.handle('channel:fetch', (_, channelId) => runChannelFetch(channelId))
@@ -799,7 +1003,8 @@ function register({ getMainWindow }) {
   // ---- LLM 提议指针 ----
   ipcMain.handle('llm:proposeLinks', async (_, indicatorId) => {
     try {
-      return await proposeChannelLinks(settings(), getNode(indicatorId), allChannels())
+      const node = getNode(indicatorId)
+      return await tracked('propose', () => proposeChannelLinks(settings(), node, allChannels()), { themeId: node?.themeId })
     } catch (e) {
       return { ok: false, error: e.message || String(e) }
     }
