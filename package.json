@@ -8,7 +8,7 @@
   "main": "src/main/entry.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node test/engine.test.mjs && node test/ipc.test.mjs && node test/redesign.test.mjs && node test/sync.test.mjs",
+    "test": "node test/engine.test.mjs && node test/ipc.test.mjs && node test/redesign.test.mjs && node test/sync.test.mjs && node test/briefing.test.mjs",
     "shoot": "electron tools/shoot.mjs"
   },
   "devDependencies": {
