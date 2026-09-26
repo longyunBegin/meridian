@@ -493,6 +493,8 @@ function renderThemes() {
     const count = lemmaCount(t.id)
     const itemBtn = h('button', {
       class: 'theme-item',
+      // 长名被省略号截断时，hover 用原生 tooltip 展示全名
+      title: t.name,
       // 只有正停留在该主题的脉络页时才亮。曾经只看 themeId，
       // 于是切到读数/数据源后主题还高亮着——一个已经不在看的页面里的选中态。
       'aria-selected': state.view === 'lattice' && state.themeId === t.id ? 'true' : 'false',

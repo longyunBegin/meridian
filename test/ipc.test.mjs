@@ -144,5 +144,20 @@ const dirtyReuse = store.load().traces.filter((t) => t.stage === 'extract'
   && t.actor?.by === 'reuse' && !(t.decision && t.decision.lemmas))
 ok('没有写下空 decision 的假复用留痕', dirtyReuse.length === 0, `实际 ${dirtyReuse.length}`)
 
+console.log('\n— 回归：抽取分流合并阈值 0.6 —')
+// 既有命题「北美云厂商Q4光模块订单大增」vs 新文本首句
+// 「北美云厂商Q4光模块订单小幅上扬」相似度恰为 0.5，落在旧阈值 0.45
+// 与设计值 0.6 之间。曾经 routeLemmas 用 findSimilar 默认阈值 0.45
+// 把它判成 merge——新命题就丢了，只变成已有节点的一个来源，
+// 而注释里写的一直是"抽完再合并的 0.6"。
+const mergeTheme = store.addTheme('合并阈值回归主题')
+store.addNode({ themeId: mergeTheme.id, kind: 'lemma', title: '北美云厂商Q4光模块订单大增', type: 'observation', confidence: 70 })
+const weakCap = await fireAsync('agent:process', '北美云厂商Q4光模块订单小幅上扬。', mergeTheme.id)
+const weakAction = weakCap?.lemmas?.[0]?.action
+ok('弱相似(0.5)命题不判合并', weakAction === 'new', `实际 ${weakAction}`)
+const strongCap = await fireAsync('agent:process', '北美云厂商Q4光模块订单大增。', mergeTheme.id)
+const strongAction = strongCap?.lemmas?.[0]?.action
+ok('强相似(1.0)命题仍判合并', strongAction === 'merge', `实际 ${strongAction}`)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

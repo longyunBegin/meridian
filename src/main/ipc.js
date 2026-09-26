@@ -73,6 +73,8 @@ function pathOf(id) {
 
 const LOW_QUALITY_GATE = 0.35 // 与现有闸门同值，不引入新阈值
 const SIMILAR_DUPLICATE = 0.85 // 比抽完再合并的 0.6 严：宁可漏合，不可错合
+const MERGE_SIMILAR = 0.6 // 抽取后分流时判"合并"的相似度下限：低于此值的新命题必须独立成项，
+// 不能并成已有节点的来源——否则一次误合并就等于丢了一条新命题。
 
 /** 本主题标签库的最高匹配分。没命中返回 0；主题没词库返回 hasLibrary: false */
 function targetTagScore(themeId, text) {
@@ -169,7 +171,9 @@ function routeLemmas({ lemmas, themeId, label, channelId, textHash = null }) {
 
   for (const l of lemmas) {
     // 1) 去重：同一条 claim 已有独立来源 → 不新建，只 +1 源
-    const dup = findSimilar([l.title, l.parentHint].filter(Boolean).join(' '), themeId)[0]
+    // 阈值必须显式传 MERGE_SIMILAR：findSimilar 默认 0.45 太松，
+    // 0.45~0.6 的弱相似会被误判成合并，新命题就丢了（只剩一个来源）。
+    const dup = findSimilar([l.title, l.parentHint].filter(Boolean).join(' '), themeId, MERGE_SIMILAR)[0]
     if (dup) {
       if (dup.score > noulMaxScore) noulMaxScore = dup.score
       out.push({

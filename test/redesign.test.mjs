@@ -665,15 +665,22 @@ ok('闸门失败 low-quality: autoImported = false', gateLowQ?.autoImported === 
 ok('闸门失败 low-quality: gateReasons 含 low-quality', gateLowQ?.gateReasons?.includes('low-quality'))
 
 // 闸门失败: 去重灰色地带 (0.6–0.85)
-const gateDedup1 = await fire('inbox:capture', 'AI算力 需求大幅增长超预期', { kind: '一手数据', quality: 0.9 })
+// 注意：相似度按 token 交叠算，0.67 恰好落在"达到合并线 0.6、
+// 但进灰色地带"的区间——之前这里的测试文本相似度只有 0.5，
+// 是靠 routeLemmas 误用 0.45 默认阈值才判成合并的（已修复为 0.6）。
+const gateDedup1 = await fire('inbox:capture', 'AI算力 需求增长 超预期', { kind: '一手数据', quality: 0.9 })
 ok('去重测试: 第一条自动入库', gateDedup1?.autoImported === true, `实际 ${gateDedup1?.autoImported} reasons=${JSON.stringify(gateDedup1?.gateReasons)}`)
-const gateDedup2 = await fire('inbox:capture', 'AI算力 需求大幅增长超出预期', { kind: '一手数据', quality: 0.9 })
+const gateDedup2 = await fire('inbox:capture', 'AI算力 需求增长 低于预期', { kind: '一手数据', quality: 0.9 })
 if (gateDedup2?.autoImported) {
   ok('去重灰色: 高相似度直接合并', gateDedup2?.imported?.[0]?.action === 'merge')
 } else {
   ok('去重灰色: 进收件箱', gateDedup2?.item?.id != null)
   ok('去重灰色: gateReasons 含 dedup-gray', gateDedup2?.gateReasons?.includes('dedup-gray'))
 }
+// 几乎逐字相同（相似度 1.0，命中留痕复用）：跳过灰色地带，直接合并自动入库
+const gateDedup3 = await fire('inbox:capture', 'AI算力 需求增长 超预期', { kind: '一手数据', quality: 0.9 })
+ok('去重高相似: 自动入库', gateDedup3?.autoImported === true, `实际 ${gateDedup3?.autoImported}`)
+ok('去重高相似: 直接合并', gateDedup3?.imported?.[0]?.action === 'merge', `实际 ${gateDedup3?.imported?.[0]?.action}`)
 
 // 校准曲线不统计 by:source 的节点
 const calibBefore = store.calibration()
