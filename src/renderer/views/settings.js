@@ -1,6 +1,5 @@
 import { h, clear, confirmToast, toast } from '../lib/dom.js'
 import { state } from '../app.js'
-import { confColor } from './shared.js'
 
 const m = window.meridian
 
@@ -202,6 +201,19 @@ export async function renderSettings(mid) {
     }
   }
 
+  // ---------------------------------------------------------------- 诊断披露
+  // 「试一段文本」是偶发需求：平时看质量表就够了，只有怀疑某条原文
+  // 被分错类时才需要亲手试。折进披露行，不跟主配置抢注意力。
+  const diagBody = h('div', { class: 'jev-body', hidden: true })
+  const diagChev = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', transition: 'transform var(--dur) var(--ease)' } }, '›')
+  diagBody.append(
+    h('p', { style: { margin: '10px 0 8px', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
+      '粘贴任意原文，看它怎么被归类。'),
+    testBox,
+    h('button', { class: 'btn', style: { marginTop: '6px' }, onclick: runTest }, '打标看看'),
+    testOut,
+  )
+
   mid.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', {}, '设置'),
@@ -231,15 +243,28 @@ export async function renderSettings(mid) {
         h('div', { class: 'kinds' },
           ...kinds.map(([label, q]) => h('div', { class: 'kind-row' },
             h('span', { class: 'kind-name' }, label),
+            // 质量表是校准曲线的基准，不是价值判断——条形只用单一中性色，
+            // 数字本身说明一切。红绿灯色会暗示"好/坏"，而这里没有好坏。
             h('span', { class: 'kind-bar' },
-              h('i', { style: { width: `${(q / maxQ) * 100}%`, background: confColor(q * 100) } })),
+              h('i', { style: { width: `${(q / maxQ) * 100}%`, background: 'var(--accent)' } })),
             h('span', { class: 'kind-q' }, q.toFixed(2)),
           )),
         ),
-        h('div', { class: 'sect-h', style: { marginTop: '18px' } }, h('h2', { style: { fontSize: 'var(--t-body)' } }, '试一段文本')),
-        testBox,
-        h('button', { class: 'btn', style: { marginTop: '6px' }, onclick: runTest }, '打标看看'),
-        testOut,
+        // 诊断是偶发需求，折进披露行，默认不占地方
+        h('div', {},
+          h('button', {
+            class: 'jev-toggle',
+            onclick: () => {
+              diagBody.hidden = !diagBody.hidden
+              diagChev.style.transform = diagBody.hidden ? '' : 'rotate(90deg)'
+            },
+          },
+            h('span', {}, '诊断'),
+            h('span', { style: { flex: 1 } }),
+            diagChev,
+          ),
+          diagBody,
+        ),
       ),
     ),
 
@@ -259,7 +284,7 @@ export async function renderSettings(mid) {
     ),
 
     h('section', { class: 'sect' },
-
+      h('div', { class: 'sect-h' }, h('h2', {}, '数据与存储')),
       h('div', { class: 'sect-b' },
         // L3 caption 带。七个数字零层级读不出「哪个需要我操心」——
         // 所以非零的异常项（待裁决冲突 / 待结算）单独升格并上语义色
