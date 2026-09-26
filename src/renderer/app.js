@@ -13,6 +13,12 @@ export const state = {
   view: 'today',
   shape: localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree',
   auditKind: 'cold',
+  /** 正在铺骨架的主题 id。放 state 而不是闭包——addTheme 会触发 db:changed →
+   *  refresh() 重画整个创建页，闭包里的变量被清零，骨架铺完就找不到该去哪个主题了。 */
+  pendingScaffoldId: null,
+  /** 骨架铺失败了。创建页据此把按钮解锁成「重新生成」——放在 state 里，
+   *  因为 db:changed 会重画页面，闭包记不住这件事。 */
+  scaffoldFailed: false,
   themeId: null,
   selectedId: null,
   open: new Set(),
@@ -49,10 +55,53 @@ function themeColor(id) {
   return THEME_COLORS[idx % THEME_COLORS.length]
 }
 
+let scaffoldPoll = null
+/** 轮询等骨架铺完。事件推送是主路径，这里是丢事件时的兜底——两条路都通到同一个 settle。 */
+function pollScaffold(themeId) {
+  clearInterval(scaffoldPoll)
+  scaffoldPoll = setInterval(async () => {
+    if (state.pendingScaffoldId !== themeId) { clearInterval(scaffoldPoll); return }
+    let inFlight = true
+    try { inFlight = (await m.themeScaffoldStatus()).includes(themeId) } catch { return }
+    if (inFlight) return
+    clearInterval(scaffoldPoll)
+    let result = null
+    try { result = await m.themeScaffoldResult(themeId) } catch { return }
+    if (result) settleScaffold(themeId, result)
+  }, 1200)
+}
+
+/** 骨架铺完：成功切去那个主题，失败就地解锁让人重试。 */
+function settleScaffold(themeId, info) {
+  if (state.pendingScaffoldId !== themeId) return
+  if (info.degraded) {
+    state.pendingScaffoldId = null
+    state.scaffoldFailed = true
+    refresh()
+    toast(`骨架没生成：${scaffoldWhy(info)}。`, 'var(--red)')
+    return
+  }
+  state.themeId = themeId
+  state.pendingScaffoldId = null
+  state.view = 'lattice'
+  refresh()
+  toast('骨架已生成')
+  if (info.tagLibraryOk === false) toast(`标签库没生成：${tagLibraryWhy(info)}。归位会受影响。`, 'var(--red)')
+}
+
+/** 骨架失败的人话原因。「树没生成」和「key 没配」是两件事，用户该知道是哪件。 */
+const scaffoldWhy = (info) => (!info.hasKey ? '未配置 API key'
+  : { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.reason]
+    || `调用失败（${info.reason}）`)
+const tagLibraryWhy = (info) => ({ timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.tagLibraryReason]
+  || `调用失败（${info.tagLibraryReason}）`)
+
 async function boot() {
   state.themes = await m.themes()
   state.settings = await m.settings()
-  state.view = 'today'
+  // 空账本直接落在创建页——和点侧栏 + 进来的是同一个页面、同一套交互。
+  // 曾经空账本进 today，today 里再嵌一个创建器，等于同一个目的两套界面。
+  state.view = state.themes.length ? 'today' : 'new-theme'
   if (state.themes.length) {
     state.themeId = state.themes[0].id
   }
@@ -74,23 +123,26 @@ async function boot() {
       : `正在检验读数 ${progress.processed || 0} / ${progress.total}`
     if (done) intakeTimer = setTimeout(() => intakeStatus?.remove(), 4000)
   })
-  // 骨架铺完的通知——建主题是异步的，这里负责收尾刷新
+
   m.onThemeScaffolded(async (info) => {
+    // 建主题页还在等这条通知：成了就切过去，败了就地解锁重试。
+    // 必须在 refresh() 之前做——refresh 会重画页面，把创建页替换掉。
+    if (state.pendingScaffoldId && info?.themeId === state.pendingScaffoldId) {
+      clearInterval(scaffoldPoll)
+      settleScaffold(info.themeId, info)
+      return
+    }
     await refresh()
     if (info?.skipped === 'complete') return
     if (info?.degraded) {
       // 分清楚是没配 key 还是配了但调用失败——后者值得用户立刻看见并重试
-      const why = !info.hasKey
-        ? '未配置 API key'
-        : { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.reason] || `调用失败（${info.reason}）`
-      toast(`骨架没生成：${why}。可在脉络页点「重新生成」重试。`, 'var(--red)')
+      toast(`骨架没生成：${scaffoldWhy(info)}。可在脉络页点「重新生成」重试。`, 'var(--red)')
     }
     else if (info?.themeId) toast('骨架已生成')
     // 标签库是归位的依据，缺了读数匹配不上指标。它的失败以前是静默的——
     // 骨架成功就报「已生成」，用户只看到标签库是 0，根本不知道去哪补。
     if (info && !info.degraded && info.tagLibraryOk === false) {
-      const why = { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.tagLibraryReason] || `调用失败（${info.tagLibraryReason}）`
-      toast(`标签库没生成：${why}。归位会受影响，可再点一次「重新生成」只补标签库。`, 'var(--red)')
+      toast(`标签库没生成：${tagLibraryWhy(info)}。归位会受影响，可再点一次「重新生成」只补标签库。`, 'var(--red)')
     }
   })
   m.onInboxPaste(captureText)
@@ -384,7 +436,10 @@ function renderThemes() {
 
   const slot = $('#theme-add-slot')
   clear(slot)
-  slot.append(h('button', { class: 'btn btn-icon', title: '新建主题', onclick: newThemePrompt }, icon('plus', 13)))
+  // 开一个独立页面，不在侧栏里内联展开——侧栏那点宽度放不下描述输入，
+  // 而且「有主题时点 + 」和「没主题时看到的页面」必须是同一个东西，否则同一个
+  // 目的有两套交互。没主题时 boot 也落在 new-theme 上，两边完全一致。
+  slot.append(h('button', { class: 'btn btn-icon', title: '新建主题', onclick: () => setView('new-theme') }, icon('plus', 13)))
 }
 
 function renderSideFoot() {
@@ -441,65 +496,66 @@ async function paintVaultCounts() {
 /** 主题创建器：用户只描述要跟踪什么，其余由系统完成。 */
 export function renderThemeCreator(opts = {}) {
   const compact = opts.compact || false
+  const startFailed = !!opts.failed
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
   const statusEl = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', marginLeft: '6px' } })
 
-  // 异步：主题立即建好并切过去，骨架在后台铺。用户不用对着转圈等——
-  // 可以先去别处看，铺完由 theme:scaffolded 通知刷新。
-  // 必须防重入：Enter 键和按钮是两个入口，且都只禁自己不禁对方。
-  // 用户输完按回车、手指又点到按钮，就会建出两个同名主题、各跑一遍骨架——
-  // 实测数据里出现过两个「光互连」，各 34 个环节。
+  // 生成期间按钮锁住，只有失败才解锁。放在这里而不是各 onclick 里——
+  // Enter 键和按钮是两个入口，且都只禁自己不禁对方；用户输完按回车、
+  // 手指又点到按钮，就会建出两个同名主题、各跑一遍骨架。
   let submitting = false
+  const submitBtn = h('button', {
+    class: 'btn btn-primary', style: { height: '34px' },
+    // 上一轮铺失败了就解锁让人重试，否则等用户填描述
+    disabled: !startFailed,
+    onclick: () => submitDesc(input.value.trim()),
+  }, icon('plus', 13), startFailed ? '重新生成' : '开始跟踪')
+
+  const lock = (label) => { submitting = true; submitBtn.disabled = true; submitBtn.textContent = label; input.disabled = true }
+  const unlock = (label) => { submitting = false; submitBtn.disabled = false; submitBtn.textContent = label; input.disabled = false }
+
   const submitDesc = async (desc) => {
     if (!desc || submitting) return
-    submitting = true
-    const submitBtn = wrap.querySelector('.btn-primary')
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '创建中…' }
+    lock('创建中…')
+    statusEl.textContent = ''
     try {
       const theme = await m.setupNewTheme(desc)
+      state.pendingScaffoldId = theme.id
       input.value = ''
-      statusEl.textContent = '骨架生成中…'
-      state.themeId = theme.id
-      state.view = 'lattice'
-      await refresh()
+      // 主题已经建好，骨架在后台铺。留在本页显示进度，不切走——
+      // 失败了要能就地重试，不用自己导航回来。成功后再切过去。
+      lock('骨架生成中…')
+      statusEl.textContent = '骨架生成中，可以先去别处看。'
       if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架和标签库。')
+      // 轮询兜底：theme:scaffolded 是推送，窗口没起来或渲染层还没订阅时就丢了。
+      // 丢了的后果是用户永远卡在这一页、按钮锁死——所以结果必须可查。
+      pollScaffold(theme.id)
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
-      submitting = false
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '开始跟踪' }
+      unlock('重新开始')
     }
   }
 
   const input = h('input', {
     class: 'txt skeleton-input', placeholder: '描述你要跟踪的', id: 'skeleton-desc',
+    value: startFailed ? '' : '',
+    oninput: () => { if (!submitting) submitBtn.disabled = !input.value.trim() },
     onkeydown: async (e) => {
       if (e.key !== 'Enter') return
-      e.target.disabled = true
+      e.preventDefault()
       await submitDesc(e.target.value.trim())
     },
   })
 
   wrap.append(h('div', { class: 'skeleton-gen' },
     input,
-    h('button', {
-      class: 'btn btn-primary', style: { height: '34px' },
-      onclick: async () => {
-        input.disabled = true
-        await submitDesc(input.value.trim())
-      },
-    }, icon('plus', 13), '开始跟踪'),
+    submitBtn,
     statusEl,
   ))
   return wrap
 }
 
-function newThemePrompt() {
-  const list = $('#themes')
-  // 切换：再点 [+] 收起
-  const existing = list.querySelector('.theme-creator')
-  if (existing) { renderThemes(); return }
-  list.append(renderThemeCreator({ compact: true, onDone: async () => { state.view = 'today'; await refresh() } }))
-}
+
 
 async function exportJson() {
   const json = await m.exportAll()
@@ -530,6 +586,7 @@ function renderMid() {
   const mid = $('#mid')
   clear(mid)
   if (state.view === 'today') renderToday(mid)
+  else if (state.view === 'new-theme') mid.append(renderNewTheme())
   else if (state.view === 'lattice') {
     if (!state.themeId) { mid.append(emptyState()); return }
     renderLattice(mid)
@@ -545,12 +602,25 @@ function renderMid() {
   else if (state.view === 'settings') renderSettings(mid)
 }
 
+/** 没有任何主题时，今日页主区就是创建页——和点侧栏 + 进来的是同一个组件。 */
 function emptyState() {
-  return h('div', { class: 'empty' },
-    h('h2', {}, '从一个主题开始'),
-    h('p', {}, '说一句话，模型搭好骨架。写下判断，账本帮你记录证据。'),
-    renderThemeCreator(),
-  )
+  return renderNewTheme()
+}
+
+/**
+ * 新建主题页。侧栏 + 与空账本都落在这里，交互完全一致。
+ * 生成期间按钮锁住，只有失败才解锁——否则连点会建出多个同名主题、
+ * 各跑一遍骨架（实测出现过两个「光互连」，各 34 个环节）。
+ */
+function renderNewTheme() {
+  const page = h('div', { class: 'page' })
+  const creator = renderThemeCreator({ failed: state.scaffoldFailed })
+  state.scaffoldFailed = false
+  page.append(h('div', { class: 'page-head' },
+    h('h1', {}, '新建主题'),
+    h('p', {}, '说一句话，模型搭骨架、配通道、建标签库。之后你在脉络页写下判断，账本负责记录证据。'),
+  ), creator)
+  return page
 }
 
 function renderInspector() {

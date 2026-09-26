@@ -2972,7 +2972,14 @@ ok('E1: app.js 只有描述输入框', appSrcER.includes('描述你要跟踪的'
 
 // --- E2: 空态复用 ---
 
-ok('E2: emptyState 调 renderThemeCreator', appSrcER.includes('renderThemeCreator()'))
+// 空账本与点侧栏 + 走同一个创建页，不再是「today 里嵌一个创建器」
+ok('E2: 空态与新建入口共用同一个创建页', appSrcER.includes('function renderNewTheme') && appSrcER.includes('return renderNewTheme()'))
+ok('E2: 有 new-theme 视图路由', appSrcER.includes("state.view === 'new-theme'"))
+ok('E2: 侧栏 + 开页面而非内联展开', appSrcER.includes("setView('new-theme')") && !appSrcER.includes('function newThemePrompt'))
+// 失败态放 state 而不是闭包——addTheme 触发 db:changed 会重画整个创建页，
+// 闭包里的变量被清零，骨架铺完就找不到该去哪、也没法就地解锁
+ok('E2: 生成期间按钮锁住，失败才解锁', appSrcER.includes('const unlock = ') && appSrcER.includes('state.scaffoldFailed'))
+ok('E2: 待铺骨架的 id 放 state', appSrcER.includes('state.pendingScaffoldId') && !appSrcER.includes('let createdThemeId'))
 // skeleton-desc 只在 app.js 的 renderThemeCreator 中定义（不复制到其他文件）
 ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !latticeSrcER.includes('skeleton-desc') && !vaultSrcER.includes('skeleton-desc') && !inspectorSrcER.includes('skeleton-desc'))
 

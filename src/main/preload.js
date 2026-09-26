@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('meridian', {
   addTheme: (name) => ipcRenderer.invoke('theme:add', name),
   setupNewTheme: (description) => ipcRenderer.invoke('theme:setupNew', description),
   regenerateTheme: (themeId) => ipcRenderer.invoke('theme:regenerate', themeId),
+  themeScaffoldStatus: () => ipcRenderer.invoke('theme:scaffoldStatus'),
+  themeScaffoldResult: (themeId) => ipcRenderer.invoke('theme:scaffoldResult', themeId),
   onThemeScaffolded: (cb) => ipcRenderer.on('theme:scaffolded', (_, info) => cb(info)),
   scaffoldExisting: (themeId, description) => ipcRenderer.invoke('theme:scaffoldExisting', themeId, description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),

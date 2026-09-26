@@ -424,28 +424,57 @@ Promise.all([
 
   await win.loadFile(RENDERER, { query: { view: 'lattice' } })
   await sleep(700)
+  // 侧栏 + 开的是独立页面，和空账本看到的同一个创建页（不再内联在侧栏里）
   const themeCreation = await win.webContents.executeJavaScript(`
     (async () => {
       document.querySelector('[title="新建主题"]')?.click()
-      const creator = document.querySelector('#themes .theme-creator')
-      const singleInput = creator?.querySelectorAll('input').length === 1
-      const noTemplates = !creator?.textContent.includes('模板')
-      const input = creator?.querySelector('#skeleton-desc')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const page = document.querySelector('.page')
+      const inSidebar = !!document.querySelector('#themes .theme-creator')
+      const singleInput = page?.querySelectorAll('input').length === 1
+      const noTemplates = !page?.textContent.includes('模板')
+      const btn = page?.querySelector('.btn-primary')
+      const lockedBefore = btn?.disabled
+      const input = page?.querySelector('#skeleton-desc')
       input.value = '城市轨交客流与设备更新'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      const enabledWithText = !btn?.disabled
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(resolve => setTimeout(resolve, 700))
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const lockedDuring = btn?.disabled
+      const label = btn?.textContent.trim()
+      await new Promise(resolve => setTimeout(resolve, 1400))
       const text = document.body.textContent
       return {
-        singleInput,
-        noTemplates,
+        status: document.querySelector('.skeleton-gen span:last-child')?.textContent,
+        inSidebar, singleInput, noTemplates, lockedBefore, enabledWithText, lockedDuring, label,
         fallback: text.includes('上游') && text.includes('中游') && text.includes('下游'),
         notice: document.querySelector('.toast')?.textContent.includes('API key') || false,
       }
     })()
   `)
-  check(themeCreation.singleInput && themeCreation.noTemplates, '新建主题只有描述输入')
-  check(themeCreation.fallback, '无 key 建成领域中立上中下游骨架')
+  check(!themeCreation.inSidebar && themeCreation.singleInput && themeCreation.noTemplates, '新建主题是独立页面且只有描述输入')
+  check(themeCreation.lockedBefore === true && themeCreation.enabledWithText === true, '按钮空了禁用，填了才解锁')
+  check(themeCreation.lockedDuring === true, '生成期间按钮锁住：' + themeCreation.label + ' | 状态:' + themeCreation.status)
   check(themeCreation.notice, '无 key 显示降级提示')
+  // 无 key 时走兜底模板：建完自动切到该主题的脉络页，树上应是领域中立的上中下游
+  for (let i = 0; i < 20; i++) {
+    await sleep(200)
+    const has = await win.webContents.executeJavaScript(`!!document.querySelector('.row-branch')`)
+    if (has) break
+  }
+  await sleep(500)
+  const fallbackTree = await win.webContents.executeJavaScript(`(() => {
+    const rows = [...document.querySelectorAll('.row-branch .row-title')].map(el => el.textContent.trim())
+    return { rows, hasGeneric: rows.includes('上游') && rows.includes('中游') && rows.includes('下游') }
+  })()`)
+  const dbgView = await win.webContents.executeJavaScript(`(() => ({
+    view: document.querySelector('.app')?.dataset.view,
+    anyRow: !!document.querySelector('.row'),
+    bodyStart: (document.querySelector('.page')?.textContent || '').slice(0, 80),
+    status: document.querySelector('.skeleton-gen span:last-child')?.textContent,
+  }))()`)
+  check(fallbackTree.hasGeneric, '无 key 建成领域中立上中下游骨架：' + fallbackTree.rows.slice(0, 5).join('/') + ' | ' + JSON.stringify(dbgView))
   writeFileSync(join(OUT, '17-generic-fallback.png'), (await win.webContents.capturePage()).toPNG())
   console.log('  →', '17-generic-fallback.png')
 

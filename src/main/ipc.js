@@ -558,82 +558,120 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('theme:tagLibrary:updateTag', (_, themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
   ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
 
+  /** 正在铺骨架的 themeId。渲染层据此显示「生成中」而不是再给一个生成按钮——
+   *  曾经建主题后立刻切到脉络页，那一刻节点还没落，界面照常给出「这个主题还没有骨架」
+   *  和生成按钮，用户点了就触发第二次 scaffoldTheme：两次 LLM 调用、一次白失败，
+   *  还弹一个「骨架没生成」的假警报（树其实是第一次铺好的）。 */
+  const scaffolding = new Set()
+  /** themeId → 最后一次铺设结果。推送事件会丢（窗口没起来、渲染层还没订阅），
+   *  创建页因此不能只靠事件——留一份可查的结果，让它轮询兜底。 */
+  const scaffoldResults = new Map()
+
   async function scaffoldTheme(themeId, description, s) {
-    // 幂等：骨架铺过就不再重铺。兜底模板没有去重，连点几次「生成」
-    // 就会 instantiate 好几遍——实测同一个主题下摞了三套上中下游。
-    // theme:regenerate 是先删后建，走到底下时已经是空树，不受这里挡。
-    // 但标签库缺了仍然要补：它是归位的依据，缺了读数匹配不上指标节点。
-    // 曾经这里只要看到环节就整体返回，结果「环节已有、标签库为空」的主题
-    // 永远补不上标签库——用户点多少次生成都没用。
-    const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
-    const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
-    if (hasBranches && hasTagLibrary) {
-      return { degraded: false, channelCount: 0, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
-    }
-
-    const library = channelLibrary()
-    const [skeletonResult, tagResult, channelResult] = await Promise.all([
-      tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
-      tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
-      tracked('pickChannelsFromLibrary', () => pickChannelsFromLibrary(s, description, library), { themeId }),
-    ])
-
-    if (hasBranches) {
-      // 这一轮只补标签库，骨架、通道、指标节点都不重铺
-    } else if (skeletonResult.ok) {
-      const walk = (node, parentId) => {
-        const n = addNode({
-          themeId, parentId, kind: 'branch', title: node.title,
-          propagation: node.propagation || 0.6, by: 'model',
-          stableId: node.id, scaffold: node.scaffold || null,
-        })
-        for (const c of node.children || []) walk(c, n.id)
-      }
-      for (const root of skeletonResult.skeleton.roots || []) walk(root, null)
-    } else if (!s.apiKey) {
-      // 只有完全没有 key 时才用兜底模板——那是唯一还能给出结构的情形。
-      // key 在却失败了（超时 / 解析不出来）就留空：铺一套上中下游上去，
-      // 用户会以为模型分析过了，只是水平差。留空 + 明说失败，比假的通用骨架诚实。
-      const fallback = genericFallback()
-      if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
-    }
-
-    const available = new Set(availableFetchers())
-    const automaticChannels = []
-    if (!hasBranches) for (const ch of channelResult.channels || []) {
-      if (!available.has(ch.fetch)) continue
-      automaticChannels.push(addChannel({
-        name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
-        metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
-        cadence: ch.cadence, themeId, tags: ch.tags || [],
-        enabled: !ch.needsKey,
-      }))
-    }
-    if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
-      for (const spec of branch.scaffold?.indicators || []) {
-        const name = typeof spec === 'string' ? spec : spec.name
-        if (!name || allNodes().some((n) => n.themeId === themeId && n.parentId === branch.id && n.title === name && n.status !== 'dead')) continue
-        const linked = automaticChannels.filter((ch) => METRIC_FETCHERS.includes(ch.fetch) && ch.name === name)
-        addNode({
-          themeId, parentId: branch.id, title: name, type: 'observation', by: 'model',
-          cadence: spec.cadence || '季度', channelIds: linked.map((ch) => ch.id),
-        })
-      }
-    }
-
-    if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
-    const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
-    const tagLibraryResult = await tracked('tagLibrary', () => generateTagLibrary(s, description, titles), { themeId })
-    if (tagLibraryResult.ok) updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary })
-
-    return {
-      degraded: !skeletonResult.ok,
-      // 把失败原因带出去——「树没生成」和「key 没配」是两件事，用户该知道是哪件
-      reason: skeletonResult.ok ? null : (skeletonResult.reason || 'unknown'),
-      hasKey: !!s.apiKey,
-      channelCount: channelResult.channels?.length || 0,
+    if (scaffolding.has(themeId)) return { degraded: false, channelCount: 0, skipped: 'in-flight' }
+    scaffolding.add(themeId)
+    try {
+      const result = await runScaffold(themeId, description, s)
+      scaffoldResults.set(themeId, result)
+      // 只留最近 20 个主题的结果，别让这张表跟着主题数无限长
+      if (scaffoldResults.size > 20) scaffoldResults.delete(scaffoldResults.keys().next().value)
+      return result
+    } finally {
+      scaffolding.delete(themeId)
     }
   }
+
+  async function runScaffold(themeId, description, s) {
+      // 幂等：骨架铺过就不再重铺。兜底模板没有去重，连点几次「生成」
+      // 就会 instantiate 好几遍——实测同一个主题下摞了三套上中下游。
+      // theme:regenerate 是先删后建，走到底下时已经是空树，不受这里挡。
+      // 但标签库缺了仍然要补：它是归位的依据，缺了读数匹配不上指标节点。
+      // 曾经这里只要看到环节就整体返回，结果「环节已有、标签库为空」的主题
+      // 永远补不上标签库——用户点多少次生成都没用。
+      const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
+      const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
+      if (hasBranches && hasTagLibrary) {
+        return { degraded: false, channelCount: 0, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
+      }
+
+      const library = channelLibrary()
+      const [skeletonResult, tagResult, channelResult] = await Promise.all([
+        tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
+        tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
+        tracked('pickChannelsFromLibrary', () => pickChannelsFromLibrary(s, description, library), { themeId }),
+      ])
+
+      if (hasBranches) {
+        // 这一轮只补标签库，骨架、通道、指标节点都不重铺
+      } else if (skeletonResult.ok) {
+        const walk = (node, parentId) => {
+          const n = addNode({
+            themeId, parentId, kind: 'branch', title: node.title,
+            propagation: node.propagation || 0.6, by: 'model',
+            stableId: node.id, scaffold: node.scaffold || null,
+          })
+          for (const c of node.children || []) walk(c, n.id)
+        }
+        for (const root of skeletonResult.skeleton.roots || []) walk(root, null)
+      } else if (!s.apiKey) {
+        // 只有完全没有 key 时才用兜底模板——那是唯一还能给出结构的情形。
+        // key 在却失败了（超时 / 解析不出来）就留空：铺一套上中下游上去，
+        // 用户会以为模型分析过了，只是水平差。留空 + 明说失败，比假的通用骨架诚实。
+        const fallback = genericFallback()
+        if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
+      }
+
+      const available = new Set(availableFetchers())
+      const automaticChannels = []
+      if (!hasBranches) for (const ch of channelResult.channels || []) {
+        if (!available.has(ch.fetch)) continue
+        automaticChannels.push(addChannel({
+          name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
+          metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
+          cadence: ch.cadence, themeId, tags: ch.tags || [],
+          enabled: !ch.needsKey,
+        }))
+      }
+      if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
+        for (const spec of branch.scaffold?.indicators || []) {
+          const name = typeof spec === 'string' ? spec : spec.name
+          if (!name || allNodes().some((n) => n.themeId === themeId && n.parentId === branch.id && n.title === name && n.status !== 'dead')) continue
+          const linked = automaticChannels.filter((ch) => METRIC_FETCHERS.includes(ch.fetch) && ch.name === name)
+          addNode({
+            themeId, parentId: branch.id, title: name, type: 'observation', by: 'model',
+            cadence: spec.cadence || '季度', channelIds: linked.map((ch) => ch.id),
+          })
+        }
+      }
+
+      if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
+      const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
+      const tagLibraryResult = await tracked('tagLibrary', () => generateTagLibrary(s, description, titles), { themeId })
+      const tagLibraryCount = tagLibraryResult.ok
+        ? (updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary }), tagLibraryResult.tagLibrary.length)
+        : 0
+
+      // degraded 必须按「结束时树上到底有没有环节」判，不能按进入时的 hasBranches 快照。
+      // 并发的另一次铺设可能已经把树铺好了，此时报「骨架没生成」是在说谎——
+      // 用户明明看见树上有一堆环节。实测踩过：两次调用并发，第二次失败，
+      // 弹了假警报，而树是第一轮的成果。
+      const treeExists = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
+      return {
+        degraded: !treeExists && !skeletonResult.ok,
+        // 树没生成和 key 没配是两件事，用户该知道是哪件
+        reason: treeExists || skeletonResult.ok ? null : (skeletonResult.reason || 'unknown'),
+        hasKey: !!s.apiKey,
+        // 标签库失败以前是静默的——骨架成功就报「已生成」，用户只看到标签库是 0，无从判断
+        tagLibraryOk: !!tagLibraryResult.ok,
+        tagLibraryReason: tagLibraryResult.ok ? null : (tagLibraryResult.reason || 'unknown'),
+        tagLibraryCount,
+        channelCount: automaticChannels.length,
+        skipped: treeExists && hasBranches ? 'tag-library-only' : null,
+      }
+  }
+
+  ipcMain.handle('theme:scaffoldStatus', () => [...scaffolding])
+  ipcMain.handle('theme:scaffoldResult', (_, themeId) => scaffoldResults.get(themeId) || null)
 
   // 建主题分两步：主题立即建好返回（UI 不必卡住），骨架异步铺。
   // 铺完由 db:changed 通知渲染层刷新——用户在等的时候还能看别的东西。
