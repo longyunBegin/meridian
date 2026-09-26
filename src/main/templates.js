@@ -11,7 +11,7 @@ function read() {
   try {
     cache = JSON.parse(readFileSync(FILE, 'utf8'))
   } catch {
-    cache = { version: 0, genericFallback: null, channelLibrary: [] }
+    cache = { version: 0, genericFallback: null }
   }
   return cache
 }

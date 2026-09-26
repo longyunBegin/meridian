@@ -7,10 +7,20 @@
       {
         "path": "上游",
         "scaffold": {
-          "answer": ["供给端的关键约束是什么？", "谁真正握有供给？", "约束放松时谁先受益？"],
+          "answer": [
+            "供给端的关键约束是什么？",
+            "谁真正握有供给？",
+            "约束放松时谁先受益？"
+          ],
           "indicators": [
-            { "name": "供给量", "cadence": "季度" },
-            { "name": "价格", "cadence": "月" }
+            {
+              "name": "供给量",
+              "cadence": "季度"
+            },
+            {
+              "name": "价格",
+              "cadence": "月"
+            }
           ],
           "falsifier": "供给持续过剩而价格不跌。"
         }
@@ -18,10 +28,20 @@
       {
         "path": "中游",
         "scaffold": {
-          "answer": ["价值如何在这一环节转化？", "决定效率和利润的瓶颈是什么？", "上下游谁拥有议价权？"],
+          "answer": [
+            "价值如何在这一环节转化？",
+            "决定效率和利润的瓶颈是什么？",
+            "上下游谁拥有议价权？"
+          ],
           "indicators": [
-            { "name": "产能利用率", "cadence": "季度" },
-            { "name": "单位成本", "cadence": "季度" }
+            {
+              "name": "产能利用率",
+              "cadence": "季度"
+            },
+            {
+              "name": "单位成本",
+              "cadence": "季度"
+            }
           ],
           "falsifier": "规模扩大但单位成本和交付效率持续恶化。"
         }
@@ -29,35 +49,24 @@
       {
         "path": "下游",
         "scaffold": {
-          "answer": ["最终需求来自谁？", "需求增长由数量还是价格驱动？", "替代方案何时会出现？"],
+          "answer": [
+            "最终需求来自谁？",
+            "需求增长由数量还是价格驱动？",
+            "替代方案何时会出现？"
+          ],
           "indicators": [
-            { "name": "需求量", "cadence": "月" },
-            { "name": "渗透率", "cadence": "季度" }
+            {
+              "name": "需求量",
+              "cadence": "月"
+            },
+            {
+              "name": "渗透率",
+              "cadence": "季度"
+            }
           ],
           "falsifier": "供给和价格改善后，终端需求仍持续下降。"
         }
       }
     ]
-  },
-  "channelLibrary": [
-    { "id": "arxiv-ai", "name": "arXiv · AI", "kind": "一手数据", "fetch": "rss", "query": "https://export.arxiv.org/rss/cs.AI", "cadence": "日", "needsKey": false, "tags": ["人工智能", "模型", "研究"] },
-    { "id": "huggingface-blog", "name": "Hugging Face Blog", "kind": "一手数据", "fetch": "rss", "query": "https://huggingface.co/blog/feed.xml", "cadence": "周", "needsKey": false, "tags": ["人工智能", "模型", "开源"] },
-    { "id": "tavily-ai-news", "name": "Tavily · AI 新闻", "kind": "独立媒体", "fetch": "tavily", "query": "AI infrastructure OR LLM OR GPU supply chain", "cadence": "日", "needsKey": true, "tags": ["人工智能", "算力", "产业链"] },
-    { "id": "grok-ai-chain", "name": "X · AI 产业链", "kind": "自媒体", "fetch": "grok-x-search", "query": "1.6T optical module OR silicon photonics OR AI supply chain", "cadence": "日", "needsKey": true, "tags": ["人工智能", "半导体", "光通信"] },
-    { "id": "crm-filings", "name": "CRM 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "CRM", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "订阅", "财报"] },
-    { "id": "now-filings", "name": "NOW 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "NOW", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "订阅", "财报"] },
-    { "id": "wday-filings", "name": "WDAY 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "WDAY", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "订阅", "财报"] },
-    { "id": "ddog-filings", "name": "DDOG 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "DDOG", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "云服务", "财报"] },
-    { "id": "snow-filings", "name": "SNOW 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "SNOW", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "云服务", "财报"] },
-    { "id": "mdb-filings", "name": "MDB 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "MDB", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "数据库", "财报"] },
-    { "id": "net-filings", "name": "NET 10-Q 正文", "kind": "财报 / 公告", "fetch": "edgarFilings", "query": "NET", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "网络", "财报"] },
-    { "id": "crm-gross-profit", "name": "毛利率 · CRM", "kind": "财报 / 公告", "fetch": "edgarConcept", "query": "CRM", "metric": "GrossProfit", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "毛利率", "财报"] },
-    { "id": "now-gross-profit", "name": "毛利率 · NOW", "kind": "财报 / 公告", "fetch": "edgarConcept", "query": "NOW", "metric": "GrossProfit", "cadence": "季度", "needsKey": false, "tags": ["软件服务", "毛利率", "财报"] },
-    { "id": "saas-rss", "name": "SaaS 财报季 RSS", "kind": "独立媒体", "fetch": "rss", "query": "https://www.saas.fm/feed", "cadence": "周", "needsKey": false, "tags": ["软件服务", "订阅", "财报"] },
-    { "id": "stablecoin-total", "name": "稳定币总量", "kind": "一手数据", "fetch": "defillamaStablecoins", "metric": "total", "cadence": "日", "needsKey": false, "tags": ["数字资产", "稳定币", "流动性"] },
-    { "id": "aave-tvl", "name": "Aave TVL", "kind": "一手数据", "fetch": "defillamaProtocol", "query": "aave", "metric": "tvl", "cadence": "日", "needsKey": false, "tags": ["数字资产", "借贷", "锁仓量"] },
-    { "id": "ethereum-fees", "name": "以太坊手续费", "kind": "一手数据", "fetch": "defillamaProtocol", "query": "ethereum", "metric": "fees", "cadence": "日", "needsKey": false, "tags": ["数字资产", "公链", "手续费"] },
-    { "id": "network-hash-rate", "name": "全网算力", "kind": "一手数据", "fetch": "blockchainChart", "metric": "hash-rate", "cadence": "日", "needsKey": false, "tags": ["数字资产", "挖矿", "算力"] },
-    { "id": "active-addresses", "name": "活跃地址", "kind": "一手数据", "fetch": "blockchainChart", "metric": "n-unique-addresses", "cadence": "日", "needsKey": false, "tags": ["数字资产", "链上活动", "用户"] }
-  ]
+  }
 }

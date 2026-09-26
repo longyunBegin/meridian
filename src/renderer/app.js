@@ -218,7 +218,6 @@ async function loadNodes() {
   state.nodes = nodes
   state.readingsError = !latest
   const byNode = new Map()
-  const byChannel = new Map()
   // 待归位的读数单独放——它们没有指标节点可挂，但必须让人看见，否则永远等不到归位
   const pending = []
   // 仅保留服务端已判定的最新快照，不按时间猜当前值。
@@ -230,14 +229,6 @@ async function loadNodes() {
   for (const reading of latest?.items || []) {
     if (reading.pending || !reading.indicatorId) { pending.push(reading); continue }
     put(byNode, reading.indicatorId, reading)
-  }
-  // 兼容旧通道关联，只在建索引时解析一次；树每行只做 Map.get。
-  for (const node of nodes) {
-    if (node.type !== 'observation' || byNode.has(node.id)) continue
-    for (const id of node.channelIds || []) {
-      const reading = byChannel.get(id)
-      if (reading) put(byNode, node.id, reading)
-    }
   }
   state.latestByNode = byNode
   state.pendingReadings = pending

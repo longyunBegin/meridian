@@ -262,7 +262,7 @@ export async function renderSettings(mid) {
   // ---------------------------------------------------------------- 来源分类
   const kinds = settings.sourceQuality || []
   const maxQ = Math.max(...kinds.map(([, q]) => q), 1)
-  const VIA = { table: '查表', jev: 'Jev', channel: '通道声明' }
+  const VIA = { table: '查表', jev: 'Jev', channel: '来源声明' }
 
   const testOut = h('p', {
     style: { margin: '10px 0 0', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6', minHeight: '18px' },

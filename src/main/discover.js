@@ -2,16 +2,73 @@
  * us-gaap 标签发现：仅手动触发，不进任何定时/轮询路径。
  *
  * R3 立的规矩：companyfacts 只用于发现，不用于轮询。
- * 所以这个模块独立于 fetchers.js，不被 scheduler 或 FETCHERS map 引用。
+ * 2026-09-26：fetchers.js（通道取数器）已随通道系统删除；
+ * ticker→CIK 解析与 UA 搬到本模块，discoverTags 继续手动可用。
  */
 
-import { resolveTicker, UA } from './fetchers.js'
 import { COMMON_US_GAAP, SYNONYM_GROUPS, kindToTags, sicToTags } from './store.js'
 import { labelSource } from './labeler.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const { app } = globalThis.__electron
+
+/** SEC EDGAR 硬要求：不带 UA 全站 403。邮箱要换成真实的。 */
+const UA = 'Meridian/0.6 (contact: meridian@example.com)'
+
+/** ticker → CIK 内存缓存 */
+let tickerCache = null
+let tickerCacheAt = 0
+const TICKER_CACHE_TTL = 7 * 864e5 // 7 天
+
+/**
+ * ticker → CIK 解析。优先内存缓存，其次本地文件，最后拉 SEC。
+ * CIK 补零到 10 位。大小写不敏感。
+ */
+async function resolveTicker(ticker) {
+  const t = ticker.toUpperCase().trim()
+  if (tickerCache && Date.now() - tickerCacheAt < TICKER_CACHE_TTL) {
+    const hit = tickerCache.get(t)
+    if (hit) return hit
+  }
+  // 尝试本地文件缓存
+  const cacheFile = join(app.getPath('userData'), 'sec-tickers.json')
+  if (!tickerCache && existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(readFileSync(cacheFile, 'utf8'))
+      if (cached.savedAt && Date.now() - cached.savedAt < TICKER_CACHE_TTL) {
+        tickerCache = new Map(Object.entries(cached.data))
+        tickerCacheAt = cached.savedAt
+        const hit = tickerCache.get(t)
+        if (hit) return hit
+      }
+    } catch { /* 缓存损坏，忽略 */ }
+  }
+  // 拉 SEC
+  const res = await fetch('https://www.sec.gov/files/company_tickers.json', {
+    headers: { 'user-agent': UA },
+    signal: AbortSignal.timeout(30000),
+  })
+  if (!res.ok) throw new Error(`ticker 解析失败: HTTP ${res.status}`)
+  const raw = await res.json()
+  // 结构是字典套字典：{"0": {cik_str, ticker, title}, ...}
+  const map = new Map()
+  for (const entry of Object.values(raw)) {
+    map.set(entry.ticker.toUpperCase(), {
+      cik: String(entry.cik_str).padStart(10, '0'),
+      title: entry.title,
+    })
+  }
+  tickerCache = map
+  tickerCacheAt = Date.now()
+  // 写本地缓存
+  try {
+    writeFileSync(cacheFile, JSON.stringify({ data: Object.fromEntries(map), savedAt: tickerCacheAt }))
+  } catch { /* 写缓存失败不影响主流程 */ }
+  const hit = map.get(t)
+  if (!hit) throw new Error(`未知 ticker: ${ticker}`)
+  return hit
+}
 
 const FACTS_CACHE_TTL = 7 * 864e5 // 7 天
 

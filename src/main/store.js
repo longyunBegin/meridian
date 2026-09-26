@@ -264,7 +264,12 @@ export function pruneInbox(days = INBOX_TTL_DAYS, { dryRun = false } = {}) {
 }
 
 export function load() {
-  if (db) return db
+  if (db) {
+    // 2026-09-26：通道功能已整体移除。migrate()/importAll() 是红区不碰，
+    // 这里在运行态清理账本里残留的通道描述符，之后 persist() 写回时自然消失。
+    if (db.channels !== undefined) delete db.channels
+    return db
+  }
   const file = DATA_FILE()
   if (existsSync(file)) {
     try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
@@ -1449,10 +1454,8 @@ export function importAll(json) {
   if (parsed.readingJournal) readingsStore().validateJournal(parsed.readingJournal)
   else for (const r of parsed.readings || []) validateReading({ ...r, source: r.source || (parsed.sources || []).find((s) => s.id === r.sourceId) || {} }, { legacy: true })
   readingsStore().replaceJournal(parsed.readingJournal || [])
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], intakeEvents: parsed.intakeEvents || [], sources: parsed.sources || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], sources: parsed.sources || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
   migrate(db)
-  // 2026-09-26：通道功能已移除，导入时不保留通道描述符（migrate 系红区，加载后清理）
-  if (db.channels !== undefined) delete db.channels
   if (!parsed.readingJournal) migrateReadings(db.readings)
   else db.readings = []
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文

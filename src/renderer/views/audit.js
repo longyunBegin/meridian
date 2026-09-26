@@ -11,7 +11,7 @@ export async function renderAudit(mid) {
   clear(mid)
   const a = await m.falseKill(30)
   // 通道已移除：只显示来源 id
-  const chName = (id) => id || '未知通道'
+  const chName = (id) => id || '未知来源'
   const keys = ['source', 'dedup', 'user', 'routeIgnored']
   if (a.byGate.other.total) keys.push('other')
   const card = h('div', { class: 'audit' },

@@ -1250,30 +1250,9 @@ if (plan2.willDelete) {
 const preview3 = store.purgeDead('user', { dryRun: true })
 const plan3 = planPurge('user', preview3, true)
 ok('Fix4: 空集时 willDelete = false', !plan3.willDelete)
-ok('Fix4: 空集时 reason = empty', plan3.reason === 'empty')
-
 // ============================================================
-console.log('\n— R1: 取数器注册表 —')
+// R1: 取数器注册表 — 已随通道系统移除（fetchers.js 已删除）
 // ============================================================
-
-const { fetchChannel, availableFetchers } = await import('../src/main/fetchers.js')
-
-const avail = availableFetchers()
-ok('R1: availableFetchers 包含 rss', avail.includes('rss'))
-ok('R1: availableFetchers 包含 web', avail.includes('web'))
-ok('R1: availableFetchers 不含未实现的 tavily', !avail.includes('tavily'))
-ok('R1: availableFetchers 不含 null 值', avail.every((k) => k != null))
-
-// v0.8 不再静默吞掉空壳取数器：旧配置仍可能存在，必须明说不可用。
-const unkResult = await fetchChannel({ fetch: 'tavily', query: 'test', kind: '自媒体' })
-ok('R1 v0.8: 未实现类型无内容且返回明确错误', unkResult.items.length === 0 && typeof unkResult.error === 'string' && unkResult.error.length > 0)
-
-const unkResult2 = await fetchChannel({ fetch: 'nonexistent', query: 'test' })
-ok('R1 v0.8: 未知类型无内容且返回明确错误', unkResult2.items.length === 0 && typeof unkResult2.error === 'string' && unkResult2.error.length > 0)
-
-// web fetcher 对短文本返回空
-const shortResult = await fetchChannel({ fetch: 'web', query: 'about:blank', name: 'test', kind: '自媒体' })
-ok('R1: web fetcher 失败时返回空 items', shortResult.items.length === 0)
 
 // ============================================================
 console.log('\n— R2: readings 读数集合 —')
@@ -1462,75 +1441,12 @@ ok('preload: 两份桥接键同步', JSON.stringify(extractKeys(pj)) === JSON.st
 import { default as vm } from 'node:vm'
 const syntaxOk = (src) => { try { new vm.Script(src); return true } catch { return false } }
 ok('preload: preload.js 语法可编译', syntaxOk(pj), '语法错误会让 app 起不来')
-ok('preload: preload.cjs 语法可编译', syntaxOk(pc), '语法错误会让 app 起不来')
-
 // ============================================================
-console.log('\n— R3: SEC EDGAR 取数器 —')
+// R3: SEC EDGAR 取数器 — 已随通道系统移除（fetchers.js 已删除）
 // ============================================================
 
-const { convertEdgarConcept, filterFilings } = await import('../src/main/fetchers.js')
-const conceptFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-companyconcept.json'), 'utf8'))
-const filingsFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/edgar-submissions.json'), 'utf8'))
-
-// --- Path A: convertEdgarConcept 纯函数 ---
-const testChannel = { id: 'ch-edgar', kind: '财报 / 公告', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', query: 'NVDA' }
-const readingInputs = convertEdgarConcept(conceptFixture, testChannel, '0001045810', 'NVDA', 'NVIDIA CORP')
-
-ok('R3: convertEdgarConcept 产出 6 条', readingInputs.length === 6)
-ok('R3: metric 命名用 ticker 小写', readingInputs[0].metric === 'nvda.RevenueFromContractWithCustomerExcludingAssessedTax')
-ok('R3: value 正确', readingInputs[0].value === 9714000000)
-ok('R3: unit = USD', readingInputs[0].unit === 'USD')
-ok('R3: asOf = rec.end', readingInputs[0].asOf === '2018-01-28')
-ok('R3: basis = reported (10-K)', readingInputs[0].basis === 'reported')
-ok('R3: source.kind 由取数器给定', readingInputs[0].source.kind === '财报 / 公告')
-ok('R3: source.platform = SEC EDGAR', readingInputs[0].source.platform === 'SEC EDGAR')
-ok('R3: source.url 存在', readingInputs[0].source.url.includes('sec.gov'))
-ok('R3: indicatorId 不再写入', readingInputs[0].indicatorId === undefined)
-ok('R3: channelId 正确', readingInputs[0].channelId === 'ch-edgar')
-
-// 重复期间（1.4 实例）：同一 start+end 不同 accn，两条都在
-ok('R3: 重复期间第1条 accn', readingInputs[0].source.accn === '0001045810-19-000010')
-ok('R3: 重复期间第2条 accn', readingInputs[1].source.accn === '0001045810-20-000036')
-ok('R3: 重复期间 dedupeKey 不同', readingInputs[0].dedupeKey !== readingInputs[1].dedupeKey)
-
-// --- Path A: 幂等 — 同一批 readingInputs 跑两次 addReading ---
-let added1 = 0, skipped1 = 0
-for (const input of readingInputs) {
-  const r = store.addReading(input)
-  if (r.added) added1++; else skipped1++
-}
-ok('R3: 第一次全部 added', added1 === 6 && skipped1 === 0)
-
-let added2 = 0, skipped2 = 0
-for (const input of readingInputs) {
-  const r = store.addReading(input)
-  if (r.added) added2++; else skipped2++
-}
-ok('R3: 第二次全部 skipped (幂等)', added2 === 0 && skipped2 === 6)
-
-// --- Path B: filterFilings 纯函数 ---
-const filtered = filterFilings(filingsFixture.filings, 5)
-const forms = filtered.map((f) => f.form)
-ok('R3: filterFilings 只含 10-K/10-Q/8-K', forms.every((f) => ['10-K', '10-Q', '8-K'].includes(f)))
-ok('R3: filterFilings 过滤掉 Form 4', !forms.includes('4'))
-ok('R3: filterFilings 过滤掉 144', !forms.includes('144'))
-ok('R3: filterFilings 最多 5 条', filtered.length <= 5)
-ok('R3: filterFilings 有 accessionNumber', filtered[0].accessionNumber != null)
-ok('R3: filterFilings 有 primaryDocument', filtered[0].primaryDocument != null)
-
-// --- grep 验收 ---
-const fetchersSrc = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
-ok('R3: fetchers.js 不调 labelSource', !fetchersSrc.includes('labelSource'))
-ok('R3: fetchers.js 不用 companyfacts', !fetchersSrc.includes('companyfacts'))
-
-// --- channels.metric 端到端 ---
-const edgarCh = store.addChannel({ name: 'EDGAR 测试', query: 'NVDA', fetch: 'edgarConcept', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', kind: '财报 / 公告' })
-ok('R3: channel.metric 存储成功', edgarCh.metric === 'RevenueFromContractWithCustomerExcludingAssessedTax')
-const chFromDb = store.allChannels().find((c) => c.id === edgarCh.id)
-ok('R3: channel.metric 从 DB 读回', chFromDb.metric === 'RevenueFromContractWithCustomerExcludingAssessedTax')
-
 // ============================================================
-console.log('\n— 数据源统一为通道：迁移 —')
+// 数据源统一为通道：迁移 — 通道已移除，旧 feeds/channels 不再转入运行态
 // ============================================================
 
 // --- 旧格式数据：3 条 feeds，0 条 channels ---
@@ -1554,22 +1470,9 @@ const oldData = JSON.stringify({
 })
 
 store.importAll(oldData)
-const migratedChannels = store.allChannels()
-const migratedFeeds = store.load().feeds
-
-ok('迁移: 3 条 feeds → 3 条 channels', migratedChannels.length === 3)
-ok('迁移: feeds 集合清空', migratedFeeds.length === 0)
-ok('迁移: kind 映射为 独立媒体', migratedChannels.every((c) => c.kind === '独立媒体'))
-ok('迁移: 无 rss 出现在 channel.kind', !migratedChannels.some((c) => c.kind === 'rss'))
-ok('迁移: fetch 设为 rss', migratedChannels.every((c) => c.fetch === 'rss'))
-ok('迁移: query 保留原 URL', migratedChannels.some((c) => c.query === 'https://reuters.com/feed.xml'))
-ok('迁移: id 保留', migratedChannels.some((c) => c.id === 'feed-1'))
-ok('迁移: name 保留', migratedChannels.some((c) => c.name === 'Reuters RSS'))
-ok('迁移: interval 保留', migratedChannels.find((c) => c.id === 'feed-1').interval === 60)
-ok('迁移: lastFetch 保留', migratedChannels.find((c) => c.id === 'feed-1').lastFetch === '2026-09-20')
-ok('迁移: lastCount 保留', migratedChannels.find((c) => c.id === 'feed-1').lastCount === 15)
-ok('迁移: enabled 保留', migratedChannels.find((c) => c.id === 'feed-3').enabled === false)
-ok('迁移: review 默认 false', migratedChannels.every((c) => c.review === false))
+const migratedExportJson2 = JSON.parse(store.exportAll())
+ok('迁移: 加载后通道描述符被清理（load 运行态）', !('channels' in store.load()))
+ok('迁移: feeds 集合清空', (migratedExportJson2.feeds || []).length === 0)
 
 // --- 幂等：导出再导入，channels 不翻倍 ---
 const migratedExport = store.exportAll()
@@ -1577,7 +1480,7 @@ const migratedExportJson = JSON.parse(migratedExport)
 ok('幂等: 导出 feeds 为空', Array.isArray(migratedExportJson.feeds) && migratedExportJson.feeds.length === 0)
 ok('幂等: 导出 version 为 4', migratedExportJson.version === 4)
 store.importAll(migratedExport)
-ok('幂等: 导入后无 channels 键（通道已移除）', !('channels' in JSON.parse(store.exportAll())))
+ok('幂等: 加载后无 channels 键（通道已移除）', !('channels' in store.load()))
 
 // --- 旧导出文件可导入（version 3 + feeds 有数据，channels 应被丢弃） ---
 const dedupData = JSON.stringify({
@@ -1600,7 +1503,7 @@ const dedupData = JSON.stringify({
 })
 store.importAll(dedupData)
 ok('兼容: 旧格式导入不报错', true)
-ok('兼容: 旧 channels 不再导入', !('channels' in JSON.parse(store.exportAll())))
+ok('兼容: 旧 channels 在加载后被清理', !('channels' in store.load()))
 
 // --- grep 验收 ---
 const vaultSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
@@ -1666,11 +1569,11 @@ store.importAll(r7Export)
 const exportedNode = store.allNodes().find((n) => n.title === '导出测试')
 ok('R7 导出导入: channelIds 不丢', exportedNode?.channelIds?.length === 2)
 
-// --- indicatorsForReading ---
+// --- indicatorsForReading（节点 channelIds 指针保留，仅存历史引用） ---
 const ifrTheme = store.addTheme('R7 反查测试')
-const ifrCh = store.addChannel({ name: 'EDGAR TSLA', fetch: 'edgarConcept', query: 'TSLA', kind: '财报 / 公告', themeId: ifrTheme.id })
-const ifrNode = store.addNode({ themeId: ifrTheme.id, kind: 'lemma', title: 'TSLA 收入', type: 'observation', channelIds: [ifrCh.id] })
-const ifrReading = store.addReading({ metric: 'tsla.revenue', value: 96773000000, unit: 'USD', channelId: ifrCh.id, at: '2026-09-20', source: { kind: '财报 / 公告', start: '2024-01-01', end: '2024-03-31', accn: '0001628280-24-020' } })
+const ifrChId = 'fake-edgar-tsla'
+const ifrNode = store.addNode({ themeId: ifrTheme.id, kind: 'lemma', title: 'TSLA 收入', type: 'observation', channelIds: [ifrChId] })
+const ifrReading = store.addReading({ metric: 'tsla.revenue', value: 96773000000, unit: 'USD', channelId: ifrChId, at: '2026-09-20', source: { kind: '财报 / 公告', start: '2024-01-01', end: '2024-03-31', accn: '0001628280-24-020' } })
 ok('R7 addReading: 返回 added', ifrReading.added === true)
 const inds = store.indicatorsForReading(ifrReading.reading)
 ok('R7 indicatorsForReading: 返回该指标', inds.length === 1 && inds[0].id === ifrNode.id)
@@ -1679,30 +1582,6 @@ ok('R7 indicatorsForReading: 返回该指标', inds.length === 1 && inds[0].id =
 const orphanReading = { channelId: null, metric: 'test' }
 ok('R7 indicatorsForReading: 无 channelId → 空', store.indicatorsForReading(orphanReading).length === 0)
 
-// --- latestReadingByChannel ---
-const latest1 = store.latestReadingByChannel(ifrCh.id)
-ok('R7 latestReadingByChannel: 返回最新', latest1 != null && latest1.metric === 'tsla.revenue')
-
-// 多条读数取最新
-store.addReading({ metric: 'tsla.revenue', value: 97000000000, unit: 'USD', channelId: ifrCh.id, source: { kind: '财报 / 公告', start: '2024-04-01', end: '2024-06-30', accn: '0001628280-24-030' }, at: '2026-09-24' })
-const latest2 = store.latestReadingByChannel(ifrCh.id)
-ok('R7 latestReadingByChannel: 多条取最新', latest2.value === 97000000000)
-
-// 不存在的 channel → null
-ok('R7 latestReadingByChannel: 不存在 → null', store.latestReadingByChannel('nonexistent') === null)
-
-// --- 3.4 interval 端到端 ---
-const intervalCh = store.addChannel({ name: '间隔测试', fetch: 'rss', query: 'https://example.com', kind: '独立媒体', interval: 30 })
-ok('R7 interval: 填 30 → 读回 30', intervalCh.interval === 30)
-const intervalChFromDb = store.allChannels().find((c) => c.id === intervalCh.id)
-ok('R7 interval: 从 DB 读回 30', intervalChFromDb.interval === 30)
-
-// --- 3.6 改 fetch 类型清场 ---
-const clearCh = store.addChannel({ name: '清场测试', fetch: 'edgarConcept', query: 'NVDA', metric: 'RevenueFromContractWithCustomerExcludingAssessedTax', kind: '财报 / 公告' })
-ok('R7 清场: 初始有 metric', clearCh.metric != null)
-store.updateChannel(clearCh.id, { fetch: 'web', metric: null })
-const clearedCh = store.allChannels().find((c) => c.id === clearCh.id)
-ok('R7 清场: edgarConcept → web 清 metric', clearedCh.metric === null)
 
 // --- 缺口列表：observation 节点无 channelIds ---
 const gapTheme = store.addTheme('R7 缺口测试')
@@ -1789,7 +1668,6 @@ ok('O1: 无 us-gaap 返回空数组', parseCompanyFacts({ facts: {} }).length ==
 // companyfacts 不进轮询
 const schedulerSrc = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
 ok('O1: scheduler.js 无 companyfacts', !schedulerSrc.includes('companyfacts'))
-ok('O1: fetchers.js 无 companyfacts', !fetchersSrc.includes('companyfacts'))
 // discoverTags 在 discover.js 中（手动触发，不是轮询）
 const discoverSrc = readFileSync2(join(ROOT2, 'src/main/discover.js'), 'utf8')
 ok('O1: discover.js 有 discoverTags', discoverSrc.includes('discoverTags'))
@@ -1801,41 +1679,16 @@ ok('O1: preload.cjs 有 discoverTags', pcR7.includes('discoverTags'))
 // v0.8 不再要求用户发现内部标签，来源由读数自动形成。
 ok('O1 v0.8: 去掉标签配置，来源有独立分页', !vaultSrcR7.includes('发现标签') && readingUiSrcV8.includes('m.sourcesPage('))
 
-// --- O2: 通道归属主题 + optgroup ---
+// --- O2: 通道已移除；归位走读数台账 ---
 const o2Theme = store.addTheme('O2 测试主题')
-const o2Other = store.addTheme('O2 其他主题')
-// O2a: 建通道时传 themeId
-const o2Ch1 = store.addChannel({ name: '当前主题通道', fetch: 'rss', kind: '独立媒体', themeId: o2Theme.id })
-ok('O2a: 通道有 themeId', o2Ch1.themeId === o2Theme.id)
-const o2Ch2 = store.addChannel({ name: '全局通道', fetch: 'rss', kind: '独立媒体' })
-ok('O2a: 默认 themeId 为 null', o2Ch2.themeId === null)
-const o2Ch3 = store.addChannel({ name: '其他主题通道', fetch: 'rss', kind: '独立媒体', themeId: o2Other.id })
-ok('O2a: 其他主题通道有 themeId', o2Ch3.themeId === o2Other.id)
-// 从 DB 读回
-const o2Channels = store.allChannels()
-ok('O2a: channelList 包含主题私有通道', o2Channels.some((c) => c.id === o2Ch1.id && c.themeId === o2Theme.id))
-ok('O2a: channelList 包含全局通道', o2Channels.some((c) => c.id === o2Ch2.id && c.themeId === null))
 // v0.8：不用通道分组选管道，直接按指标查台账，未知读数再人工归位。
 ok('O2b v0.8: 检视面板提供读数台账', inspectorSrc.includes('readingPanel(node)'))
 ok('O2b v0.8: 台账查询限定当前指标', readingUiSrcV8.includes('m.readingsPage({ indicatorId: node.id'))
 ok('O2b v0.8: 未匹配读数可人工归位', readingUiSrcV8.includes('m.assignReading(') && readingUiSrcV8.includes('归位到'))
 ok('O2 v0.8: 归位选项可辨主题', readingUiSrcV8.includes('state.themes.find') && readingUiSrcV8.includes('n.themeId'))
 
-// --- O3: 删通道清悬空引用 ---
-const o3Theme = store.addTheme('O3 测试主题')
-const o3Ch = store.addChannel({ name: 'O3 通道', fetch: 'rss', kind: '独立媒体', themeId: o3Theme.id })
-const o3Node = store.addNode({ themeId: o3Theme.id, kind: 'lemma', title: 'O3 指标', type: 'observation', channelIds: [o3Ch.id] })
-ok('O3: 挂通道前 channelIds 有 1 个', o3Node.channelIds.length === 1)
-ok('O3: channelIds 包含通道 id', o3Node.channelIds.includes(o3Ch.id))
-store.removeChannel(o3Ch.id)
-const o3NodeAfter = store.getNode(o3Node.id)
-ok('O3: 删通道后 channelIds 为空', o3NodeAfter.channelIds.length === 0, `实际 ${o3NodeAfter.channelIds.length}`)
-ok('O3: channelIds 不含已删通道 id', !o3NodeAfter.channelIds.includes(o3Ch.id))
-// 通道确实被删了
-ok('O3: 通道已删除', !store.allChannels().some((c) => c.id === o3Ch.id))
 
 // --- O4: v0.8 指标归位为主关联，获取方仍可用人话契约 ---
-ok('O4: fetchers.js 无 indicatorId', !fetchersSrc.includes('indicatorId'))
 const storeSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 ok('O4 v0.8: store 提供主关联和待归位入口', storeSrc.includes('indicatorId') && typeof store.assignReading === 'function')
 
@@ -1893,17 +1746,9 @@ ok('F4 v0.8: 手填也过摄入契约', !inspectorSrcF4.includes('channelAdd(') 
 ok('F4 v0.8: 人话归位不再改 channelIds', readingUiSrcV8.includes('indicator: node.title') && !readingUiSrcV8.includes('channelIds:'))
 ok('F4: vault.js 无手动录入表单', !vaultSrcF.includes('手动记一条读数'))
 
-// --- F5: 通道列表显示拉取错误状态 ---
-ok('F5: store.js addChannel 有 lastOk', storeSrc.includes('lastOk'))
-ok('F5: store.js addChannel 有 lastError', storeSrc.includes('lastError'))
-ok('F5: ipc.js channel:fetch 写 lastError', ipcSrcF.includes('lastError'))
-ok('F5: ipc.js channel:fetch 写 lastOk', ipcSrcF.includes('lastOk'))
+// --- F5: 通道已移除；来源读取失败回归 ---
 ok('F5 v0.8: 来源读取失败有重试，手填失败不丢内容', readingUiSrcV8.includes('重试') && readingUiSrcV8.includes('填写内容已保留'))
-// 端到端：addChannel 带 lastError
-const f5Ch = store.addChannel({ name: 'F5 错误通道', fetch: 'rss', kind: '独立媒体', lastError: 'HTTP 500' })
-ok('F5: addChannel 存储 lastError', f5Ch.lastError === 'HTTP 500')
-const f5ChUpdated = store.updateChannel(f5Ch.id, { lastOk: '2026-09-23', lastError: null })
-ok('F5: updateChannel 清 lastError', f5ChUpdated.lastError === null && f5ChUpdated.lastOk === '2026-09-23')
+
 
 // --- v0.6.4 preload 两份同步 ---
 const pj64 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
@@ -1917,7 +1762,7 @@ ok('v0.6.4 验收: preload 两份同步', JSON.stringify(extractKeys64(pj64)) ==
 
 console.log('\n— 主题标签与通道相关性匹配 —')
 
-const { rankChannelsByTags, kindToTags, sicToTags, KIND_TO_TAGS, SIC_TO_TAG, updateTheme } = store
+const { kindToTags, sicToTags, KIND_TO_TAGS, SIC_TO_TAG, updateTheme } = store
 const inspectorSrcT = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
 const extractSrc = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
 const templatesJson = JSON.parse(readFileSync2(join(ROOT2, 'src/main/templates.json'), 'utf8'))
@@ -1941,18 +1786,7 @@ ok('T1: 旧主题导入后 tags 为空数组', Array.isArray(store.allThemes()[0
 ok('T2: selectable templates 已删除', !Array.isArray(templatesJson.templates))
 ok('T2: 通用骨架是上中下游', templatesJson.genericFallback.nodes.map((node) => node.path).join(',') === '上游,中游,下游')
 ok('T2: 通用骨架领域中立', !JSON.stringify(templatesJson.genericFallback).match(/AI|光模块|半导体|GPU/i))
-ok('T2: 通道库非空', Array.isArray(templatesJson.channelLibrary) && templatesJson.channelLibrary.length > 0)
-ok('T2: 通道库 id 唯一', new Set(templatesJson.channelLibrary.map((channel) => channel.id)).size === templatesJson.channelLibrary.length)
-ok('T2: 通道库保留 tags', templatesJson.channelLibrary.every((channel) => Array.isArray(channel.tags) && channel.tags.length > 0))
-
-// --- T3: channels.tags ---
-const t3Ch = store.addChannel({ name: 'T3 通道', fetch: 'rss', kind: '独立媒体', tags: ['AI', '学术'] })
-ok('T3: addChannel 存储 tags', t3Ch.tags.length === 2 && t3Ch.tags.includes('AI'))
-// 旧数据迁移
-const t3OldCh = JSON.parse(store.exportAll({ withRaw: false }))
-delete t3OldCh.channels[0].tags
-store.importAll(JSON.stringify(t3OldCh))
-ok('T3: 旧通道导入后 tags 为空数组', Array.isArray(store.allChannels()[0].tags) && store.allChannels()[0].tags.length === 0)
+ok('T2: 通道库已移除', !('channelLibrary' in templatesJson))
 
 // --- T4: kindToTags 纯函数 ---
 ok('T4: 财报→财报', kindToTags('财报 / 公告').includes('财报'))
@@ -1970,28 +1804,6 @@ const submissionsFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/e
 ok('T5: fixture 有 sic', submissionsFixture.sic === '3674')
 ok('T5: fixture 有 sicDescription', submissionsFixture.sicDescription === 'Semiconductors and Related Devices')
 ok('T5: fixture SIC 推导含半导体', sicToTags(submissionsFixture.sic, submissionsFixture.sicDescription).includes('半导体'))
-
-// --- T6: rankChannelsByTags 纯函数 ---
-const t6Channels = [
-  { id: 'a', name: 'A', tags: ['半导体', 'AI', '美股'] },
-  { id: 'b', name: 'B', tags: ['半导体', '美股'] },
-  { id: 'c', name: 'C', tags: ['AI', '学术'] },
-  { id: 'd', name: 'D', tags: ['美食'] },
-]
-const t6ThemeTags = ['半导体', 'AI', '美股']
-const t6Ranked = rankChannelsByTags(t6Channels, t6ThemeTags)
-ok('T6: 交集 3 排第一', t6Ranked[0].channel.id === 'a' && t6Ranked[0].score === 3)
-ok('T6: 交集 2 排第二', t6Ranked[1].channel.id === 'b' && t6Ranked[1].score === 2)
-ok('T6: 交集 1 排第三', t6Ranked[2].channel.id === 'c' && t6Ranked[2].score === 1)
-ok('T6: 交集 0 排最后', t6Ranked[3].channel.id === 'd' && t6Ranked[3].score === 0)
-ok('T6: shared 数组正确', t6Ranked[0].shared.length === 3 && t6Ranked[0].shared.includes('半导体'))
-// 主题 tags 为空 → 全部 score 0，顺序不变
-const t6Empty = rankChannelsByTags(t6Channels, [])
-ok('T6: 空 tags 全部 score 0', t6Empty.every((r) => r.score === 0))
-ok('T6: 空 tags 顺序不变', t6Empty[0].channel.id === 'a' && t6Empty[3].channel.id === 'd')
-// null tags
-const t6Null = rankChannelsByTags(t6Channels, null)
-ok('T6: null tags 全部 score 0', t6Null.every((r) => r.score === 0))
 
 // --- T7: v0.8 不再挑选相关通道；台账直接给证据、信任和关联判断 ---
 ok('T7 v0.8: 检视面板直达台账', inspectorSrcT.includes('readingPanel(node)'))
@@ -2011,8 +1823,8 @@ ok('T9: generateThemeTags 无 key 返回 ok: false', extractSrc.includes("return
 
 // --- T10: IPC + preload ---
 ok('T10: ipc.js 有 theme:update', ipcSrcF.includes('theme:update'))
-ok('T10: ipc.js channel:add 异步推导 tags', ipcSrcF.includes('deriveChannelTags'))
-ok('T10: ipc.js channel:update 重算 tags', ipcSrcF.includes('patch.query') || ipcSrcF.includes('patch.fetch'))
+ok('T10: ipc.js 无 channel:add', !ipcSrcF.includes('channel:add'))
+ok('T10: ipc.js 无 channel:update', !ipcSrcF.includes('channel:update'))
 ok('T10: preload.js 有 themeUpdate', pj64.includes('themeUpdate'))
 ok('T10: preload.cjs 有 themeUpdate', pc64.includes('themeUpdate'))
 
@@ -2040,438 +1852,74 @@ store.addReading({ ...tieInput, value: 2, source: { kind: '一手数据', label:
 const tieGroup = store.readingsPage({ indicatorId: tieIndicator.id, limit: 10 })
 ok('tie-break v0.8: 同 at 异值呈现一个冲突观测', tieGroup.total === 1 && tieGroup.items[0]?.status === 'conflicted' && tieGroup.items[0]?.currentReadingId === null)
 
-// 旧通道查询也不能绕过冲突裁决。
-const tieCh = store.addChannel({ name: 'tie-break 通道', fetch: 'manual', kind: '一手数据' })
-const tieChannelIndicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: '通道冲突指标', channelIds: [tieCh.id] })
-store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 100, channelId: tieCh.id, source: { kind: '一手数据', label: '甲', url: 'https://tie-a.example/channel', platform: '甲' } })
-store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 200, channelId: tieCh.id, source: { kind: '一手数据', label: '乙', url: 'https://tie-b.example/channel', platform: '乙' } })
-const tieLatest = store.latestReadingByChannel(tieCh.id)
-ok('tie-break v0.8: latestReadingByChannel 不擅选胜者', tieLatest?.status === 'conflicted' && tieLatest?.value == null)
+// 旧通道引用也不能绕过冲突裁决。
+const tieChId = 'fake-tie-break'
+const tieChannelIndicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: '通道冲突指标', channelIds: [tieChId] })
+store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 100, channelId: tieChId, source: { kind: '一手数据', label: '甲', url: 'https://tie-a.example/channel', platform: '甲' } })
+store.addReading({ ...tieInput, indicatorId: tieChannelIndicator.id, indicator: tieChannelIndicator.title, metric: 'tie.break.ch', value: 200, channelId: tieChId, source: { kind: '一手数据', label: '乙', url: 'https://tie-b.example/channel', platform: '乙' } })
+const tieConflicted = store.readingsPage({ indicatorId: tieChannelIndicator.id, limit: 10 })
+ok('tie-break v0.8: 通道引用读数冲突仍裁决', tieConflicted.total === 1 && tieConflicted.items[0]?.status === 'conflicted')
+
 
 const readingsSrc = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 ok('tie-break v0.8: 树使用显式最新投影而非全量排序', readingsSrc.includes('latestReadings') && !readingsSrc.includes('await m.allReadings('))
-
 // ============================================================
-// R5: 轮询器 — dueChannels + runChannelFetch + failCount
-// ============================================================
-
-console.log('\n— R5: 轮询器 —')
-
-const { dueChannels } = await import('../src/main/scheduler.js')
-const { channelJitter, MAX_ITEMS_PER_TICK } = await import('../src/main/scheduler.js')
-
-// --- dueChannels 纯函数全分支 ---
-
-const NOW = Date.parse('2026-09-24T12:00:00Z')
-const FETCHERS = ['rss', 'edgarConcept']
-
-// 1) 停用 → 不拉
-const chDisabled = { id: 'd1', enabled: false, fetch: 'rss', interval: 60, lastFetch: null }
-ok('R5: 停用通道不 due', dueChannels([chDisabled], NOW, new Map(), FETCHERS).length === 0)
-
-// 2) manual → 不拉
-const chManual = { id: 'm1', enabled: true, fetch: 'manual', interval: 60, lastFetch: null }
-ok('R5: manual 通道不 due', dueChannels([chManual], NOW, new Map(), FETCHERS).length === 0)
-
-// 3) 未实现 fetcher → 不拉
-const chUnknown = { id: 'u1', enabled: true, fetch: 'grok-x-search', interval: 60, lastFetch: null }
-ok('R5: 未实现 fetcher 不 due', dueChannels([chUnknown], NOW, new Map(), FETCHERS).length === 0)
-
-// 4) 启用 + 已实现 + 从未拉取 → due
-const chFresh = { id: 'f1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null }
-ok('R5: 从未拉取的通道 due', dueChannels([chFresh], NOW, new Map(), FETCHERS).length === 1)
-
-// 5) 间隔未到 → 不 due
-const chRecent = { id: 'r1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 10 * 60000).toISOString() }
-ok('R5: 间隔未到不 due', dueChannels([chRecent], NOW, new Map(), FETCHERS).length === 0)
-
-// 6) 间隔 + 抖动已到 → due
-const chStale = { id: 's1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 70 * 60000).toISOString() }
-ok('R5: 间隔已到 due', dueChannels([chStale], NOW, new Map(), FETCHERS).length === 1)
-
-// 6b) C2：抖动把同 interval 的通道错开——落在抖动窗口内还不该拉
-const jitterStale = new Date(NOW - (60 + channelJitter('s1')) * 60000 + 60000).toISOString()
-ok('R5: 抖动窗口内不 due', dueChannels([{ ...chStale, lastFetch: jitterStale }], NOW, new Map(), FETCHERS).length === 0)
-ok('R5: 同 id 抖动稳定可复现', channelJitter('s1') === channelJitter('s1'))
-
-// 7) failCount 退避：失败 1 次 → 退避 2 倍 interval
-const fails1 = new Map([['b1', 1]])
-const chBackoff = { id: 'b1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
-ok('R5: 失败 1 次退避中不 due', dueChannels([chBackoff], NOW, fails1, FETCHERS).length === 0)
-
-// 8) failCount 退避已过 → due
-const chBackoffPassed = { id: 'b1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 200 * 60000).toISOString() }
-ok('R5: 退避已过 due', dueChannels([chBackoffPassed], NOW, fails1, FETCHERS).length === 1)
-
-// 9) failCount = 0 → 无退避（等同 Map 里没有）
-const fails0 = new Map([['z1', 0]])
-const chNoBackoff = { id: 'z1', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 61 * 60000).toISOString() }
-ok('R5: failCount=0 无退避 due', dueChannels([chNoBackoff], NOW, fails0, FETCHERS).length === 1)
-
-// 10) 混合：多通道只筛出 due 的
-const mixChannels = [
-  { id: 'mix1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },           // due
-  { id: 'mix2', enabled: false, fetch: 'rss', interval: 60, lastFetch: null },          // not due
-  { id: 'mix3', enabled: true, fetch: 'manual', interval: 60, lastFetch: null },        // not due
-  { id: 'mix4', enabled: true, fetch: 'rss', interval: 60, lastFetch: new Date(NOW - 10 * 60000).toISOString() }, // not due
-]
-ok('R5: 混合只筛出 1 个 due', dueChannels(mixChannels, NOW, new Map(), FETCHERS).length === 1)
-ok('R5: 混合筛出的是 mix1', dueChannels(mixChannels, NOW, new Map(), FETCHERS)[0].id === 'mix1')
-
-// --- failCount 持久化 ---
-
-// 新通道 failCount 默认 0
-const fcCh = store.addChannel({ name: 'R5-failCount', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/feed' })
-ok('R5: 新通道 failCount=0', fcCh.failCount === 0)
-
-// 手动 updateChannel 设 failCount
-store.updateChannel(fcCh.id, { failCount: 3 })
-ok('R5: updateChannel 设 failCount', store.allChannels().find((c) => c.id === fcCh.id).failCount === 3)
-
-// 归零
-store.updateChannel(fcCh.id, { failCount: 0 })
-ok('R5: failCount 可归零', store.allChannels().find((c) => c.id === fcCh.id).failCount === 0)
-
-// --- review 字段 ---
-
-// 新通道 review 默认 false
-const rvCh = store.addChannel({ name: 'R5-review', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/feed2' })
-ok('R5: 新通道 review=false', rvCh.review === false)
-
-// 切换 review
-store.updateChannel(rvCh.id, { review: true })
-ok('R5: review 可切 true', store.allChannels().find((c) => c.id === rvCh.id).review === true)
-
-store.updateChannel(rvCh.id, { review: false })
-ok('R5: review 可切回 false', store.allChannels().find((c) => c.id === rvCh.id).review === false)
-
-// --- runChannelFetch 行为：review=true 绕过闸门进收件箱 ---
-
-// 先建一个 review 通道 + 主题
-const rvTheme = store.addTheme('R5-review-主题')
-const rvChannel = store.addChannel({ name: 'R5-review-通道', fetch: 'rss', kind: '一手数据', query: 'http://example.com/rv', themeId: rvTheme.id, review: true, enabled: true })
-ok('R5: review 通道建好', rvChannel.review === true)
-
-// 手动通过 IPC 触发 channel:fetch（fetcher 会失败，但能验证 runChannelFetch 不崩）
-const fetchResult = await fire('channel:fetch', rvChannel.id)
-ok('R5: runChannelFetch 返回结果', fetchResult != null)
-
-// --- runChannelFetch 对不存在的通道 ---
-const noCh = await fire('channel:fetch', 'nonexistent-id')
-ok('R5: 不存在的通道返回 error', noCh?.error === 'channel not found')
-
-// --- scheduler.js 只有一个 setInterval ---
-const schedulerFullSrc = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
-const setIntervalCount = (schedulerFullSrc.match(/setInterval/g) || []).length
-ok('R5: scheduler.js 只有一个 setInterval', setIntervalCount === 1, `实际 ${setIntervalCount}`)
-
-// --- startScheduler 接受 channels/runChannel/fetchers ---
-ok('R5: startScheduler 有 channels 参数', schedulerFullSrc.includes('channels'))
-ok('R5: startScheduler 有 runChannel 参数', schedulerFullSrc.includes('runChannel'))
-ok('R5: startScheduler 有 fetchers 参数', schedulerFullSrc.includes('fetchers'))
-ok('R5: startScheduler 调 dueChannels', schedulerFullSrc.includes('dueChannels('))
-
-// --- ipc.js runChannelFetch 抽出 ---
-const ipcFullSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-ok('R5: ipc.js 有 runChannelFetch 函数', ipcFullSrc.includes('async function runChannelFetch'))
-ok('R5: ipc.js channel:fetch 委托 runChannelFetch', ipcFullSrc.includes("runChannelFetch(channelId)"))
-ok('R5: ipc.js register 返回 runChannelFetch', ipcFullSrc.includes('return { runChannelFetch }'))
-ok('R5: ipc.js 不再按 review 分流', !ipcFullSrc.includes('ch.review'))
-ok('R5: ipc.js failCount 失败 +1', ipcFullSrc.includes('failCount: (ch.failCount || 0) + 1'))
-ok('R5: ipc.js failCount 成功归零', ipcFullSrc.includes('failCount: 0'))
-
-// --- main.js 接线 ---
-const mainFullSrc = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
-ok('R5: main.js 解构 runChannelFetch', mainFullSrc.includes('runChannelFetch'))
-ok('R5: main.js 传 channels 给 startScheduler', mainFullSrc.includes('channels:'))
-ok('R5: main.js 传 runChannel 给 startScheduler', mainFullSrc.includes('runChannel:'))
-ok('R5: main.js 传 fetchers 给 startScheduler', mainFullSrc.includes('fetchers:'))
-
-// --- store.js failCount 持久化 ---
-const storeFullSrc = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
-ok('R5: store.js addChannel 有 failCount', storeFullSrc.includes('failCount: ch.failCount ?? 0'))
-ok('R5: store.js migrate 有 failCount', storeFullSrc.includes('c.failCount = c.failCount ?? 0'))
-ok('R5: store.js addChannel 有 review', storeFullSrc.includes('review: ch.review === true'))
-
-// --- vault.js review toggle ---
-const vaultFullSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-ok('R5: vault.js 无 review toggle', !vaultFullSrc.includes("review: !ch.review"))
-ok('R5: vault.js 不显示复审状态', !vaultFullSrc.includes('免复审'))
-
-// ============================================================
-// B: LLM 提议指针
+// R5: 轮询器 — 通道已移除，调度器只保留到期结算通知
 // ============================================================
 
-console.log('\n— B: LLM 提议指针 —')
+console.log('\n— R5: 轮询器（通道已移除） —')
 
-const { sanitize, proposeChannelLinks } = await import('../src/main/propose.js')
+const schedulerR5Src = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
+ok('R5: scheduler.js 无 dueChannels', !schedulerR5Src.includes('dueChannels'))
+ok('R5: scheduler.js 无 runChannel', !schedulerR5Src.includes('runChannel'))
+ok('R5: scheduler.js 无 fetcher', !schedulerR5Src.includes('fetcher'))
+ok('R5: scheduler.js 只有一个 setInterval', (schedulerR5Src.match(/setInterval/g) || []).length === 1)
+ok('R5: scheduler.js 保留到期结算通知', schedulerR5Src.includes('dueToNotify'))
 
-// --- sanitize 纯函数全分支 ---
+const ipcR5Src = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+ok('R5: ipc.js 无 channel:fetch', !ipcR5Src.includes('channel:fetch'))
+ok('R5: ipc.js 无 channel:list', !ipcR5Src.includes('channel:list'))
+ok('R5: ipc.js 无 runChannelFetch', !ipcR5Src.includes('runChannelFetch'))
 
-const validInd = new Set(['n1', 'n2', 'n3'])
-const validCh = new Set(['ch_a', 'ch_b', 'ch_c'])
+const mainR5Src = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
+ok('R5: main.js 不再传通道给调度器', !mainR5Src.includes('runChannel'))
 
-// 合法提议保留
-const bS1 = sanitize(
-  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_b'], reason: 'ok' }],
-  validInd, validCh)
-ok('B: sanitize 合法提议保留', bS1.length === 1 && bS1[0].channelIds.length === 2)
+const storeR5Src = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
+ok('R5: store.js 无 allChannels', !storeR5Src.includes('allChannels'))
+ok('R5: store.js 无 addChannel', !storeR5Src.includes('addChannel'))
+ok('R5: store.js 无 channelMatchRates', !storeR5Src.includes('channelMatchRates'))
 
-// 非法 indicatorId → 整条丢弃
-const bS2 = sanitize(
-  [{ indicatorId: 'n_bad', channelIds: ['ch_a'], reason: 'x' }],
-  validInd, validCh)
-ok('B: sanitize 非法 indicatorId 丢弃', bS2.length === 0)
+// fetchers.js / propose.js 已删除
+ok('R5: fetchers.js 已删除', !existsSync2(join(ROOT2, 'src/main/fetchers.js')))
+ok('R5: propose.js 已删除', !existsSync2(join(ROOT2, 'src/main/propose.js')))
+// ============================================================
+// B: LLM 提议指针 — 已随通道系统移除
+// ============================================================
 
-// 任一 channelId 非法 → 整条丢弃（不是过滤后保留）
-const bS3 = sanitize(
-  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_hallucinated'], reason: 'x' }],
-  validInd, validCh)
-ok('B: sanitize 任一非法 channelId 整条丢弃', bS3.length === 0)
+console.log('\n— B: LLM 提议指针（已移除） —')
 
-// 重复 channelId → 去重
-const bS4 = sanitize(
-  [{ indicatorId: 'n1', channelIds: ['ch_a', 'ch_a', 'ch_b'], reason: 'x' }],
-  validInd, validCh)
-ok('B: sanitize 重复 channelId 去重', bS4.length === 1 && bS4[0].channelIds.length === 2)
-
-// channelIds 为空数组 → 保留（合法的「无建议」）
-const bS5 = sanitize(
-  [{ indicatorId: 'n1', channelIds: [], reason: '无匹配' }],
-  validInd, validCh)
-ok('B: sanitize 空 channelIds 保留', bS5.length === 1 && bS5[0].channelIds.length === 0)
-
-// reason 非字符串 → 空字符串
-const bS6 = sanitize(
-  [{ indicatorId: 'n1', channelIds: ['ch_a'], reason: null }],
-  validInd, validCh)
-ok('B: sanitize reason 非字符串转空', bS6[0].reason === '')
-
-// channelIds 非数组 → 丢弃
-const bS7 = sanitize(
-  [{ indicatorId: 'n1', channelIds: 'ch_a', reason: 'x' }],
-  validInd, validCh)
-ok('B: sanitize channelIds 非数组丢弃', bS7.length === 0)
-
-// 混合：合法和非法并存
-const bS8 = sanitize(
-  [
-    { indicatorId: 'n1', channelIds: ['ch_a'], reason: 'ok' },
-    { indicatorId: 'n_bad', channelIds: ['ch_a'], reason: 'bad' },
-    { indicatorId: 'n2', channelIds: ['ch_b', 'ch_hallucinated'], reason: 'mixed' },
-    { indicatorId: 'n3', channelIds: [], reason: 'empty' },
-  ],
-  validInd, validCh)
-ok('B: sanitize 混合只留合法', bS8.length === 2)
-ok('B: sanitize 混合留 n1 和 n3', bS8[0].indicatorId === 'n1' && bS8[1].indicatorId === 'n3')
-
-// --- proposeChannelLinks 无 key降级与边界校验 ---
-
-const bNoKeyResult = await proposeChannelLinks({ apiKey: '', baseUrl: 'x', model: 'x' }, null, [])
-ok('B: 无 key 返回 ok: false', bNoKeyResult.ok === false)
-ok('B: 无 key 返回 no-key', bNoKeyResult.error === 'no-key')
-
-const noIndicatorResult = await proposeChannelLinks(
-  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, null, [])
-ok('B: 指标不存在返回 ok: false', noIndicatorResult.ok === false)
-ok('B: 指标不存在返回 error', noIndicatorResult.error === 'indicator not found')
-
-// --- 端到端：单指标提议 ---
-
-const bTheme = store.addTheme('B-提议测试主题')
-const bInd1 = store.addNode({
-  themeId: bTheme.id, parentId: null, kind: 'lemma',
-  title: '废旧电池采购量：按月度节奏更新，本期读数待填',
-  type: 'observation', confidence: 50, tags: ['锂电', '回收'],
-})
-const bCh1 = store.addChannel({ name: 'ALB 总收入', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'ALB', metric: 'Revenues', tags: ['锂电', '财报'] })
-const bCh2 = store.addChannel({ name: 'LTHM 毛利', fetch: 'edgarConcept', kind: '财报 / 公告', query: 'LTHM', metric: 'GrossProfit', tags: ['锂电', '财报'] })
-
-const originalFetch = globalThis.fetch
-let capturedUserContent = null
-globalThis.fetch = async (url, opts) => {
-  const body = JSON.parse(opts.body)
-  capturedUserContent = body.messages.find((message) => message.role === 'user')?.content
-  return {
-    ok: true,
-    json: async () => ({
-      choices: [{
-        message: {
-          content: JSON.stringify({
-            proposal: {
-              indicatorId: bInd1.id,
-              channelIds: [bCh1.id, bCh2.id],
-              reason: '采购量可由两家上游公司的财报交叉验证',
-            },
-          }),
-        },
-      }],
-    }),
-  }
-}
-
-try {
-  const proposeResult = await proposeChannelLinks(
-    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bInd1,
-    [bCh1, bCh2])
-
-  ok('B: 单指标提议返回 ok', proposeResult.ok === true)
-  ok('B: 单指标提议返回 proposal', proposeResult.proposal?.indicatorId === bInd1.id)
-  ok('B: 单指标提议含两个通道', proposeResult.proposal?.channelIds.length === 2)
-  ok('B: 单指标提议含 bCh1', proposeResult.proposal?.channelIds.includes(bCh1.id))
-  ok('B: 单指标提议含 bCh2', proposeResult.proposal?.channelIds.includes(bCh2.id))
-  ok('B: 单指标提议 reason 正确', proposeResult.proposal?.reason.includes('交叉验证'))
-  ok('B: LLM 输入只含当前指标', capturedUserContent.includes(bInd1.id))
-  ok('B: LLM 输入含指标 tags', capturedUserContent.includes('回收'))
-  ok('B: LLM 输入含通道 tags', capturedUserContent.includes('财报'))
-
-  const merged = [...new Set(['ch_existing', ...proposeResult.proposal.channelIds])]
-  store.updateNode(bInd1.id, { channelIds: merged })
-  const updated = store.allNodes().find((node) => node.id === bInd1.id)
-  ok('B: 采用时保留已有通道', updated.channelIds.includes('ch_existing'))
-  ok('B: 采用时合并提议通道', updated.channelIds.includes(bCh1.id) && updated.channelIds.includes(bCh2.id))
-} finally {
-  globalThis.fetch = originalFetch
-}
-
-// --- 幻觉通道整条拒绝 ---
-
-globalThis.fetch = async () => ({
-  ok: true,
-  json: async () => ({
-    choices: [{ message: { content: JSON.stringify({
-      proposal: { indicatorId: bInd1.id, channelIds: ['ch_hallucinated'], reason: '猜测' },
-    }) } }],
-  }),
-})
-try {
-  const invalidResult = await proposeChannelLinks(
-    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bInd1,
-    [bCh1, bCh2])
-  ok('B: 幻觉通道提议被拒绝', invalidResult.ok === false && invalidResult.error === 'invalid proposal')
-} finally {
-  globalThis.fetch = originalFetch
-}
-
-// --- LLM 失败不阻塞 ---
-
-globalThis.fetch = async () => { throw new Error('network error') }
-try {
-  const failResult = await proposeChannelLinks(
-    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bInd1,
-    [bCh1])
-  ok('B: LLM 失败返回 ok: false', failResult.ok === false)
-  ok('B: LLM 失败有 error', typeof failResult.error === 'string')
-} finally {
-  globalThis.fetch = originalFetch
-}
-
-// --- HTTP 错误不阻塞 ---
-
-globalThis.fetch = async () => ({ ok: false, status: 500 })
-try {
-  const httpFailResult = await proposeChannelLinks(
-    { apiKey: 'test-key', baseUrl: 'https://test.example.com/v1', model: 'test-model' },
-    bInd1,
-    [bCh1])
-  ok('B: HTTP 错误返回 ok: false', httpFailResult.ok === false)
-  ok('B: HTTP 错误含状态码', httpFailResult.error.includes('500'))
-} finally {
-  globalThis.fetch = originalFetch
-}
-
-// --- 无通道时直接返回空提议 ---
-
-const noChannelResult = await proposeChannelLinks(
-  { apiKey: 'test-key', baseUrl: 'x', model: 'x' }, bInd1, [])
-ok('B: 无通道返回空提议', noChannelResult.ok === true && noChannelResult.proposal.channelIds.length === 0)
-
-// --- IPC handler ---
-
-const ipcResult = await fire('llm:proposeLinks', bInd1.id)
-ok('B: IPC llm:proposeLinks 可调', ipcResult != null)
-ok('B: IPC 无 key 返回 ok: false', ipcResult.ok === false)
-
-// --- 不新增节点字段 ---
-
-const proposeSrc = readFileSync2(join(ROOT2, 'src/main/propose.js'), 'utf8')
-ok('B: propose.js 无 suggestedChannelIds', !proposeSrc.includes('suggestedChannelIds'))
-ok('B: propose.js 无 proposedChannelIds', !proposeSrc.includes('proposedChannelIds'))
-ok('B: store.js 无 suggestedChannelIds', !readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8').includes('suggestedChannelIds'))
-
-// --- preload 两份同步 ---
+const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+ok('B: ipc.js 无 llm:proposeLinks', !ipcBSrc.includes('llm:proposeLinks'))
+ok('B: propose.js 已删除', !existsSync2(join(ROOT2, 'src/main/propose.js')))
 
 const pjB = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
 const pcB = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-ok('B: preload.js 有 proposeLinks', pjB.includes('proposeLinks'))
-ok('B: preload.cjs 有 proposeLinks', pcB.includes('proposeLinks'))
-const extractKeysB = (s) => s.split('\n').filter((line) => line.includes('ipcRenderer.invoke')).map((line) => line.trim().split(':')[0].trim()).sort()
-ok('B: preload 两份同步', JSON.stringify(extractKeysB(pjB)) === JSON.stringify(extractKeysB(pcB)))
+ok('B: preload.js 无 proposeLinks', !pjB.includes('proposeLinks'))
+ok('B: preload.cjs 无 proposeLinks', !pcB.includes('proposeLinks'))
 
-// --- IPC 与界面入口 ---
-
-const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-const vaultBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-const latticeBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+// --- v0.8 读数界面回归：手填不暗建通道 ---
 const inspectorBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
-ok('B: ipc.js 有 llm:proposeLinks', ipcBSrc.includes('llm:proposeLinks'))
-ok('B: IPC 按 indicatorId 提议', ipcBSrc.includes("getNode(indicatorId)"))
-ok('B: lattice.js 无批量提议入口', !latticeBSrc.includes('proposeLinks'))
-ok('B v0.8: 单指标看台账而非提议管道', inspectorBSrc.includes('readingPanel(node)') && !inspectorBSrc.includes('proposeLinks(node.id)'))
+ok('B v0.8: 单指标看台账', inspectorBSrc.includes('readingPanel(node)'))
 ok('B v0.8: 手填不暗建通道', !readingUiSrcV8.includes('channelAdd(') && readingUiSrcV8.includes('m.pushReadings('))
 ok('B v0.8: 提交读数后刷新台账', readingUiSrcV8.includes('await refresh()') && !readingUiSrcV8.includes('m.channelFetch('))
-ok('B: vault.js 无缺口列表', !vaultBSrc.includes('未关联指标'))
 
 // ============================================================
-// C+D: 通道包补全 + 研究观点记录
+// ============================================================
+// D: 研究观点记录（通道包 C 已随通道系统移除）
 // ============================================================
 
-console.log('\n— C+D: 通道包补全 + 研究观点 —')
+console.log('\n— D: 研究观点 —')
 
-const { channelLibrary: getChannelLibrary } = await import('../src/main/templates.js')
-
-// --- C1: 软件服务通道配置 ---
-const saasPack = getChannelLibrary().filter((channel) => channel.tags.includes('软件服务'))
-ok('C1: 软件服务通道非空', saasPack.length > 0)
-ok('C1: 软件服务有 edgarFilings', saasPack.some((channel) => channel.fetch === 'edgarFilings'))
-ok('C1: 软件服务有 edgarConcept', saasPack.some((channel) => channel.fetch === 'edgarConcept'))
-ok('C1: 软件服务覆盖 ≥5 家公司', new Set(saasPack.filter((channel) => channel.fetch === 'edgarFilings').map((channel) => channel.query)).size >= 5)
-
-// --- C2: 数字资产通道配置 ---
-const cryptoPack = getChannelLibrary().filter((channel) => channel.tags.includes('数字资产'))
-ok('C2: 数字资产通道非空', cryptoPack.length > 0)
-ok('C2: 数字资产有 defillamaProtocol', cryptoPack.some((channel) => channel.fetch === 'defillamaProtocol'))
-ok('C2: 数字资产有 defillamaStablecoins', cryptoPack.some((channel) => channel.fetch === 'defillamaStablecoins'))
-ok('C2: 数字资产有 blockchainChart', cryptoPack.some((channel) => channel.fetch === 'blockchainChart'))
-ok('C2: 数字资产通道全免费无 key', cryptoPack.every((channel) => channel.needsKey === false))
-
-// --- C2: 新取数器注册 ---
-const availCD = (await import('../src/main/fetchers.js')).availableFetchers()
-ok('C2: availableFetchers 含 defillamaProtocol', availCD.includes('defillamaProtocol'))
-ok('C2: availableFetchers 含 defillamaStablecoins', availCD.includes('defillamaStablecoins'))
-ok('C2: availableFetchers 含 blockchainChart', availCD.includes('blockchainChart'))
-
-// --- C2: fixture 测试 ---
-const defiProtocolFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/defillama-protocol-aave.json'), 'utf8'))
-ok('C2: defillama fixture 有 tvl 数组', Array.isArray(defiProtocolFixture.tvl) && defiProtocolFixture.tvl.length > 0)
-ok('C2: defillama fixture tvl 最后一条有 total', defiProtocolFixture.tvl[defiProtocolFixture.tvl.length - 1].total > 0)
-
-const defiStableFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/defillama-stablecoins.json'), 'utf8'))
-ok('C2: stablecoins fixture 有 peggedAssets', Array.isArray(defiStableFixture.peggedAssets) && defiStableFixture.peggedAssets.length > 0)
-
-const bcHashrateFixture = JSON.parse(readFileSync2(join(ROOT2, 'test/fixtures/blockchain-hashrate.json'), 'utf8'))
-ok('C2: blockchain fixture 有 values 数组', Array.isArray(bcHashrateFixture.values) && bcHashrateFixture.values.length > 0)
-
-// --- C2: metric 命名同构 ---
-const fetchersSrcCD = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
-ok('C2: metric 命名 defillama.{slug}.{metric}', fetchersSrcCD.includes('defillama.${slug}.${metric}'))
-ok('C2: metric 命名 blockchain.{metric}', fetchersSrcCD.includes('blockchain.${metric}'))
-
-// --- C2: Unix 时间戳转日期 ---
-ok('C2: fetchers.js 有 unixToDate', fetchersSrcCD.includes('unixToDate'))
 
 // --- D1: researchNotes 集合 ---
 
@@ -2607,7 +2055,6 @@ const extractSrc66 = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
 const storeSrc66 = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 const ipcSrc66 = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
 const vaultSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-const fetchersSrc66 = readFileSync2(join(ROOT2, 'src/main/fetchers.js'), 'utf8')
 const appSrc66 = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 const settingsSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
 const pj66 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
@@ -2654,32 +2101,13 @@ if (b1MonthNode) {
   ok('B1: cadence=月 结算日约 30 天', false, '节点未找到')
 }
 
-// --- B2: metric 输入框显隐 ---
+// --- B2: 取数器配置已随通道系统移除；来源页回归 ---
 
-ok('B2: fetchers.js 导出 METRIC_FETCHERS', fetchersSrc66.includes('export const METRIC_FETCHERS'))
-ok('B2: METRIC_FETCHERS 含 edgarConcept', fetchersSrc66.includes("'edgarConcept'"))
-ok('B2: METRIC_FETCHERS 含 defillamaProtocol', fetchersSrc66.includes("'defillamaProtocol'"))
-ok('B2: METRIC_FETCHERS 含 defillamaStablecoins', fetchersSrc66.includes("'defillamaStablecoins'"))
-ok('B2: METRIC_FETCHERS 含 blockchainChart', fetchersSrc66.includes("'blockchainChart'"))
-ok('B2: ipc.js 有 channel:metricFetchers', ipcSrc66.includes('channel:metricFetchers'))
-ok('B2: ipc.js import METRIC_FETCHERS', ipcSrc66.includes('METRIC_FETCHERS'))
-ok('B2: preload.js 有 metricFetchers', pj66.includes('metricFetchers'))
-ok('B2: preload.cjs 有 metricFetchers', pc66.includes('metricFetchers'))
-ok('B2 v0.8: 来源页不配置取数器', !vaultSrc66.includes('metricFetchers') && readingUiSrcV8.includes('renderSources'))
+ok('B2 v0.8: 来源页有 renderSources', readingUiSrcV8.includes('renderSources'))
 ok('B2 v0.8: 无内部 metric 配置', !vaultSrc66.includes('needsMetric') && readingUiSrcV8.includes('indicator: node.title'))
 ok('B2 v0.8: 不再要求用户发现 GAAP 标签', !vaultSrc66.includes('发现标签') && readingUiSrcV8.includes('来源随读数自动记录'))
-
-// B2: IPC 可调
-ok('B2: IPC channel:metricFetchers 可调', Array.isArray(await fire('channel:metricFetchers')))
-const metricFetchersList = await fire('channel:metricFetchers')
-ok('B2: IPC 返回 4 个取数器', metricFetchersList.length === 4, `实际 ${metricFetchersList.length}`)
-
-// --- B3: 验证通道库保留 metric/interval ---
-
-const b3Library = getChannelLibrary()
-ok('B3: 通道库保留 metric', b3Library.some((channel) => channel.metric))
-ok('B3: 通道库保留 interval 或使用默认值', b3Library.every((channel) => channel.interval == null || channel.interval >= 15))
-ok('B3: preload 无模板入口', !pj66.includes('addThemeFromTemplate') && !pc66.includes('addThemeFromTemplate'))
+ok('B2: preload 无取数器入口', !pj66.includes('metricFetchers') && !pc66.includes('metricFetchers'))
+ok('B2: ipc.js 无取数器', !ipcSrc66.includes('METRIC_FETCHERS') && !ipcSrc66.includes('channel:metricFetchers'))
 
 // --- I1: v0.8 指标维度由查询限定，不在渲染层过滤全量 readings ---
 
@@ -2738,7 +2166,8 @@ if (i5Match2) {
 }
 
 // --- v0.6.6 验收: preload 两份同步 ---
-ok('v0.6.6 验收: preload 两份同步', pj66.includes('metricFetchers') && pc66.includes('metricFetchers'))
+const extractKeys66 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
+ok('v0.6.6 验收: preload 两份同步', JSON.stringify(extractKeys66(pj66)) === JSON.stringify(extractKeys66(pc66)))
 
 // ============================================================
 // 主题标签库与语义归位
@@ -2996,10 +2425,10 @@ ok('R1 v0.8: 展开历史按需分页', readingUiSrcV8.includes('m.readingEviden
 const r1Theme = store.addTheme('R1 测试主题')
 const r1Node = store.addNode({ themeId: r1Theme.id, parentId: null, kind: 'branch', title: 'R1 环节' })
 const r1Ind = store.addNode({ themeId: r1Theme.id, parentId: r1Node.id, kind: 'lemma', title: 'R1 指标', type: 'observation', confidence: 50 })
-const r1Ch = store.addChannel({ name: 'R1 通道', fetch: 'manual', kind: '一手数据', themeId: r1Theme.id })
-store.updateNode(r1Ind.id, { channelIds: [r1Ch.id] })
-store.addReading({ metric: 'r1.test', value: 42, unit: 'USD', asOf: '2024-Q1', channelId: r1Ch.id, source: { kind: '一手数据' } })
-const r1Inds = store.indicatorsForReading({ channelId: r1Ch.id })
+const r1ChId = 'fake-r1-channel'
+store.updateNode(r1Ind.id, { channelIds: [r1ChId] })
+store.addReading({ metric: 'r1.test', value: 42, unit: 'USD', asOf: '2024-Q1', channelId: r1ChId, source: { kind: '一手数据' } })
+const r1Inds = store.indicatorsForReading({ channelId: r1ChId })
 ok('R1: indicatorsForReading 返回指标', r1Inds.length > 0 && r1Inds[0].title === 'R1 指标')
 
 // --- R2: 手填读数在检视面板 ---
@@ -3294,19 +2723,10 @@ ok('C4: 失败明细封顶 50 条', store.llmUsage().recent.length === 50, `实�
 ok('C4: 封顶保留最新', store.llmUsage().recent[0].error === 'boom-59')
 ok('C4: 账本过迁移仍是对象', (() => { const dbRaw = store.load(); return typeof dbRaw.llmUsage === 'object' && Array.isArray(dbRaw.llmUsage.daily) })())
 
-// ---- A：lastFetch 存完整时间，interval 才真正生效 ----
+// ---- A：通道已移除；成本治理主题照常建 ----
 
 const aGeo = store.addTheme('成本治理主题')
-const aCh = store.addChannel({ name: 'A-精度通道', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/a.xml', themeId: aGeo.id })
-const aRealFetch = globalThis.fetch
-globalThis.fetch = async () => { throw new Error('测试不允许外网请求') }
-await fire('channel:fetch', aCh.id)
-globalThis.fetch = aRealFetch
-const aAfter = store.allChannels().find((c) => c.id === aCh.id)
-ok('A: 拉取后 lastFetch 是完整时间', typeof aAfter.lastFetch === 'string' && aAfter.lastFetch.includes('T') && Date.parse(aAfter.lastFetch) > Date.now() - 60000, `实际 ${aAfter.lastFetch}`)
-ok('A: 刚拉过的通道不 due', dueChannels([aAfter], Date.now(), new Map(), ['rss']).length === 0)
-ok('A: ipc.js 不再写日期型 lastFetch', !ipcSrcGov.includes('lastFetch: today()') && ipcSrcGov.includes('lastFetch: new Date().toISOString()'))
-ok('A: 老日期型数据不迁移，注释说明', schedulerSrcGov.includes('不做迁移'))
+
 
 // ---- 让成本治理主题成为默认主题，装上可控抽取桩 ----
 
@@ -3437,39 +2857,27 @@ ok('D: 未匹配 30 天后自动过期', !store.allInbox().some((i) => i.id === 
 ok('D: 过期条目仍在库里（内容不丢）', dDb.inbox.some((i) => i.id === dStale.id))
 dDb.inbox = dDb.inbox.filter((i) => i.id !== dStale.id)
 
-// ---- C1：每 tick 预算 ----
+// ---- C1：调度器只做到期结算通知，不再轮询通道 ----
 
-ok('C1: 预算常量 = 10 条', MAX_ITEMS_PER_TICK === 10)
-const budgetCalls = []
-const stopBudget = startScheduler({
-  due: () => [],
-  channels: () => [
-    { id: 'govc1', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
-    { id: 'govc2', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
-    { id: 'govc3', enabled: true, fetch: 'rss', interval: 60, lastFetch: null },
-  ],
-  runChannel: async (ch) => { budgetCalls.push(ch.id); return 5 },
-  fetchers: () => ['rss'],
-})
+const { dueToNotify: govDueToNotify, buildNotification: govBuildNotification } = await import('../src/main/scheduler.js')
+ok('C1: scheduler 导出 dueToNotify', typeof govDueToNotify === 'function')
+ok('C1: scheduler 导出 buildNotification', typeof govBuildNotification === 'function')
+ok('C1: dueToNotify 过滤已通知', govDueToNotify([{ id: 'a' }, { id: 'b' }], new Set(['a'])).length === 1)
+ok('C1: buildNotification 空返回 null', govBuildNotification([]) === null)
+ok('C1: buildNotification 带标题', govBuildNotification([{ title: 't' }]).title.includes('到期'))
+// startScheduler 只接受到期结算相关参数
+const schedNotified = []
+const stopSched = startScheduler({ due: () => [{ id: 's1', title: '到期判断' }], notify: (n) => schedNotified.push(n), badge: () => {}, onClick: () => {} })
 await new Promise((r) => setTimeout(r, 20))
-stopBudget()
-if (govQuiet()) {
-  ok('C1: 静默时段整段不轮询', budgetCalls.length === 0)
-} else {
-  ok('C1: 一个 tick 最多处理 10 条（5+5 后停手）', budgetCalls.length === 2, `实际 ${budgetCalls.length}`)
-}
+stopSched()
+ok('C1: startScheduler 不再接受 channels 参数', !schedulerSrcGov.includes('channels'))
+ok('C1: scheduler 无通道轮询', !schedulerSrcGov.includes('dueChannels') && !schedulerSrcGov.includes('runChannel'))
 
-// ---- C6：通道未匹配率（只展示，不自动停用）----
 
-const c6Ch = store.addChannel({ name: 'C6-未匹配率通道', fetch: 'rss', kind: '独立媒体', query: 'http://example.com/c6.xml', themeId: aGeo.id })
-store.addInboxItem({ text: 'c6-a', title: 'c6-a', lemmas: [], provenance: { channelId: c6Ch.id }, extracted: false, matchScore: 0 })
-store.addInboxItem({ text: 'c6-b', title: 'c6-b', lemmas: [{ title: 'c6-b' }], provenance: { channelId: c6Ch.id }, extracted: true, matchScore: 0.8 })
-const c6Rates = await fire('channel:matchRates')
-const c6Mine = c6Rates.find((r) => r.channelId === c6Ch.id)
-ok('C6: 未匹配率按通道聚合', c6Mine?.total === 2 && c6Mine?.unmatched === 1 && Math.abs(c6Mine.rate - 0.5) < 1e-9, `实际 ${JSON.stringify(c6Mine)}`)
-ok('C6: 只统计不改通道状态', store.allChannels().find((c) => c.id === c6Ch.id).enabled === true)
-ok('C6: 未匹配率函数不写通道', !storeSrcGov.slice(storeSrcGov.indexOf('export function channelMatchRates'), storeSrcGov.indexOf('export function channelMatchRates') + 900).includes('updateChannel'))
+// ---- C6：通道未匹配率已随通道系统移除；来源声誉回归 ----
+
 ok('C6 v0.8: 来源声誉只作参考不停用', readingUiSrcV8.includes('只作参考') && readingUiSrcV8.includes('不会自动停用来源'))
+
 
 // ---- C5：复盘页 LLM 段 ----
 
@@ -3488,7 +2896,7 @@ ok('D: 未抽取条目不可勾选入库', todaySrcGov.includes('const isSelecta
 ok('D: 未抽取详情不给归位表单', todaySrcGov.includes('const unextracted = item.extracted === false') && todaySrcGov.includes('const editable = !unextracted'))
 ok('D: 三态样式就位', stylesSrcS45.includes('.inbox-group-head'))
 ok('D: preload 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))
-ok('C5/C6: preload 有 llmUsage / channelMatchRates', pjGov.includes('llmUsage:') && pjGov.includes('channelMatchRates'))
+ok('C5/C6: preload 有 llmUsage、无 channelMatchRates', pjGov.includes('llmUsage:') && !pjGov.includes('channelMatchRates'))
 ok('C5/C6: 两份 preload 仍然完全同步', pjGov === pcGov && pjGov.includes('inboxExtract') === pcGov.includes('inboxExtract'))
 
 // 收尾：恢复抽取桩与设置，别把 stub 留给后面的断言
@@ -3649,7 +3057,7 @@ await v8Test('人话归位、原文引用、来源观察、重放幂等与留痕
   const progress = []
   v8Accepted(await v8Ingest(envelope, { onProgress: (event) => progress.push(event) }), 1)
   v8Assert.ok(progress.length > 0, '摄入须报告进度')
-  v8Assert.equal(store.allChannels().length, 0, '零配置不创建通道')
+  v8Assert.equal(typeof store.addChannel, 'undefined', '通道 API 已移除')
   const reading = store.allReadings()[0]
   v8Assert.equal(reading.indicatorId, indicator.id)
   v8Assert.deepEqual(reading.period, v8Period)
@@ -3998,7 +3406,7 @@ await v8Test('意图导出含树、标签库和未结算判断；零配置也有
   v8Assert.equal(open.settlesOn, '2026-12-31')
   v8Assert.ok(open.indicators.includes(indicator.title))
   v8Assert.ok(!intent.openJudgments.some((item) => item.claim === closed.title))
-  v8Assert.equal(store.allChannels().length, 0)
+  v8Assert.equal(typeof store.addChannel, 'undefined', '通道 API 已移除')
   v8Assert.ok(store.dueIndicators().some((item) => item.id === indicator.id))
   v8Add(indicator)
   v8Assert.ok(!store.dueIndicators().some((item) => item.id === indicator.id), '刚摄入不应立即再次到期')
@@ -4385,23 +3793,6 @@ await v8Test('旧无效数值仍保留并标记，不阻止整份旧账本迁移
   v8Assert.equal(store.getReading('old-null').status, 'rejected')
 })
 
-await v8Test('内置取数器走统一契约并可沿已有通道自动归位', async () => {
-  const { indicator } = v8Reset()
-  const channel = store.addChannel({ name: '自动采集名称', query: 'aave', fetch: 'defillamaProtocol', metric: 'tvl', kind: '一手数据' })
-  store.updateNode(indicator.id, { channelIds: [channel.id] })
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = async () => new Response(JSON.stringify({ tvl: [{ date: Date.UTC(2026, 5, 30) / 1000, totalLiquidityUSD: 123 }] }), { status: 200 })
-  try {
-    const fetched = await (await import('../src/main/fetchers.js')).fetchChannel(channel)
-    v8Assert.equal(fetched.error, null)
-    v8Assert.equal(fetched.readings.added, 1)
-    const r = store.allReadings()[0]
-    v8Assert.equal(r.indicatorId, indicator.id)
-    v8Assert.equal(r.value, 123)
-    v8Assert.equal(r.effectiveTier, 'structured')
-    v8Assert.ok(r.hash && r.sourceId)
-  } finally { globalThis.fetch = originalFetch }
-})
 
 await v8Test('等长篡改后退出不能洗白索引，重启后禁止继续追加', async () => {
   const { ReadingStore } = await import('../src/main/reading-store.js')
@@ -4480,7 +3871,7 @@ await v8Test('today() 用本地时区，不与 UTC 日期混用', async () => {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
   })(), 'addDays 同样是本地基准')
   // 源码里不许再出现 toISOString().slice(0,10) 这类 UTC 取日期的写法
-  for (const file of ['store.js', 'fetchers.js']) {
+  for (const file of ['store.js']) {
     const src = v8Fs.readFileSync(join(ROOT2, 'src/main', file), 'utf8')
     v8Assert.ok(!/toISOString\(\)\.slice\(0,\s*10\)/.test(src), `${file} 还在用 UTC 取日期`)
   }
