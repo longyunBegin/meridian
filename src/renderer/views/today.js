@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
-import { confColor, nodePath, inferInboxThemeId, inboxRouteValid } from './shared.js'
+import { confColor, nodePath, inferInboxThemeId, inboxRouteValid, splitInboxPicked } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
 
 const m = window.meridian
@@ -235,7 +235,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
-  const isSelectable = (item) => item.extracted !== false && item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, itemThemeNodes(item))
+  // 复选框全开：分拣语义是"选中这批处理"，批量栏按选中成分自适应可用操作。
+  // 未抽取条目可勾选 → 抽取所选 / 忽略所选；已抽取且挂点有效 → 批量入库。
+  const isSelectable = (item) => !resolving.has(item.id)
+  const overrideOf = (item, tid) => overrides.get(overrideKey(item.id, tid)) || {}
+  const splitPicked = () => splitInboxPicked(items, picked, cachedAllNodes, state.themeId, overrideOf)
   const pickAll = h('button', {
     class: 'btn inbox-pick-all',
     onclick: () => {
@@ -247,20 +251,34 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   })
   const importPicked = h('button', {
     class: 'btn btn-primary inbox-import-picked',
-    onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'accept'),
+    onclick: () => resolve(splitPicked().importable, 'accept'),
   }, '批量入库')
+  const extractPicked = h('button', {
+    class: 'btn inbox-extract-picked',
+    onclick: () => resolve(splitPicked().extractable, 'extract'),
+  }, '抽取所选')
+  const ignorePicked = h('button', {
+    class: 'btn inbox-ignore-picked',
+    onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'reject'),
+  }, '忽略所选')
 
   function updateBatch() {
-    for (const item of items) if (!hasValidInboxRoute(item, itemThemeNodes(item))) picked.delete(item.id)
     const available = items.filter(isSelectable)
     pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
     pickAll.disabled = !available.length
+    const { importable, extractable } = splitPicked()
     count.textContent = `已选 ${picked.size} 条`
     // 渐进式披露：没选中时底部栏只是状态条，不跟详情的「确认入库」抢主操作；
-    // 选中后才出现批量入口，名字也跟单条操作区分开。
-    importPicked.hidden = !picked.size
-    importPicked.textContent = `批量入库（${picked.size}）`
-    importPicked.disabled = !picked.size || items.some((item) => picked.has(item.id) && (!itemThemeId(item) || resolving.has(item.id)))
+    // 选中后按成分出现对应批量入口，按钮带数字，一眼知道作用范围。
+    importPicked.hidden = !importable.length
+    importPicked.textContent = `批量入库（${importable.length}）`
+    importPicked.disabled = !importable.length || importable.some((item) => resolving.has(item.id))
+    extractPicked.hidden = !extractable.length
+    extractPicked.textContent = `抽取所选（${extractable.length}）`
+    extractPicked.disabled = !extractable.length || extractable.some((item) => resolving.has(item.id))
+    ignorePicked.hidden = !picked.size
+    ignorePicked.textContent = `忽略所选（${picked.size}）`
+    ignorePicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
@@ -306,9 +324,18 @@ function renderInboxWorkspace(mid, seq, allNodes) {
           for (const item of group) { picked.delete(item.id); overrides.delete(overrideKey(item.id, tid)) }
         }
         toast(`${total} 条命题已入库`)
+      } else if (action === 'extract') {
+        const res = await m.inboxExtract(chosen.map((item) => item.id))
+        for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
+        if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
       } else {
-        await m.inboxResolve(chosen[0].id, 'reject')
-        toast(chosen[0].kind === 'route-proposal' ? '已忽略归位提议，可在下方展开查看。' : '已忽略这条信息')
+        if (chosen.length === 1) {
+          await m.inboxResolve(chosen[0].id, 'reject')
+          toast(chosen[0].kind === 'route-proposal' ? '已忽略归位提议，可在下方展开查看。' : '已忽略这条信息')
+        } else {
+          const res = await m.inboxResolveMany(chosen.map((item) => item.id), 'reject')
+          toast(`已忽略 ${res?.resolved?.length ?? chosen.length} 条`)
+        }
         for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
       }
     } catch (e) {
@@ -350,6 +377,19 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       await renderToday(mid)
     },
   }, '清空未匹配')
+  // 未匹配组 previously 只有"清空"：内容留着但没有变有价值的路径。
+  // 与待抽取组对称，给抽取入口（forceExtract 越过标签库闸门）。
+  const extractUnmatched = h('button', {
+    class: 'btn', disabled: inboxLoading,
+    onclick: async () => {
+      extractUnmatched.disabled = true
+      extractUnmatched.textContent = '抽取中…'
+      const res = await m.inboxExtract(unmatchedItems.map((item) => item.id))
+      if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
+      await refresh()
+      await renderToday(mid)
+    },
+  }, `抽取这 ${unmatchedItems.length} 条`)
 
   const appendItems = (group, opts = {}) => {
     if (!group.length) return
@@ -364,13 +404,13 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         const row = [...list.querySelectorAll('.inbox-item')].find((el) => el.dataset.id === next.id)
         row.querySelector('.inbox-body').focus({ preventScroll: true })
         row.scrollIntoView({ block: 'nearest' })
-      }))
+      }, isSelectable(item)))
     }
   }
 
   appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '核对信息，再归位到脉络') })
   appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
-  appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [clearUnmatched]) })
+  appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [extractUnmatched, clearUnmatched]) })
 
   // 分页：只渲染前 inboxLimit 条。全量渲染时上千条 DOM 本身就是卡顿源。
   const remaining = Math.max(0, inboxTotal - inboxItems.length)
@@ -391,7 +431,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
       loadMore,
-      h('div', { class: 'inbox-import-bar' }, count, importPicked),
+      h('div', { class: 'inbox-import-bar' }, count, extractPicked, importPicked, ignorePicked),
     ),
     detail,
   ))
@@ -400,13 +440,13 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   return section
 }
 
-function renderInboxItem(item, onSelect, onPick, onNavigate) {
+function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const lemmas = item.lemmas || []
   const title = item.title || lemmas[0]?.title || '未命名信息'
   return h('div', { class: 'inbox-item', dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
-      disabled: item.extracted === false || !lemmas.length || resolving.has(item.id),
+      disabled: !pickable,
       onchange: (e) => onPick(e.target.checked),
     }),
     h('button', {
@@ -537,7 +577,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange) {
       unextracted ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '未抽取'),
         h('p', { class: 'inbox-detail-note' }, unextractedNote(item)),
-        h('p', { class: 'inbox-detail-note' }, '原文已留在本地。需要时在列表的「待抽取」分组点「抽取这 N 条」。'),
+        h('p', { class: 'inbox-detail-note' }, '原文已留在本地。勾选后点「抽取所选」，或直接点分组旁的「抽取这 N 条」。'),
       ) : h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, `提取的命题 · ${lemmas.length}`),
         lemmas.length ? h('ol', { class: 'inbox-proposals' },

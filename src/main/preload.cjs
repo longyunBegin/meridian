@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxList: (opts) => ipcRenderer.invoke('inbox:list', opts),
   inboxIgnored: () => ipcRenderer.invoke('inbox:ignored'),
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
+  inboxResolveMany: (ids, action) => ipcRenderer.invoke('inbox:resolveMany', ids, action),
   inboxImport: (themeId, items, overrides) => ipcRenderer.invoke('inbox:import', themeId, items, overrides),
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
   inboxUndoAutoImport: (intakeEventId) => ipcRenderer.invoke('inbox:undoAutoImport', intakeEventId),

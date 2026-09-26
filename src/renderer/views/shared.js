@@ -50,3 +50,21 @@ export function inboxRouteValid(item, themeNodes, override = {}) {
     return !parentId || themeNodes.some((node) => node.id === parentId && node.status !== 'dead')
   })
 }
+
+/** 把选中的收件箱条目按可执行操作分组（今日收件箱分拣用）：
+ *  importable: 已抽取、有命题、挂点在其主题下有效 → 可批量入库
+ *  extractable: 未抽取 → 可批量抽取
+ *  overrideOf(item, themeId) 返回该条目的手动调整 { parentId } */
+export function splitInboxPicked(items, picked, allNodes, currentThemeId, overrideOf) {
+  const importable = []
+  const extractable = []
+  for (const item of items) {
+    if (!picked.has(item.id)) continue
+    if (item.extracted === false) { extractable.push(item); continue }
+    if (!item.lemmas?.length) continue
+    const tid = inferInboxThemeId(item, allNodes, currentThemeId)
+    const nodes = allNodes.filter((node) => node.themeId === tid)
+    if (inboxRouteValid(item, nodes, overrideOf(item, tid))) importable.push(item)
+  }
+  return { importable, extractable }
+}

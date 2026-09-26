@@ -4,7 +4,7 @@
  *
  * 运行：node test/inbox-theme.test.mjs
  */
-import { inferInboxThemeId, inboxRouteValid } from '../src/renderer/views/shared.js'
+import { inferInboxThemeId, inboxRouteValid, splitInboxPicked } from '../src/renderer/views/shared.js'
 
 let pass = 0
 let fail = 0
@@ -52,6 +52,25 @@ ok('合并类命题不看挂点',
   inboxRouteValid({ ...itemB, lemmas: [{ title: 't', action: 'merge', mergeInto: 'n-b1' }] }, nodesA, {}) === true)
 ok('多命题里有一条挂点越界 → 整体不可选',
   inboxRouteValid({ ...itemB, lemmas: [{ title: 't1', parentId: 'n-b1' }, { title: 't2', parentId: 'n-a1' }] }, nodesB, {}) === false)
+
+console.log('\n— splitInboxPicked：选中按可执行操作分组 —')
+const itemU = { id: 'it-u', extracted: false, lemmas: [] }
+const itemOk = { id: 'it-ok', extracted: true, extractedThemeId: 'theme-a', lemmas: [{ title: 't', parentId: 'n-a1' }] }
+const itemBadRoute = { id: 'it-bad', extracted: true, extractedThemeId: 'theme-a', lemmas: [{ title: 't', parentId: 'n-b1' }] }
+const itemNoLemma = { id: 'it-nolemma', extracted: true, lemmas: [] }
+const picked = new Set(['it-u', 'it-ok', 'it-bad', 'it-nolemma'])
+const noOv = () => ({})
+const { importable, extractable } = splitInboxPicked(
+  [itemU, itemOk, itemBadRoute, itemNoLemma], picked, allNodes, 'theme-a', noOv)
+ok('未抽取 → 抽取所选', extractable.length === 1 && extractable[0].id === 'it-u')
+ok('挂点有效 → 批量入库', importable.length === 1 && importable[0].id === 'it-ok')
+ok('挂点越界不进批量入库', !importable.some((i) => i.id === 'it-bad'))
+ok('无命题不进任何批量操作',
+  !importable.some((i) => i.id === 'it-nolemma') && !extractable.some((i) => i.id === 'it-nolemma'))
+const fixed = splitInboxPicked([itemBadRoute], new Set(['it-bad']), allNodes, 'theme-a', () => ({ parentId: 'n-a1' }))
+ok('手动改到本主题环节后可入库', fixed.importable.length === 1)
+const noPick = splitInboxPicked([itemU, itemOk], new Set(), allNodes, 'theme-a', noOv)
+ok('没选中 → 两组都空', noPick.importable.length === 0 && noPick.extractable.length === 0)
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
