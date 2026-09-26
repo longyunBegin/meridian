@@ -284,14 +284,20 @@ function parseTagLibrary(raw) {
 const SKELETON_SYSTEM = `你是一个产业链分析专家。根据用户的描述，生成一条产业链的环节树。
 
 硬规则：
-1. 产出 JSON，不要 markdown 代码块，不要解释。
-2. 结构：{"roots":[{"title":"环节名","propagation":0.5,"scaffold":{"answer":"要回答的核心问题","indicators":[{"name":"指标名","cadence":"月|季度|年度|事件"}],"falsifier":"证伪信号"},"children":[...]}]}
-3. 每条边带传导权重 propagation（0-1），上游 → 下游，权重越大传导越强。
-4. 通常 3-5 层深度，每层 2-5 个环节。
-5. scaffold.answer 是该环节要回答的核心问题，indicators 是按周期跟踪的指标数组（每项是 {name, cadence} 对象，cadence 只能是 月 / 季度 / 年度 / 事件 四选一），falsifier 是证伪信号。
-6. 环节名称简洁（4-12 字），是产业环节不是公司名。
+1. 只输出纯文本大纲，不要 JSON，不要 markdown 代码块，不要解释，不要空话。
+2. 每行一个环节，格式固定为：
+- 环节名 | 传导权重 | 该环节最值得跟踪的核心问题
+3. 子环节缩进两格表示下一层。通常 3-5 层，每层 2-5 个环节。
+4. 传导权重 0-1：上游 → 下游，权重越大传导越强；不确定就写 0.5。
+5. 环节名简洁（4-12 字），是产业环节不是公司名。
+6. 核心问题一句话，是该环节最值得跟踪的一个问题。
 
-只输出 JSON：`
+示例：
+- 多晶硅 | 0.8 | 硅料价格受供需的什么影响？
+  - 工业硅 | 0.6 | 工业硅成本谁说了算？
+  - 多晶硅产能 | 0.7 | 新增产能什么时候释放？
+- 硅片 | 0.7 | 硅片价格战打到什么程度？
+`
 
 const VALID_CADENCES = ['周', '月', '季度', '半年', '年度', '事件']
 
@@ -338,35 +344,14 @@ export async function generateSkeleton(settings, description) {
 
   const skeleton = parseSkeleton(raw)
   if (!skeleton) return { ok: false, reason: 'unparsable', usage }
+
+  // 第二轮：行式补齐 indicators / falsifier。失败不影响骨架——指标留空而已。
+  try { await fillScaffoldDetails(settings, skeleton.roots) } catch { /* 忽略 */ }
   return { ok: true, skeleton, usage }
 }
 
-/** 模型不总按 schema 吐：标题可能叫 name/label，子层可能叫 sub/nodes，顶层可能直接是数组。
- *  这些都得认。认不出来才该降级——把一棵合法的树扔了换成上中下游，比解析失败更糟：
- *  用户看到的是「模型分析过了但只给了通用模板」，而事实是模型给的结构被我们丢了。 */
-const TITLE_KEYS = ['title', 'name', 'label', 'stage']
-const CHILD_KEYS = ['children', 'child', 'sub', 'subStages', 'nodes']
-
-const pickTitle = (n) => {
-  for (const k of TITLE_KEYS) {
-    const v = n?.[k]
-    if (typeof v === 'string' && v.trim()) return v.trim()
-  }
-  return ''
-}
-
-const pickChildren = (n) => {
-  for (const k of CHILD_KEYS) if (Array.isArray(n?.[k])) return n[k]
-  return []
-}
-
-const pickRoots = (parsed) => {
-  if (Array.isArray(parsed)) return parsed
-  for (const k of ['roots', 'stages', 'tree', 'chain', 'skeleton', 'layers']) {
-    if (Array.isArray(parsed?.[k])) return parsed[k]
-  }
-  return []
-}
+/** 骨架不再让模型吐 JSON：JSON 错一个括号整棵树就没了。
+ *  行式大纲按行解析，坏行只丢一个节点——"整体无法解析"几乎不可能发生。 */
 
 function normalizeScaffoldSpec(sc) {
   if (!sc) return null
@@ -384,47 +369,107 @@ function normalizeScaffoldSpec(sc) {
   }
 }
 
-/** 从模型回复里切出候选 JSON 片段：先对象后数组。
- *  顶层是数组时，对象切法会切到第一个元素身上——解析"成功"却只剩一个环节。
- *  所以两种切法都要试，谁真能给出 roots 用谁。 */
-function skeletonCandidates(s) {
-  const spans = []
-  const a = s.indexOf('{')
-  const b = s.lastIndexOf('}')
-  if (a >= 0 && b > a) spans.push(s.slice(a, b + 1))
-  const a2 = s.indexOf('[')
-  const b2 = s.lastIndexOf(']')
-  if (a2 >= 0 && b2 > a2) spans.push(s.slice(a2, b2 + 1))
-  return spans
-}
+/** 行式大纲解析：每行 "- 标题 | 权重 | 核心问题"，缩进两格为一层。
+ *  容错是设计目标：坏行只丢一个节点，废话行直接忽略，缩进错乱就顺序挂载。
+ *  只有一行有效节点都抠不出来才返回 null。 */
+const OUTLINE_RE = /^(\s*)[-*•]\s*(.+?)\s*$/
+
+const clamp01num = (n) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5)
 
 export function parseSkeleton(raw) {
-  const s = String(raw)
-  const clean = (node) => ({
-    title: pickTitle(node).slice(0, 50),
-    propagation: Math.max(0, Math.min(1, Number(node.propagation) || 0.5)),
-    stableId: Math.random().toString(36).slice(2, 10),
-    scaffold: normalizeScaffoldSpec(node.scaffold),
-    children: pickChildren(node).map(clean),
-  })
-
-  // 没标题的中间层直接穿透，孩子并进父级——不为一个空名的环节造一行
-  const flatten = (nodes) => {
-    const out = []
-    for (const n of nodes) {
-      if (!n.title) { out.push(...flatten(n.children)); continue }
-      out.push({ ...n, children: flatten(n.children) })
+  const roots = []
+  const stack = [] // stack[depth] = 该层的最后一个节点
+  for (const line of String(raw).split('\n')) {
+    const m = OUTLINE_RE.exec(line)
+    if (!m) continue
+    const depth = Math.floor(m[1].replace(/\t/g, '  ').length / 2)
+    const parts = m[2].split('|').map((s) => s.trim())
+    const title = (parts[0] || '').slice(0, 50)
+    if (!title) continue
+    const node = {
+      title,
+      propagation: clamp01num(parseFloat(parts[1])),
+      stableId: Math.random().toString(36).slice(2, 10),
+      scaffold: null,
+      children: [],
     }
-    return out
+    const question = (parts[2] || '').slice(0, 200)
+    if (question) node.scaffold = { answer: [question], indicators: [], falsifier: '' }
+    const d = Math.min(depth, stack.length) // 缩进跳跃时钳到当前深度内，不丢节点
+    if (d === 0) roots.push(node)
+    else stack[d - 1].children.push(node)
+    stack.length = d
+    stack.push(node)
   }
+  return roots.length ? { roots } : null
+}
 
-  for (const span of skeletonCandidates(s)) {
-    let parsed = null
-    try { parsed = JSON.parse(span) } catch { continue }
-    const rawRoots = pickRoots(parsed)
-    if (!rawRoots.length) continue
-    const roots = flatten(rawRoots.map(clean))
-    if (roots.length) return { roots }
+const SCAFFOLD_SYSTEM = `你是一个产业链分析专家。根据给定的环节清单，为每个环节补齐跟踪要素。
+
+硬规则：
+1. 只输出纯文本，每行一个环节，格式固定为：
+- 编号 | 指标1/周期；指标2/周期 | 证伪信号
+2. 编号必须和输入清单里的编号一致，不要增删改编号。
+3. 指标 2-4 个，用"；"分隔；周期只能是 月 / 季度 / 年度 / 事件 四选一。
+4. 证伪信号一句话：如果这个信号出现，说明该环节的判断错了。
+5. 不要 JSON，不要 markdown 代码块，不要解释。
+
+示例输入：
+1. 多晶硅
+2. 工业硅
+示例输出：
+- 1 | 多晶硅价格/月；多晶硅产量/季度 | 价格跌破主流厂商现金成本
+- 2 | 工业硅价格/月；开工率/月 | 行业开工率跌破五成且持续三个月
+`
+
+/** 第二轮：为骨架节点补 indicators / falsifier（行式，编号回填）。
+ *  失败不影响骨架本身——调用方把第一轮的树照常用，只是指标为空。 */
+async function fillScaffoldDetails(settings, roots) {
+  const flat = []
+  const walk = (nodes) => { for (const n of nodes) { flat.push(n); walk(n.children || []) } }
+  walk(roots)
+  // 上层节点更重要：文档序本身就是自上而下，超 40 个只补前面的
+  const targets = flat.slice(0, 40)
+  if (!targets.length) return
+  const list = targets.map((n, i) => `${i + 1}. ${n.title}`).join('\n')
+
+  let res
+  try {
+    res = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${settings.apiKey}` },
+      signal: AbortSignal.timeout(SKELETON_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: settings.model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: SCAFFOLD_SYSTEM },
+          { role: 'user', content: list },
+        ],
+      }),
+    })
+  } catch { return }
+  if (!res.ok) return
+  const raw = (await res.json().catch(() => null))?.choices?.[0]?.message?.content
+  if (!raw) return
+
+  for (const line of String(raw).split('\n')) {
+    const m = /^\s*[-*•]\s*(\d+)\s*\|([^|]*)\|([\s\S]*)$/.exec(line)
+    if (!m) continue
+    const node = targets[Number(m[1]) - 1]
+    if (!node) continue
+    const indicators = m[2].split(/[；;]/).map((s) => s.trim()).filter(Boolean).slice(0, 6)
+      .map((s) => {
+        const im = /^(.*?)[\/／]\s*(周|月|季度|半年|年度|事件)\s*$/.exec(s)
+        return im
+          ? { name: im[1].trim().slice(0, 60), cadence: normalizeCadence(im[2]) }
+          : { name: s.slice(0, 60), cadence: '季度' }
+      })
+      .filter((i) => i.name)
+    node.scaffold = normalizeScaffoldSpec({
+      answer: node.scaffold?.answer || [],
+      indicators,
+      falsifier: m[3].trim().slice(0, 200),
+    })
   }
-  return null
 }
