@@ -18,7 +18,7 @@ function fmtCompact(v) {
 }
 
 /** 每一层的缩进与导轨位置都由它推导，改一处全树同步 */
-const INDENT = 15
+const INDENT = 22
 const PAD = 20
 /** 导轨落在父行箭号的圆心上：内容起点 - 8（号宽 16 的一半） */
 const railX = (depth) => PAD + (depth - 1) * INDENT - 8

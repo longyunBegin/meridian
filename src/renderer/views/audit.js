@@ -17,7 +17,7 @@ export async function renderAudit(mid) {
     h('div', { class: 'audit-tag' }, '误杀审计 · 30 天周期'),
     // L3 caption：这两个数字是过滤器的副产物，不是内容——不该占首屏最显眼处
     h('div', { class: 'audit-scope' }, `近 30 天 ${a.total} 条 · 全部 ${a.allTotal} 条`),
-    h('div', { class: 'sub' }, `近期裁决中误杀 ${a.missed} 条，误杀率 ${percent(a.rate)}。归位提议忽略单独统计，不计入裁决总数或误杀率分母。`),
+    h('div', { class: 'sub' }, `近 30 天筛掉了 ${a.total} 条，其中 ${a.missed} 条后来证明有用（误杀率 ${percent(a.rate)}）。`),
     ...keys.map((key) => {
       const group = a.byGate[key]
       return h('details', { class: 'audit-detail', dataset: { gate: key } },

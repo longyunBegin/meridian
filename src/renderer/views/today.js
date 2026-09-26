@@ -86,14 +86,15 @@ export async function renderToday(mid) {
       }, '撤销'),
     ) : null,
 
-    // ---- 顶部两个大数字
+    // ---- 顶部两个大数字：同色，靠字号和位置区分主次。
+    // 颜色只留给真正的异常——"今日结算"用橙色会让用户误以为出问题了。
     h('div', { class: 'today-metrics' },
       h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'inbox-section') },
-        h('span', { class: 'today-metric-num', style: { color: inboxTotal ? 'var(--accent)' : 'var(--text-3)' } }, String(inboxTotal)),
+        h('span', { class: 'today-metric-num', style: { color: inboxTotal ? 'var(--text-1)' : 'var(--text-3)' } }, String(inboxTotal)),
         h('span', { class: 'today-metric-label' }, '待确认'),
       ),
       h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'due-section') },
-        h('span', { class: 'today-metric-num', style: { color: due.length ? 'var(--orange)' : 'var(--text-3)' } }, String(due.length)),
+        h('span', { class: 'today-metric-num', style: { color: due.length ? 'var(--text-1)' : 'var(--text-3)' } }, String(due.length)),
         h('span', { class: 'today-metric-label' }, '今日结算'),
       ),
     ),
@@ -239,7 +240,7 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   const importPicked = h('button', {
     class: 'btn btn-primary inbox-import-picked',
     onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'accept'),
-  }, '入库所选')
+  }, '批量入库')
 
   function updateBatch() {
     for (const item of items) if (!hasValidInboxRoute(item, themeNodes)) picked.delete(item.id)
@@ -247,6 +248,10 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
     pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
     pickAll.disabled = !available.length
     count.textContent = `已选 ${picked.size} 条`
+    // 渐进式披露：没选中时底部栏只是状态条，不跟详情的「确认入库」抢主操作；
+    // 选中后才出现批量入口，名字也跟单条操作区分开。
+    importPicked.hidden = !picked.size
+    importPicked.textContent = `批量入库（${picked.size}）`
     importPicked.disabled = !state.themeId || !picked.size || items.some((item) => picked.has(item.id) && resolving.has(item.id))
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)

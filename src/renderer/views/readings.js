@@ -54,6 +54,7 @@ function pager(fetchPage, renderItems, limit = 50) {
   const prev = h('button', { class: 'btn', onclick: () => load('prev') }, '上一页')
   const next = h('button', { class: 'btn', onclick: () => load('next') }, '下一页')
   const root = h('div', { class: 'reading-pager' }, content, h('div', { class: 'reading-pagination' }, prev, status, next))
+  const pagination = root.querySelector('.reading-pagination')
   async function load(direction) {
     if (busy) return
     busy = true
@@ -71,6 +72,8 @@ function pager(fetchPage, renderItems, limit = 50) {
       clear(content)
       renderItems(content, result.items)
       status.textContent = `第 ${previous.length + 1} 页${result.total != null ? ` · 共 ${result.total} 条` : ''}`
+      // 空状态不画分页器：没有数据时"上一页/第1页·共0条/下一页"只是噪音。
+      pagination.hidden = result.total === 0
     } catch {
       status.textContent = '读取失败，可重试'
       if (!content.childNodes.length) failure(content, () => load())

@@ -106,8 +106,10 @@ async function renderConflicts(mid, meta) {
             h('strong', { class: 'reading-number' }, `${fmtValue(r.value)} ${r.unit || ''}`),
             h('span', {}, periodLabel(r)), h('span', {}, r.source?.label || '未命名来源'), trustMark(r), safeSourceLink(r.source?.url))
           const actions = h('div', { class: 'acts' })
-          for (const [choice, label] of [['a', 'A 成立'], ['b', 'B 成立'], ['both', '两者都对（我搞错了）']]) {
-            actions.append(h('button', { class: 'btn', onclick: async () => {
+          // 决策动作要有决策的分量：A / B 是主要判断，用实心主按钮；
+          // 「两者都对」是低频的自我纠正，降为次要样式，不跟主判断抢。
+          for (const [choice, label, primary] of [['a', 'A 成立', true], ['b', 'B 成立', true], ['both', '两者都对（我搞错了）', false]]) {
+            actions.append(h('button', { class: primary ? 'btn btn-primary' : 'btn', onclick: async () => {
               actions.querySelectorAll('button').forEach(button => { button.disabled = true })
               try {
                 const result = await m.resolveConflict(c.id, choice)
@@ -192,12 +194,15 @@ async function renderReview(mid) {
   const degradeRate = pct(agg.degraded, agg.captured)
 
   const metrics = [
-    { label: '摩擦率', value: friction, target: '< 20%', raw: `${agg.toInbox} / ${agg.captured}`, color: friction > 20 ? 'var(--orange)' : 'var(--accent)' },
-    { label: '撤销率', value: undoRate, target: '< 5%', raw: `${agg.undone} / ${agg.autoImported}`, color: undoRate > 5 ? 'var(--orange)' : 'var(--accent)' },
-    { label: '归位修改率', value: overrideRate, target: '< 15%', raw: `${agg.overridden} / ${agg.autoImported + agg.confirmed}`, color: overrideRate > 15 ? 'var(--orange)' : 'var(--accent)' },
-    { label: '误杀率', value: falseKillRate, target: '< 10%', raw: `${falseKillCount} / ${verdicts.length}`, color: falseKillRate > 10 ? 'var(--orange)' : 'var(--accent)' },
-    { label: '降级率', value: degradeRate, target: '—', raw: `${agg.degraded} / ${agg.captured}`, color: 'var(--text-3)' },
+    { label: '摩擦率', value: friction, target: '< 20%', raw: `${agg.toInbox} / ${agg.captured}`, denom: agg.captured, color: friction > 20 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '撤销率', value: undoRate, target: '< 5%', raw: `${agg.undone} / ${agg.autoImported}`, denom: agg.autoImported, color: undoRate > 5 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '归位修改率', value: overrideRate, target: '< 15%', raw: `${agg.overridden} / ${agg.autoImported + agg.confirmed}`, denom: agg.autoImported + agg.confirmed, color: overrideRate > 15 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '误杀率', value: falseKillRate, target: '< 10%', raw: `${falseKillCount} / ${verdicts.length}`, denom: verdicts.length, color: falseKillRate > 10 ? 'var(--orange)' : 'var(--accent)' },
+    { label: '降级率', value: degradeRate, target: '—', raw: `${agg.degraded} / ${agg.captured}`, denom: agg.captured, color: 'var(--text-3)' },
   ]
+
+  // 校准曲线永远返回 4 个桶，"有没有数据"要看桶里有没有样本。
+  const calibTotal = filterCalib.reduce((s, b) => s + b.total, 0)
 
   mid.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
@@ -210,12 +215,16 @@ async function renderReview(mid) {
       h('div', { class: 'card-h' }, h('h2', {}, '采集漏斗'), h('em', {}, `近 30 天 · ${agg.captured} 次捕获`)),
       h('div', { class: 'sect-b' },
         h('div', { class: 'review-funnel' },
-          ...metrics.map((mt) => h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: mt.color } }, `${mt.value}%`),
-            h('div', { class: 'review-metric-label' }, mt.label),
-            h('div', { class: 'review-metric-target' }, `目标 ${mt.target}`),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, mt.raw),
-          )),
+          ...metrics.map((mt) => {
+            // 0/0 不是 0%：分母为 0 说明没有数据，给灰色破折号，别装作"完美"。
+            const noData = !mt.denom
+            return h('div', { class: 'review-metric' },
+              h('div', { class: 'review-metric-num', style: { color: noData ? 'var(--text-3)' : mt.color } }, noData ? '—' : `${mt.value}%`),
+              h('div', { class: 'review-metric-label' }, mt.label),
+              h('div', { class: 'review-metric-target' }, `目标 ${mt.target}`),
+              h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, mt.raw),
+            )
+          }),
         ),
       ),
     ),
@@ -283,14 +292,18 @@ async function renderReview(mid) {
     // 误杀校准曲线
     h('section', { class: 'card' },
       h('div', { class: 'card-h' }, h('h2', {}, '过滤器校准曲线'),
-        h('em', {}, filterCalib.length ? `${filterCalib.reduce((s, b) => s + b.total, 0)} 条被筛` : '尚无数据')),
+        h('em', {}, calibTotal ? `${calibTotal} 条被筛` : '尚无数据')),
       h('div', { class: 'sect-b' },
-        filterCalib.length
-          ? h('div', { class: 'calib' }, ...filterCalib.map((b) => h('div', {},
-              h('em', {}, `${Math.round(b.accuracy * 100)}%`),
-              h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } }),
-              h('span', {}, `${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`),
-            )))
+        calibTotal
+          ? h('div', { class: 'calib' }, ...filterCalib.map((b) => {
+              // 空桶不画"0%"：没有样本的柱子不该用颜色讲故事。
+              const empty = !b.total
+              return h('div', {},
+                h('em', { style: { color: empty ? 'var(--text-3)' : '' } }, empty ? '—' : `${Math.round(b.accuracy * 100)}%`),
+                h('i', { style: { height: `${b.accuracy * 100}%`, background: empty ? 'var(--line)' : b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } }),
+                h('span', {}, `${b.lo.toFixed(1)}–${b.hi.toFixed(1)}`),
+              )
+            }))
           : h('div', { class: 'q' }, h('div', { class: 'q-body' },
               h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '尚无被筛掉的记录。有了数据之后，这里会显示各质量段的误杀率。'),
             )),
@@ -304,8 +317,10 @@ async function renderReview(mid) {
         h('div', { class: 'review-funnel' },
           ...['source', 'dedup', 'user', 'other'].map((g) => {
             const s = filterCalib.byGate[g]
+            // 0/0 不是 0%：没有数据就不该给一个"完美"的数字，看着像健康。
+            const noData = !s.total
             return h('div', { class: 'review-metric' },
-              h('div', { class: 'review-metric-num', style: { color: s.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, `${Math.round(s.accuracy * 100)}%`),
+              h('div', { class: 'review-metric-num', style: { color: noData ? 'var(--text-3)' : s.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, noData ? '—' : `${Math.round(s.accuracy * 100)}%`),
               h('div', { class: 'review-metric-label' }, s.label),
               h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${s.missed} / ${s.total}`),
             )
@@ -319,11 +334,15 @@ async function renderReview(mid) {
       h('div', { class: 'card-h' }, h('h2', {}, '误杀归因到通道'), h('em', {}, `近 30 天 · ${byChannel.length} 通道`)),
       h('div', { class: 'sect-b' },
         h('div', { class: 'review-funnel' },
-          ...byChannel.map((c) => h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: c.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, `${Math.round(c.rate * 100)}%`),
-            h('div', { class: 'review-metric-label' }, chName(c.channelId)),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${c.missed} / ${c.total}`),
-          )),
+          ...byChannel.map((c) => {
+            // 0/0 不是 0%：没有数据就不该给一个"完美"的数字。
+            const noData = !c.total
+            return h('div', { class: 'review-metric' },
+              h('div', { class: 'review-metric-num', style: { color: noData ? 'var(--text-3)' : c.missed > 0 ? 'var(--orange)' : 'var(--accent)' } }, noData ? '—' : `${Math.round(c.rate * 100)}%`),
+              h('div', { class: 'review-metric-label' }, chName(c.channelId)),
+              h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${c.missed} / ${c.total}`),
+            )
+          }),
         ),
       ),
     ) : null,
@@ -351,16 +370,16 @@ async function renderReview(mid) {
       h('div', { class: 'sect-b' },
         h('div', { class: 'review-funnel' },
           h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-num', style: { color: vsData.userTotal >= 5 && vsData.userRate != null ? '' : 'var(--text-3)' } },
+              vsData.userTotal >= 5 && vsData.userRate != null ? `${Math.round(vsData.userRate * 100)}%` : '—'),
             h('div', { class: 'review-metric-label' }, '你的命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}`),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.userHits} / ${vsData.userTotal}${vsData.userTotal < 5 ? ' · 样本不足' : ''}`),
           ),
           h('div', { class: 'review-metric' },
-            h('div', { class: 'review-metric-num', style: { color: '' } },
-              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '样本不足'),
+            h('div', { class: 'review-metric-num', style: { color: vsData.orgTotal >= 5 && vsData.orgRate != null ? '' : 'var(--text-3)' } },
+              vsData.orgTotal >= 5 && vsData.orgRate != null ? `${Math.round(vsData.orgRate * 100)}%` : '—'),
             h('div', { class: 'review-metric-label' }, '机构观点命中率'),
-            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}`),
+            h('div', { class: 'review-metric-raw', style: { color: 'var(--text-3)' } }, `${vsData.orgHits} / ${vsData.orgTotal}${vsData.orgTotal < 5 ? ' · 样本不足' : ''}`),
           ),
         ),
       ),
