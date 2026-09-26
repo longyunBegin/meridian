@@ -6,11 +6,13 @@
  * 绝不碰真实账本。
  */
 import { createServer } from 'node:http'
+import { createServer as createNetServer, connect as netConnect } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const { createBridge, loadBridgeConfig, backoffDelayMs, isBenignReplayError } =
+const { createBridge, loadBridgeConfig, backoffDelayMs, isBenignReplayError,
+  deriveTunnelProxy, tunnelAgent, httpJson } =
   await import('../sync-bridge.mjs')
 
 let pass = 0
@@ -197,6 +199,53 @@ console.log('\n— 配置：默认目录不指向真实账本 —')
   const cfg2 = loadBridgeConfig({})
   ok('环境变量覆盖 macUrl', cfg2.macUrl === 'http://10.0.0.9:3821')
   delete process.env.MERIDIAN_SYNC_MAC_URL
+}
+
+console.log('\n— CONNECT 隧道代理 —')
+{
+  // 假目标 HTTP 服务
+  const target = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ ok: true, via: 'tunnel' }))
+  })
+  await new Promise((r) => target.listen(0, '127.0.0.1', r))
+  const targetPort = target.address().port
+  // 假 CONNECT 代理：应答 200 后把 socket 管道到目标
+  const proxy = createNetServer((sock) => {
+    let head = ''
+    const onData = (chunk) => {
+      head += chunk.toString('latin1')
+      if (!head.includes('\r\n\r\n')) return
+      sock.off('data', onData)
+      const m = head.match(/^CONNECT ([^ :]+):(\d+)/)
+      sock.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      const rest = Buffer.from(head.slice(head.indexOf('\r\n\r\n') + 4), 'latin1')
+      const up = netConnect({ host: m[1], port: Number(m[2]) }, () => {
+        if (rest.length) up.write(rest)
+        sock.pipe(up).pipe(sock)
+      })
+      up.on('error', () => sock.destroy())
+    }
+    sock.on('data', onData)
+  })
+  await new Promise((r) => proxy.listen(0, '127.0.0.1', r))
+  const proxyPort = proxy.address().port
+
+  const agent = tunnelAgent(`http://127.0.0.1:${proxyPort}`)
+  const res = await httpJson(`http://127.0.0.1:${targetPort}/sync/health`, { agent })
+  ok('经 CONNECT 隧道拿到目标响应', res.ok && res.body && res.body.via === 'tunnel')
+  ok('无代理时 tunnelAgent 返回 undefined（直连）', tunnelAgent('') === undefined)
+
+  delete process.env.MERIDIAN_SYNC_TUNNEL_PROXY
+  delete process.env.HTTPS_PROXY
+  delete process.env.HTTP_PROXY
+  process.env.HTTPS_PROXY = 'http://user:pw@proxy.example:3128'
+  ok('deriveTunnelProxy 只换端口保留认证', deriveTunnelProxy() === 'http://user:pw@proxy.example:3130/')
+  delete process.env.HTTPS_PROXY
+  ok('无环境变量时返回空', deriveTunnelProxy() === '')
+
+  target.close()
+  proxy.close()
 }
 
 rmSync(bridgeDir, { recursive: true, force: true })
