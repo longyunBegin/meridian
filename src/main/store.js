@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync, renameSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
@@ -153,6 +153,21 @@ let readingStore = null
  * 黄区：只动缓存指针，不动 migrate()/importAll()/哈希链/ingest。
  */
 export function invalidateDbCache() { db = null }
+
+/**
+ * 账本文件损坏时的隔离：把损坏文件改名备份（.corrupt-<时间戳>），并大声打日志，
+ * 再回退到空账本。2026-09-26 之前这里是静默 blank()——Mac 端一次损坏或撕裂读
+ * 会无声丢掉全部数据，且事后无从恢复。
+ */
+function quarantineCorrupt(file, err) {
+  try {
+    const bak = file + '.corrupt-' + new Date().toISOString().replace(/[:.]/g, '-')
+    renameSync(file, bak)
+    console.error(`[meridian] 账本文件损坏，已隔离为 ${bak}，回退到空账本:`, err?.message || err)
+  } catch (e) {
+    console.error('[meridian] 账本文件损坏且隔离备份失败，仍回退到空账本:', e?.message || e)
+  }
+}
 
 /** SQLite 句柄单例。WAL 模式，建表幂等（见 service/db-schema.mjs）。 */
 let sqliteDb = null
@@ -325,13 +340,13 @@ export function load() {
   }
   const sqlFile = SQLITE_FILE()
   if (existsSync(sqlFile)) {
-    // SQLite 已是 durability 层：整库从表里恢复。损坏则回退到空账本
-    //（与旧 JSON 路径"解析失败 → blank()" 的语义一致）。
-    try { db = readSqlite() } catch { db = blank() }
+    // SQLite 已是 durability 层：整库从表里恢复。损坏则隔离备份后回退到空账本
+    //（与旧 JSON 路径"解析失败 → 隔离+blank()" 的语义一致）。
+    try { db = readSqlite() } catch (err) { quarantineCorrupt(sqlFile, err); db = blank() }
   } else {
     const file = DATA_FILE()
     if (existsSync(file)) {
-      try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
+      try { db = JSON.parse(readFileSync(file, 'utf8')) } catch (err) { quarantineCorrupt(file, err); db = blank() }
     } else db = blank()
   }
   migrate(db)
@@ -435,7 +450,12 @@ function persistNow() {
   }
   const file = DATA_FILE()
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(snapshot, null, 2))
+  // 原子写：先写临时文件再改名。直接 writeFileSync 大文件时是多 syscall，
+  // 并发的 load()/快照读取可能读到半截 JSON → 解析失败 → 静默 blank() 丢数据。
+  // 2026-09-26 Mac 账本清空事故后加固。
+  const tmp = file + '.tmp'
+  writeFileSync(tmp, JSON.stringify(snapshot, null, 2))
+  renameSync(tmp, file)
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
@@ -1521,13 +1541,32 @@ export function exportAll({ withRaw = true } = {}) {
   return JSON.stringify(out, null, 2)
 }
 
+/**
+ * 导入前归档当前账本：importAll 是整体替换，一旦选错文件旧数据无法找回。
+ * 注释里"原账本只改名归档"的承诺 2026-09-26 前一直没实现，Mac 账本清空事故后落实。
+ * 归档失败则直接中止导入——没有备份的替换不如不做。
+ */
+function archiveLedgerForImport() {
+  const snap = readingSnapshot()
+  const bak = DATA_FILE() + '.import-bak-' + new Date().toISOString().replace(/[:.]/g, '-')
+  try {
+    mkdirSync(dirname(DATA_FILE()), { recursive: true })
+    writeFileSync(bak, JSON.stringify(snap, null, 2))
+    console.log(`[meridian] 导入前已归档原账本: ${bak}`)
+  } catch (err) {
+    throw new Error('导入前无法归档原账本，已中止导入以保护现有数据: ' + (err?.message || err))
+  }
+  return bak
+}
+
 export function importAll(json) {
   const parsed = JSON.parse(json)
   if (!parsed || !Array.isArray(parsed.nodes)) throw new Error('不是有效的脉络数据文件')
   if ((parsed.readingFormat || (parsed.readings || []).some((r) => r.hash || r.prevHash)) && !Array.isArray(parsed.readingJournal)) {
     throw new Error('带存证的读数必须附完整追加记录，不能按旧数据重新签名')
   }
-  // 新导出保留事实和裁决事件；显式导入替换当前视图，原账本只改名归档。
+  // 新导出保留事实和裁决事件；显式导入替换当前视图，替换前先归档原账本。
+  archiveLedgerForImport()
   if (parsed.readingJournal) readingsStore().validateJournal(parsed.readingJournal)
   else for (const r of parsed.readings || []) validateReading({ ...r, source: r.source || (parsed.sources || []).find((s) => s.id === r.sourceId) || {} }, { legacy: true })
   readingsStore().replaceJournal(parsed.readingJournal || [])
