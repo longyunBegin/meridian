@@ -332,8 +332,11 @@ select { font: inherit; color: inherit; }
 .theme-item .count { margin-left: auto; font-size: var(--t-caption); color: var(--text-3); font-variant-numeric: tabular-nums; }
 .theme-wrap { display: flex; align-items: center; gap: 2px; position: relative; }
 .theme-wrap .theme-item { flex: 1; }
-.theme-menu-btn { display: none; padding: 2px 6px; font-size: var(--t-body); color: var(--text-3); background: none; border: none; cursor: pointer; border-radius: var(--r-sm); }
-.theme-wrap:hover .theme-menu-btn { display: flex; }
+/* hover 才冒出来的 ⋯ 必须常占位（visibility 显隐），不能 display:none↔flex：
+ * 后者会让整行重排，鼠标正要点主题名时目标在指针底下移位，
+ * 点下去命中的是 ⋯（弹出重命名行）而不是选中主题。 */
+.theme-menu-btn { display: flex; visibility: hidden; padding: 2px 6px; font-size: var(--t-body); color: var(--text-3); background: none; border: none; cursor: pointer; border-radius: var(--r-sm); }
+.theme-wrap:hover .theme-menu-btn { visibility: visible; }
 .theme-menu-btn:hover { background: var(--hover); color: var(--text); }
 .theme-edit-row { display: flex; align-items: center; gap: 4px; padding: 2px 8px; }
 
