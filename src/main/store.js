@@ -99,21 +99,6 @@ export function sicToTags(sic, sicDescription) {
   return tags
 }
 
-/**
- * 按标签交集给通道排序。交集多的在前，交集 0 的排最后。
- * 返回 [{ channel, score, shared }]，score = 交集数量。
- */
-export function rankChannelsByTags(channels, themeTags) {
-  if (!themeTags?.length) return channels.map((c) => ({ channel: c, score: 0, shared: [] }))
-  const want = new Set(themeTags)
-  return channels
-    .map((c) => {
-      const shared = (c.tags || []).filter((t) => want.has(t))
-      return { channel: c, score: shared.length, shared }
-    })
-    .sort((a, b) => b.score - a.score)
-}
-
 /** 更新频率 → 结算日偏移（天） */
 const CADENCE_DAYS = { 周: 7, 月: 30, 季度: 95, 半年: 180, 年度: 365, 事件: 60 }
 
@@ -146,7 +131,6 @@ const blank = () => ({
   feeds: [], // 订阅源：RSS / 公众号 / X 列表
   inbox: [], // 收件箱：待确认的摄入项，全局不按主题分
   traces: [], // 留痕：每一次模型介入的完整记录，独立集合不内联进 node
-  channels: [], // 通道描述符：按内容类型选取数器
   intakeEvents: [], // 采集漏斗：每次捕获一条记录
   readings: [], // 仅接收旧文件迁移；正文独立存于 readings.jsonl
   sources: [], // 从读数观测出来的来源，不是配置项
@@ -286,6 +270,9 @@ export function load() {
     try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
   } else db = blank()
   migrate(db)
+  // 2026-09-26：通道功能已整体移除。migrate() 是红区不碰，这里在加载后清理账本
+  // 里残留的通道描述符（用户已确认不需要），之后 persist() 写回时自然消失。
+  if (db.channels !== undefined) delete db.channels
   readingsStore()
   migrateReadings(db.readings)
   // 收件箱是队列不是档案——启动时清一次过期积压。放在 load 里而不是起定时器：
@@ -1304,7 +1291,7 @@ export function stats() {
     verdicts: db.verdicts.length,
     conflicts: allConflicts().filter((c) => !c.resolved).length,
     premises: sharedPremises().length,
-    feeds: db.channels.filter((c) => c.enabled).length,
+    feeds: 0, // 通道已移除（2026-09-26）：订阅源计数恒为 0
     inbox: inboxCount(),
     readings: readingsStore().refs.size,
     researchNotes: db.researchNotes.length,
@@ -1462,8 +1449,10 @@ export function importAll(json) {
   if (parsed.readingJournal) readingsStore().validateJournal(parsed.readingJournal)
   else for (const r of parsed.readings || []) validateReading({ ...r, source: r.source || (parsed.sources || []).find((s) => s.id === r.sourceId) || {} }, { legacy: true })
   readingsStore().replaceJournal(parsed.readingJournal || [])
-  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], channels: parsed.channels || [], intakeEvents: parsed.intakeEvents || [], sources: parsed.sources || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
+  db = { version: 4, settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) }, themes: parsed.themes || [], nodes: parsed.nodes, verdicts: parsed.verdicts || [], conflicts: parsed.conflicts || [], feeds: parsed.feeds || [], inbox: parsed.inbox || [], traces: parsed.traces || [], intakeEvents: parsed.intakeEvents || [], sources: parsed.sources || [], readings: parsed.readings || [], researchNotes: parsed.researchNotes || [], llmUsage: normalizeLlmUsage(parsed.llmUsage), traceAggregates: normalizeTraceAggregates(parsed.traceAggregates) }
   migrate(db)
+  // 2026-09-26：通道功能已移除，导入时不保留通道描述符（migrate 系红区，加载后清理）
+  if (db.channels !== undefined) delete db.channels
   if (!parsed.readingJournal) migrateReadings(db.readings)
   else db.readings = []
   // 带了原文就整体替换；没带（只导出判断的文件）则不动磁盘上已有的原文
@@ -1581,22 +1570,6 @@ export function setInboxExtraction(id, { extracted, matchScore, lemmas }) {
   if (Array.isArray(lemmas)) item.lemmas = lemmas
   persist()
   return item
-}
-
-/** 通道未匹配率：近 N 天该通道进收件箱的条目里，多少条没被抽取（低质 / 未命中标签库 / 未达阈值） */
-export function channelMatchRates(days = 30) {
-  const since = Date.parse(today()) - days * 864e5
-  const byChannel = new Map()
-  for (const i of load().inbox) {
-    const channelId = i.provenance?.channelId
-    if (!channelId) continue
-    if (Date.parse(i.createdAt || today()) < since) continue
-    if (!byChannel.has(channelId)) byChannel.set(channelId, { channelId, total: 0, unmatched: 0 })
-    const row = byChannel.get(channelId)
-    row.total++
-    if (i.extracted === false) row.unmatched++
-  }
-  return [...byChannel.values()].map((r) => ({ ...r, rate: r.total ? r.unmatched / r.total : 0 }))
 }
 
 export function inboxCount() {
@@ -1781,63 +1754,6 @@ export function labelerDivergence() {
     count: g.count,
     meanDiff: g.count ? g.diffSum / g.count : 0,
   }))
-}
-// ============================================================
-// 通道描述符
-// ============================================================
-
-export function allChannels() {
-  return load().channels
-}
-
-export function addChannel(ch) {
-  const db = load()
-  const channel = {
-    id: uid(),
-    name: ch.name || '未命名通道',
-    kind: ch.kind || '自媒体',
-    quality: ch.quality ?? SOURCE_QUALITY.find(([k]) => k === (ch.kind || '自媒体'))?.[1] ?? 0.5,
-    fetch: ch.fetch || 'manual',
-    query: ch.query || '',
-    cadence: ch.cadence || '日',
-    network: ch.network || 'direct',
-    themeId: ch.themeId || null,
-    metric: ch.metric || null,
-    interval: Math.max(15, Number(ch.interval) || 60),
-    lastFetch: ch.lastFetch || null,
-    lastCount: ch.lastCount ?? null,
-    lastOk: ch.lastOk ?? null,
-    lastError: ch.lastError || null,
-    tags: [...new Set((ch.tags || []).filter((t) => typeof t === 'string'))],
-    failCount: ch.failCount ?? 0,
-    review: ch.review === true,
-    enabled: ch.enabled !== false,
-    createdAt: today(),
-  }
-  db.channels.push(channel)
-  persist()
-  return channel
-}
-
-export function updateChannel(id, patch) {
-  const db = load()
-  const ch = db.channels.find((c) => c.id === id)
-  if (!ch) return null
-  Object.assign(ch, patch)
-  persist()
-  return ch
-}
-
-export function removeChannel(id) {
-  const db = load()
-  db.channels = db.channels.filter((c) => c.id !== id)
-  // 清理节点上的悬空引用——不靠 UI 的 filter(Boolean) 兜底
-  for (const n of db.nodes) {
-    if (Array.isArray(n.channelIds) && n.channelIds.includes(id)) {
-      n.channelIds = n.channelIds.filter((x) => x !== id)
-    }
-  }
-  persist()
 }
 // ------------------------------------------------------------------ 读数层
 
@@ -2211,15 +2127,6 @@ function resolveReadingConflict(c, verdict) {
 export function indicatorsForReading(reading) {
   const d = load()
   return d.nodes.filter((n) => n.id === reading.indicatorId || n.id === reading.nodeId || (reading.channelId && (n.channelIds || []).includes(reading.channelId)))
-}
-
-export function latestReadingByChannel(channelId) {
-  load()
-  const s = readingsStore()
-  const rs = [...s.refs.values()].filter((r) => r.channelId === channelId).sort((a, b) => b.period.end.localeCompare(a.period.end) || b.period.start.localeCompare(a.period.start) || b.lineNo - a.lineNo)
-  if (!rs.length) return null
-  const r = s.get(rs[0].id), g = s.groups.get(observationKey(rs[0]))
-  return { ...r, value: g.value, status: g.status, trust: { ...g.trust, flags: [...g.trust.flags] } }
 }
 
 export function exportIntent() {

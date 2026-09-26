@@ -9,8 +9,9 @@ const percent = (rate) => `${(rate * 100).toFixed(1)}%`
 
 export async function renderAudit(mid) {
   clear(mid)
-  const [a, channels] = await Promise.all([m.falseKill(30), m.channelList()])
-  const chName = (id) => channels.find((c) => c.id === id)?.kind || id || '未知通道'
+  const a = await m.falseKill(30)
+  // 通道已移除：只显示来源 id
+  const chName = (id) => id || '未知通道'
   const keys = ['source', 'dedup', 'user', 'routeIgnored']
   if (a.byGate.other.total) keys.push('other')
   const card = h('div', { class: 'audit' },

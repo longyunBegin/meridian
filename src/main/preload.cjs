@@ -88,9 +88,8 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxPrune: (days, opts) => ipcRenderer.invoke('inbox:prune', days, opts),
   intakeSeries: (sinceDays) => ipcRenderer.invoke('intake:series', sinceDays),
 
-  // ---- LLM 账本 + 通道未匹配率
+  // ---- LLM 账本
   llmUsage: () => ipcRenderer.invoke('llm:usage'),
-  channelMatchRates: () => ipcRenderer.invoke('channel:matchRates'),
 
   // ---- 骨架生成
   generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),
@@ -102,25 +101,12 @@ contextBridge.exposeInMainWorld('meridian', {
   traceModelCalibration: () => ipcRenderer.invoke('trace:modelCalibration'),
   traceLabelerDivergence: () => ipcRenderer.invoke('trace:labelerDivergence'),
 
-  // ---- 通道描述符
-  channelList: () => ipcRenderer.invoke('channel:list'),
-  channelAdd: (ch) => ipcRenderer.invoke('channel:add', ch),
-  channelUpdate: (id, patch) => ipcRenderer.invoke('channel:update', id, patch),
-  channelRemove: (id) => ipcRenderer.invoke('channel:remove', id),
-  channelFetch: (id) => ipcRenderer.invoke('channel:fetch', id),
-  availableFetchers: () => ipcRenderer.invoke('channel:fetchers'),
-  metricFetchers: () => ipcRenderer.invoke('channel:metricFetchers'),
-
   // ---- EDGAR 标签发现
   discoverTags: (ticker) => ipcRenderer.invoke('edgar:discoverTags', ticker),
-
-  // ---- LLM 提议指针
-  proposeLinks: (indicatorId) => ipcRenderer.invoke('llm:proposeLinks', indicatorId),
 
   // ---- 读数层
   addReading: (input) => ipcRenderer.invoke('reading:add', input),
   indicatorsForReading: (reading) => ipcRenderer.invoke('reading:indicatorsFor', reading),
-  latestReadingByChannel: (channelId) => ipcRenderer.invoke('reading:latestByChannel', channelId),
   getReading: (id) => ipcRenderer.invoke('reading:get', id),
   readingsPage: (opts) => ipcRenderer.invoke('reading:page', opts),
   readingEvidence: (opts) => ipcRenderer.invoke('reading:evidence', opts),

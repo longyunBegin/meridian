@@ -561,40 +561,6 @@ ok('导出包含 traces 数组', Array.isArray(exportedTraces.traces))
 ok('导出 traces 有 ' + store.allTraces().length + ' 条', exportedTraces.traces.length === store.allTraces().length)
 
 // ============================================================
-console.log('\n— 通道描述符 —')
-
-const ch = store.addChannel({
-  name: 'X · AI 产业链',
-  kind: '自媒体',
-  fetch: 'grok-x-search',
-  query: '1.6T optical module supply chain',
-  cadence: '日',
-  themeId: theme.id,
-})
-ok('addChannel 创建了通道', store.allChannels().length === 1, `实际 ${store.allChannels().length}`)
-ok('通道有 id', typeof ch.id === 'string')
-ok('通道 kind = 自媒体', ch.kind === '自媒体')
-ok('通道 fetch = grok-x-search', ch.fetch === 'grok-x-search')
-ok('通道 enabled 默认 true', ch.enabled === true)
-ok('通道 quality 查表', ch.quality === 0.5, `实际 ${ch.quality}`)
-
-store.updateChannel(ch.id, { enabled: false, query: 'updated query' })
-const updatedCh = store.allChannels().find((c) => c.id === ch.id)
-ok('updateChannel 改了 enabled', updatedCh.enabled === false)
-ok('updateChannel 改了 query', updatedCh.query === 'updated query')
-
-store.addChannel({ name: 'arXiv', kind: '一手数据', fetch: 'tavily', themeId: theme.id })
-ok('两个通道', store.allChannels().length === 2, `实际 ${store.allChannels().length}`)
-
-store.removeChannel(ch.id)
-ok('removeChannel 删了', store.allChannels().length === 1, `实际 ${store.allChannels().length}`)
-
-// 导出包含 channels
-const exportedCh = JSON.parse(store.exportAll())
-ok('导出包含 channels 数组', Array.isArray(exportedCh.channels))
-ok('导出 channels 有 1 条', exportedCh.channels.length === 1)
-
-// ============================================================
 console.log('\n— 不确定性闸门 + 自动归位 —')
 // ============================================================
 
@@ -1610,12 +1576,10 @@ const migratedExport = store.exportAll()
 const migratedExportJson = JSON.parse(migratedExport)
 ok('幂等: 导出 feeds 为空', Array.isArray(migratedExportJson.feeds) && migratedExportJson.feeds.length === 0)
 ok('幂等: 导出 version 为 4', migratedExportJson.version === 4)
-const channelCountBefore = store.allChannels().length
 store.importAll(migratedExport)
-const channelCountAfter = store.allChannels().length
-ok('幂等: 再导入 channels 不翻倍', channelCountAfter === channelCountBefore)
+ok('幂等: 导入后无 channels 键（通道已移除）', !('channels' in JSON.parse(store.exportAll())))
 
-// --- 去重：旧数据里 feeds 和 channels 有同 URL，不重复 ---
+// --- 旧导出文件可导入（version 3 + feeds 有数据，channels 应被丢弃） ---
 const dedupData = JSON.stringify({
   version: 3,
   settings: {},
@@ -1625,7 +1589,6 @@ const dedupData = JSON.stringify({
   conflicts: [],
   feeds: [
     { id: 'feed-dup', name: 'Reuters RSS', url: 'https://reuters.com/feed.xml', kind: 'rss', interval: 60, enabled: true, createdAt: '2026-09-01' },
-    { id: 'feed-new', name: 'CNBC RSS', url: 'https://cnbc.com/feed.xml', kind: 'rss', interval: 60, enabled: true, createdAt: '2026-09-04' },
   ],
   inbox: [],
   traces: [],
@@ -1636,13 +1599,8 @@ const dedupData = JSON.stringify({
   readings: [],
 })
 store.importAll(dedupData)
-const dedupChannels = store.allChannels()
-ok('去重: 同 URL 不重复', dedupChannels.filter((c) => c.query === 'https://reuters.com/feed.xml').length === 1)
-ok('去重: 新 URL 正常添加', dedupChannels.some((c) => c.query === 'https://cnbc.com/feed.xml'))
-ok('去重: 总数 2（1 已有 + 1 新）', dedupChannels.length === 2)
-
-// --- 旧导出文件可导入（version 3 + feeds 有数据） ---
 ok('兼容: 旧格式导入不报错', true)
+ok('兼容: 旧 channels 不再导入', !('channels' in JSON.parse(store.exportAll())))
 
 // --- grep 验收 ---
 const vaultSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
@@ -1672,26 +1630,21 @@ ok('验收: feeds.js 已删除', !existsSync2(join(ROOT2, 'src/renderer/views/fe
 console.log('\n— R7: 指标来源面板 —')
 // ============================================================
 
-// --- 3.1 packId 修复：非 AI 描述 → 0 通道 ---
+// --- 3.1 建主题不再配通道（通道功能已移除） ---
 const nonAiTheme = await fire('theme:setupNew', '纺织服装供应链')
-const nonAiChannels = store.allChannels().filter((c) => c.themeId === nonAiTheme.id)
-ok('R7 packId: 非 AI 描述 → 0 通道', nonAiChannels.length === 0, `实际 ${nonAiChannels.length}`)
+ok('R7: 非 AI 描述建主题成功', !!nonAiTheme?.id)
 
 const aiTheme = await fire('theme:setupNew', 'AI 产业链')
-const aiChannels = store.allChannels().filter((c) => c.themeId === aiTheme.id)
-ok('R7 无 key: AI 描述也不猜通道', aiChannels.length === 0, `实际 ${aiChannels.length}`)
 ok('R7 无 key: 返回降级标记', aiTheme.degraded === true)
+ok('R7: 建主题不再返回 channelCount', aiTheme.channelCount === undefined)
 
-// --- 3.2 指针机制：channelIds ---
+// --- 3.2 指针机制：channelIds（节点字段保留，仅存历史引用） ---
 const ptrTheme = store.addTheme('R7 指针测试')
-const r7Ch1 = store.addChannel({ name: 'EDGAR NVDA', fetch: 'edgarConcept', query: 'NVDA', kind: '财报 / 公告', themeId: ptrTheme.id })
-const r7Ch2 = store.addChannel({ name: 'EDGAR MSFT', fetch: 'edgarConcept', query: 'MSFT', kind: '财报 / 公告', themeId: ptrTheme.id })
-const r7Ch3 = store.addChannel({ name: 'EDGAR GOOGL', fetch: 'edgarConcept', query: 'GOOGL', kind: '财报 / 公告', themeId: ptrTheme.id })
 
-const indNode = store.addNode({ themeId: ptrTheme.id, kind: 'lemma', title: '云厂商 capex', type: 'observation', channelIds: [r7Ch1.id, r7Ch2.id, r7Ch3.id] })
-ok('R7 channelIds: 挂 3 个通道', indNode.channelIds.length === 3)
+const indNode = store.addNode({ themeId: ptrTheme.id, kind: 'lemma', title: '云厂商 capex', type: 'observation', channelIds: ['r7-ch-1', 'r7-ch-2', 'r7-ch-3'] })
+ok('R7 channelIds: 挂 3 个通道引用', indNode.channelIds.length === 3)
 
-store.updateNode(indNode.id, { channelIds: [r7Ch1.id, r7Ch2.id] })
+store.updateNode(indNode.id, { channelIds: ['r7-ch-1', 'r7-ch-2'] })
 ok('R7 channelIds: 更新为 2', store.getNode(indNode.id).channelIds.length === 2)
 
 // 旧节点 migrate 补 channelIds

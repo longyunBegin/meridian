@@ -12,27 +12,24 @@ import {
 
   allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
-  bestThemeContext, channelMatchRates,
+  bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
   traceIndexByHash, recordLabelAggregate, pruneInbox, lastInboxPrune, INBOX_TTL_DAYS,
-  allChannels, addChannel, updateChannel, removeChannel,
-  addReading, indicatorsForReading, latestReadingByChannel,
+  addReading, indicatorsForReading,
   getReading, readingsPage, readingEvidence, latestReadings, sourcesPage,
   assignReading, verifyReadingChain, exportIntent,
-  updateTheme, rankChannelsByTags, kindToTags, sicToTags,
+  updateTheme, kindToTags, sicToTags,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid,
 } from './store.js'
-import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary, pickChannelsFromLibrary } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary } from './extract.js'
 import { labelSource, jevLabel } from './labeler.js'
 import { tracked } from './llmlog.js'
-import { genericFallback, channelLibrary, instantiate } from './templates.js'
+import { genericFallback, instantiate } from './templates.js'
 
-import { fetchChannel, availableFetchers, METRIC_FETCHERS } from './fetchers.js'
-import { discoverTags, deriveChannelTags } from './discover.js'
+import { discoverTags } from './discover.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
-import { proposeChannelLinks } from './propose.js'
 import { createHash } from 'node:crypto'
 import { ingestReadings } from './reading-ingest.js'
 
@@ -568,7 +565,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   const scaffoldResults = new Map()
 
   async function scaffoldTheme(themeId, description, s) {
-    if (scaffolding.has(themeId)) return { degraded: false, channelCount: 0, skipped: 'in-flight' }
+    if (scaffolding.has(themeId)) return { degraded: false, skipped: 'in-flight' }
     scaffolding.add(themeId)
     try {
       const result = await runScaffold(themeId, description, s)
@@ -591,18 +588,16 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
       const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
       if (hasBranches && hasTagLibrary) {
-        return { degraded: false, channelCount: 0, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
+        return { degraded: false, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
       }
 
-      const library = channelLibrary()
-      const [skeletonResult, tagResult, channelResult] = await Promise.all([
+      const [skeletonResult, tagResult] = await Promise.all([
         tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
         tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
-        tracked('pickChannelsFromLibrary', () => pickChannelsFromLibrary(s, description, library), { themeId }),
       ])
 
       if (hasBranches) {
-        // 这一轮只补标签库，骨架、通道、指标节点都不重铺
+        // 这一轮只补标签库，骨架、指标节点都不重铺
       } else if (skeletonResult.ok) {
         const walk = (node, parentId) => {
           const n = addNode({
@@ -621,25 +616,13 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
         if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
       }
 
-      const available = new Set(availableFetchers())
-      const automaticChannels = []
-      if (!hasBranches) for (const ch of channelResult.channels || []) {
-        if (!available.has(ch.fetch)) continue
-        automaticChannels.push(addChannel({
-          name: ch.name, kind: ch.kind, fetch: ch.fetch, query: ch.query,
-          metric: ch.metric || null, interval: Math.max(15, Number(ch.interval) || 60),
-          cadence: ch.cadence, themeId, tags: ch.tags || [],
-          enabled: !ch.needsKey,
-        }))
-      }
       if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
         for (const spec of branch.scaffold?.indicators || []) {
           const name = typeof spec === 'string' ? spec : spec.name
           if (!name || allNodes().some((n) => n.themeId === themeId && n.parentId === branch.id && n.title === name && n.status !== 'dead')) continue
-          const linked = automaticChannels.filter((ch) => METRIC_FETCHERS.includes(ch.fetch) && ch.name === name)
           addNode({
             themeId, parentId: branch.id, title: name, type: 'observation', by: 'model',
-            cadence: spec.cadence || '季度', channelIds: linked.map((ch) => ch.id),
+            cadence: spec.cadence || '季度',
           })
         }
       }
@@ -665,12 +648,10 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
         tagLibraryOk: !!tagLibraryResult.ok,
         tagLibraryReason: tagLibraryResult.ok ? null : (tagLibraryResult.reason || 'unknown'),
         tagLibraryCount,
-        channelCount: automaticChannels.length,
         skipped: treeExists && hasBranches ? 'tag-library-only' : null,
       }
   }
 
-  ipcMain.handle('theme:scaffoldStatus', () => [...scaffolding])
   ipcMain.handle('theme:scaffoldResult', (_, themeId) => scaffoldResults.get(themeId) || null)
 
   // 建主题分两步：主题立即建好返回（UI 不必卡住），骨架异步铺。
@@ -690,9 +671,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('theme:regenerate', async (_, themeId) => {
     const theme = allThemes().find((t) => t.id === themeId)
     if (!theme) return { ok: false, error: 'not-found' }
-    // 删旧：整棵环节树 + 标签库 + 该主题下自动配的通道
+    // 删旧：整棵环节树 + 标签库
     for (const n of allNodes().filter((n) => n.themeId === themeId)) removeNode(n.id)
-    for (const ch of allChannels().filter((c) => c.themeId === themeId)) removeChannel(ch.id)
     updateTheme(themeId, { tags: [], tagLibrary: [] })
     scaffoldTheme(themeId, theme.name, settings())
       .then((result) => {
@@ -834,7 +814,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('db:tickerLookup', (_, code, themeId) => nodesByTicker(code, themeId))
   ipcMain.handle('db:tickers', (_, themeId) => allTickers(themeId))
 
-  // ---- 订阅源（已统一为通道，见 channel:* handler）----
+  // ---- 数据目录 ----
 
   ipcMain.handle('io:openDataDir', async () => {
     const path = app.getPath('userData')
@@ -962,9 +942,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   }
 
   ipcMain.handle('inbox:capture', (_, text, channelMeta) => runCapture(text, channelMeta))
-  // 复盘页：LLM 账本 + 通道未匹配率
+  // 复盘页：LLM 账本
   ipcMain.handle('llm:usage', () => llmUsage())
-  ipcMain.handle('channel:matchRates', () => channelMatchRates(30))
 
   // 分页：无分页时每次渲染把全部 pending（含 text+lemmas）拉过 IPC，
   // 而 refresh() 挂在 db:changed 上——改任何东西都会重跑一遍。
@@ -1121,100 +1100,12 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('trace:modelCalibration', () => modelCalibration())
   ipcMain.handle('trace:labelerDivergence', () => labelerDivergence())
 
-  // ---- 通道描述符 ----
-  ipcMain.handle('channel:list', () => allChannels())
-  ipcMain.handle('channel:add', async (_, ch) => {
-    const channel = addChannel(ch)
-    try {
-      const tags = await deriveChannelTags(channel, settings())
-      if (tags.length) return updateChannel(channel.id, { tags })
-    } catch { /* 推导失败不阻塞建通道 */ }
-    return channel
-  })
-  ipcMain.handle('channel:update', async (_, id, patch) => {
-    const updated = updateChannel(id, patch)
-    if (!updated) return null
-    // 改了 query / fetch / kind 时重算 tags
-    if (patch.query !== undefined || patch.fetch !== undefined || patch.kind !== undefined) {
-      try {
-        const tags = await deriveChannelTags(updated, settings())
-        return updateChannel(id, { tags })
-      } catch { /* 重算失败保留旧 tags */ }
-    }
-    return updated
-  })
-  ipcMain.handle('channel:remove', (_, id) => removeChannel(id))
-
-  /** 通道拉取的分流逻辑——handler 和轮询器都调它，不复制粘贴 */
-  async function runChannelFetch(channelId) {
-    const ch = allChannels().find((c) => c.id === channelId)
-    if (!ch) return { items: [], readings: null, error: 'channel not found' }
-    const result = await fetchChannel(ch)
-    if (result.error) {
-      // lastFetch 必须是完整时间：只存日期会被 Date.parse 还原成当天 00:00，interval 形同虚设
-      updateChannel(channelId, { lastError: result.error, lastFetch: new Date().toISOString(), failCount: (ch.failCount || 0) + 1 })
-      return result
-    }
-    const count = (result.readings?.added || 0) + (result.items?.length || 0)
-    // lastOk / lastError 仍是日期——那是给人看的，不需要精度
-    updateChannel(channelId, { lastOk: today(), lastError: null, lastFetch: new Date().toISOString(), lastCount: count, failCount: 0 })
-    // Path B：有 items 需要走 processCapture 产命题
-    let processed = 0
-    if (result.items && result.items.length) {
-      const themeId = ch.themeId || bestThemeContext()?.id || null
-      for (const item of result.items) {
-        if (!themeId) continue
-        processed++
-        const cap = await processCapture(item.text, themeId, {
-          kind: item.kind || ch.kind,
-          platform: item.platform || null,
-          url: item.url || null,
-          channelId: ch.id,
-        })
-        const gate = gateCheck(cap)
-        if (cap.extracted !== false && gate.pass && cap.lemmas.length > 0) {
-          autoImport(cap, themeId, gate.reasons, uid(), uid())
-        } else {
-          addInboxItem({
-            text: item.text,
-            title: firstSentence(item.text),
-            label: cap.label,
-            lemmas: cap.lemmas,
-            rejected: cap.rejected,
-            noulCompared: cap.noulCompared,
-            noulMaxScore: cap.noulMaxScore,
-            provenance: { platform: item.platform || null, url: item.url || null, channelId: ch.id },
-            extracted: cap.extracted !== false,
-            matchScore: cap.matchScore || 0,
-            ...(cap.skipped ? { skipped: cap.skipped } : {}),
-          })
-        }
-      }
-    }
-    // processed：本轮处理的条数（含被免费过滤层拦下的），轮询器据此扣 tick 预算
-    return { ...result, processed }
-  }
-
-  ipcMain.handle('channel:fetch', (_, channelId) => runChannelFetch(channelId))
-  ipcMain.handle('channel:fetchers', () => availableFetchers())
-  ipcMain.handle('channel:metricFetchers', () => METRIC_FETCHERS)
-
   // ---- EDGAR 标签发现（仅手动触发）----
   ipcMain.handle('edgar:discoverTags', async (_, ticker) => {
     try {
       return await discoverTags(ticker)
     } catch (e) {
       return { tags: [], error: e.message || String(e), entityName: null }
-    }
-  })
-
-  // ---- LLM 提议指针 ----
-  ipcMain.handle('llm:proposeLinks', async (_, indicatorId) => {
-    try {
-      const node = getNode(indicatorId)
-      return await tracked('propose', () => proposeChannelLinks(settings(), node, allChannels()), { themeId: node?.themeId })
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) }
     }
   })
 
@@ -1225,7 +1116,6 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     channelId: input?.channelId, nodeId: input?.nodeId, tier: 'agent',
   }))
   ipcMain.handle('reading:indicatorsFor', (_, reading) => indicatorsForReading(reading))
-  ipcMain.handle('reading:latestByChannel', (_, channelId) => latestReadingByChannel(channelId))
   ipcMain.handle('reading:get', (_, id) => getReading(id))
   ipcMain.handle('reading:page', (_, opts) => readingsPage(opts))
   ipcMain.handle('reading:evidence', (_, opts) => readingEvidence(opts))
@@ -1282,8 +1172,6 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     getMainWindow?.()?.webContents.send('db:changed')
     return { ok: true, count: created.length }
   })
-
-  return { runChannelFetch }
 }
 
 

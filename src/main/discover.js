@@ -115,29 +115,3 @@ export async function fetchSic(ticker) {
   if (!sic) return null
   return { sic, sicDescription }
 }
-
-/**
- * 通道标签推导：合并 kind / SIC / Jev 三个来源。
- * 三条都可能失败，任一失败不影响其他。返回去重后的标签数组。
- */
-export async function deriveChannelTags(channel, settings) {
-  const tags = new Set()
-  // ① kind 推导
-  for (const t of kindToTags(channel.kind)) tags.add(t)
-  // ② SIC 推导（仅 edgar 类型且 query 像 ticker）
-  const EDGAR_FETCHES = new Set(['edgarConcept', 'edgarFilings'])
-  if (EDGAR_FETCHES.has(channel.fetch) && channel.query && /^[A-Z]{1,6}$/i.test(channel.query)) {
-    try {
-      const sic = await fetchSic(channel.query)
-      if (sic) for (const t of sicToTags(sic.sic, sic.sicDescription)) tags.add(t)
-    } catch { /* SIC 推导失败不影响其他 */ }
-  }
-  // ③ Jev 打标（仅 rss / web）
-  if ((channel.fetch === 'rss' || channel.fetch === 'web') && channel.query) {
-    try {
-      const label = await labelSource(settings, channel.query, { kind: channel.kind })
-      if (label?.kind) tags.add(label.kind)
-    } catch { /* Jev 打标失败不影响其他 */ }
-  }
-  return [...tags]
-}

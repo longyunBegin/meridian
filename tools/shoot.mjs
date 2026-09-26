@@ -909,7 +909,7 @@ Promise.all([
     const theme = await m.addTheme('零配置读数验收')
     const judgment = await m.addNode({ themeId: theme.id, kind: 'lemma', type: 'hypothesis', title: '验收收入超过一千万元', confidence: 75, settlement: { date: '2026-12-31', resolved: null, correct: null } })
     const node = await m.addNode({ themeId: theme.id, parentId: judgment.id, kind: 'lemma', type: 'observation', title: '验收季度收入', confidence: 75 })
-    return { theme, judgment, node, channels: (await m.channelList()).length }
+    return { theme, judgment, node }
   })()`)
   await win.loadFile(RENDERER, { query: { view: 'lattice', shape: 'tree' } })
   await waitDom("!!document.querySelector('.theme-item')")
@@ -940,10 +940,10 @@ Promise.all([
     const page = await m.readingsPage({ indicatorId: '${v08.node.id}' })
     const evidence = await m.readingEvidence({ observationId: page.items[0].id })
     const reading = evidence.items[0]
-    return { item: page.items[0], tier: reading.tier, trust: reading.trust, channels: (await m.channelList()).length }
+    return { item: page.items[0], tier: reading.tier, trust: reading.trust }
   })()`)
-  check(manual.item.value === 1200 && manual.tier === 'agent' && manual.trust.score < 0.6 && manual.channels === v08.channels,
-    'v0.8: 人工填写公告类型仍按外部提供检验，不创建通道，树显示读数')
+  check(manual.item.value === 1200 && manual.tier === 'agent' && manual.trust.score < 0.6,
+    'v0.8: 人工填写公告类型仍按外部提供检验，树显示读数')
   await win.loadFile(RENDERER, { query: { view: 'sources' } })
   await waitDom("!!document.querySelector('.source-record')")
   // 三种接入方式都必须让用户知道——MCP 实现了却长期不在界面上出现

@@ -277,68 +277,6 @@ function parseTagLibrary(raw) {
   } catch { return [] }
 }
 
-const CHANNEL_PICK_SYSTEM = `你是一个产业链数据源配置助手。根据主题描述，从给定的已验证通道库中选择相关通道。
-
-硬规则：
-1. 只能返回库中已有的 id，不能创建或修改通道配置。
-2. 不相关时返回空数组，不要为了凑数而选择。
-3. 只输出 JSON，不要 markdown 或解释。
-4. 结构：{"channelIds":["id"]}`
-
-export async function pickChannelsFromLibrary(settings, description, library) {
-  const { baseUrl, apiKey, model } = settings
-  if (!apiKey) return { ok: false, reason: 'no-key', channels: [] }
-  if (!library.length) return { ok: true, channels: [] }
-  if (__testHooks.run) return __testHooks.run('pickChannels', { settings, description, library })
-
-  const candidates = library.map((ch) => ({
-    id: ch.id,
-    name: ch.name,
-    fetch: ch.fetch,
-    query: ch.query || null,
-    metric: ch.metric || null,
-    tags: ch.tags || [],
-  }))
-
-  let res
-  try {
-    res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        messages: [
-          { role: 'system', content: CHANNEL_PICK_SYSTEM },
-          { role: 'user', content: `主题：${String(description).slice(0, 500)}\n\n已验证通道库：${JSON.stringify(candidates)}` },
-        ],
-      }),
-    })
-  } catch (e) {
-    return { ok: false, reason: errorReason(e), channels: [] }
-  }
-
-  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, channels: [] }
-  const usage = await readUsage(res)
-  const body = await res.json()
-  const raw = body?.choices?.[0]?.message?.content
-  if (!raw) return { ok: false, reason: 'empty', channels: [], usage }
-
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start < 0 || end <= start) return { ok: false, reason: 'unparsable', channels: [], usage }
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1))
-    if (!Array.isArray(parsed.channelIds)) return { ok: false, reason: 'unparsable', channels: [], usage }
-    const byId = new Map(library.map((ch) => [ch.id, ch]))
-    const ids = [...new Set(parsed.channelIds.filter((id) => typeof id === 'string'))]
-    return { ok: true, channels: ids.map((id) => byId.get(id)).filter(Boolean), usage }
-  } catch {
-    return { ok: false, reason: 'unparsable', channels: [], usage }
-  }
-}
-
 /**
  * 模型生成骨架：输入一句话描述 → 产出环节树 + 传导权重 + scaffold。
  * 这是 step 4 的核心：建树不再需要用户写标题，模型产出草稿态，用户裁剪。

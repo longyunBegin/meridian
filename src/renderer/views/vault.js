@@ -151,16 +151,16 @@ function side(n, label) {
 async function renderReview(mid) {
   clear(mid)
 
-  const [series, filterCalib, verdicts, byChannel, channels, vsData, llm] = await Promise.all([
+  const [series, filterCalib, verdicts, byChannel, vsData, llm] = await Promise.all([
     m.intakeSeries(30),
     m.filterCalibration(),
     m.verdicts(),
     m.falseKillByChannel(30),
-    m.channelList(),
     m.vsInstitution(90),
     m.llmUsage(),
   ])
-  const chName = (id) => channels.find((c) => c.id === id)?.kind || id
+  // 通道已移除：只显示来源 id
+  const chName = (id) => id
 
   // LLM 账本：按天聚合，今天与近 30 天两个口径
   const llmDays = llm?.daily || []

@@ -74,7 +74,7 @@ ok('应用按新权重重算为 52', Math.abs(app_.confidence - 52) < 0.01, `实
 ok('云仍为 70', Math.abs(cloud.confidence - 70) < 0.01, `实际 ${cloud.confidence}`)
 
 console.log('\n— 结算与校准曲线 —')
-const { version, genericFallback, channelLibrary, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
+const { version, genericFallback, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
 const settleTheme = s.addTheme('结算主题')
 const p1 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 确信', confidence: 90, settlement: { date: '2026-01-01' } })
 const p2 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 错', confidence: 92, settlement: { date: '2026-01-01' } })
@@ -196,7 +196,6 @@ ok('所有骨架节点都是环节', created.every((n) => n.kind === 'branch'))
 ok('没有重复 id', new Set(s.allNodes().map((n) => n.id)).size === s.allNodes().length)
 ok('根环节都挂了 scaffold', roots.every((id) => s.getNode(id)?.scaffold?.answer?.length))
 ok('scaffold 含指标与证伪信号', created.every((n) => n.scaffold.indicators?.length && n.scaffold.falsifier))
-ok('验证通道库非空且 id 唯一', channelLibrary().length > 0 && new Set(channelLibrary().map((channel) => channel.id)).size === channelLibrary().length)
 
 console.log('\n— 从骨架生成命题（结算日由更新频率推导）—')
 const leaf = s.getNode(roots[0])
@@ -221,7 +220,6 @@ ok('墓碑节点不接收传导', (() => {
 console.log('\n— 骨架与通道库版本 —')
 ok('配置带版本号', Number.isInteger(version()) && version() >= 2, String(version()))
 ok('通用骨架不可选模板', fallback.id === 'generic')
-ok('通道库条目保留取数配置', channelLibrary().every((channel) => channel.fetch && channel.name))
 
 console.log('\n— 数据主权 —')
 const json = s.exportAll()
@@ -303,22 +301,6 @@ ok('反查标的关联命题', lookup.length === 2, `实际 ${lookup.length}`)
 ok('反查不限定主题', s.nodesByTicker('NVDA').length === 2)
 const allT = s.allTickers(tickerTheme.id)
 ok('主题下全部标的去重', allT.length === 1 && allT[0].code === 'NVDA' && allT[0].count === 2, JSON.stringify(allT))
-
-console.log('\n— 通道 —')
-const ch = s.addChannel({ name: '测试通道', kind: '独立媒体', fetch: 'rss', query: 'https://example.com/feed.xml', themeId: tickerTheme.id, interval: 30 })
-ok('通道创建', !!ch && ch.query === 'https://example.com/feed.xml')
-ok('间隔下限 15 分钟', ch.interval === 30)
-const ch2 = s.addChannel({ name: '通道2', fetch: 'rss', query: 'https://example.com/2.xml', interval: 5 })
-ok('间隔低于 15 被拉到 15', ch2.interval === 15)
-ok('review 默认 false', ch.review === false)
-s.updateChannel(ch.id, { name: '改名', interval: 120 })
-ok('通道可更新', s.allChannels().find((c) => c.id === ch.id).name === '改名')
-s.removeChannel(ch2.id)
-ok('通道可删除', s.allChannels().length === 1)
-ok('通道随导出导入', (() => {
-  const exp = JSON.parse(s.exportAll({ withRaw: false }))
-  return Array.isArray(exp.channels) && exp.channels.length === 1
-})())
 
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

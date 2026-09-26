@@ -1,7 +1,7 @@
 const { app, BrowserWindow, globalShortcut, clipboard } = globalThis.__electron
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { load, settings, lastInboxPrune, dueIndicators, exportIntent } from './store.js'
+import { load, settings, lastInboxPrune, exportIntent } from './store.js'
 import { startAgentServer } from './agent-server.js'
 import { ingestReadings } from './reading-ingest.js'
 
@@ -58,8 +58,7 @@ function createMain() {
 
 import { register } from './ipc.js'
 import { startScheduler } from './scheduler.js'
-import { dueSettlements, allChannels } from './store.js'
-import { availableFetchers, METRIC_FETCHERS } from './fetchers.js'
+import { dueSettlements } from './store.js'
 
 // ---------------------------------------------------------------- boot
 
@@ -86,7 +85,7 @@ app.whenReady().then(async () => {
       mainWin.webContents.send('inbox:pruned', pruned)
     })
   }
-  const { runChannelFetch } = register({
+  register({
     getMainWindow: () => mainWin,
     getAgentConnection: () => ({
       available: !!agentServer, host: '127.0.0.1', port: agentServer?.port || null,
@@ -128,11 +127,6 @@ app.whenReady().then(async () => {
         mainWin.webContents.send('due:notify')
       }
     },
-    channels: () => allChannels(),
-    indicators: (now) => dueIndicators(now),
-    metricFetchers: METRIC_FETCHERS,
-    runChannel: async (ch) => runChannelFetch(ch.id),
-    fetchers: () => availableFetchers(),
   })
 
   const hk = settings().hotkey

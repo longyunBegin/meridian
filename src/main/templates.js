@@ -18,7 +18,6 @@ function read() {
 
 export const version = () => read().version
 export const genericFallback = () => read().genericFallback
-export const channelLibrary = () => read().channelLibrary || []
 
 export function instantiate(template, createBranch) {
   const terminal = new Map()
