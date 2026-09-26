@@ -96,7 +96,7 @@ resolution : 它后来有没有在别的源里变成重要命题？
 
 **做什么**
 
-- 接入 Jev（System One Model，OpenAI 兼容端点）：
+- 接入 Jev（System One Model，原生 state/questions 协议，单端点直连）：
   | 产品动作 | Jev 原语 |
   |---|---|
   | 这段原文属于哪类来源（封闭枚举） | `Choice` |

@@ -7,8 +7,9 @@
  *   table —— 关键词启发式 + SOURCE_QUALITY 表裁决（默认，零依赖，永远可用）
  *   jev   —— Jev 的 Choice / Score / Noul（System One Model，只做判断不聊天）
  *
- * 曾经的 llm 档位已移除：它和 jev 打的是同一个 OpenAI 兼容端点，只是 prompt 形状不同，
- * 用户视角看不出区别，却多一个要理解的概念。接 Jev 就选 jev，不接就用查表。
+ * Jev 走原生协议：POST baseUrl 本体（不拼 /chat/completions），body 为
+ * { model, state, questions }，回答在 answers 里直接是结构化数值，不需要
+ * 从聊天文本里抠 JSON——以前按 OpenAI chat 协议打是错的，端点和协议都对不上。
  *
  * 硬约束：**质量分一律由 SOURCE_QUALITY 表裁决**，打标器只负责选类型。
  * 否则换一个模型，整条校准曲线的基准就漂移了。
@@ -36,54 +37,98 @@ export function tableLabel(text) {
 }
 
 /**
- * Jev 打标。一次调用同时取三个原语：
- *   Choice —— 来源类型（封闭枚举，结构上不可能返回非法值）
- *   Score  —— 来源质量 0–1
+ * Jev 打标。一次调用同时取三个原语（原生协议，一个请求里并行求值）：
+ *   Choice —— 来源类型（封闭枚举：选项就是 KINDS，结构上不可能返回非法值）
+ *   Score  —— 来源质量档位（只记 jevScore 做观测，业务质量分仍走表）
  *   Noul   —— 是否包含可独立成立的判断
+ *
+ * 请求打到 jevBaseUrl 本体：Jev 只有一个端点，不需要拼 /chat/completions。
  */
 export async function jevLabel(settings, text) {
   const { jevBaseUrl, jevKey, jevModel } = settings
   if (!jevKey) return { ok: false, why: 'no-key' }
+  if (!jevBaseUrl) return { ok: false, why: 'no-endpoint' }
 
-  const enumText = KINDS.map((k, i) => `${i + 1}.${k}`).join(' ')
-  const res = await fetch(`${jevBaseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${jevKey}` },
-    body: JSON.stringify({
-      model: jevModel,
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content:
-            '你是来源分类器。对给定文本输出三个判断，只输出 JSON，不要解释：' +
-            '{"choice":枚举下标(整数),"score":0到1的小数,"noul":0到1的小数}。' +
-            'choice 只能从下面这些里选：' + enumText,
+  const state = String(text || '').slice(0, 3000)
+  // Choice 的选项 key 直接用类型名：返回的 choice 就是 key，不用下标映射
+  const kindCriteria = {}
+  for (const k of KINDS) kindCriteria[k] = k
+
+  let res
+  try {
+    res = await fetch(jevBaseUrl.replace(/\/$/, ''), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${jevKey}` },
+      body: JSON.stringify({
+        model: jevModel,
+        state,
+        questions: {
+          kind: {
+            type: 'choice',
+            instructions: '判断这段文本属于哪种来源类型，只能从给定选项中选择最贴切的一个。',
+            criteria: kindCriteria,
+          },
+          quality: {
+            type: 'score',
+            instructions: '这段文本作为信息来源，质量处于哪个档位？档位从低到高排列。',
+            criteria: [
+              '很低：营销号、群聊转发，未经核实的传闻',
+              '较低：自媒体个人观点，有立场无实证',
+              '中等：独立媒体报道，有采编流程',
+              '较高：券商研报，有数据与逻辑支撑',
+              '很高：财报公告、一手数据等官方披露',
+            ],
+          },
+          noul: {
+            type: 'noul',
+            instructions: '这段文本是否包含可独立成立的判断（而非纯信息搬运）？',
+            criteria: { true: '包含可独立成立的判断', false: '纯信息搬运，无独立判断' },
+          },
         },
-        { role: 'user', content: String(text).slice(0, 3000) },
-      ],
-    }),
-  })
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+  } catch (e) {
+    return { ok: false, why: e?.name === 'TimeoutError' ? 'timeout' : 'network' }
+  }
   if (!res.ok) return { ok: false, why: `HTTP ${res.status}` }
 
   const usage = await readUsage(res)
-  const body = await res.json()
-  const raw = body?.choices?.[0]?.message?.content
-  const parsed = parseJson(raw)
-  if (!parsed) return { ok: false, why: 'unparsable', usage }
+  const body = await res.json().catch(() => null)
+  const answers = body?.answers
+  if (!answers || typeof answers !== 'object') return { ok: false, why: 'unparsable', usage }
 
-  const idx = Math.round(Number(parsed.choice))
-  const kind = KINDS[idx - 1] || tableLabel(text).kind
+  const choice = answers.kind?.choice
+  const kind = KINDS.includes(choice) ? choice : tableLabel(text).kind
   // 类型定了，质量分回到表里取——不让模型直接给分
   return {
     ok: true,
     kind,
     quality: QUALITY.get(kind),
-    jevScore: clamp01(Number(parsed.score)),
-    noul: clamp01(Number(parsed.noul)),
+    jevScore: normalizeScore(answers.quality),
+    noul: clamp01(Number(answers.noul?.noul)),
     via: 'jev',
     usage,
+    model: body?.model || undefined, // 别名（如 jev-latest）解析成的真实版本
   }
+}
+
+/**
+ * Score 回答是档位位置（可能落在档位之间），归一到 0–1 只做观测用。
+ * 优先用服务端给的 normalized；没有就用 legend 的刻度自己归一；
+ * 都没有回中性 0.5——错了也只影响 jevScore 这个观测值，不影响业务。
+ */
+function normalizeScore(answer) {
+  const n = Number(answer?.normalized)
+  if (Number.isFinite(n)) return clamp01(n)
+  const s = Number(answer?.score)
+  const keys = Object.keys(answer?.legend || {}).map(Number).filter((x) => Number.isFinite(x))
+  if (Number.isFinite(s) && keys.length >= 2) {
+    const lo = Math.min(...keys)
+    const hi = Math.max(...keys)
+    if (hi > lo) return clamp01((s - lo) / (hi - lo))
+  }
+  return 0.5
 }
 
 /**
@@ -114,15 +159,6 @@ export async function labelSource(settings, text, channelMeta) {
   }
   const t = tableLabel(text)
   return { ok: true, kind: t.kind, quality: t.quality, via: 'table' }
-}
-
-function parseJson(raw) {
-  if (!raw) return null
-  const s = String(raw)
-  const a = s.indexOf('{')
-  const b = s.lastIndexOf('}')
-  if (a < 0 || b <= a) return null
-  try { return JSON.parse(s.slice(a, b + 1)) } catch { return null }
 }
 
 const clamp01 = (n) => (Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5)

@@ -167,13 +167,15 @@ export async function renderSettings(mid) {
         const r = await m.jevTest()
         if (r.ok) {
           jevTestOut.style.color = 'var(--green)'
-          jevTestOut.textContent = `✓ 连通 · ${r.model} · ${r.latency}ms · 返回「${r.text}」`
+          jevTestOut.textContent = `✓ 连通 · ${r.model} · ${r.latency}ms`
         } else {
           jevTestOut.style.color = 'var(--red)'
           const why = {
             'no-key': '未填密钥',
+            'no-endpoint': '未填服务端地址',
             'bad-key': '密钥无效或无权访问（401）——检查密钥是否填对',
             'bad-model': `模型「${r.model}」不存在或无权访问——换一个模型 ID`,
+            'bad-question': '请求格式被拒绝（422）——检查地址与模型 ID',
             timeout: '超时（20s）',
             empty: '模型无返回',
             network: '请求失败，请检查地址与密钥',

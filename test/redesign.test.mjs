@@ -2742,6 +2742,87 @@ ok('C4: readUsage 无 usage 返回 0', await readUsage(new Response('{}', { head
 ok('C4: readUsage 解析失败返回 0', await readUsage(new Response('not json', { headers: { 'content-type': 'application/json' } })) === 0)
 ok('C4: 调用点只在 tracked 里记账', ipcSrcGov.includes('tracked(') && !ipcSrcGov.includes('recordLlmUsage'))
 
+// ---- C5：Jev 原生协议（state/questions 直连 baseUrl 本体）----
+
+const jevNativeRes = new Response(JSON.stringify({ usage: { input_tokens: 280, output_tokens: 20 } }), { headers: { 'content-type': 'application/json' } })
+ok('C5: readUsage 读 Jev 原生 input/output_tokens', await readUsage(jevNativeRes) === 300)
+const jevBothRes = new Response(JSON.stringify({ usage: { total_tokens: 42, input_tokens: 280, output_tokens: 20 } }), { headers: { 'content-type': 'application/json' } })
+ok('C5: readUsage 有 total_tokens 时优先用它', await readUsage(jevBothRes) === 42)
+
+// 打桩 fetch：捕获请求形状，返回原生 answers
+const realFetch = globalThis.fetch
+let jevLastReq = null
+const jevOkBody = {
+  answers: {
+    kind: { type: 'choice', choice: '券商研报', probabilities: { '券商研报': 0.9 }, confidence: 0.9 },
+    quality: { type: 'score', score: 3.4, normalized: 0.85, legend: { 1: '低', 5: '高' }, confidence: 0.8 },
+    noul: { type: 'noul', noul: 0.7 },
+  },
+  model: 'jev-1.13.0',
+  usage: { input_tokens: 280, output_tokens: 20 },
+}
+globalThis.fetch = async (url, init) => {
+  jevLastReq = { url, body: JSON.parse(init.body) }
+  return new Response(JSON.stringify(jevOkBody), { headers: { 'content-type': 'application/json' } })
+}
+const jevSettings = { jevBaseUrl: 'https://api.typesafe.ai/v1/systemone/', jevKey: 'sk-test', jevModel: 'jev-latest' }
+const jevR = await labeler.jevLabel(jevSettings, '某券商发布研报称目标价上调')
+ok('C5: jevLabel 打到 baseUrl 本体，不拼 /chat/completions', jevLastReq.url === 'https://api.typesafe.ai/v1/systemone')
+ok('C5: jevLabel 请求体是原生 state/questions 形状',
+  jevLastReq.body.model === 'jev-latest' &&
+  jevLastReq.body.state === '某券商发布研报称目标价上调' &&
+  jevLastReq.body.questions?.kind?.type === 'choice' &&
+  jevLastReq.body.questions?.quality?.type === 'score' &&
+  jevLastReq.body.questions?.noul?.type === 'noul' &&
+  !('messages' in jevLastReq.body))
+ok('C5: jevLabel Choice 选项覆盖全部来源类型',
+  Object.keys(jevLastReq.body.questions.kind.criteria).length === 7 &&
+  jevLastReq.body.questions.kind.criteria['券商研报'] === '券商研报')
+ok('C5: jevLabel 解析 answers：kind/质量走表/jevScore/noul',
+  jevR.ok === true && jevR.kind === '券商研报' && jevR.quality === 0.8 &&
+  jevR.jevScore === 0.85 && jevR.noul === 0.7 && jevR.via === 'jev')
+ok('C5: jevLabel 返回服务端解析的真实模型版本与用量', jevR.model === 'jev-1.13.0' && jevR.usage === 300)
+
+// choice 返回非法选项 → 回落查表，但仍记 via=jev（与旧语义一致）
+globalThis.fetch = async (url, init) => {
+  jevLastReq = { url, body: JSON.parse(init.body) }
+  const b = structuredClone(jevOkBody)
+  b.answers.kind.choice = '不存在的类型'
+  return new Response(JSON.stringify(b), { headers: { 'content-type': 'application/json' } })
+}
+const jevFallback = await labeler.jevLabel(jevSettings, '某公司财报显示营收增长')
+ok('C5: jevLabel Choice 非法时回落查表', jevFallback.ok === true && jevFallback.kind === '财报 / 公告')
+
+// score 没有 normalized 时用 legend 刻度归一
+globalThis.fetch = async () => new Response(JSON.stringify({
+  answers: {
+    kind: { type: 'choice', choice: '独立媒体' },
+    quality: { type: 'score', score: 1.6, legend: { 0: '低', 1: '中', 2: '高' } },
+    noul: { type: 'noul', noul: 0.5 },
+  },
+  model: 'jev-1.13.0', usage: { input_tokens: 10, output_tokens: 2 },
+}), { headers: { 'content-type': 'application/json' } })
+const jevLegend = await labeler.jevLabel(jevSettings, '据报道')
+ok('C5: jevLabel score 用 legend 刻度归一', jevLegend.jevScore === 0.8)
+
+// 异常路径
+globalThis.fetch = async () => new Response('nope', { status: 500 })
+const jev500 = await labeler.jevLabel(jevSettings, '文本')
+ok('C5: jevLabel HTTP 失败返回 why', jev500.ok === false && jev500.why === 'HTTP 500')
+globalThis.fetch = async () => { throw new TypeError('fetch failed') }
+const jevNet = await labeler.jevLabel(jevSettings, '文本')
+ok('C5: jevLabel 网络异常返回 network', jevNet.ok === false && jevNet.why === 'network')
+globalThis.fetch = async () => new Response(JSON.stringify({ nothing: true }), { headers: { 'content-type': 'application/json' } })
+const jevBad = await labeler.jevLabel(jevSettings, '文本')
+ok('C5: jevLabel 无 answers 返回 unparsable', jevBad.ok === false && jevBad.why === 'unparsable')
+const jevNoKey = await labeler.jevLabel({ ...jevSettings, jevKey: '' }, '文本')
+ok('C5: jevLabel 无 key 不发请求', jevNoKey.ok === false && jevNoKey.why === 'no-key')
+globalThis.fetch = realFetch
+
+// jev:test 的 handler 走原生最小 ping（只验形状：不拼 /chat/completions、body 为原生）
+ok('E2: jev:test 不再拼 /chat/completions', !ipcSrcGov.includes("jevBaseUrl || '')}/chat/completions"))
+ok('E2: jev:test 用原生 state/questions 最小请求', ipcSrcGov.includes("questions: { ok: { type: 'noul'") && ipcSrcGov.includes("state: 'ping'"))
+
 const usageToday = () => store.llmUsage().daily.find((d) => d.date === store.today()) || { calls: 0, failed: 0, degraded: 0, tokens: 0, byScenario: {} }
 // 账本是同一个对象，比较前先拍快照，否则 before/after 是同一个引用
 const usageSnapshot = () => { const d = usageToday(); return { calls: d.calls, failed: d.failed, degraded: d.degraded, tokens: d.tokens, byScenario: { ...d.byScenario } } }
