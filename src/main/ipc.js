@@ -125,7 +125,11 @@ function recordGateTrace({ h, text, skip, matchScore, channel }) {
  */
 function captureGate({ text, h, themeId, label }) {
   const seen = findReuse(h, themeId)
-  if (seen) return { action: 'reuse', seen }
+  // 只复用真正抽取过的留痕（kind 'lemmas'）：被免费层拦下的 'skipped' 留痕
+  // 没有 lemmas 可复用，掉下去重走闸门（大概率再次拦下，零 LLM 调用）。
+  // 之前这里把 'skipped' 也当复用返回，导致 processCapture 读到
+  // gate.seen.lemmas === undefined，在 ex.lemmas.length 抛 TypeError。
+  if (seen?.kind === 'lemmas') return { action: 'reuse', seen }
 
   // B2 · 通道元数据已经告诉我们这是低质源，抽它干什么
   if (label.via === 'channel' && label.quality < LOW_QUALITY_GATE) {

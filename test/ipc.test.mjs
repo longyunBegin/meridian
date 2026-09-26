@@ -121,5 +121,28 @@ ok('settings:set 写得进', fire('settings:set', { model: 'test-model' }).model
 ok('db:stats 算得动', fire('db:stats').themes === 1)
 ok('theme:all 列得出', fire('theme:all').length === 1)
 
+console.log('\n— 回归：被免费层拦下的原文再抓一次不崩 —')
+// 带标签库的主题：文本命中 B4 no-tags 拦截，留下 kind 'skipped' 的 gate 留痕。
+// 曾经 captureGate 把 'skipped' 也当复用返回，processCapture 读到
+// gate.seen.lemmas === undefined，在 ex.lemmas.length 抛 TypeError。
+const skipTheme = store.addTheme('拦截回归主题')
+store.updateTheme(skipTheme.id, { tagLibrary: [{ id: 't1', name: '量子计算', threshold: 0.6 }] })
+await fireAsync('inbox:import', skipTheme.id, [1, 2, 3, 4].map((i) => ({
+  label: { kind: '一手数据' },
+  text: `回归主题第 ${i} 条原文`,
+  lemmas: [{ title: `回归主题第 ${i} 条命题`, type: 'observation', confidence: 70, parentId: null }],
+})))
+const SKIP_TEXT = '回归拦截文本：某厂 Q3 光模块出货环比增长 20%。'
+const rs1 = await fireAsync('inbox:capture', SKIP_TEXT)
+ok('第一次被 no-tags 拦下', rs1?.ok === true && rs1?.skipped === 'no-tags', `实际 ${rs1?.skipped}`)
+let reThrew = null
+let rs2 = null
+try { rs2 = await fireAsync('inbox:capture', SKIP_TEXT) } catch (e) { reThrew = e }
+ok('第二次同文本捕获不抛异常', reThrew === null, reThrew ? reThrew.message : '')
+ok('第二次同样被拦下', rs2?.ok === true && rs2?.skipped === 'no-tags', `实际 ${rs2?.skipped}`)
+const dirtyReuse = store.load().traces.filter((t) => t.stage === 'extract'
+  && t.actor?.by === 'reuse' && !(t.decision && t.decision.lemmas))
+ok('没有写下空 decision 的假复用留痕', dirtyReuse.length === 0, `实际 ${dirtyReuse.length}`)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
