@@ -1629,6 +1629,9 @@ export function addInboxItem(item) {
     ...(item.matchedTags ? { matchedTags: item.matchedTags } : {}),
     ...(item.originChannel !== undefined ? { originChannel: item.originChannel } : {}),
     ...(item.bestScore != null ? { bestScore: item.bestScore } : {}),
+    // 抽取时路由所用的主题：今日收件箱按条目各自主题判定可选性与入库目标，
+    // 不再依赖渲染层当前主题。老数据没有该字段，渲染层从命题挂点反推。
+    ...(item.extractedThemeId ? { extractedThemeId: item.extractedThemeId } : {}),
     // 读数型待办：四个来源共用收件箱后，待归位的读数也走这道门
     ...(item.readingId ? { readingId: item.readingId } : {}),
     ...(item.observationId ? { observationId: item.observationId } : {}),
@@ -1681,12 +1684,13 @@ export function clearInbox({ onlyUnextracted = false } = {}) {
 }
 
 /** 用户主动点「抽取这 N 条」后，把抽取结果写回条目 */
-export function setInboxExtraction(id, { extracted, matchScore, lemmas }) {
+export function setInboxExtraction(id, { extracted, matchScore, lemmas, themeId }) {
   const item = load().inbox.find((i) => i.id === id)
   if (!item) return null
   item.extracted = extracted !== false
   if (matchScore != null) item.matchScore = Number(matchScore) || 0
   if (Array.isArray(lemmas)) item.lemmas = lemmas
+  if (themeId) item.extractedThemeId = themeId
   persist()
   return item
 }

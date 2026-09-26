@@ -159,5 +159,34 @@ const strongCap = await fireAsync('agent:process', '北美云厂商Q4光模块�
 const strongAction = strongCap?.lemmas?.[0]?.action
 ok('强相似(1.0)命题仍判合并', strongAction === 'merge', `实际 ${strongAction}`)
 
+console.log('\n— 收件箱条目级主题（跨主题勾选/入库） —')
+const themeA = store.addTheme('收件箱主题A')
+const themeB = store.addTheme('收件箱主题B')
+const nA = store.addNode({ themeId: themeA.id, kind: 'lemma', title: 'A 主题既有命题', type: 'observation', confidence: 60 })
+const nB = store.addNode({ themeId: themeB.id, kind: 'lemma', title: 'B 主题既有命题', type: 'observation', confidence: 60 })
+const itA = store.addInboxItem({
+  text: 'A 主题文本', title: 'A 条目', extracted: true, extractedThemeId: themeA.id,
+  lemmas: [{ title: 'A 新命题', type: 'observation', confidence: 70, parentId: nA.id }],
+})
+ok('addInboxItem 透传 extractedThemeId', itA.extractedThemeId === themeA.id, `实际 ${itA.extractedThemeId}`)
+store.setInboxExtraction(itA.id, { extracted: true, matchScore: 0.9, lemmas: itA.lemmas, themeId: themeA.id })
+ok('setInboxExtraction 记录抽取所用主题',
+  store.allInbox().find((i) => i.id === itA.id)?.extractedThemeId === themeA.id)
+// 跨主题分组入库：各进各的主题，不串
+const itB = store.addInboxItem({
+  text: 'B 主题文本', title: 'B 条目', extracted: true, extractedThemeId: themeB.id,
+  lemmas: [{ title: 'B 新命题', type: 'observation', confidence: 70, parentId: nB.id }],
+})
+const rA = await fireAsync('inbox:import', themeA.id, [itA])
+const rB = await fireAsync('inbox:import', themeB.id, [itB])
+ok('A 条目入库 ok', rA?.ok === true)
+ok('B 条目入库 ok', rB?.ok === true)
+const nodeNewA = store.allNodes().find((n) => n.title === 'A 新命题')
+const nodeNewB = store.allNodes().find((n) => n.title === 'B 新命题')
+ok('A 命题落在 A 主题', nodeNewA?.themeId === themeA.id, `实际 ${nodeNewB?.themeId}`)
+ok('B 命题落在 B 主题', nodeNewB?.themeId === themeB.id, `实际 ${nodeNewB?.themeId}`)
+ok('A 命题挂点仍是 A 的节点', nodeNewA?.parentId === nA.id)
+ok('B 命题挂点仍是 B 的节点', nodeNewB?.parentId === nB.id)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
