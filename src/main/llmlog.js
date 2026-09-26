@@ -22,7 +22,13 @@ export async function readUsage(response) {
     const src = typeof response?.clone === 'function' ? response.clone() : response
     const body = await src.json()
     const n = Number(body?.usage?.total_tokens)
-    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0
+    if (Number.isFinite(n) && n > 0) return Math.round(n)
+    // Jev 原生：usage 按输入 / 输出分开给，没有 total_tokens
+    const parts = [body?.usage?.input_tokens, body?.usage?.output_tokens]
+      .map(Number)
+      .filter((x) => Number.isFinite(x) && x > 0)
+    if (parts.length) return Math.round(parts.reduce((a, b) => a + b, 0))
+    return 0
   } catch {
     return 0
   }

@@ -731,43 +731,46 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('settings:set', (_, patch) => saveSettings(patch))
   // 试标：不落库，只为在捕获之前验证打标器通不通、规则命中得对不对
   ipcMain.handle('label:test', (_, text) => labelSource(settings(), text))
-  // Jev 连通性测试：只打一次最小请求，验证 key / 端点 / 模型三件事。
+  // Jev 连通性测试：往 baseUrl 本体 POST 一个最小原生请求，一次验证三件事——
+  // 通不通（HTTP 200）、key 对不对（401 就挂）、模型有没有（看返回的 model）。
   // 不写账本、不记用量——测试是测试，数据是数据。
   ipcMain.handle('jev:test', async () => {
     const s = settings()
     if (!s.jevKey) return { ok: false, reason: 'no-key' }
+    if (!s.jevBaseUrl) return { ok: false, reason: 'no-endpoint' }
     const t0 = Date.now()
     try {
-      const res = await fetch(`${(s.jevBaseUrl || '').replace(/\/$/, '')}/chat/completions`, {
+      const res = await fetch(s.jevBaseUrl.replace(/\/$/, ''), {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${s.jevKey}` },
         body: JSON.stringify({
           model: s.jevModel,
-          max_tokens: 16,
-          messages: [{ role: 'user', content: '回复「连通」两个字' }],
+          state: 'ping',
+          questions: { ok: { type: 'noul', criteria: { true: '是', false: '否' } } },
         }),
         signal: AbortSignal.timeout(20000),
       })
+      const latency = Date.now() - t0
       if (!res.ok) {
-        const detail = await res.clone().json().then((b) => b?.error?.message || '').catch(() => '')
-        // 401 是 Jev 配置里最常见的坑：key 填了但服务端不认（比如 OpenRouter 的 key
-        // 没有走浏览器 credential 注入、出口根本没带 Authorization 头）。单独拎出来说人话。
-        if (res.status === 401) return { ok: false, reason: 'bad-key', latency: Date.now() - t0 }
-        if (res.status === 404 || /model.*(not exist|invalid|not found)/i.test(detail)) {
-          return { ok: false, reason: 'bad-model', model: s.jevModel, latency: Date.now() - t0 }
-        }
-        return { ok: false, reason: `HTTP ${res.status}`, latency: Date.now() - t0 }
+        // 401 是 Jev 配置里最常见的坑：key 填了但服务端不认。单独拎出来说人话。
+        if (res.status === 401) return { ok: false, reason: 'bad-key', latency }
+        if (res.status === 422) return { ok: false, reason: 'bad-question', latency }
+        if (res.status === 404) return { ok: false, reason: 'bad-model', model: s.jevModel, latency }
+        return { ok: false, reason: `HTTP ${res.status}`, latency }
       }
-      const body = await res.json()
-      const text = body?.choices?.[0]?.message?.content?.trim()
-      if (text) return { ok: true, text: text.slice(0, 40), model: s.jevModel, latency: Date.now() - t0 }
-      return { ok: false, reason: 'empty', latency: Date.now() - t0 }
+      const body = await res.json().catch(() => null)
+      const ans = body?.answers?.ok
+      if (ans?.type === 'noul' && Number.isFinite(Number(ans.noul))) {
+        // model 是服务端解析后的真实版本（如 jev-latest → jev-1.13.0）
+        return { ok: true, model: body?.model || s.jevModel, latency, noul: Number(ans.noul) }
+      }
+      return { ok: false, reason: 'empty', latency }
     } catch (e) {
       return { ok: false, reason: e.name === 'TimeoutError' ? 'timeout' : 'network', latency: Date.now() - t0 }
     }
   })
   // Jev 打标测试：强制走 Jev 路径（不静默降级查表），只返回结果、不写账本。
-  // jevLabel 本身没有超时，测试里用竞速包一层 20s，避免按钮卡死。
+  // jevLabel 自带 20s 超时，这里的竞速只是双保险。
   ipcMain.handle('jev:labelTest', async (_, text) => {
     const t = String(text || '').slice(0, 3000)
     if (!t.trim()) return { ok: false, why: 'empty-input' }

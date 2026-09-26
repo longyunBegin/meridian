@@ -108,8 +108,8 @@ const DEFAULT_SETTINGS = {
   model: 'step-3.5-flash',
   hotkey: 'CommandOrControl+Shift+V',
   labeler: 'table', // table | jev —— 可替换的打标器
-  jevBaseUrl: 'https://openrouter.ai/api/v1',
-  jevModel: 'typesafe/jev-1.13',
+  jevBaseUrl: 'https://api.typesafe.ai/v1/systemone', // Jev 只有一个原生端点，直接 POST 本体
+  jevModel: 'jev-latest', // 别名，服务端解析成真实版本（如 jev-1.13.0）后在回答里返回
   jevKey: '',
   // 产业链图的滚轮缩放灵敏度。触控板一次滚动连发多个小 deltaY，
   // 固定一档 10% 体感过快；给用户自己调。
