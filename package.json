@@ -1,6 +1,6 @@
 {
   "name": "meridian",
-  "productName": "脉络",
+  "productName": "Meridian",
   "version": "0.1.0",
   "private": true,
   "description": "信息 → 归位到主题脉络 → 传导 → 结算。本地优先的判断账本。",

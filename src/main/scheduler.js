@@ -30,9 +30,9 @@ export function buildNotification(items) {
   if (first.downstreamCount > 0) parts.push(`${first.downstreamCount} 条下游`)
   const body = parts.join(' · ')
   if (items.length === 1) {
-    return { title: '脉络 · 到期结算', body }
+    return { title: 'Meridian · 到期结算', body }
   }
-  return { title: `脉络 · ${items.length} 条判断到期`, body }
+  return { title: `Meridian · ${items.length} 条判断到期`, body }
 }
 
 /**

@@ -24,6 +24,11 @@ let closing = false
 let closed = false
 let agentError = null
 
+// ---------------------------------------------------------------- data dir
+// 产品改名 Meridian，但账本目录保持历史名称「脉络」：老用户的数据、
+// 导出文件、外部引用都不因改名断链。必须在 app ready 之前调用。
+app.setPath('userData', join(app.getPath('appData'), '脉络'))
+
 // ---------------------------------------------------------------- windows
 
 function createMain() {
@@ -32,6 +37,8 @@ function createMain() {
     height: 780,
     minWidth: 900,
     minHeight: 640,
+    title: 'Meridian',
+    icon: join(HERE, '../renderer/assets/icons/icon-512.png'),
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     ...(isMac ? { trafficLightPosition: { x: 20, y: 18 } } : {}),
     ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' } : {}),
@@ -63,6 +70,7 @@ import { dueSettlements } from './store.js'
 // ---------------------------------------------------------------- boot
 
 app.whenReady().then(async () => {
+  if (isMac) app.dock?.setIcon(join(HERE, '../renderer/assets/icons/icon-512.png'))
   if (isMac) {
     const { session } = globalThis.__electron
     const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"

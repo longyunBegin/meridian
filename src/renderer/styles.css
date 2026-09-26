@@ -1,5 +1,5 @@
 /* ============================================================
-   脉络 Meridian — 视觉系统
+   Meridian — 视觉系统
    原则：少颜色、少线、多留白。边框只用 0.5px 发丝线。
    ============================================================ */
 
@@ -257,6 +257,28 @@ select { font: inherit; color: inherit; }
 .sidebar input { -webkit-app-region: no-drag; }
 
 .nav { display: flex; flex-direction: column; gap: 1px; padding: 0 10px; }
+
+/* 品牌：Logo + 词标，启动即见 */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 18px 14px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.brand img {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.12);
+}
+.brand span {
+  font-size: var(--t-title);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-1);
+}
 .nav-item {
   display: flex;
   align-items: center;

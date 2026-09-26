@@ -1,11 +1,15 @@
-# 脉络 Meridian
+![Meridian](src/renderer/assets/icons/icon-128.png)
+
+# Meridian
 
 > 信息搬进来 → 归位到主题脉络 → 沿产业链传导 → 到期结算。
 > 资产不是知识地图，是你的**校准曲线**。
 
 本地优先、零构建、单依赖。`npm install && npm start`。
 
-**状态：v0.6.2** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37。
+**状态：master 即最新** · 平台：macOS（vibrancy / 全局热键依赖桌面端）· Node ≥ 18 · Electron 37 · schema v4 · 测试 969 项全绿。
+
+曾用名「脉络」。改名后账本目录保持历史名称，老用户数据不断链。
 
 ---
 
@@ -14,7 +18,7 @@
 ```bash
 npm install
 npm start          # 启动
-npm test           # 引擎 + IPC + 改造测试（438 项）
+npm test           # 引擎 + IPC + 改造测试（969 项）
 npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 ```
 
@@ -62,12 +66,12 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 
 ---
 
-## 已实现的能力（v0.6）
+## 已实现的能力
 
 | 能力 | 状态 |
 |---|---|
-| 一句话冷启动（输入产业链描述 → 骨架 + 通道 + 今日页） | ✅ 无 key 降级到静态模板 |
-| 默认通道包（模板自带 RSS + Tavily + Grok，needsKey:false 启用） | ✅ |
+| 一句话冷启动（三阶段：骨架 → 主题标签 → 标签库） | ✅ 成功/部分失败/彻底失败分别处理，页面不卡 |
+| 行式大纲骨架 + 确定性解析 | ✅ 模型只吐纯文本大纲，坏行只丢一个节点 |
 | 不确定性闸门 + 自动归位（通过闸门的信息自动入库，例外才进收件箱） | ✅ |
 | 可撤销自动归位（toast 提示，撤销退回收件箱不丢数据） | ✅ |
 | 来源推导置信度（搬运品 by:source，置信度由来源质量推导） | ✅ 用户零操作 |
@@ -79,7 +83,6 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | ⌘⇧V 粘贴 / URL 抓取 → 收件箱 | ✅ 粘贴 URL 自动抓取网页正文+推断通道 |
 | 通道优先打标（通道 > 表 > 模型 > 关键词） | ✅ |
 | provenance（平台、URL、抓取时间、检索提示词） | ✅ |
-| 通道描述符（按内容类型选取数器：RSS / Tavily / Brave / Grok X Search） | ✅ |
 | 留痕层 trace（模型介入完整记录，可复现/可对比/可结算） | ✅ |
 | 模型建议校准曲线 + 打标器 vs 表分歧曲线 | ✅ |
 | 主题脉络 + 传导权重 | ✅ |
@@ -92,21 +95,21 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 图密度编码（空 scaffold 淡，密集判断实） | ✅ |
 | 连续传导权重滑块（替代三档预设） | ✅ |
 | 侧边栏四行（今日 / 脉络 / 库 / 设置） | ✅ |
-| 来源打标器（table / jev / llm，可替换） | ✅ |
+| 来源打标器（table / jev，可替换） | ✅ jev 走原生协议 |
 | 来源收敛度（同 claim 多源只累加不新建） | ✅ |
 | 冲突检测与裁决 | ✅ |
 | 误杀审计 + 过滤器校准曲线 | ✅ |
-| 误杀闭环（verdict → promotedTo 回填，幂等） | ✅ v0.6.1 |
-| route trace（归位留痕：gate/user，output vs decision） | ✅ v0.6.1 |
-| 采集漏斗 intakeEvents（每次捕获一条记录，可追溯） | ✅ v0.6.1 |
-| 撤销持久化（重启后仍可撤销自动归位） | ✅ v0.6.1 |
-| 原文层通道元数据（url/platform/fetchedAt 落盘） | ✅ v0.6.1 |
-| 复盘视图（漏斗五项 + 过滤器校准曲线 + 每日趋势） | ✅ v0.6.1 |
-| 删除护栏（⌘⌫ 降级为入墓，整棵子树可恢复，清空墓碑区二次确认） | ✅ v0.6.2 |
-| 到期结算定时器 + 原生通知 + Dock 角标（9–22 时，15 分钟 tick） | ✅ v0.6.2 |
-| 误杀率按 gate 拆分（source/dedup/user 三栏） | ✅ v0.6.2 |
-| 误杀归因到通道（verdict 带 channelId，按通道聚合查询） | ✅ v0.6.2 |
-| 检视面板数值输入（传导权重/置信度可键入精确值） | ✅ v0.6.2 |
+| 误杀闭环（verdict → promotedTo 回填，幂等） | ✅ |
+| route trace（归位留痕：gate/user，output vs decision） | ✅ |
+| 采集漏斗 intakeEvents（每次捕获一条记录，可追溯） | ✅ |
+| 撤销持久化（重启后仍可撤销自动归位） | ✅ |
+| 原文层通道元数据（url/platform/fetchedAt 落盘） | ✅ |
+| 复盘视图（漏斗五项 + 过滤器校准曲线 + 每日趋势） | ✅ |
+| 删除护栏（⌘⌫ 降级为入墓，整棵子树可恢复，清空墓碑区二次确认） | ✅ |
+| 到期结算定时器 + 原生通知 + Dock 角标（9–22 时，15 分钟 tick） | ✅ |
+| 误杀率按 gate 拆分（source/dedup/user 三栏） | ✅ |
+| 误杀归因到通道（verdict 带 channelId，按通道聚合查询） | ✅ |
+| 检视面板数值输入（传导权重/置信度可键入精确值） | ✅ |
 | 跨主题共同前提扫描 | ✅ |
 | 命题 ↔ 标的映射（只做可见性，不做信号） | ✅ 合规红线 |
 | 苏格拉底追问（AI 只追问边界，禁止输出陈述句） | ✅ |
@@ -116,7 +119,8 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 | 原文层（raw.jsonl，与判断层分离） | ✅ |
 | API 密钥加密存储（AES-256-GCM，机器绑定） | ✅ |
 | 本地 JSON 主权 + 导入导出 | ✅ |
-| 引擎 + IPC + 改造测试 | ✅ 438 项 |
+| 旧通道抓取移除（历史收件箱保留，需手动清理） | ✅ |
+| 引擎 + IPC + 改造测试 | ✅ 969 项 |
 
 ---
 
@@ -139,18 +143,18 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "settings": {
     "baseUrl": "https://api.stepfun.com/v1",
     "apiKey": "",                 // 加密存储，格式 enc:v1:base64(iv|authTag|ciphertext)，机器绑定
     "model": "step-3.5-flash",
     "hotkey": "CommandOrControl+Shift+V",
-    "labeler": "table",          // table | jev | llm —— 可替换的打标器
-    "jevBaseUrl": "https://openrouter.ai/api/v1",
-    "jevModel": "typesafe/jev-1.13",
+    "labeler": "table",          // table | jev —— 可替换的打标器
+    "jevBaseUrl": "https://api.typesafe.ai/v1/systemone",  // Jev 只有一个原生端点
+    "jevModel": "jev-latest",    // 别名，服务端解析成真实版本后在回答里返回
     "jevKey": ""                  // 同样加密存储
   },
-  "themes": [{ "id": "…", "name": "AI 产业链" }],
+  "themes": [{ "id": "…", "name": "光互连" }],
   "inbox": [{                     // 收件箱：全局待确认区，⌘⇧V 粘贴 / URL 抓取先进这里
     "id": "…",
     "text": "…",                  // 原文或抓取正文
@@ -220,21 +224,11 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
     "output": null,               // 模型原始返回，未加工
     "decision": null,             // 最终落库的值
     "reason": null                // 为什么取这个值而不是模型给的值
-  }],
-  "channels": [{                  // 通道描述符：按内容类型选取数器
-    "id": "…", "name": "X · AI 产业链",
-    "kind": "自媒体",             // 通道决定，不由模型猜
-    "quality": 0.5,               // SOURCE_QUALITY 表裁决
-    "fetch": "grok-x-search",     // manual | rss | rsshub | tavily | brave | grok-x-search | mcp
-    "query": "1.6T optical module supply chain",
-    "cadence": "日",
-    "network": "direct",
-    "themeId": "…", "enabled": true
   }]
 }
 ```
 
-**schema 只加不改**：新增字段不破坏旧导出文件。`migrate()` 在加载时把 v1/v2 升到 v3。
+**schema 只加不改**：新增字段不破坏旧导出文件。`migrate()` 在加载时把旧版本升到 v4。
 API 密钥用 AES-256-GCM 加密后落盘（密钥由 hostname + username + scrypt 派生，机器绑定），读取时解密返回明文。无 `enc:v1:` 前缀的旧值当作明文直接返回，向后兼容。
 
 ### 原文层
@@ -253,16 +247,15 @@ API 密钥用 AES-256-GCM 加密后落盘（密钥由 hostname + username + scry
 ## 打标器
 
 整个产品里**唯一必须可替换的模块**：换打标器不触动抽取、存储和 UI。
-按 `settings.labeler` 选择，三种实现：
+按 `settings.labeler` 选择：
 
 | 模式 | 说明 |
 |---|---|
 | `table` | 关键词启发式 + `SOURCE_QUALITY` 表裁决。零依赖，永远可用（默认） |
-| `jev` | Jev 的 `Choice` / `Score` / `Noul`（System One Model，只做判断不聊天） |
-| `llm` | 前沿模型打标（有 key 但没接 Jev 时的过渡） |
+| `jev` | Jev 原生协议：直接 POST `jevBaseUrl` 本体，`{model, state, questions}`，一次取回 Choice / Score / Noul |
 
 **硬约束：质量分一律由 `SOURCE_QUALITY` 表裁决，打标器只负责选类型。**
-否则换一个模型，整条校准曲线的基准就漂移了。失败一律静默降级到查表，不阻塞捕获。
+否则换一个模型，整条校准曲线的基准就漂移了。Jev 的 Score 只做分歧观测，不决定业务质量分。失败一律静默降级到查表，不阻塞捕获。
 
 ```js
 // src/main/store.js
@@ -276,6 +269,23 @@ export const SOURCE_QUALITY = [
   ['道听途说', 0.2],
 ]
 ```
+
+---
+
+## 骨架生成
+
+模型不再被要求输出 JSON——JSON 拼错一个括号整棵树就没了。第一轮模型只输出**纯文本行式大纲**：
+
+```text
+- 光模块 | 0.6 | 核心问题：1.6T 何时放量？
+  - 硅光 | 0.6 | 核心问题：良率爬坡到哪了？
+```
+
+客户端做**确定性逐行解析**：废话行直接忽略，单行格式错误只丢该行，非法权重回落 0.5，
+缩进跳跃钳制到可用层级。只有完全提取不到有效节点时才判失败。
+
+第二轮按编号用行式文本补 `indicators / cadence / falsifier`（最多前 40 个节点），
+失败不影响第一轮骨架——指标保持为空，树照常可用。
 
 ---
 
@@ -315,24 +325,25 @@ export const SOURCE_QUALITY = [
 ```
 src/
   main/                 主进程
-    store.js            引擎：节点、传导、结算、校准、原文层、共同前提、标的、订阅源、收件箱、trace、通道
-    extract.js          LLM 抽取（OpenAI 兼容）+ 苏格拉底追问 + 骨架生成
-    labeler.js          来源打标（table / jev / llm，通道优先）
+    store.js            引擎：节点、传导、结算、校准、原文层、共同前提、标的、订阅源、收件箱、trace
+    extract.js          LLM 抽取（OpenAI 兼容）+ 苏格拉底追问 + 行式大纲骨架生成
+    labeler.js          来源打标（table / jev 原生协议，通道优先）
     fetcher.js          URL 抓取 + 通道推断（域名 → 一手/研报/自媒体…）
     crypto.js           API 密钥加密（AES-256-GCM，机器绑定）
     feeds.js            RSS / Atom 解析器（零依赖）
     templates.{js,json} 主题骨架模板（按版本维护）
-    ipc.js              IPC 编排 + 捕获流水线 + 收件箱 + 骨架 + trace + 通道
+    ipc.js              IPC 编排 + 捕获流水线 + 收件箱 + 骨架 + trace
     main.js             窗口与全局热键（⌘⇧V → inbox:paste / inbox:focus）
     preload.js          上下文桥
   renderer/             渲染进程（无框架，原生 DOM）
+    assets/icons/       应用图标（icon.icns / 各尺寸 PNG）
     views/              今日 / 脉络 / 图 / 库 / 设置 / 检视 / 订阅
     lib/dom.js          极简 DOM 工具
     app.js              状态与路由
 test/
   engine.test.mjs       引擎测试（传导 / 结算 / 校准 / 收敛 / 审计 / 前提 / 标的 / 订阅源 / 模板 / 原文层）
   ipc.test.mjs          IPC 层测试（收件箱链路 + 原文层）
-  redesign.test.mjs     改造测试（收件箱 / 通道 / provenance / 骨架 / 加密 / URL / trace / 通道描述符 / 闸门 / 撤销 / 置信度分流）
+  redesign.test.mjs     改造测试（收件箱 / 通道 / provenance / 骨架 / 加密 / URL / trace / 闸门 / 撤销 / 置信度分流）
   electron-stub.mjs     Electron 模块 stub
 tools/shoot.mjs         视觉回归截图
 docs/ROADMAP.md         迭代路线（按 JEV/Effort 排序）
@@ -342,35 +353,17 @@ docs/ROADMAP.md         迭代路线（按 JEV/Effort 排序）
 
 ## 下一步
 
-完整路线见 `docs/ROADMAP.md`，按 JEV/Effort 排序，`<10` 的不碰。当前进度：
+完整路线见 `docs/ROADMAP.md`，按 JEV/Effort 排序，`<10` 的不碰。近期完成：
 
-- ✅ **今日视图**（开屏=待确认+到期结算+校准曲线，资产优先）
-- ✅ **一句话冷启动**（输入产业链描述 → 骨架 + 通道 + 今日页，2 分钟进场）
-- ✅ **默认通道包**（模板自带 RSS + Tavily + Grok，needsKey:false 启用）
-- ✅ **不确定性闸门 + 自动归位**（通过闸门的信息自动入库，例外才进收件箱）
-- ✅ **可撤销自动归位**（toast 提示，撤销退回收件箱不丢数据）
-- ✅ **来源推导置信度**（搬运品 by:source，置信度由来源质量推导，用户零操作）
-- ✅ **校准曲线只算 by:manual**（来源推导/模型建议/传导分开统计，护城河不混）
-- ✅ **冲突静默化**（标记不弹窗不强制裁决，今日页文字标签待着）
-- ✅ **收件箱**（全局待确认区，⌘⇧V 粘贴 / URL 抓取，批量裁决零思考入库）
-- ✅ **URL 抓取 + 通道推断**（域名 → 一手/研报/自媒体，通道优先于打标表）
-- ✅ **provenance**（平台、URL、抓取时间、检索提示词）
-- ✅ **模型生成骨架 + stableId**（重生成不丢判断，无 key 降级到静态模板）
-- ✅ **图改造**（边拖权重 / 结算脉冲 / 密度编码 / 迷你图 / 连续滑块）
-- ✅ **API 密钥加密存储**（AES-256-GCM，机器绑定）
-- ✅ **来源打标器**（table / jev / llm，可替换的模块边界）
-- ✅ **来源收敛度**（同 claim 被 N 个独立源确认时合并，保留来源计数）
-- ✅ **scaffold → 命题冷启动**（结算日由更新频率推导）
-- ✅ **跨主题共同前提扫描**（同 tag 出现在 ≥2 个主题即共享底层假设）
-- ✅ **误杀审计 + 过滤器校准曲线**（被筛掉的后来进了图谱才算误杀）
-- ✅ **命题 ↔ 标的映射**（只做可见性，不做信号——合规红线）
-- ✅ **苏格拉底追问**（AI 只追问边界，禁止输出陈述句）
-- ✅ **订阅源适配器**（RSS / Atom，定时拉取走捕获流水线）
+- ✅ **行式大纲骨架**（模型吐纯文本，客户端确定性解析，单行坏只丢一个节点）
+- ✅ **Jev 原生协议**（直连 `api.typesafe.ai/v1/systemone`，一次取 Choice/Score/Noul）
+- ✅ **新建主题三阶段 UX**（骨架 → 标签 → 标签库，部分失败可恢复，页面不卡）
+- ✅ **品牌**：更名 Meridian + 极简几何 Logo
 - **禁止** 多端同步、协作分享、图谱美化
 
 ### 骨架的版本管理
 
-`templates.json` 带 `version` 字段（当前 `2026-Q3`）。产业链每季度都在变，
+`templates.json` 带 `version` 字段。产业链每季度都在变，
 换版本 = 新起一个主题，旧主题的图谱不动——这正是「范式 Fork」应该保护的东西。
 
 ---

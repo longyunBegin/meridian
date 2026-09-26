@@ -1042,11 +1042,11 @@ ok('scheduler: 去重后是 b 和 c', fresh[0]?.id === 'b' && fresh[1]?.id === '
 
 // 通知构造
 const n1 = buildNotification([{ id: 'x', title: '光模块超预期' }])
-ok('scheduler: 单条标题', n1?.title === '脉络 · 到期结算', `实际 ${n1?.title}`)
+ok('scheduler: 单条标题', n1?.title === 'Meridian · 到期结算', `实际 ${n1?.title}`)
 ok('scheduler: 单条正文', n1?.body === '光模块超预期')
 
 const n3 = buildNotification([{ id: 'a', title: '第一条' }, { id: 'b', title: '第二条' }, { id: 'c', title: '第三条' }])
-ok('scheduler: 多条标题', n3?.title === '脉络 · 3 条判断到期', `实际 ${n3?.title}`)
+ok('scheduler: 多条标题', n3?.title === 'Meridian · 3 条判断到期', `实际 ${n3?.title}`)
 ok('scheduler: 多条正文取最早', n3?.body === '第一条')
 
 ok('scheduler: 空列表返回 null', buildNotification([]) === null)
