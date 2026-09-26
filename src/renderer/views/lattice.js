@@ -1,5 +1,5 @@
 import { h, icon, clear, toast, confirmToast } from '../lib/dom.js'
-import { state, refresh, selectNode, setShape, setView, deleteNodeWithUndo } from '../app.js'
+import { state, refresh, selectNode, setShape, setView, deleteNodeWithUndo, trackScaffold } from '../app.js'
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
 import { isConflicted, trustMark, periodLabel } from './readings.js'
@@ -210,28 +210,39 @@ function renderSkeletonPrompt(theme) {
           const input = h('input', {
             class: 'txt', placeholder: '一句话描述生成骨架 + 标签库',
             style: { flex: '1', minWidth: '180px' },
-            onkeydown: async (e) => {
-              if (e.key === 'Enter') {
-                const desc = input.value.trim()
-                if (!desc) return
-                input.disabled = true
-                await m.scaffoldExisting(theme.id, desc)
-                await refresh()
-              }
-            },
+          })
+          const btn = h('button', {
+            class: 'btn btn-primary', style: { padding: '2px 10px' },
+            onclick: () => startGen(),
+          }, '生成')
+          const startGen = async () => {
+            const desc = input.value.trim()
+            if (!desc || btn.disabled) return
+            // 两个控件一起锁——之前只禁了 input，按钮还能点，连点就触发 in-flight，
+            // 渲染层还把它当成功弹「骨架已生成」。
+            input.disabled = true
+            btn.disabled = true
+            btn.textContent = '生成中…'
+            state.pendingScaffoldDesc = desc
+            try {
+              // 不在这里 refresh——等 theme:scaffolded / 轮询回来统一 settle，
+              // 按钮由 settle 刷新恢复，事件丢了也有轮询兜底。
+              trackScaffold(theme.id)
+              await m.scaffoldExisting(theme.id, desc)
+            } catch {
+              input.disabled = false
+              btn.disabled = false
+              btn.textContent = '生成'
+            }
+          }
+          input.addEventListener('keydown', async (e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            await startGen()
           })
           return h('div', { style: { display: 'flex', gap: '4px', flex: '1', minWidth: '180px' } },
             input,
-            h('button', {
-              class: 'btn btn-primary', style: { padding: '2px 10px' },
-              onclick: async () => {
-                const desc = input.value.trim()
-                if (!desc) return
-                input.disabled = true
-                await m.scaffoldExisting(theme.id, desc)
-                await refresh()
-              },
-            }, '生成'),
+            btn,
           )
         })(),
       ),
@@ -266,10 +277,14 @@ export function renderLattice(mid) {
     // 重新生成骨架：产业链每季度都在变，这是常态按钮不是一次性冷启动。
     // 破坏性操作——先提示会删掉原有环节和命题，确认后才动。异步执行，不卡界面。
     isGraph ? null : (() => {
+      // 重新生成期间按钮保持锁住：中间的 db:changed 会 refresh 重建按钮，
+      // 不靠 state 锁就会出现第二个可点的「重新生成」，点下去会删掉正在铺的树。
+      const regenerating = state.pendingScaffoldId === theme?.id
       const btn = h('button', {
         class: 'btn regenerate-btn', title: '重新生成骨架',
+        disabled: regenerating,
         onclick: async () => {
-          if (!theme) return
+          if (!theme || state.pendingScaffoldId === theme.id) return
           const ok = await confirmToast(
             `重新生成「${theme.name}」的骨架？\n\n将删除该主题下所有环节和命题，并重新生成。此操作不可撤销。`,
             '重新生成',
@@ -277,14 +292,18 @@ export function renderLattice(mid) {
           if (!ok) return
           btn.disabled = true
           btn.textContent = '生成中…'
+          // 交给全局的 settle 流程：事件 / 轮询回来后 refresh 重建按钮。
+          // 之前成功后没有任何恢复逻辑，靠别处的 db:changed 顺带刷新——事件丢了就永远「生成中…」。
+          state.pendingScaffoldDesc = theme.name
           try {
+            trackScaffold(theme.id)
             await m.regenerateTheme(theme.id)
           } catch {
             btn.disabled = false
             btn.textContent = '重新生成'
           }
         },
-      }, icon('lattice', 12), '重新生成')
+      }, icon('lattice', 12), regenerating ? '生成中…' : '重新生成')
       return btn
     })(),
     h('div', { class: 'seg seg-shape' },

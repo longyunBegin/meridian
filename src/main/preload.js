@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('meridian', {
   themeScaffoldStatus: () => ipcRenderer.invoke('theme:scaffoldStatus'),
   themeScaffoldResult: (themeId) => ipcRenderer.invoke('theme:scaffoldResult', themeId),
   onThemeScaffolded: (cb) => ipcRenderer.on('theme:scaffolded', (_, info) => cb(info)),
+  onThemeScaffoldProgress: (cb) => ipcRenderer.on('theme:scaffoldProgress', (_, info) => cb(info)),
   scaffoldExisting: (themeId, description) => ipcRenderer.invoke('theme:scaffoldExisting', themeId, description),
   removeTheme: (id) => ipcRenderer.invoke('theme:remove', id),
   restoreTheme: (id) => ipcRenderer.invoke('theme:restore', id),
@@ -90,10 +91,6 @@ contextBridge.exposeInMainWorld('meridian', {
 
   // ---- LLM 账本
   llmUsage: () => ipcRenderer.invoke('llm:usage'),
-
-  // ---- 骨架生成
-  generateSkeleton: (description) => ipcRenderer.invoke('theme:generateSkeleton', description),
-  instantiateSkeleton: (themeId, skeleton) => ipcRenderer.invoke('theme:instantiateSkeleton', themeId, skeleton),
 
   // ---- 留痕层 trace
   traceAll: () => ipcRenderer.invoke('trace:all'),

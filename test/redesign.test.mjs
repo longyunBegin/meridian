@@ -238,37 +238,75 @@ store.importAll(exported)
 ok('导入后 inbox 恢复', store.allInbox().length >= 1, `实际 ${store.allInbox().length}`)
 
 // ============================================================
-console.log('\n— 骨架生成 IPC —')
+console.log('\n— 骨架生成 IPC（一步异步流 + 部分失败） —')
 // ============================================================
 
-const noKeyResult = await fire('theme:generateSkeleton', 'AI算力供应链')
-ok('无 key 时骨架生成返回 ok: false', noKeyResult?.ok === false)
+// 旧的两步式 handler（先取 JSON 再落库）已被 theme:setupNew / theme:scaffoldExisting
+// 的一步异步流程取代，渲染层无调用——确认已移除，不留后门
+ok('旧骨架 handler 已移除', !stub.__handlers.has('theme:generateSkeleton') && !stub.__handlers.has('theme:instantiateSkeleton'))
 
-const skeleton = {
-  roots: [{
-    title: '上游·芯片设计',
-    propagation: 0.6,
-    stableId: 'sk-1',
-    scaffold: { answer: '芯片设计能力如何', indicators: ['流片数'], falsifier: '流片延迟' },
-    children: [
-      { title: 'EDA工具', propagation: 0.5, stableId: 'sk-2', scaffold: null, children: [] },
-      { title: 'IP授权', propagation: 0.5, stableId: 'sk-3', scaffold: null, children: [] },
-    ],
-  }],
+// 轮询兜底的另一半：theme:scaffoldStatus 必须存在
+ok('scaffoldStatus handler 存在', typeof stub.__handlers.get('theme:scaffoldStatus') === 'function')
+ok('空闲时 scaffoldStatus 返回空数组', JSON.stringify(await fire('theme:scaffoldStatus')) === '[]')
+
+// 用 __testHooks 模拟真实 LLM 的延迟与部分失败（这台机器没有可用的真实 key）
+const { __testHooks: scaffoldHooks } = await import('../src/main/llmlog.js')
+const realScaffoldHook = scaffoldHooks.run
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
+store.saveSettings({ apiKey: 'sk-test-scaffold' })
+
+// 场景 A：骨架成功、主题标签失败、标签库失败——部分失败不能报成全成功
+scaffoldHooks.run = async (scenario) => {
+  await sleepMs(50)
+  if (scenario === 'skeleton') {
+    return { ok: true, skeleton: { roots: [{ title: '测试环节', propagation: 0.6, id: 't1', children: [] }] } }
+  }
+  return { ok: false, reason: 'timeout' }
 }
-const theme2 = store.addTheme('骨架测试主题')
-const instResult = await fire('theme:instantiateSkeleton', theme2.id, skeleton)
-ok('instantiateSkeleton 返回 ok', instResult?.ok === true)
-ok('instantiateSkeleton 创建了节点', instResult?.count > 0, `实际 ${instResult?.count}`)
+const partialTheme = store.addTheme('部分失败测试主题')
+await fire('theme:scaffoldExisting', partialTheme.id, '测试描述')
+// 生成中：scaffoldStatus 必须能看到 in-flight（之前这个 handler 根本不存在）
+const statusDuring = await fire('theme:scaffoldStatus')
+ok('生成中 scaffoldStatus 可见', Array.isArray(statusDuring) && statusDuring.includes(partialTheme.id), `实际 ${JSON.stringify(statusDuring)}`)
+let partialResult = null
+for (let i = 0; i < 100 && !partialResult; i++) { await sleepMs(100); partialResult = await fire('theme:scaffoldResult', partialTheme.id) }
+ok('部分失败：有结果', !!partialResult)
+ok('部分失败：骨架 ok', partialResult?.skeletonOk === true)
+ok('部分失败：主题标签失败且有原因', partialResult?.themeTagsOk === false && partialResult?.themeTagsReason === 'timeout', `实际 ${partialResult?.themeTagsReason}`)
+ok('部分失败：标签库失败', partialResult?.tagLibraryOk === false)
+ok('部分失败：整体不算 degraded（树已生成）', partialResult?.degraded === false)
+ok('部分失败：节点已铺上', store.allNodes().some((n) => n.themeId === partialTheme.id && n.kind === 'branch'))
+ok('生成完 scaffoldStatus 为空', !(await fire('theme:scaffoldStatus')).includes(partialTheme.id), `实际 ${JSON.stringify(await fire('theme:scaffoldStatus'))}`)
 
-const skNodes = store.allNodes().filter((n) => n.themeId === theme2.id)
-ok('骨架节点都是 branch', skNodes.every((n) => n.kind === 'branch'))
-ok('骨架节点 by = model', skNodes.every((n) => n.by === 'model'))
-ok('骨架根节点 1 个', store.rootNodes(theme2.id).length === 1, `实际 ${store.rootNodes(theme2.id).length}`)
-ok('骨架子节点 2 个', store.childrenOf(skNodes[0].id).length === 2, `实际 ${store.childrenOf(skNodes[0].id).length}`)
-ok('骨架节点带 stableId', skNodes.every((n) => typeof n.stableId === 'string'))
-ok('骨架节点带 scaffold', skNodes[0].scaffold?.answer?.[0] === '芯片设计能力如何')
-ok('骨架节点带 propagation', skNodes[0].propagation === 0.6)
+// 场景 B：骨架失败、主题标签成功——失败卡不能吞掉已成的部分
+scaffoldHooks.run = async (scenario) => {
+  await sleepMs(30)
+  if (scenario === 'themeTags') return { ok: true, tags: ['测试标签'] }
+  return { ok: false, reason: 'timeout' }
+}
+const failTheme = store.addTheme('骨架失败测试主题')
+await fire('theme:scaffoldExisting', failTheme.id, '测试描述')
+let failResult = null
+for (let i = 0; i < 100 && !failResult; i++) { await sleepMs(100); failResult = await fire('theme:scaffoldResult', failTheme.id) }
+ok('骨架失败：degraded', failResult?.degraded === true)
+ok('骨架失败：skeletonOk false 且有原因', failResult?.skeletonOk === false && failResult?.skeletonReason === 'timeout')
+ok('骨架失败：主题标签仍成功落库', failResult?.themeTagsOk === true && (store.allThemes().find((t) => t.id === failTheme.id)?.tags || []).includes('测试标签'))
+ok('骨架失败：hasKey 为 true（区分没配 key）', failResult?.hasKey === true)
+
+// 场景 C：无 key——兜底模板要诚实标注，不能显示成模型生成的
+scaffoldHooks.run = realScaffoldHook
+store.saveSettings({ apiKey: '' })
+const fallbackTheme = store.addTheme('兜底测试主题')
+await fire('theme:scaffoldExisting', fallbackTheme.id, 'AI 算力供应链')
+let fallbackResult = null
+for (let i = 0; i < 100 && !fallbackResult; i++) { await sleepMs(100); fallbackResult = await fire('theme:scaffoldResult', fallbackTheme.id) }
+ok('无 key：兜底模板铺上', store.allNodes().some((n) => n.themeId === fallbackTheme.id && n.kind === 'branch'))
+ok('无 key：skeletonFallback 诚实标注', fallbackResult?.skeletonFallback === true)
+ok('无 key：不算 degraded（有树可用）', fallbackResult?.degraded === false)
+
+// 收尾：恢复钩子与设置，别影响后面的 E3（它依赖无 key 兜底）
+scaffoldHooks.run = realScaffoldHook
+store.saveSettings({ apiKey: '' })
 
 // ============================================================
 console.log('\n— 骨架解析容错（模型不按 schema 吐） —')
