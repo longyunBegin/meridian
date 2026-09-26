@@ -915,6 +915,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
           provenance: result.resolvedChannel || channel,
           extracted: true,
           matchScore: rp.bestScore || 0,
+          extractedThemeId: defaultThemeId,
         })
         items.push(item)
       }
@@ -969,6 +970,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       provenance: result.resolvedChannel || channel,
       extracted: result.extracted !== false,
       matchScore: result.matchScore || 0,
+      extractedThemeId: defaultThemeId,
       ...(result.skipped ? { skipped: result.skipped } : {}),
     })
     // 采集漏斗记录
@@ -1094,9 +1096,12 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     let extracted = 0
     for (const item of targets) {
       if (item.extracted) continue
-      const result = await processCapture(item.text, bestThemeContext()?.id || null, item.provenance, { forceExtract: true })
+      // 抽取路由按命题最多的主题（bestThemeContext），与渲染层当前主题无关；
+      // 把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
+      const themeId = bestThemeContext()?.id || null
+      const result = await processCapture(item.text, themeId, item.provenance, { forceExtract: true })
       if (!result.lemmas.length) continue
-      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas })
+      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId })
       extracted++
     }
     getMainWindow?.()?.webContents.send('db:changed')
@@ -1128,6 +1133,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       addInboxItem({
         text: cr.text || '', title: cr.title || '',
         label: cr.label || null, lemmas: cr.lemmas || [],
+        extractedThemeId: event.themeId || null,
         rejected: cr.rejected || [], noulCompared: cr.noulCompared || 0,
         noulMaxScore: cr.noulMaxScore || 0, provenance: cr.provenance || null,
       })

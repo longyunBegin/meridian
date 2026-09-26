@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
-import { confColor, nodePath } from './shared.js'
+import { confColor, nodePath, inferInboxThemeId, inboxRouteValid } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
 
 const m = window.meridian
@@ -15,15 +15,22 @@ let selectedInboxId = null
 const overrides = new Map()
 const resolving = new Set()
 let lastAutoImport = null
+let cachedAllNodes = []
 const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
 
+/** 条目自己的主题：抽取路由所用的主题（新数据直接记在条目上）。 */
+function itemThemeId(item) {
+  return inferInboxThemeId(item, cachedAllNodes, state.themeId)
+}
+function itemThemeNodes(item) {
+  const tid = itemThemeId(item)
+  return cachedAllNodes.filter((node) => node.themeId === tid)
+}
+/** 条目级 override 键：跟着条目自己的主题走，不跟当前主题 */
+const ovKey = (item) => overrideKey(item.id, itemThemeId(item))
+
 function hasValidInboxRoute(item, themeNodes) {
-  const ov = overrides.get(overrideKey(item.id)) || {}
-  return (item.lemmas || []).every((lemma) => {
-    if (lemma.action === 'merge') return true
-    const parentId = ov.parentId ?? lemma.parentId
-    return !parentId || themeNodes.some((node) => node.id === parentId && node.status !== 'dead')
-  })
+  return inboxRouteValid(item, themeNodes, overrides.get(ovKey(item)) || {})
 }
 
 export async function renderToday(mid) {
@@ -58,6 +65,7 @@ export async function renderToday(mid) {
 
   const allNodes = await m.allNodes()
   if (seq !== renderSeq || state.view !== 'today') return
+  cachedAllNodes = allNodes
   const themeNodes = allNodes.filter((node) => node.themeId === state.themeId)
 
   mid.append(h('div', { class: 'page today-page' },
@@ -99,7 +107,7 @@ export async function renderToday(mid) {
       ),
     ),
 
-    renderInboxWorkspace(mid, seq, themeNodes, allNodes),
+    renderInboxWorkspace(mid, seq, allNodes),
     renderIgnoredProposals(ignored, allNodes),
 
     // ---- 到期未结算
@@ -206,7 +214,7 @@ function renderIgnoredProposals(items, nodes) {
   )
 }
 
-function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
+function renderInboxWorkspace(mid, seq, allNodes) {
   const items = inboxItems
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
@@ -227,7 +235,7 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
-  const isSelectable = (item) => item.extracted !== false && item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, themeNodes)
+  const isSelectable = (item) => item.extracted !== false && item.lemmas?.length && !resolving.has(item.id) && hasValidInboxRoute(item, itemThemeNodes(item))
   const pickAll = h('button', {
     class: 'btn inbox-pick-all',
     onclick: () => {
@@ -243,7 +251,7 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
   }, '批量入库')
 
   function updateBatch() {
-    for (const item of items) if (!hasValidInboxRoute(item, themeNodes)) picked.delete(item.id)
+    for (const item of items) if (!hasValidInboxRoute(item, itemThemeNodes(item))) picked.delete(item.id)
     const available = items.filter(isSelectable)
     pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
     pickAll.disabled = !available.length
@@ -252,7 +260,7 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
     // 选中后才出现批量入口，名字也跟单条操作区分开。
     importPicked.hidden = !picked.size
     importPicked.textContent = `批量入库（${picked.size}）`
-    importPicked.disabled = !state.themeId || !picked.size || items.some((item) => picked.has(item.id) && resolving.has(item.id))
+    importPicked.disabled = !picked.size || items.some((item) => picked.has(item.id) && (!itemThemeId(item) || resolving.has(item.id)))
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
@@ -269,15 +277,13 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
       row.dataset.sel = String(selected)
       row.querySelector('.inbox-body').setAttribute('aria-pressed', String(selected))
     }
-    renderInboxDetail(detail, items.find((item) => item.id === id), themeNodes, allNodes, resolve, updateBatch)
+    renderInboxDetail(detail, items.find((item) => item.id === id), allNodes, resolve, updateBatch)
   }
 
   async function resolve(chosen, action) {
     if (!chosen.length || chosen.some((item) => resolving.has(item.id))) return
-    const themeId = state.themeId
-    if (action === 'accept' && !themeId) { toast('先选择一个主题', 'var(--red)'); return }
-    if (action === 'accept' && chosen.some((item) => !hasValidInboxRoute(item, themeNodes))) {
-      toast('请先为所选信息选择当前主题下的目标环节。', 'var(--red)')
+    if (action === 'accept' && chosen.some((item) => !itemThemeId(item) || !hasValidInboxRoute(item, itemThemeNodes(item)))) {
+      toast('请先为所选信息选择其主题下的目标环节。', 'var(--red)')
       return
     }
     for (const item of chosen) resolving.add(item.id)
@@ -285,14 +291,26 @@ function renderInboxWorkspace(mid, seq, themeNodes, allNodes) {
     select(selectedInboxId)
     try {
       if (action === 'accept') {
-        const ovMap = Object.fromEntries(chosen.map((item) => [item.id, overrides.get(overrideKey(item.id, themeId)) || {}]))
-        const result = await m.inboxImport(themeId, chosen, ovMap)
-        toast(`${result.results.length} 条命题已入库`)
+        // 按条目各自主题分组入库：今日收件箱是全局的，一批勾选可能横跨多个主题
+        const groups = new Map()
+        for (const item of chosen) {
+          const tid = itemThemeId(item)
+          if (!groups.has(tid)) groups.set(tid, [])
+          groups.get(tid).push(item)
+        }
+        let total = 0
+        for (const [tid, group] of groups) {
+          const ovMap = Object.fromEntries(group.map((item) => [item.id, overrides.get(overrideKey(item.id, tid)) || {}]))
+          const result = await m.inboxImport(tid, group, ovMap)
+          total += result.results.length
+          for (const item of group) { picked.delete(item.id); overrides.delete(overrideKey(item.id, tid)) }
+        }
+        toast(`${total} 条命题已入库`)
       } else {
         await m.inboxResolve(chosen[0].id, 'reject')
         toast(chosen[0].kind === 'route-proposal' ? '已忽略归位提议，可在下方展开查看。' : '已忽略这条信息')
+        for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
       }
-      for (const item of chosen) { picked.delete(item.id); overrides.delete(overrideKey(item.id, themeId)) }
     } catch (e) {
       toast('处理失败：' + (e.message || '请重试'), 'var(--red)')
     } finally {
@@ -424,15 +442,18 @@ function unextractedNote(item) {
   return '标签库没有命中，留档不抽取。'
 }
 
-function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRouteChange) {
+function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange) {
   clear(panel)
+  // 条目级主题：勾选、挂点下拉、归位图、入库都跟着条目自己的主题走，
+  // 与渲染层当前主题无关——今日收件箱是全局的。
+  const themeNodes = itemThemeNodes(item)
   const unextracted = item.extracted === false
   const lemmas = item.lemmas || []
   const editable = !unextracted && lemmas.some((lemma) => lemma.action !== 'merge')
   const label = item.label || {}
-  const ov = overrides.get(overrideKey(item.id)) || {}
+  const ov = overrides.get(ovKey(item)) || {}
   const busy = resolving.has(item.id)
-  const theme = state.themes.find((t) => t.id === state.themeId)
+  const theme = state.themes.find((t) => t.id === itemThemeId(item))
   const conf = ov.confidence ?? lemmas[0]?.confidence ?? 50
   const sourceUrl = item.provenance?.url
   const confirm = h('button', {
@@ -440,19 +461,19 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
     onclick: () => onResolve([item], 'accept'),
   }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
   const routeNote = h('p', { class: 'inbox-detail-note inbox-route-warning', hidden: hasValidInboxRoute(item, themeNodes) },
-    '建议挂点不属于当前主题，请重新选择目标环节。')
+    '建议挂点不在该条目主题下，请重新选择目标环节。')
   const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
   const parentSelect = h('select', {
     class: 'inbox-parent-select', id: 'inbox-parent', disabled: busy || !theme,
     onchange: () => {
-      overrides.set(overrideKey(item.id), { ...overrides.get(overrideKey(item.id)), parentId: parentSelect.value })
+      overrides.set(ovKey(item), { ...overrides.get(ovKey(item)), parentId: parentSelect.value })
       clear(graph)
       graph.append(renderMiniGraph(themeNodes, item, changeParent))
       confirm.disabled = busy || !theme
       routeNote.hidden = true
       onRouteChange()
     },
-  }, h('option', { value: '__unavailable__', disabled: true }, '请选择当前主题的环节'),
+  }, h('option', { value: '__unavailable__', disabled: true }, '请选择该主题的环节'),
   h('option', { value: '' }, '主题根级'),
   ...themeNodes.filter((node) => node.status !== 'dead').map((node) =>
     h('option', { value: node.id }, nodePath(themeNodes, node.id) || node.title)))
@@ -534,7 +555,7 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
       ),
       editable ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '确认归位'),
-        h('p', { class: 'inbox-route-theme' }, theme ? `主题 · ${theme.name}` : '先在侧栏选择一个主题，再确认入库。'),
+        h('p', { class: 'inbox-route-theme' }, theme ? `主题 · ${theme.name}` : '该条目没有可用主题，无法入库。'),
         routeNote,
         h('div', { class: 'inbox-routing' }, h('label', { for: 'inbox-parent' }, '目标环节'), parentSelect),
         h('div', { class: 'inbox-confidence' },
@@ -544,7 +565,7 @@ function renderInboxDetail(panel, item, themeNodes, allNodes, onResolve, onRoute
             min: 0, max: 100, value: conf, disabled: busy,
             oninput: (e) => {
               const value = Number(e.target.value)
-              overrides.set(overrideKey(item.id), { ...overrides.get(overrideKey(item.id)), confidence: value })
+              overrides.set(ovKey(item), { ...overrides.get(ovKey(item)), confidence: value })
               confValue.value = String(value)
             },
           }), confValue,
@@ -608,7 +629,7 @@ function renderMiniGraph(themeNodes, item, onParentChange) {
   themeNodes = themeNodes.filter((node) => node.status !== 'dead')
   if (!themeNodes.length) return h('div', { class: 'inbox-graph-empty' }, h('span', {}, '主题还没有环节'))
 
-  const ov = overrides.get(overrideKey(item.id)) || {}
+  const ov = overrides.get(ovKey(item)) || {}
   const suggestedParent = ov.parentId ?? item.lemmas?.find((lemma) => lemma.action !== 'merge')?.parentId ?? null
 
   const downstream = new Set()
