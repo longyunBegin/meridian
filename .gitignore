@@ -7,3 +7,5 @@ service/config.json
 *.sqlite*
 service/backups/
 service/ops/*.log
+service/sync-bridge.config.json
+src/main/sync.config.json

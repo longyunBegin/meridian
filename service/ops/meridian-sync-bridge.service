@@ -1,0 +1,24 @@
+[Unit]
+Description=Meridian Tailscale reverse sync bridge (VM -> Mac)
+Documentation=file://MERIDIAN_HOME/service/sync-README.md
+After=network.target meridian-service.service
+
+[Service]
+Type=simple
+# MERIDIAN_HOME 是占位符：部署时替换为仓库实际检出路径
+Environment=MERIDIAN_HOME=/opt/meridian
+# 桥的配置与状态目录（默认 ~/.local/share/meridian-sync-bridge，可覆盖）
+# Environment=MERIDIAN_BRIDGE_DIR=%h/.local/share/meridian-sync-bridge
+# 也可以直接用环境变量覆盖配置项（优先级高于 config.json）：
+# Environment=MERIDIAN_SYNC_MAC_URL=http://100.68.175.71:3821
+# Environment=MERIDIAN_SYNC_MAC_TOKEN=xxx
+# Environment=MERIDIAN_SYNC_SERVICE_TOKEN=xxx
+ExecStart=/usr/bin/node ${MERIDIAN_HOME}/service/sync-bridge.mjs
+WorkingDirectory=${MERIDIAN_HOME}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

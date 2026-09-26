@@ -148,6 +148,12 @@ let db = null
 let saveTimer = null
 let readingStore = null
 
+/**
+ * 同步快照覆盖 meridian.json 后调用：失效内存缓存，下一次 load() 从磁盘重读。
+ * 黄区：只动缓存指针，不动 migrate()/importAll()/哈希链/ingest。
+ */
+export function invalidateDbCache() { db = null }
+
 /** SQLite 句柄单例。WAL 模式，建表幂等（见 service/db-schema.mjs）。 */
 let sqliteDb = null
 function sqlite() {
@@ -194,7 +200,8 @@ function readingsStore() {
   return readingStore
 }
 
-function readingSnapshot() {
+/** persist() 写盘的真相形状；也是反向同步 VM→Mac 快照的格式。导出给 sync:snapshot channel 用。 */
+export function readingSnapshot() {
   const { readings, ...rest } = db
   // 迁移尚未全部成功时保留旧数组，避免一次 I/O 失败被 debounce 写盘吞掉未迁移项。
   return { ...rest, readings: readings || [], sources: allSources().map(({ readingIds, ...source }) => source) }

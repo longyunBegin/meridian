@@ -1,0 +1,1 @@
+{"_comment":"Mac 端同步端点配置。放到 Electron userData 目录（Mac 上是 ~/Library/Application Support/脉络/）下，文件名 sync.config.json。本文件只是示例，不要填真实 token 后提交。","host":"0.0.0.0","port":3821,"token":"用 openssl rand -hex 32 生成后填这里，VM 桥的 macToken 填同一个值"}

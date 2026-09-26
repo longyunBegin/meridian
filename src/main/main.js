@@ -2,6 +2,7 @@ const { app, BrowserWindow, globalShortcut, clipboard } = globalThis.__electron
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { load, settings, lastInboxPrune, exportIntent } from './store.js'
+import { startSyncServer } from './sync-server.js'
 import { startAgentServer } from './agent-server.js'
 import { ingestReadings } from './reading-ingest.js'
 
@@ -101,7 +102,15 @@ app.whenReady().then(async () => {
       requireToken: agentServer?.requireToken,
       error: agentError,
     }),
+    // 反向同步：用户写操作进 outbox，供 VM 桥经 Tailscale 拉取重放。
+    enableOutbox: true,
   })
+  // Mac 同步端点（Tailscale 反向同步）：无 sync.config.json 则不启动，不影响 App 本体。
+  try {
+    await startSyncServer()
+  } catch (e) {
+    console.error('[sync] 同步端点启动失败（App 本体不受影响）:', e.message || e)
+  }
   try {
     agentServer = await startAgentServer({
       userData: app.getPath('userData'), ingest: ingestReadings, getIntent: exportIntent,

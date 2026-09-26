@@ -21,7 +21,7 @@ import {
   updateTheme, kindToTags, sicToTags,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
-  uid,
+  uid, readingSnapshot,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary } from './extract.js'
 import { labelSource, jevLabel } from './labeler.js'
@@ -29,6 +29,7 @@ import { tracked } from './llmlog.js'
 import { genericFallback, instantiate } from './templates.js'
 
 import { discoverTags } from './discover.js'
+import { withOutbox } from './sync-outbox.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { ingestReadings } from './reading-ingest.js'
@@ -517,8 +518,15 @@ function tokenOverlap(a, b) {
 /**
  * 窗口相关的东西由 main.js 注入，不在这里 import。
  */
-function register({ getMainWindow, getAgentConnection = () => ({ available: false }) }) {
+function register({ getMainWindow, getAgentConnection = () => ({ available: false }), enableOutbox = false }) {
+  // 反向同步 outbox：只在 Mac 真实 App 显式开启（main.js 传 enableOutbox: true）。
+  // service（shim）与测试默认关闭。用局部变量遮蔽模块顶层的 ipcMain，
+  // 下面全部 ipcMain.handle 调用零改动，白名单 channel 自动被包装记录。
+  const ipcMain = enableOutbox ? withOutbox(globalThis.__electron.ipcMain) : globalThis.__electron.ipcMain
   ipcMain.handle('db:stats', () => stats())
+  // 反向同步快照导出：VM 桥用它拿 readingSnapshot()（persist 写盘的同一形状），推给 Mac。
+  // 只读，不进 outbox 白名单。
+  ipcMain.handle('sync:snapshot', () => readingSnapshot())
   ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
   ipcMain.handle('db:allNodes', () => allNodes())
   ipcMain.handle('db:getNode', (_, id) => getNode(id))
