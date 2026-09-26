@@ -697,7 +697,15 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
         }),
         signal: AbortSignal.timeout(20000),
       })
-      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, latency: Date.now() - t0 }
+      if (!res.ok) {
+        // 模型 ID 写错是最常见也最难自查的失败——服务端只回 404 + 一句英文，
+        // 用户看到「HTTP 404」不知道往哪儿查。默认模型就曾因为下线白屏过。
+        const detail = await res.clone().json().then((b) => b?.error?.message || '').catch(() => '')
+        if (res.status === 404 || /model.*(not exist|invalid|not found)/i.test(detail)) {
+          return { ok: false, reason: 'bad-model', model: s.model, latency: Date.now() - t0 }
+        }
+        return { ok: false, reason: `HTTP ${res.status}`, latency: Date.now() - t0 }
+      }
       const body = await res.json()
       const msg = body?.choices?.[0]?.message
       const text = msg?.content?.trim()

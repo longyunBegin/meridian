@@ -370,8 +370,15 @@ function persist() {
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-export const today = () => new Date().toISOString().slice(0, 10)
-export const addDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10)
+/** 本地日期。曾经用 toISOString()——那是 UTC，在 UTC+8 下每天有 8 小时算「明天」，
+ *  用户晚上十一点记一笔，日期就跳到了明天，结算日和「今天」的比对都会错位一天。
+ *  日期是给人看的，按用户所在的时区算。 */
+const localDate = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+export const today = () => localDate()
+export const addDays = (n) => localDate(new Date(Date.now() + n * 864e5))
 
 const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)))
 const clamp01 = (n) => Math.max(0, Math.min(1, Number(n) || 0))
@@ -1649,7 +1656,7 @@ export function lastAutoIntakeEvent() {
 /** 按天返回采集漏斗 */
 export function intakeSeries(sinceDays = 30) {
   const db = load()
-  const cutoff = new Date(Date.now() - sinceDays * 864e5).toISOString().slice(0, 10)
+  const cutoff = localDate(new Date(Date.now() - sinceDays * 864e5))
   const byDate = {}
   for (const e of db.intakeEvents) {
     if (e.at < cutoff) continue
@@ -2303,7 +2310,7 @@ export function researchHitRate(notes, correct) {
  */
 export function vsInstitution(days = 90) {
   const db = load()
-  const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+  const cutoff = localDate(new Date(Date.now() - days * 86400000))
   const settled = db.nodes.filter((n) =>
     n.kind === 'lemma' &&
     n.settlement?.resolved &&

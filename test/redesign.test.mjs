@@ -4489,5 +4489,75 @@ await v8Test('摄入队列并发有界，MCP 拒绝非法初始化参数', async
   })
 })
 
+// ---- 回归：第三方审查发现的四件没测试护着的事 ----
+
+// 1) 数据目录被外部删掉后，追加不能崩。目录是可重建的，事实不是——
+//    先建目录再谈损坏，否则一次误删就让摄入永久失效。
+await v8Test('数据目录被外部删除后自动重建，追加不崩且链自洽', async () => {
+  const { indicator } = v8Reset()
+  // 读数账本就在 MERIDIAN_TEST_DATA 下，删整个目录模拟「用户手动删了数据文件夹」
+  const dir = process.env.MERIDIAN_TEST_DATA
+  v8Assert.ok(dir, '拿得到数据目录')
+  v8Fs.rmSync(dir, { recursive: true, force: true })
+  v8Assert.ok(!v8Fs.existsSync(dir), '目录已删')
+  // 删目录后追加：不能抛 ENOENT
+  const result = await v8Ingest(v8Envelope(v8Input(indicator)))
+  v8Assert.equal(result.accepted, 1, '删目录后仍能入账')
+  v8Assert.ok(v8Fs.existsSync(dir), '目录被重建')
+  const obs = v8OnlyObservation(indicator.id)
+  v8ChainOk(obs.chainKey, 1)
+})
+
+// 2) 日期必须按本地时区算。UTC 日期在 UTC+8 下每天有 8 小时是「明天」——
+//    用户晚上十一点记一笔，日期跳到明天，结算日与「今天」的比对错位一天。
+await v8Test('today() 用本地时区，不与 UTC 日期混用', async () => {
+  const now = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  const expect = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
+  v8Assert.equal(store.today(), expect, `today() 应等于本地日期，实际 ${store.today()}`)
+  v8Assert.equal(store.addDays(1), (() => {
+    const d = new Date(Date.now() + 864e5)
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  })(), 'addDays 同样是本地基准')
+  // 源码里不许再出现 toISOString().slice(0,10) 这类 UTC 取日期的写法
+  for (const file of ['store.js', 'fetchers.js']) {
+    const src = v8Fs.readFileSync(join(ROOT2, 'src/main', file), 'utf8')
+    v8Assert.ok(!/toISOString\(\)\.slice\(0,\s*10\)/.test(src), `${file} 还在用 UTC 取日期`)
+  }
+})
+
+// 3) 模型 ID 无效必须被识别成 bad-model，不能只回一句 HTTP 404——
+//    默认模型曾因下线而白屏，用户看到 404 完全不知道该改什么。
+await v8Test('llm:test 识别无效模型 ID', async () => {
+  const fired = []
+  const seen = []
+  const origFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    const body = opts.body ? JSON.parse(opts.body) : {}
+    seen.push(body.model)
+    if (body.model === 'bad-model-name') {
+      return { ok: false, status: 404, clone: () => ({ json: async () => ({ error: { message: 'The model "bad-model-name" does not exist' } }) }), json: async () => ({ error: { message: 'The model "bad-model-name" does not exist' } }) }
+    }
+    return origFetch(url, opts)
+  }
+  try {
+    store.saveSettings({ apiKey: 'sk-test', model: 'bad-model-name', baseUrl: 'https://api.stepfun.com/v1' })
+    const r = await fire('llm:test')
+    fired.push(r)
+  } finally { globalThis.fetch = origFetch }
+  v8Assert.equal(fired[0]?.reason, 'bad-model', '无效模型 ID 要报 bad-model：' + JSON.stringify(fired[0]))
+  v8Assert.equal(fired[0]?.model, 'bad-model-name', '回报出是哪个模型无效')
+})
+
+// 4) 界面不许再泄漏 SOURCE_QUALITY 这个内部常量名（第三方审查抓到过）
+await v8Test('设置页文案不泄漏内部常量名', async () => {
+  const src = v8Fs.readFileSync(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
+  // 只查给用户看的字符串字面量，不查注释
+  const visible = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  for (const word of ['SOURCE_QUALITY', 'dedupeKey', 'prevHash', 'chainKey', 'crossCount', 'indicatorId', 'readingInboxPaths']) {
+    v8Assert.ok(!visible.includes(word), `设置页文案泄漏了 ${word}`)
+  }
+})
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

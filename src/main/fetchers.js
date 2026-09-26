@@ -124,7 +124,7 @@ export function convertEdgarConcept(data, channel, cik, ticker, entityName) {
       kind: channel.kind || '财报 / 公告',
       label: `${entityName || ticker} ${rec.form || ''} ${rec.fy || ''}${rec.fp || ''}`,
       url: `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=${rec.form || ''}&dateb=&owner=include&count=40`,
-      fetchedAt: new Date().toISOString().slice(0, 10),
+      fetchedAt: localDate(),
       platform: 'SEC EDGAR',
       start: rec.start,
       end: rec.end,
@@ -226,9 +226,18 @@ async function fetchEdgarFilings(channel) {
 // ----------------------------------------------------------------- DefiLlama / Blockchain.com
 
 /** Unix 秒 → YYYY-MM-DD */
+/** Unix 秒 → 本地日期。和 store 的 today() 同一个基准——混用 UTC 会让
+ *  「数据所属期间」和「抓取日期」在跨日那一小时对不上。 */
 function unixToDate(unix) {
   if (!unix || typeof unix !== 'number') return null
-  return new Date(unix * 1000).toISOString().slice(0, 10)
+  const d = new Date(unix * 1000)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+const localDate = () => {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
 /**
@@ -248,7 +257,7 @@ async function fetchDefiLlamaProtocol(channel) {
     const data = await res.json()
     const value = data?.total24h ?? data?.totalDataChart?.slice(-1)?.[0]?.[1]
     if (value == null) return { items: [], readings: { ok: false, error: '响应缺少 total24h' }, error: null }
-    const asOf = unixToDate(data?.totalDataChart?.slice(-1)?.[0]?.[0]) || new Date().toISOString().slice(0, 10)
+    const asOf = unixToDate(data?.totalDataChart?.slice(-1)?.[0]?.[0]) || localDate()
     return submitReadings(channel, [{
       metric: metricName, value, unit: 'USD', asOf,
       source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: `https://defillama.com/protocol/${slug}` },
@@ -291,7 +300,7 @@ async function fetchDefiLlamaStablecoins(channel) {
     value = coins.reduce((s, c) => s + (c?.circulating?.peggedUSD || 0), 0)
   }
   return submitReadings(channel, [{
-    metric: metricName, value, unit: 'USD', asOf: new Date().toISOString().slice(0, 10),
+    metric: metricName, value, unit: 'USD', asOf: localDate(),
     source: { kind: channel.kind || '一手数据', platform: 'DefiLlama', url: 'https://defillama.com/stablecoins' },
     basis: 'reported', channelId: channel.id,
   }])

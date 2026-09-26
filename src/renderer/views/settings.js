@@ -122,6 +122,7 @@ export async function renderSettings(mid) {
             'no-key': '未填密钥',
             timeout: '超时（20s）',
             empty: '模型无返回',
+            'bad-model': `模型「${r.model}」不存在或无权访问——换一个模型 ID`,
             'reasoning-only': '推理模型把预算全花在思考上了，正文为空——接口是通的，换非推理模型或调大预算',
             'no-content': '模型只返回了思考，没有正文',
           }[r.reason] || r.reason
@@ -252,7 +253,7 @@ export async function renderSettings(mid) {
       h('div', { class: 'sect-b' },
         field('接口地址', txt(settings.baseUrl, (v) => m.saveSettings({ baseUrl: v }), 'https://api.stepfun.com/v1'), '任意 OpenAI 兼容端点。'),
         field('密钥', secret(settings.apiKey, (v) => m.saveSettings({ apiKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定。'),
-        field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3.5-flash'), '只做「抽取命题」，不需要太强的模型。'),
+        field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3.5-flash'), '只做「抽取命题」，不需要太强的模型。ID 写错会在测试连接时告诉你，不会静默失败。'),
         llmTestOut,
       ),
     ),

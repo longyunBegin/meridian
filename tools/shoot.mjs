@@ -1176,7 +1176,11 @@ Promise.all([
   // R2 禁词表
   const banned = await win.webContents.executeJavaScript(`(() => {
     const body = document.body.textContent
-    return ['跌死的', '清空我删的', '数据主权', '子项'].filter(w => body.includes(w))
+    // 工程语言黑名单。SOURCE_QUALITY 曾是设置页 hint 里的漏网之鱼——
+    // 内部常量名直接印给用户看。其余是历史累积的同类问题。
+    return ['跌死的', '清空我删的', '数据主权', '子项', 'SOURCE_QUALITY',
+      'dedupeKey', 'prevHash', 'chainKey', 'crossCount', 'indicatorId', 'readingInboxPaths',
+      '加权', '汇总', '总量', '合计'].filter(w => body.includes(w))
   })()`)
   check(banned.length === 0, 'R2: UI 无工程语言泄漏：' + banned.join(','))
 
