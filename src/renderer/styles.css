@@ -861,7 +861,7 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 
 /* 读数以观测为单位；天窗口与大组行窗口都保持有限 DOM。 */
 .readings-page { display: flex; flex-direction: column; min-height: 0; padding-bottom: 16px; overflow: hidden; }
-.readings-page > * { max-width: none; }
+.readings-page > * { max-width: none; margin-inline: 0; }
 .readings-page .page-head { flex: none; }
 #readings-list, #readings-list > .reading-pager, #readings-list > .reading-pager > div:first-child { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .reading-pagination { display: flex; align-items: center; gap: 12px; padding: 10px 0; flex: none; }
@@ -871,14 +871,14 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .feed-viewport { flex: 1; min-height: 100px; overflow: auto; position: relative; overscroll-behavior: contain; }
 .feed-canvas { position: relative; }
 .feed-day { position: absolute; width: 100%; }
-.feed-day-h { position: sticky; top: 0; z-index: 1; height: 36px; display: flex; align-items: center; justify-content: space-between; background: var(--bg); color: var(--text-3); font-size: var(--t-caption); border-bottom: 1px solid var(--hairline-soft); }
-.feed-row { position: relative; width: 100%; height: 64px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, auto); grid-template-rows: 24px 20px; gap: 2px 16px; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--hairline-soft); border-radius: var(--r-sm); }
+.feed-day-h { position: sticky; top: 0; z-index: 1; height: 36px; display: flex; align-items: center; justify-content: space-between; background: var(--bg); color: var(--text-2); font-size: var(--t-caption); font-weight: 600; letter-spacing: .04em; border-bottom: 1px solid var(--hairline-soft); }
+.feed-row { position: relative; width: 100%; height: 64px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, auto); grid-template-rows: 24px 20px; gap: 2px 16px; padding: 8px 16px; text-align: left; border-bottom: 1px solid var(--hairline-soft); border-radius: var(--r-sm); }
 .feed-row:hover { background: var(--hover); }
 .feed-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-body); }
 .feed-value { font-size: var(--t-body); font-weight: 600; white-space: nowrap; }
 .feed-period { font-size: var(--t-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .feed-row > .trust-mark { justify-self: end; }
-.feed-row[data-status="conflicted"] { background: rgba(255, 149, 0, .09); }
+.feed-row[data-status="conflicted"] { background: rgba(255, 149, 0, .05); }
 .feed-row[data-status="superseded"] .feed-value, .reading-proof[data-status="superseded"] .reading-number { text-decoration: line-through; color: var(--text-3); }
 .reading-seal { position: absolute; right: 2px; bottom: 9px; color: var(--text-3); font-size: var(--t-caption); }
 .trust-mark { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--t-caption); white-space: nowrap; font-weight: 400; }
@@ -898,9 +898,9 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .reading-dialog-head h2 { font-size: var(--t-title); margin: 0; }
 .reading-dialog-body { padding: 8px 24px 24px; }
 .reading-dialog h3 { font-size: var(--t-body); margin: 20px 0 8px; }
-.reading-proof, .reading-judgment { padding: 12px 0; border-bottom: 1px solid var(--hairline-soft); }
+.reading-proof, .reading-judgment { padding: 14px 0; border-bottom: 1px solid var(--hairline-soft); }
 .reading-proof-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.reading-proof-head .reading-number { margin-left: auto; }
+.reading-proof-head .reading-number { font-size: var(--t-title); font-weight: 700; margin-left: auto; }
 .reading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .reading-original .raw-text { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .reading-assignment { display: flex; gap: 8px; margin: 12px 0; }
