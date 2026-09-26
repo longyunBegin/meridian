@@ -431,39 +431,7 @@ export async function renderSettings(mid) {
             onclick: async () => { await m.saveSettings({ agentToken: v }); await renderSettings(mid) },
           }, label)))
         })(), '凭据在数据源页一键复制。仅本机模式才能关。'),
-        field('监听地址', (() => {
-          const opts = [['127.0.0.1', '仅本机'], ['0.0.0.0', '局域网（所有网卡）']]
-          return h('div', { class: 'seg seg-fit' }, ...opts.map(([v, label]) => h('button', {
-            'aria-selected': (settings.agentHost || '127.0.0.1') === v ? 'true' : 'false',
-            onclick: async () => { await m.saveSettings({ agentHost: v }); await renderSettings(mid) },
-          }, label)))
-        })(), '选「局域网」后，同一网络的其它机器也能推送读数。访问凭据会变成唯一防线，别关掉。'),
-        field('端口', h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } },
-          h('input', {
-            class: 'txt', type: 'number', min: '1024', max: '65535', placeholder: '留空 = 每次随机',
-            value: settings.agentPort ? String(settings.agentPort) : '',
-            style: { width: '110px' },
-            onchange: async (e) => {
-              const v = Number(e.target.value)
-              await m.saveSettings({ agentPort: v >= 1024 && v <= 65535 ? v : 0 })
-              await renderSettings(mid)
-            },
-          }),
-          h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '留空则每次启动随机'),
-        ), 'agent 要写死地址就填一个固定端口。改完重启 app 生效。'),
-        field('访问凭据', (() => {
-          const on = settings.agentToken !== false
-          const lan = (settings.agentHost || '127.0.0.1') !== '127.0.0.1'
-          return h('div', { class: 'seg seg-fit' }, ...[
-            [true, '需要'], [false, '不需要'],
-          ].map(([v, label]) => h('button', {
-            'aria-selected': on === v ? 'true' : 'false',
-            // 绑到非本机时不允许关——那等于把账本敞开在网络上
-            disabled: lan && v === false,
-            title: lan && v === false ? '绑定非本机地址必须启用访问凭据' : '',
-            onclick: async () => { await m.saveSettings({ agentToken: v }); await renderSettings(mid) },
-          }, label)))
-        })(), '凭据在数据源页一键复制。仅本机模式才能关。'),
+        
         field('图的缩放', (() => {
           const value = Number(settings.graphZoom) || 1
           const out = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', minWidth: '44px' } }, `${value.toFixed(1)}×`)
