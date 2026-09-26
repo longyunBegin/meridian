@@ -567,6 +567,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   async function scaffoldTheme(themeId, description, s) {
     if (scaffolding.has(themeId)) return { degraded: false, skipped: 'in-flight' }
     scaffolding.add(themeId)
+    // 新一轮开始，上一轮的结果作废——否则轮询可能在新一轮还没结束时读到旧结果并提前 settle
+    scaffoldResults.delete(themeId)
     try {
       const result = await runScaffold(themeId, description, s)
       scaffoldResults.set(themeId, result)
@@ -588,13 +590,30 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
       const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
       if (hasBranches && hasTagLibrary) {
-        return { degraded: false, tagLibraryOk: true, tagLibraryCount: 1, skipped: 'complete' }
+        return {
+          degraded: false, skipped: 'complete',
+          hasKey: !!s.apiKey,
+          skeletonOk: true, skeletonReason: null, skeletonFallback: false,
+          themeTagsOk: true, themeTagsReason: null,
+          tagLibraryOk: true, tagLibraryReason: null, tagLibraryCount: 1,
+        }
       }
 
+      // 分阶段进度：骨架一次 LLM 最长 90s，三个阶段串下来用户要等两分多钟。
+      // 没有进度就只有一句「生成中」，用户只能干等——每阶段起止都推一个事件，
+      // 创建页据此点亮步骤。事件丢了也不怕，settle 时按结果一次性校准。
+      const emitStage = (stage, state, extra = {}) => {
+        getMainWindow?.()?.webContents.send('theme:scaffoldProgress', { themeId, stage, state, ...extra })
+      }
+
+      emitStage('skeleton', 'start')
+      emitStage('tags', 'start')
       const [skeletonResult, tagResult] = await Promise.all([
         tracked('skeleton', () => generateSkeleton(s, description), { themeId }),
         tracked('themeTags', () => generateThemeTags(s, description), { themeId }),
       ])
+      emitStage('skeleton', skeletonResult.ok ? 'ok' : 'fail', { reason: skeletonResult.reason })
+      emitStage('tags', tagResult.ok ? 'ok' : 'fail', { reason: tagResult.reason })
 
       if (hasBranches) {
         // 这一轮只补标签库，骨架、指标节点都不重铺
@@ -615,6 +634,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
         const fallback = genericFallback()
         if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
       }
+      // 兜底模板不是模型生成的——UI 上要诚实标注，不能显示成「模型搭好了」
+      const skeletonFallback = !hasBranches && !skeletonResult.ok && !s.apiKey
 
       if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
         for (const spec of branch.scaffold?.indicators || []) {
@@ -629,7 +650,9 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
 
       if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
       const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
+      emitStage('library', 'start')
       const tagLibraryResult = await tracked('tagLibrary', () => generateTagLibrary(s, description, titles), { themeId })
+      emitStage('library', tagLibraryResult.ok ? 'ok' : 'fail', { reason: tagLibraryResult.reason })
       const tagLibraryCount = tagLibraryResult.ok
         ? (updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary }), tagLibraryResult.tagLibrary.length)
         : 0
@@ -644,6 +667,13 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
         // 树没生成和 key 没配是两件事，用户该知道是哪件
         reason: treeExists || skeletonResult.ok ? null : (skeletonResult.reason || 'unknown'),
         hasKey: !!s.apiKey,
+        skeletonOk: !!skeletonResult.ok,
+        skeletonReason: skeletonResult.ok ? null : (skeletonResult.reason || 'unknown'),
+        skeletonFallback,
+        // 主题标签以前是静默的：失败了只表现为 tags 为空，用户无从判断是模型没给还是没跑。
+        // 部分失败（骨架成了、标签没成）要能分别展示、分别重试。
+        themeTagsOk: !!tagResult.ok,
+        themeTagsReason: tagResult.ok ? null : (tagResult.reason || 'unknown'),
         // 标签库失败以前是静默的——骨架成功就报「已生成」，用户只看到标签库是 0，无从判断
         tagLibraryOk: !!tagLibraryResult.ok,
         tagLibraryReason: tagLibraryResult.ok ? null : (tagLibraryResult.reason || 'unknown'),
@@ -653,6 +683,10 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   }
 
   ipcMain.handle('theme:scaffoldResult', (_, themeId) => scaffoldResults.get(themeId) || null)
+  // 轮询兜底的另一半：渲染层先问「还在铺吗」，不铺了再取 scaffoldResult。
+  // 曾经只暴露了取结果、没暴露查状态，pollScaffold 每次都抛 No handler registered、
+  // 被 catch 吞掉——推送事件一丢，用户就永远卡在「骨架生成中」。
+  ipcMain.handle('theme:scaffoldStatus', () => [...scaffolding])
 
   // 建主题分两步：主题立即建好返回（UI 不必卡住），骨架异步铺。
   // 铺完由 db:changed 通知渲染层刷新——用户在等的时候还能看别的东西。
@@ -1143,35 +1177,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('research:byNode', (_, nodeId) => researchNotesByNode(nodeId))
   ipcMain.handle('research:hitRate', (_, notes, correct) => researchHitRate(notes, correct))
   ipcMain.handle('research:vsInstitution', (_, days) => vsInstitution(days || 90))
-
-  // ---- 模型生成骨架（step 4）----
-  ipcMain.handle('theme:generateSkeleton', async (_, description) => {
-    const s = settings()
-    const result = await generateSkeleton(s, description)
-    return result
-  })
-
-  ipcMain.handle('theme:instantiateSkeleton', async (_, themeId, skeleton) => {
-    // 把模型生成的骨架落库为草稿态节点
-    const created = []
-    const walk = (node, parentId) => {
-      const n = addNode({
-        themeId,
-        parentId,
-        kind: 'branch',
-        title: node.title,
-        propagation: node.propagation ?? 0.5,
-        scaffold: node.scaffold || null,
-        by: 'model',
-        stableId: node.stableId,
-      })
-      created.push(n)
-      for (const child of node.children || []) walk(child, n.id)
-    }
-    for (const root of skeleton.roots || []) walk(root, null)
-    getMainWindow?.()?.webContents.send('db:changed')
-    return { ok: true, count: created.length }
-  })
+  // 旧的两步式骨架流程（先调 theme:generateSkeleton 取 JSON，再调 theme:instantiateSkeleton 落库）
+  // 已被 theme:setupNew / theme:scaffoldExisting 的一步异步流程取代，渲染层无调用，移除。
 }
 
 

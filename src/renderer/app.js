@@ -16,6 +16,15 @@ export const state = {
   /** 正在铺骨架的主题 id。放 state 而不是闭包——addTheme 会触发 db:changed →
    *  refresh() 重画整个创建页，闭包里的变量被清零，骨架铺完就找不到该去哪个主题了。 */
   pendingScaffoldId: null,
+  /** 待铺骨架主题的描述。db:changed 会重画创建页，闭包留不住——重试要靠它。 */
+  pendingScaffoldDesc: null,
+  /** 分阶段进度：skeleton/tags/library → pending/active/done/fail。
+   *  放 state 而不是闭包——进度事件来的时候创建页可能已经被重画过。 */
+  scaffoldStages: null,
+  /** 各阶段失败的原因（事件里带的 reason） */
+  scaffoldStageReasons: {},
+  /** 最近一次铺设的完整结果。部分失败/失败时渲染结果卡、可重试。 */
+  scaffoldOutcome: null,
   /** 骨架铺失败了。创建页据此把按钮解锁成「重新生成」——放在 state 里，
    *  因为 db:changed 会重画页面，闭包记不住这件事。 */
   scaffoldFailed: false,
@@ -56,11 +65,107 @@ function themeColor(id) {
 }
 
 let scaffoldPoll = null
+/** 标记一个主题开始铺骨架并启动轮询兜底。创建页、E3 补生成、重新生成三处共用——
+ *  推送事件丢了也能靠轮询收回来，不会把按钮永远卡在「生成中」。 */
+export function trackScaffold(themeId) {
+  state.pendingScaffoldId = themeId
+  pollScaffold(themeId)
+}
+
+/** 三个阶段的展示名 */
+const STAGE_LABEL = { skeleton: '搭骨架', tags: '主题标签', library: '标签库' }
+const STAGE_ORDER = ['skeleton', 'tags', 'library']
+const STAGE_HINT = {
+  skeleton: '模型正在搭产业链骨架…',
+  tags: '正在提炼主题标签…',
+  library: '正在建标签库…',
+}
+const STEP_SVG = {
+  done: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>',
+  fail: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+}
+function stepIconEl(st) {
+  if (st === 'active') { const d = document.createElement('div'); d.className = 'sstep-spinner'; return d }
+  if (st === 'done' || st === 'fail') { const s = document.createElement('span'); s.className = 'sstep-svg'; s.innerHTML = STEP_SVG[st]; return s }
+  const d = document.createElement('div'); d.className = 'sstep-dot'; return d
+}
+
+/** 阶段失败的人话原因。事件里的 reason 和结果里的 reason 都认。 */
+function stageWhy(stage, info) {
+  const reason = info?.[stage === 'skeleton' ? 'skeletonReason' : stage === 'tags' ? 'themeTagsReason' : 'tagLibraryReason']
+    || state.scaffoldStageReasons[stage]
+  if (reason === 'no-key') return '未配置 API key'
+  return { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回无法解析' }[reason]
+    || (reason ? `调用失败（${reason}）` : '未知原因')
+}
+
+function stepSub(stage, st, info) {
+  if (st === 'active') return STAGE_HINT[stage]
+  if (st === 'fail') return stageWhy(stage, info)
+  if (st === 'done' && stage === 'skeleton' && info?.skeletonFallback) return '通用模板（未配 key，配好后可重生成）'
+  if (st === 'done' && stage === 'library' && info?.tagLibraryCount != null) return `${info.tagLibraryCount} 个标签`
+  return ''
+}
+
+/** 阶段进度事件 → 更新 state + 直接刷当前视图的步骤行（不等整页重画）。 */
+function updateScaffoldSteps(info) {
+  if (!info || state.pendingScaffoldId !== info.themeId) return
+  if (!state.scaffoldStages) state.scaffoldStages = { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  const st = { start: 'active', ok: 'done', fail: 'fail' }[info.state]
+  if (!st || !STAGE_LABEL[info.stage]) return
+  state.scaffoldStages[info.stage] = st
+  if (info.state === 'fail' && info.reason) state.scaffoldStageReasons[info.stage] = info.reason
+  paintScaffoldSteps()
+}
+
+/** 按 state.scaffoldStages 重绘步骤行。事件和重画都走这里。 */
+function paintScaffoldSteps() {
+  const stages = state.scaffoldStages
+  if (!stages) return
+  document.querySelectorAll('.scaffold-step[data-stage]').forEach((el) => {
+    const stage = el.dataset.stage
+    const st = stages[stage] || 'pending'
+    el.dataset.state = st
+    const ic = el.querySelector('.sstep-icon')
+    if (ic) { ic.textContent = ''; ic.append(stepIconEl(st)) }
+    const sub = el.querySelector('.sstep-sub')
+    if (sub) sub.textContent = stepSub(stage, st, state.scaffoldOutcome)
+  })
+}
+
+/** 用最终结果校准各步骤状态——进度事件丢了也以此为准。 */
+function calibrateStages(info) {
+  if (info?.skipped === 'complete') {
+    state.scaffoldStages = { skeleton: 'done', tags: 'done', library: 'done' }
+    return
+  }
+  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  stages.skeleton = info.degraded ? 'fail' : 'done'
+  stages.tags = info.themeTagsOk === false ? 'fail' : 'done'
+  stages.library = info.tagLibraryOk === false ? 'fail' : 'done'
+  state.scaffoldStages = stages
+  for (const [stage, key] of [['skeleton', 'skeletonReason'], ['tags', 'themeTagsReason'], ['library', 'tagLibraryReason']]) {
+    if (info[key]) state.scaffoldStageReasons[stage] = info[key]
+  }
+}
 /** 轮询等骨架铺完。事件推送是主路径，这里是丢事件时的兜底——两条路都通到同一个 settle。 */
 function pollScaffold(themeId) {
   clearInterval(scaffoldPoll)
+  let ticks = 0
   scaffoldPoll = setInterval(async () => {
     if (state.pendingScaffoldId !== themeId) { clearInterval(scaffoldPoll); return }
+    // 熔断：三阶段最长 90+60+60 秒。超过 5 分钟还没回来，主进程大概率已经没了——
+    // 不能让用户永远卡在「生成中」，给一个可重试的失败态。
+    if (++ticks > 260) {
+      clearInterval(scaffoldPoll)
+      if (state.pendingScaffoldId !== themeId) return
+      state.pendingScaffoldId = null
+      state.scaffoldFailed = true
+      state.scaffoldOutcome = { themeId, degraded: true, reason: 'timeout', hasKey: true, themeTagsOk: false, themeTagsReason: 'timeout', tagLibraryOk: false, tagLibraryReason: 'timeout' }
+      refresh()
+      toast('骨架生成超时了，可以重新生成。', 'var(--red)')
+      return
+    }
     let inFlight = true
     try { inFlight = (await m.themeScaffoldStatus()).includes(themeId) } catch { return }
     if (inFlight) return
@@ -71,22 +176,41 @@ function pollScaffold(themeId) {
   }, 1200)
 }
 
-/** 骨架铺完：成功切去那个主题，失败就地解锁让人重试。 */
+/** 骨架铺完：全成功才切去那个主题；部分失败/失败就地给结果卡、可重试。
+ *  用户中途切走了就不硬拽回来——只 toast 一声。 */
 function settleScaffold(themeId, info) {
   if (state.pendingScaffoldId !== themeId) return
-  if (info.degraded) {
-    state.pendingScaffoldId = null
-    state.scaffoldFailed = true
-    refresh()
-    toast(`骨架没生成：${scaffoldWhy(info)}。`, 'var(--red)')
+  state.pendingScaffoldId = null
+  calibrateStages(info)
+  const themeName = state.themes.find((t) => t.id === themeId)?.name || ''
+  const partial = !info.degraded && (info.themeTagsOk === false || info.tagLibraryOk === false)
+  if (!info.degraded && !partial) {
+    state.scaffoldOutcome = null
+    state.scaffoldStages = null
+    state.scaffoldStageReasons = {}
+    if (state.view === 'new-theme') {
+      state.themeId = themeId
+      state.view = 'lattice'
+      refresh()
+      toast(info.skeletonFallback ? '已用通用模板建好骨架，配 key 后可重生成' : '骨架已生成')
+    } else {
+      refresh()
+      toast(`「${themeName}」骨架已生成`)
+    }
     return
   }
-  state.themeId = themeId
-  state.pendingScaffoldId = null
-  state.view = 'lattice'
+  // 部分失败或彻底失败：留在原地给结果卡（用户还在新建页），在别处则 toast
+  state.scaffoldOutcome = { themeId, ...info }
+  state.scaffoldFailed = true
   refresh()
-  toast('骨架已生成')
-  if (info.tagLibraryOk === false) toast(`标签库没生成：${tagLibraryWhy(info)}。归位会受影响。`, 'var(--red)')
+  if (state.view !== 'new-theme') {
+    const bits = []
+    if (info.degraded) bits.push(`骨架没生成：${scaffoldWhy(info)}`)
+    if (info.themeTagsOk === false) bits.push(`主题标签没生成：${stageWhy('tags', info)}`)
+    if (info.tagLibraryOk === false) bits.push(`标签库没生成：${stageWhy('library', info)}`)
+    toast(`「${themeName}」${bits.join('；')}。`, 'var(--red)',
+      { label: '去重试', onClick: async () => { setView('new-theme') } })
+  }
 }
 
 /** 骨架失败的人话原因。「树没生成」和「key 没配」是两件事，用户该知道是哪件。 */
@@ -125,6 +249,10 @@ async function boot() {
   })
 
   m.onThemeScaffolded(async (info) => {
+    // 并发重复触发：主进程的 scaffolding 锁已经挡掉，这只是一次空转——
+    // 不算成功：不能弹「骨架已生成」，更不能切页面。之前这里没过滤，
+    // 用户连点两次「生成」，第二次会立刻收到 in-flight 并误报成功。
+    if (info?.skipped === 'in-flight') return
     // 建主题页还在等这条通知：成了就切过去，败了就地解锁重试。
     // 必须在 refresh() 之前做——refresh 会重画页面，把创建页替换掉。
     if (state.pendingScaffoldId && info?.themeId === state.pendingScaffoldId) {
@@ -145,6 +273,8 @@ async function boot() {
       toast(`标签库没生成：${tagLibraryWhy(info)}。归位会受影响，可再点一次「重新生成」只补标签库。`, 'var(--red)')
     }
   })
+  // 分阶段进度：创建页据此点亮步骤。事件丢了也不怕，settle 时按结果校准。
+  m.onThemeScaffoldProgress?.((info) => updateScaffoldSteps(info))
   m.onInboxPaste(captureText)
   m.onInboxPruned((info) => {
     if (info?.removed > 0) toast(`已清理 ${info.removed} 条超过 30 天未处理的待确认`)
@@ -485,22 +615,93 @@ async function paintVaultCounts() {
 }
 
 /** 主题创建器：用户只描述要跟踪什么，其余由系统完成。 */
+/** 生成中的分步卡：三个阶段各一行，进度事件来了就地刷，不整页重画。 */
+function renderScaffoldSteps() {
+  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  return h('div', { class: 'scaffold-steps' },
+    STAGE_ORDER.map((stage) => {
+      const st = stages[stage] || 'pending'
+      return h('div', { class: 'scaffold-step', dataset: { stage, state: st } },
+        h('span', { class: 'sstep-icon' }, stepIconEl(st)),
+        h('div', { class: 'sstep-text' },
+          h('div', { class: 'sstep-title' }, STAGE_LABEL[stage]),
+          h('div', { class: 'sstep-sub' }, stepSub(stage, st, null)),
+        ))
+    }))
+}
+
+/** 部分失败 / 失败的结果卡：哪一步成了、哪一步没成、为什么，一目了然，可重试。 */
+function renderOutcomeCard(outcome) {
+  const failed = outcome.degraded
+  const row = (stage, ok, sub) => h('div', { class: 'scaffold-step', dataset: { stage, state: ok ? 'done' : 'fail' } },
+    h('span', { class: 'sstep-icon' }, stepIconEl(ok ? 'done' : 'fail')),
+    h('div', { class: 'sstep-text' },
+      h('div', { class: 'sstep-title' }, STAGE_LABEL[stage]),
+      sub ? h('div', { class: 'sstep-sub' }, sub) : null))
+
+  const card = h('div', { class: 'scaffold-steps scaffold-result' },
+    h('div', { class: 'scaffold-result-title' }, failed ? '骨架没能生成' : '骨架已生成，但有一步没完成'),
+    row('skeleton', !failed, failed ? stageWhy('skeleton', outcome) : (outcome.skeletonFallback ? '通用模板（未配 key）' : '')),
+    row('tags', outcome.themeTagsOk !== false, outcome.themeTagsOk === false ? stageWhy('tags', outcome) : ''),
+    row('library', outcome.tagLibraryOk !== false,
+      outcome.tagLibraryOk === false ? stageWhy('library', outcome)
+        : (outcome.tagLibraryCount != null ? `${outcome.tagLibraryCount} 个标签` : '')),
+  )
+  if (!outcome.hasKey) {
+    card.append(h('div', { class: 'scaffold-hint' }, '未配置 API key——去设置里配好后，重新生成可走模型。'))
+  }
+  card.append(h('div', { class: 'scaffold-actions' },
+    h('button', { class: 'btn', onclick: retryScaffold }, '重新生成'),
+    failed ? null : h('button', {
+      class: 'btn btn-primary',
+      onclick: () => {
+        state.themeId = outcome.themeId
+        state.view = 'lattice'
+        state.scaffoldOutcome = null
+        state.scaffoldStages = null
+        refresh()
+      },
+    }, '进入主题 →'),
+  ))
+  return card
+}
+
+/** 结果卡上的「重新生成」：幂等补齐——scaffoldTheme 会跳过已有的部分，只补没成的。 */
+async function retryScaffold() {
+  const outcome = state.scaffoldOutcome
+  const desc = state.pendingScaffoldDesc
+  if (!outcome?.themeId || !desc) return
+  const themeId = outcome.themeId
+  state.scaffoldOutcome = null
+  state.scaffoldFailed = false
+  state.scaffoldStages = { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  state.scaffoldStageReasons = {}
+  trackScaffold(themeId)
+  refresh()
+  try {
+    await m.scaffoldExisting(themeId, desc)
+  } catch (e) {
+    // 轮询兜底会收回来；真收不回来也有 5 分钟熔断
+  }
+}
+
 export function renderThemeCreator(opts = {}) {
   const compact = opts.compact || false
-  const startFailed = !!opts.failed
+  const startFailed = !!opts.failed || !!state.scaffoldFailed
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
   const statusEl = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', marginLeft: '6px' } })
 
   // 生成期间按钮锁住，只有失败才解锁。放在这里而不是各 onclick 里——
   // Enter 键和按钮是两个入口，且都只禁自己不禁对方；用户输完按回车、
   // 手指又点到按钮，就会建出两个同名主题、各跑一遍骨架。
-  let submitting = false
+  const inFlight = !!state.pendingScaffoldId
+  let submitting = inFlight
   const submitBtn = h('button', {
     class: 'btn btn-primary', style: { height: '34px' },
-    // 上一轮铺失败了就解锁让人重试，否则等用户填描述
-    disabled: !startFailed,
+    // 上一轮铺失败了就解锁让人填新的，否则等用户填描述
+    disabled: inFlight || !startFailed,
     onclick: () => submitDesc(input.value.trim()),
-  }, icon('plus', 13), startFailed ? '重新生成' : '开始跟踪')
+  }, icon('plus', 13), inFlight ? '骨架生成中…' : '开始跟踪')
 
   const lock = (label) => { submitting = true; submitBtn.disabled = true; submitBtn.textContent = label; input.disabled = true }
   const unlock = (label) => { submitting = false; submitBtn.disabled = false; submitBtn.textContent = label; input.disabled = false }
@@ -509,18 +710,24 @@ export function renderThemeCreator(opts = {}) {
     if (!desc || submitting) return
     lock('创建中…')
     statusEl.textContent = ''
+    state.scaffoldOutcome = null
     try {
       const theme = await m.setupNewTheme(desc)
-      state.pendingScaffoldId = theme.id
-      input.value = ''
-      // 主题已经建好，骨架在后台铺。留在本页显示进度，不切走——
-      // 失败了要能就地重试，不用自己导航回来。成功后再切过去。
-      lock('骨架生成中…')
-      statusEl.textContent = '骨架生成中，可以先去别处看。'
+      state.pendingScaffoldDesc = desc
+      state.scaffoldFailed = false
+      // setupNew 返回时主进程已经同步起跑（start 事件甚至可能比这个 await 先到，
+      // 那时 pendingScaffoldId 还没设、事件会被丢弃）——所以这里直接标 active，
+      // 不靠事件点亮前两步。library 的 start 事件晚到，由事件驱动。
+      state.scaffoldStages = { skeleton: 'active', tags: 'active', library: 'pending' }
+      state.scaffoldStageReasons = {}
       if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架和标签库。')
       // 轮询兜底：theme:scaffolded 是推送，窗口没起来或渲染层还没订阅时就丢了。
       // 丢了的后果是用户永远卡在这一页、按钮锁死——所以结果必须可查。
-      pollScaffold(theme.id)
+      trackScaffold(theme.id)
+      // 整页重建而不是往 wrap 里 append：addTheme 不发 db:changed，侧栏要靠这次
+      // refresh 才出现新主题；而且 db:changed 随时会重画，闭包里的 wrap 可能已脱离文档。
+      // 重建后的创建器看到 inFlight，自己会锁住按钮输入框并挂上步骤卡。
+      await refresh()
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
       unlock('重新开始')
@@ -529,7 +736,7 @@ export function renderThemeCreator(opts = {}) {
 
   const input = h('input', {
     class: 'txt skeleton-input', placeholder: '描述你要跟踪的', id: 'skeleton-desc',
-    value: startFailed ? '' : '',
+    disabled: inFlight,
     oninput: () => { if (!submitting) submitBtn.disabled = !input.value.trim() },
     onkeydown: async (e) => {
       if (e.key !== 'Enter') return
@@ -543,6 +750,9 @@ export function renderThemeCreator(opts = {}) {
     submitBtn,
     statusEl,
   ))
+  // 用户切走又回来：进行中恢复步骤卡，已结束恢复结果卡——状态都在 state 里，不靠闭包
+  if (inFlight) wrap.append(renderScaffoldSteps())
+  else if (state.scaffoldOutcome) wrap.append(renderOutcomeCard(state.scaffoldOutcome))
   return wrap
 }
 
@@ -609,7 +819,7 @@ function renderNewTheme() {
   state.scaffoldFailed = false
   page.append(h('div', { class: 'page-head' },
     h('h1', {}, '新建主题'),
-    h('p', {}, '说一句话，模型搭骨架、配通道、建标签库。之后你在脉络页写下判断，账本负责记录证据。'),
+    h('p', {}, '说一句话，模型搭骨架、提炼标签、建标签库。之后你在脉络页写下判断，账本负责记录证据。'),
   ), creator)
   return page
 }

@@ -1558,6 +1558,35 @@ select.inbox-parent-select {
 .skeleton-gen { display: flex; gap: 8px; margin: 10px 0; width: 460px; }
 .skeleton-input { flex: 1; height: 34px; }
 
+/* 骨架生成 · 分阶段进度（Apple 风）：细分隔线、克制图标、不抢正文 */
+.scaffold-steps {
+  width: 460px; margin: 4px 0 12px; padding: 4px 14px;
+  border: 0.5px solid var(--hairline); border-radius: 12px; background: var(--bg-2);
+  animation: scaffold-in 240ms var(--ease);
+}
+@keyframes scaffold-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.scaffold-step { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; border-bottom: 0.5px solid var(--hairline-soft); transition: opacity 200ms var(--ease); }
+.scaffold-step:last-child { border-bottom: none; }
+.sstep-icon { flex: none; width: 18px; height: 18px; display: grid; place-items: center; margin-top: 1px; }
+.sstep-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--text-3); opacity: 0.5; }
+/* Apple 式菊花：细环 + 顶部高亮 */
+.sstep-spinner { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--hairline); border-top-color: var(--text-2); animation: sstep-spin 0.8s linear infinite; }
+@keyframes sstep-spin { to { transform: rotate(360deg); } }
+.sstep-svg { display: grid; place-items: center; }
+.scaffold-step[data-state="done"] .sstep-svg { color: var(--green); }
+.scaffold-step[data-state="fail"] .sstep-svg { color: var(--red); }
+.scaffold-step[data-state="pending"] { opacity: 0.55; }
+.sstep-text { min-width: 0; }
+.sstep-title { font-size: var(--t-body); color: var(--text-1); }
+.scaffold-step[data-state="active"] .sstep-title { font-weight: 600; }
+.sstep-sub { font-size: var(--t-caption); color: var(--text-3); margin-top: 1px; }
+.scaffold-step[data-state="fail"] .sstep-sub { color: var(--red); }
+/* 结果卡 */
+.scaffold-result { border-color: var(--hairline); }
+.scaffold-result-title { font-size: var(--t-body); font-weight: 600; color: var(--text-1); padding: 8px 0 2px; }
+.scaffold-hint { font-size: var(--t-caption); color: var(--text-3); padding: 6px 0 2px; }
+.scaffold-actions { display: flex; gap: 8px; padding: 10px 0 6px; }
+
 /* 连续传导权重滑块（替代三档预设） */
 .prop-slider { flex: 1; height: 20px; -webkit-appearance: none; background: none; outline: 0; }
 .prop-slider::-webkit-slider-runnable-track { height: 3px; border-radius: var(--r-sm); background: var(--hairline); }
