@@ -309,10 +309,10 @@ scaffoldHooks.run = realScaffoldHook
 store.saveSettings({ apiKey: '' })
 
 // ============================================================
-console.log('\n— 骨架解析容错（模型不按 schema 吐） —')
+console.log('\n— 骨架行式解析（模型说人话，我们这边建树） —')
 // ============================================================
 
-const { parseSkeleton } = await import('../src/main/extract.js')
+const { parseSkeleton, generateSkeleton } = await import('../src/main/extract.js')
 
 const parseTitles = (r) => (r?.roots || []).map((n) => n.title)
 const flatTitles = (r) => {
@@ -322,27 +322,58 @@ const flatTitles = (r) => {
   return out
 }
 
-// 顶层直接是数组——模型经常这么干，以前整棵树被扔掉换兜底模板
-const arrTop = parseSkeleton('[{"title":"上游","children":[{"title":"光芯片"}]}]')
-ok('顶层数组能解析', Array.isArray(arrTop?.roots) && arrTop.roots.length === 1, JSON.stringify(parseTitles(arrTop)))
-ok('顶层数组子层也在', flatTitles(arrTop).join(',') === '上游,光芯片')
+// 标准行式大纲
+const outline = parseSkeleton('- 多晶硅 | 0.8 | 硅料价格受什么影响？\n  - 工业硅 | 0.6 | 成本谁说了算？\n- 硅片 | 0.7 | 价格战打到什么程度？')
+ok('行式大纲解析出树', flatTitles(outline).join(',') === '多晶硅,工业硅,硅片', JSON.stringify(flatTitles(outline)))
+ok('行式大纲子层挂对', outline.roots[0].children.length === 1 && outline.roots[0].children[0].title === '工业硅')
+ok('行式大纲权重与核心问题进节点', outline.roots[0].propagation === 0.8 && outline.roots[0].scaffold?.answer?.[0] === '硅料价格受什么影响？')
 
-// 键名不同：stages / name / sub
-const altKeys = parseSkeleton('{"stages":[{"name":"上游","sub":[{"name":"光芯片","sub":[]}]}]}')
-ok('stages/name/sub 能解析', flatTitles(altKeys).join(',') === '上游,光芯片', JSON.stringify(flatTitles(altKeys)))
+// 废话行、代码块、坏行都不影响——以前这种直接整棵树报废
+const noisy = parseSkeleton('好的，结果如下：\n```\n- 上游 | 0.5 | ？\n这行是废话没有横杠\n- | 0.5 | 空标题行\n  - 光芯片 | abc | 权重不是数字\n```\n以上是我的分析')
+ok('行式大纲废话/坏行被忽略', flatTitles(noisy).join(',') === '上游,光芯片', JSON.stringify(flatTitles(noisy)))
+ok('行式大纲非法权重回落 0.5', noisy.roots[0].children[0].propagation === 0.5)
 
-// 没标题的中间层穿透，不为空名造一行
-const hoisted = parseSkeleton('{"roots":[{"children":[{"title":"上游","children":[]},{"title":"下游","children":[]}]}]}')
-ok('无标题中间层被穿透', flatTitles(hoisted).join(',') === '上游,下游', JSON.stringify(flatTitles(hoisted)))
-ok('穿透后没有空标题行', flatTitles(hoisted).every((t) => t && t.trim()))
+// 缩进跳跃不丢节点
+const jumpy = parseSkeleton('- A | 0.5 | ?\n      - B | 0.5 | ?')
+ok('行式大纲缩进跳跃钳住不丢节点', flatTitles(jumpy).join(',') === 'A,B')
 
-// markdown 代码块包裹 + 前后废话
-const fenced = parseSkeleton('好的，结果如下：\n```json\n{"roots":[{"title":"上游"}]}\n```\n以上')
-ok('代码块包裹能解析', flatTitles(fenced).join(',') === '上游')
+// 真没有有效行才返回 null
+ok('行式大纲纯废话返回 null', parseSkeleton('我不知道，没法分析') === null)
+ok('行式大纲空输入返回 null', parseSkeleton('') === null)
 
-// 真解析不了还是要返回 null，让调用方走降级
-ok('纯废话返回 null', parseSkeleton('我不知道') === null)
-ok('空 roots 返回 null', parseSkeleton('{"roots":[]}') === null)
+// ============================================================
+console.log('\n— 骨架两轮生成（行式大纲 + 行式补指标） —')
+// ============================================================
+
+const realFetchSk = globalThis.fetch
+const fetchCallsSk = []
+globalThis.fetch = async (url, init) => {
+  const body = JSON.parse(init.body)
+  fetchCallsSk.push(body)
+  const content = body.messages[0].content.includes('环节清单')
+    ? '- 1 | 多晶硅价格/月；多晶硅产量/季度 | 价格跌破现金成本\n- 2 | 工业硅价格/月 | 开工率跌破五成'
+    : '- 多晶硅 | 0.8 | 硅料价格受什么影响？\n  - 工业硅 | 0.6 | 成本谁说了算？'
+  return new Response(JSON.stringify({ choices: [{ message: { content } }], usage: { total_tokens: 100 } }), { headers: { 'content-type': 'application/json' } })
+}
+const sk = await generateSkeleton({ baseUrl: 'https://x.test', apiKey: 'k', model: 'm' }, '光伏')
+ok('两轮：第一轮 prompt 要行式大纲', fetchCallsSk[0].messages[0].content.includes('每行一个环节'))
+ok('两轮：第一轮不让模型吐 JSON', !fetchCallsSk[0].messages[0].content.includes('产出 JSON'))
+ok('两轮：第二轮发的是编号清单', fetchCallsSk[1].messages[1].content.includes('1. 多晶硅'))
+ok('两轮：骨架 ok 且树正确', sk.ok === true && flatTitles(sk.skeleton).join(',') === '多晶硅,工业硅')
+const ind0 = sk.skeleton.roots[0].scaffold?.indicators || []
+ok('两轮：指标补进来了', ind0.length === 2 && ind0[0].name === '多晶硅价格' && ind0[0].cadence === '月')
+ok('两轮：证伪信号补进来了', sk.skeleton.roots[0].scaffold?.falsifier === '价格跌破现金成本')
+
+// 第二轮失败不影响骨架
+globalThis.fetch = async (url, init) => {
+  const body = JSON.parse(init.body)
+  if (body.messages[0].content.includes('环节清单')) return new Response('boom', { status: 500 })
+  return new Response(JSON.stringify({ choices: [{ message: { content: '- A | 0.5 | ?' } }], usage: {} }), { headers: { 'content-type': 'application/json' } })
+}
+const sk2 = await generateSkeleton({ baseUrl: 'https://x.test', apiKey: 'k', model: 'm' }, '光伏')
+ok('两轮：第二轮失败骨架仍 ok', sk2.ok === true && flatTitles(sk2.skeleton).join(',') === 'A')
+ok('两轮：第二轮失败指标留空', (sk2.skeleton.roots[0].scaffold?.indicators || []).length === 0)
+globalThis.fetch = realFetchSk
 
 // ============================================================
 console.log('\n— 收件箱 inbox:capture 带通道元数据 —')
@@ -2100,8 +2131,8 @@ const pc66 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
 
 // --- B1: LLM 指标类型不匹配 ---
 
-ok('B1: prompt 有对象 indicators 示例', extractSrc66.includes('"indicators":[{"name":"指标名","cadence"'))
-ok('B1: prompt 有 cadence 四选一说明', extractSrc66.includes('月|季度|年度|事件'))
+ok('B1: 第二轮 prompt 有行式 indicators 示例', extractSrc66.includes('指标1/周期'))
+ok('B1: 第二轮 prompt 有 cadence 四选一说明', extractSrc66.includes('月 / 季度 / 年度 / 事件'))
 ok('B1: extract.js 有 normalizeCadence', extractSrc66.includes('normalizeCadence'))
 ok('B1: extract.js 解析兼容字符串', extractSrc66.includes("typeof i === 'string'"))
 ok('B1: extract.js 解析产对象', extractSrc66.includes('{ name: i, cadence:'))
