@@ -4,9 +4,14 @@ import { dirname, join } from 'node:path'
 import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
 import { __testHooks as llmHooks } from './llmlog.js'
 import { ReadingStore, digest, normalizeName, observationKey, validateReading } from './reading-store.js'
+import { DatabaseSync } from 'node:sqlite'
+import { initSchema, dbToRows, rowsToDb, TABLES } from '../../service/db-schema.mjs'
 const { app } = globalThis.__electron
 
 const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
+/** SQLite durability 文件。存在即表示"已切换到 SQLite 持久层"，load/persist 都走它；
+ *  不存在则走 legacy JSON 路径（向后兼容，测试也走这条）。 */
+const SQLITE_FILE = () => join(app.getPath('userData'), 'meridian.sqlite')
 
 /** 来源质量基准表。打标器只负责选类型，质量分一律由这张表裁决。 */
 export const SOURCE_QUALITY = [
@@ -143,6 +148,47 @@ let db = null
 let saveTimer = null
 let readingStore = null
 
+/** SQLite 句柄单例。WAL 模式，建表幂等（见 service/db-schema.mjs）。 */
+let sqliteDb = null
+function sqlite() {
+  if (!sqliteDb) {
+    const file = SQLITE_FILE()
+    mkdirSync(dirname(file), { recursive: true })
+    sqliteDb = new DatabaseSync(file)
+    initSchema(sqliteDb)
+  }
+  return sqliteDb
+}
+
+/** 整库快照写入 SQLite：单事务 DELETE+INSERT，崩溃时要么全写要么全不写。 */
+function writeSqlite(snapshot) {
+  const s = sqlite()
+  const rows = dbToRows(snapshot)
+  s.exec('BEGIN IMMEDIATE')
+  try {
+    for (const t of TABLES) {
+      s.prepare(`DELETE FROM ${t}`).run()
+      const list = rows[t] || []
+      if (!list.length) continue
+      const cols = Object.keys(list[0])
+      const ins = s.prepare(`INSERT INTO ${t} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`)
+      for (const r of list) ins.run(...cols.map((c) => r[c]))
+    }
+    s.exec('COMMIT')
+  } catch (err) {
+    try { s.exec('ROLLBACK') } catch { /* 已无事务可回滚 */ }
+    throw err
+  }
+}
+
+/** 从 SQLite 恢复整库为内存 db 对象。表损坏时抛错，调用方回退到 blank()。 */
+function readSqlite() {
+  const s = sqlite()
+  const all = {}
+  for (const t of TABLES) all[t] = s.prepare(`SELECT * FROM ${t}`).all()
+  return rowsToDb(all)
+}
+
 function readingsStore() {
   if (!readingStore) readingStore = new ReadingStore(app.getPath('userData'))
   return readingStore
@@ -270,10 +316,17 @@ export function load() {
     if (db.channels !== undefined) delete db.channels
     return db
   }
-  const file = DATA_FILE()
-  if (existsSync(file)) {
-    try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
-  } else db = blank()
+  const sqlFile = SQLITE_FILE()
+  if (existsSync(sqlFile)) {
+    // SQLite 已是 durability 层：整库从表里恢复。损坏则回退到空账本
+    //（与旧 JSON 路径"解析失败 → blank()" 的语义一致）。
+    try { db = readSqlite() } catch { db = blank() }
+  } else {
+    const file = DATA_FILE()
+    if (existsSync(file)) {
+      try { db = JSON.parse(readFileSync(file, 'utf8')) } catch { db = blank() }
+    } else db = blank()
+  }
   migrate(db)
   // 2026-09-26：通道功能已整体移除。migrate() 是红区不碰，这里在加载后清理账本
   // 里残留的通道描述符（用户已确认不需要），之后 persist() 写回时自然消失。
@@ -355,10 +408,27 @@ function migrate(d) {
 function persist() {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    const file = DATA_FILE()
-    mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify(readingSnapshot(), null, 2))
+    try {
+      persistNow()
+    } catch (err) {
+      // 落盘失败绝不能静默吞掉：内存 db 不受影响，下一次 persist 会重试。
+      console.error('[meridian] persist 失败:', err?.message || err)
+    }
   }, 120)
+}
+
+/** 防抖到期后的实际落盘。meridian.sqlite 存在 → 单事务写 SQLite；
+ *  否则走 legacy JSON 整文件重写（向后兼容）。raw.jsonl / readings.jsonl /
+ *  readings-index.json 的逻辑不受影响——它们本来就不经过这里。 */
+function persistNow() {
+  const snapshot = readingSnapshot()
+  if (existsSync(SQLITE_FILE())) {
+    writeSqlite(snapshot)
+    return
+  }
+  const file = DATA_FILE()
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, JSON.stringify(snapshot, null, 2))
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)

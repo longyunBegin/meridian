@@ -1,0 +1,21 @@
+[Unit]
+Description=Meridian single-truth service
+Documentation=file://MERIDIAN_HOME/service/README.md
+After=network.target
+
+[Service]
+Type=simple
+# MERIDIAN_HOME 是占位符：部署时替换为仓库实际检出路径
+#（或改为 Environment=MERIDIAN_HOME=/实际/路径 后用 ${MERIDIAN_HOME}）。
+Environment=MERIDIAN_HOME=/opt/meridian
+Environment=MERIDIAN_DATA_DIR=%h/.config/脉络
+ExecStart=/usr/bin/node ${MERIDIAN_HOME}/service/server.mjs
+WorkingDirectory=${MERIDIAN_HOME}
+Restart=always
+RestartSec=5
+# 只绑 Tailscale/回环，见 service/README.md「安全说明」
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

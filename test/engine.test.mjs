@@ -29,10 +29,17 @@ writeFileSync(CRYPTO_TMP, readFileSync(CRYPTO_SRC, 'utf8'))
 // store.js 现在依赖 llmlog.js（账本落库接口注入），副本目录里也要有一份
 writeFileSync(join(TMP_DIR, 'llmlog.js'), readFileSync(join(ROOT, 'src/main/llmlog.js'), 'utf8'))
 writeFileSync(join(TMP_DIR, 'reading-store.js'), readFileSync(join(ROOT, 'src/main/reading-store.js'), 'utf8'))
-writeFileSync(TMP, readFileSync(SRC, 'utf8').replace(
-  "const { app } = globalThis.__electron",
-  `const app = { getPath: () => ${JSON.stringify(DATA)} }`,
-))
+// store.js 现在依赖 service/db-schema.mjs（SQLite 持久层契约），副本目录里也要有一份
+mkdirSync(join(TMP_DIR, 'service'), { recursive: true })
+writeFileSync(join(TMP_DIR, 'service', 'db-schema.mjs'), readFileSync(join(ROOT, 'service/db-schema.mjs'), 'utf8'))
+writeFileSync(TMP, readFileSync(SRC, 'utf8')
+  .replace(
+    "const { app } = globalThis.__electron",
+    `const app = { getPath: () => ${JSON.stringify(DATA)} }`,
+  )
+  // 副本在 test/.tmp 里，../../service/ 会指到仓库外，改成副本内的 ./service/
+  .replace("'../../service/db-schema.mjs'", "'./service/db-schema.mjs'"),
+)
 rmSync(DATA, { recursive: true, force: true })
 
 const s = await import(pathToFileURL(TMP).href)

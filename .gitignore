@@ -1,3 +1,9 @@
 node_modules/
 test/.tmp/
 src/main/entry-debug.log
+
+# meridian service 本地/敏感产物
+service/config.json
+*.sqlite*
+service/backups/
+service/ops/*.log
