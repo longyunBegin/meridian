@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>脉络 Meridian · 每日简报</title>
+</head>
+<!--
+  脉络 Meridian · 每日简报固定模板
+  占位符由 src/main/briefing/render.mjs 填充。所有样式内联、纯 table 布局，
+  保证在 Apple Mail / Gmail / Outlook 下一致渲染。
+  品牌色取自 App 本体 styles.css：accent #0071e3，底 #f5f5f7，墨 #1d1d1f；
+  头图藏青 #170b33 与 Logo 原稿取色一致，米白 #f4f1e7。
+-->
+<body style="margin:0;padding:0;background-color:#f5f5f7;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f5f7;">
+<tr><td align="center" style="padding:32px 16px;">
+
+  <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;">
+
+    <!-- ===== 头图：品牌 ===== -->
+    <tr><td style="background-color:#170b33;border-radius:18px 18px 0 0;padding:36px 40px 32px 40px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="64" valign="middle">
+          <!-- Logo：子午圈 + 极点。SVG 内联，不依赖外部图片 -->
+          <svg width="52" height="52" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="脉络 Meridian">
+            <circle cx="50" cy="55" r="33" fill="none" stroke="#f4f1e7" stroke-width="5.5"/>
+            <line x1="50" y1="22" x2="50" y2="88" stroke="#f4f1e7" stroke-width="5.5"/>
+            <circle cx="50" cy="22" r="8.5" fill="#f4f1e7"/>
+          </svg>
+        </td>
+        <td valign="middle" style="padding-left:16px;">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif;font-size:22px;font-weight:700;color:#f4f1e7;letter-spacing:2px;">脉络&nbsp;MERIDIAN</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif;font-size:13px;color:rgba(244,241,231,0.62);margin-top:6px;letter-spacing:1px;">每日简报&nbsp;&nbsp;·&nbsp;&nbsp;{{date_str}}</div>
+        </td>
+        <td valign="middle" align="right">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(244,241,231,0.62);">过去 24 小时</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(244,241,231,0.62);margin-top:4px;">{{theme_count}} 个主题&nbsp;·&nbsp;{{node_count}} 个命题</div>
+        </td>
+      </tr></table>
+    </td></tr>
+
+    <!-- ===== 一句话导读 ===== -->
+    <tr><td style="background-color:#ffffff;padding:26px 40px;border-bottom:1px solid rgba(0,0,0,0.06);">
+      <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.7;color:#1d1d1f;">{{lede}}</div>
+    </td></tr>
+
+    <!-- ===== 四格指标 ===== -->
+    <tr><td style="background-color:#ffffff;padding:24px 32px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td width="25%" align="center" style="padding:6px;">
+          <div style="font-family:-apple-system,'SF Pro Text','Helvetica Neue',sans-serif;font-size:30px;font-weight:700;color:#ff9500;">{{stat_pending}}</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.55);margin-top:6px;">待审批</div>
+        </td>
+        <td width="25%" align="center" style="padding:6px;border-left:1px solid rgba(0,0,0,0.07);">
+          <div style="font-family:-apple-system,'SF Pro Text','Helvetica Neue',sans-serif;font-size:30px;font-weight:700;color:#0071e3;">{{stat_new}}</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.55);margin-top:6px;">新增命题</div>
+        </td>
+        <td width="25%" align="center" style="padding:6px;border-left:1px solid rgba(0,0,0,0.07);">
+          <div style="font-family:-apple-system,'SF Pro Text','Helvetica Neue',sans-serif;font-size:30px;font-weight:700;color:#00b8b8;">{{stat_watch}}</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.55);margin-top:6px;">追踪命中</div>
+        </td>
+        <td width="25%" align="center" style="padding:6px;border-left:1px solid rgba(0,0,0,0.07);">
+          <div style="font-family:-apple-system,'SF Pro Text','Helvetica Neue',sans-serif;font-size:30px;font-weight:700;color:{{conflict_color}};">{{stat_conflict}}</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.55);margin-top:6px;">新增冲突</div>
+        </td>
+      </tr></table>
+    </td></tr>
+
+    <!-- ===== 待审批收件箱（橙） ===== -->
+    <tr><td style="background-color:#ffffff;padding:8px 32px 8px 32px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="border-left:4px solid #ff9500;padding:4px 0 4px 14px;">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1d1d1f;">收件箱待审批</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.5);margin-top:2px;">等你拍板的 {{stat_pending}} 条，其他已自动归位</div>
+        </td></tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+        {{pending_rows}}
+      </table>
+    </td></tr>
+
+    <!-- ===== 新增命题（蓝） ===== -->
+    <tr><td style="background-color:#ffffff;padding:20px 32px 8px 32px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="border-left:4px solid #0071e3;padding:4px 0 4px 14px;">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1d1d1f;">新增命题</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.5);margin-top:2px;">已入库 {{stat_new}} 条，置信度由你 authored 为准</div>
+        </td></tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+        {{new_rows}}
+      </table>
+    </td></tr>
+
+    <!-- ===== 主题追踪（青） ===== -->
+    <tr><td style="background-color:#ffffff;padding:20px 32px 8px 32px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="border-left:4px solid #00b8b8;padding:4px 0 4px 14px;">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1d1d1f;">主题追踪</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.5);margin-top:2px;">只收录与主题本体巨大或直接相关的内容</div>
+        </td></tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+        {{watch_blocks}}
+      </table>
+    </td></tr>
+
+    <!-- ===== 冲突（红） ===== -->
+    <tr><td style="background-color:#ffffff;padding:20px 32px 28px 32px;border-radius:0 0 18px 18px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td style="border-left:4px solid {{conflict_bar}};padding:4px 0 4px 14px;">
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1d1d1f;">冲突提醒</div>
+          <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.5);margin-top:2px;">{{conflict_sub}}</div>
+        </td></tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
+        {{conflict_block}}
+      </table>
+    </td></tr>
+
+    <!-- ===== 页脚 ===== -->
+    <tr><td align="center" style="padding:24px 16px 8px 16px;">
+      <svg width="28" height="28" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="脉络 Meridian">
+        <circle cx="50" cy="55" r="33" fill="none" stroke="#1d1d1f" stroke-opacity="0.28" stroke-width="6"/>
+        <line x1="50" y1="22" x2="50" y2="88" stroke="#1d1d1f" stroke-opacity="0.28" stroke-width="6"/>
+        <circle cx="50" cy="22" r="9" fill="#1d1d1f" fill-opacity="0.28"/>
+      </svg>
+      <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.42);margin-top:8px;">脉络 Meridian · 数据来自你的本地账本，未经你审批不入库</div>
+      <div style="font-family:-apple-system,'SF Pro Text','PingFang SC','Microsoft YaHei',sans-serif;font-size:12px;color:rgba(29,31,33,0.42);margin-top:4px;">不想再收到？回复任意内容即可退订</div>
+    </td></tr>
+
+  </table>
+
+</td></tr>
+</table>
+</body>
+</html>
