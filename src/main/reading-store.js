@@ -1,6 +1,6 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 
 export const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export const normalizeName = (value) => String(value || '').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '')
@@ -193,6 +193,9 @@ export class ReadingStore {
   }
 
   ensureWritable() {
+    // 数据目录被外部删掉后，追加会报 ENOENT 崩溃。目录是可重建的，事实不是——
+    // 先保证目录存在，再谈损坏与否。
+    mkdirSync(dirname(this.file), { recursive: true })
     if (this.corruption || this.recovery?.blocked) throw new Error(`账本损坏，禁止追加：${this.corruption || this.recovery.error}`)
     const stat = this.stat()
     if (stat.size !== this.size || stat.mtimeMs !== this.mtimeMs) {

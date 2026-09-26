@@ -215,7 +215,7 @@ export async function renderSettings(mid) {
           ['table', '查表（默认）'],
           ['jev', 'Jev'],
         ], async (v) => { await m.saveSettings({ labeler: v }); await renderSettings(mid) }, true),
-          '质量分一律由 SOURCE_QUALITY 表裁决，打标器只负责选类型——否则换一个模型，整条校准曲线的基准就漂移了。'),
+          '质量分一律按内置的质量表打分，打标器只负责选类型——否则换一个模型，整条校准曲线的基准就漂移了。'),
         // Jev 的三项配置只在选中 Jev 时出现。固定显示会让人误以为换个打标器就得重新配一遍——
         // 而查表压根不需要任何配置。折成一行「备用模型」也是同一理由：默认空 = 跟随主模型。
         settings.labeler === 'jev' ? jevRow : null,
@@ -252,7 +252,7 @@ export async function renderSettings(mid) {
       h('div', { class: 'sect-b' },
         field('接口地址', txt(settings.baseUrl, (v) => m.saveSettings({ baseUrl: v }), 'https://api.stepfun.com/v1'), '任意 OpenAI 兼容端点。'),
         field('密钥', secret(settings.apiKey, (v) => m.saveSettings({ apiKey: v }), 'sk-…'), 'AES-256-GCM 加密存储，机器绑定。'),
-        field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3'), '只做「抽取命题」，不需要太强的模型。'),
+        field('模型', txt(settings.model, (v) => m.saveSettings({ model: v }), 'step-3.5-flash'), '只做「抽取命题」，不需要太强的模型。'),
         llmTestOut,
       ),
     ),

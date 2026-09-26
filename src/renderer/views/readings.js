@@ -2,6 +2,13 @@ import { h, clear, toast } from '../lib/dom.js'
 import { state, refresh, selectTheme, selectNode } from '../app.js'
 
 const m = window.meridian
+const fmtTime = (iso) => {
+  if (!iso) return '时间未记录'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '时间未记录'
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 export const fmtValue = (value) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 8 }) : '—'
 export const periodLabel = (r) => {
   const end = r.period?.end || r.asOf
@@ -105,7 +112,7 @@ function readingProof(r) {
     h('div', { class: 'reading-proof-head' }, h('b', { class: 'reading-number' }, `${fmtValue(r.value)} ${r.unit || ''}`), trustMark(r)),
     note(`${periodLabel(r)} · ${basisLabel(r)} · ${r.status === 'superseded' ? '已被修正' : r.status === 'conflicted' ? '有冲突，待裁决' : '作证记录'}`),
     note(`${r.source?.label || '未命名来源'} · ${r.source?.platform || r.source?.kind || '来源未记录'}`),
-    note(`${({ structured: '结构化', 'local-llm': '模型解读', agent: '外部提供' })[r.tier] || '获取方式未记录'} · 可信度 ${score} · 记录于 ${String(r.at || '').replace('T', ' ')}`),
+    note(`${({ structured: '结构化', 'local-llm': '模型解读', agent: '外部提供' })[r.tier] || '获取方式未记录'} · 可信度 ${score} · 记录于 ${fmtTime(r.at)}`),
     r.trust?.flags?.length ? note(flagsLabel(r.trust.flags)) : null,
     h('div', { class: 'reading-actions' }, r.rawId ? rawButton : note('未附原文'), safeSourceLink(r.source?.url)), raw)
   return card
@@ -118,10 +125,12 @@ function verification(key) {
     result.textContent = '正在验证…'
     try {
       const checked = await m.verifyReadingChain(key)
+      // 后端 error 已经是人话（如"曾修复中断半行……"），优先展示；
+      // 直接报"可能被改过"会把一次崩溃恢复误读成篡改。
       result.textContent = checked.ok
         ? `序列完整，${checked.count} 条记录，与本地存证一致`
-        : checked.firstInvalid != null ? `第 ${typeof checked.firstInvalid === 'object' ? checked.firstInvalid.index ?? checked.firstInvalid.lineNo ?? '未知' : checked.firstInvalid} 条记录对不上，可能被改过`
-          : '暂时无法验证，请重试'
+        : checked.error || (checked.firstInvalid != null ? `第 ${typeof checked.firstInvalid === 'object' ? checked.firstInvalid.index ?? checked.firstInvalid.lineNo ?? '未知' : checked.firstInvalid} 条记录对不上，可能被改过`
+          : '暂时无法验证，请重试')
     } catch { result.textContent = '验证失败，请重试' }
     finally { button.disabled = false }
   } }, '验证此序列')

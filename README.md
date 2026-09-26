@@ -143,7 +143,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
   "settings": {
     "baseUrl": "https://api.stepfun.com/v1",
     "apiKey": "",                 // 加密存储，格式 enc:v1:base64(iv|authTag|ciphertext)，机器绑定
-    "model": "step-3",
+    "model": "step-3.5-flash",
     "hotkey": "CommandOrControl+Shift+V",
     "labeler": "table",          // table | jev | llm —— 可替换的打标器
     "jevBaseUrl": "https://openrouter.ai/api/v1",
@@ -215,7 +215,7 @@ npm run shoot      # 视觉回归截图 → /tmp/meridian-shots/
     "id": "…", "t": "2026-09-20",
     "target": { "type": "node|inbox|verdict|channel", "id": "…" },
     "stage": "label|extract|dedup|route|settle",
-    "actor": { "by": "model|user|table|channel|propagation", "model": "step-3", "promptVersion": "v1" },
+    "actor": { "by": "model|user|table|channel|propagation", "model": "step-3.5-flash", "promptVersion": "v1" },
     "input": { "rawId": "…", "textHash": "…", "textLen": 100, "channelMeta": null },
     "output": null,               // 模型原始返回，未加工
     "decision": null,             // 最终落库的值

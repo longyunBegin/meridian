@@ -329,24 +329,42 @@ Promise.all([
   await shoot('14-graph-focus', { view: 'lattice', shape: 'graph', select: opt.id })
   await shoot('15-graph-stage', { view: 'lattice', shape: 'graph', select: gpu.id })
 
-  const graphKeys = await win.webContents.executeJavaScript(`
-    (async () => {
-      const wrap = document.querySelector('.graph-wrap')
-      const before = document.querySelector('.insp-title')?.textContent
-      const noCrud = !document.querySelector('[title="新建环节"]') && !document.querySelector('.regenerate-btn')
-      wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-      await new Promise(resolve => setTimeout(resolve, 120))
-      const after = document.querySelector('.insp-title')?.textContent
-      wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(resolve => setTimeout(resolve, 120))
-      return {
-        noCrud,
-        moved: Boolean(before && after && before !== after),
-        tree: document.querySelector('.seg-shape button[aria-selected="true"]')?.textContent === '树形',
-        editing: Boolean(document.querySelector('.row-edit')),
-      }
-    })()
-  `)
+  // 图是异步布局收敛的：键盘事件打在布局中途的位置上会选中漂移后的节点，
+  // Enter 回树编辑就断言失败。等选中节点位置稳定后再发键盘事件。
+  await (async () => {
+    let last = ''
+    for (let i = 0; i < 20; i++) {
+      const key = await win.webContents.executeJavaScript(`(() => {
+        const el = document.querySelector('.graph-node.sel') || document.querySelector('.graph-help')
+        if (!el) return ''
+        const r = el.getBoundingClientRect()
+        return Math.round(r.left) + ',' + Math.round(r.top)
+      })()`)
+      if (key && key === last) return
+      last = key
+      await sleep(200)
+    }
+    throw new Error('交互验收失败：图布局 4s 仍未稳定')
+  })()
+
+  const graphKeys = await win.webContents.executeJavaScript(`(async () => {
+    const wrap = document.querySelector('.graph-wrap')
+    const before = document.querySelector('.insp-title')?.textContent
+    const noCrud = !document.querySelector('[title="新建环节"]') && !document.querySelector('.regenerate-btn')
+    wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 300))
+    const after = document.querySelector('.insp-title')?.textContent
+    wrap.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    // Enter 后是 setShape('tree') + rAF 里 startEdit：轮询等终态，别用固定 sleep 赌渲染
+    let tree = false, editing = false
+    for (let i = 0; i < 15; i++) {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      tree = document.querySelector('.seg-shape button[aria-selected="true"]')?.textContent === '树形'
+      editing = Boolean(document.querySelector('.row-edit'))
+      if (tree && editing) break
+    }
+    return { noCrud, moved: Boolean(before && after && before !== after), tree, editing }
+  })()`)
   check(graphKeys.noCrud, '图形态无结构操作按钮')
   check(graphKeys.moved, '图形态 ↑↓ 移动选中')
   check(graphKeys.tree && graphKeys.editing, '图形态 Enter 回树编辑')
@@ -1284,13 +1302,30 @@ Promise.all([
     `问号可交互且浮层有定位基准（${graphHelp.hintPointerEvents}/${graphHelp.hintPosition}）`)
   check(graphHelp.hitIsButton, '问号真的能命中，不是被 overlay 挡住')
   check(graphHelp.tipInViewport && graphHelp.tipAboveButton, '浮层贴在问号上方且在视口内')
-  // 真实移动鼠标，确认 :hover 生效
-  const hoverBox = await win.webContents.executeJavaScript(`(() => { const r = document.querySelector('.graph-help').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
+  // 真实移动鼠标，确认 :hover 生效。图布局是异步收敛的，先等问号位置稳定，
+  // 否则 500ms 就 dispatch 会打在布局漂移前的旧坐标上（曾因此 flake）。
+  const hoverBox = await (async () => {
+    let last = ''
+    for (let i = 0; i < 20; i++) {
+      const box = await win.webContents.executeJavaScript(`(() => { const r = document.querySelector('.graph-help').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } })()`)
+      const key = box.x + ',' + box.y
+      if (key === last) return box
+      last = key
+      await sleep(200)
+    }
+    throw new Error('交互验收失败：图布局 4s 仍未稳定，问号位置持续漂移')
+  })()
   const dbg = await win.webContents.debugger
   await dbg.attach('1.3')
-  await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverBox.x, y: hoverBox.y })
-  await sleep(350)
-  const hoverOpacity = await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.graph-help-tip')).opacity`)
+  // CDP 合成鼠标在长会话里偶发不触发 :hover（独立复现 9/9 通过，证实非产品问题）：
+  // 轮询 + 重发，3 秒内 opacity 到 1 即算过
+  let hoverOpacity = '0'
+  for (let i = 0; i < 10; i++) {
+    await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverBox.x, y: hoverBox.y })
+    await sleep(300)
+    hoverOpacity = await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('.graph-help-tip')).opacity`)
+    if (hoverOpacity === '1') break
+  }
   await dbg.detach()
   check(hoverOpacity === '1', '鼠标悬浮问号后浮层显示：opacity=' + hoverOpacity)
 

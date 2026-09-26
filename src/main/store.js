@@ -120,7 +120,7 @@ const CADENCE_DAYS = { 周: 7, 月: 30, 季度: 95, 半年: 180, 年度: 365, �
 const DEFAULT_SETTINGS = {
   baseUrl: 'https://api.stepfun.com/v1',
   apiKey: '',
-  model: 'step-3',
+  model: 'step-3.5-flash',
   hotkey: 'CommandOrControl+Shift+V',
   labeler: 'table', // table | jev —— 可替换的打标器
   jevBaseUrl: 'https://openrouter.ai/api/v1',
