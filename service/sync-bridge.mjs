@@ -84,44 +84,45 @@ export function deriveTunnelProxy() {
 /** 返回一个经 CONNECT 代理的 http.Agent（proxyUrl 为 '' 时返回 undefined，用默认直连）。 */
 export function tunnelAgent(proxyUrl) {
   if (!proxyUrl) return undefined
-  return new http.Agent({
-    createConnection: (opts, oncreate) => {
-      let p
-      try {
-        p = new URL(proxyUrl)
-      } catch (e) {
-        oncreate(e)
+  // 注意：createConnection 是实例方法，不能走 new Agent({createConnection}) 构造参数（会被忽略）
+  const agent = new http.Agent()
+  agent.createConnection = (opts, oncreate) => {
+    let p
+    try {
+      p = new URL(proxyUrl)
+    } catch (e) {
+      oncreate(e)
+      return
+    }
+    const sock = net.connect({ host: p.hostname, port: Number(p.port) || 80 })
+    const target = `${opts.host}:${opts.port}`
+    let proxyAuth = ''
+    if (p.username) {
+      const cred = `${decodeURIComponent(p.username)}:${decodeURIComponent(p.password)}`
+      proxyAuth = `Proxy-Authorization: Basic ${Buffer.from(cred).toString('base64')}\r\n`
+    }
+    sock.on('connect', () => {
+      sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${proxyAuth}\r\n`)
+    })
+    let head = ''
+    const onData = (chunk) => {
+      head += chunk.toString('latin1')
+      const i = head.indexOf('\r\n\r\n')
+      if (i === -1) return
+      const status = head.slice(0, head.indexOf('\r\n'))
+      if (!/^HTTP\/1\.[01] 200\b/.test(status)) {
+        sock.destroy(new Error(`CONNECT 代理失败: ${status}`))
         return
       }
-      const sock = net.connect({ host: p.hostname, port: Number(p.port) || 80 })
-      const target = `${opts.host}:${opts.port}`
-      let proxyAuth = ''
-      if (p.username) {
-        const cred = `${decodeURIComponent(p.username)}:${decodeURIComponent(p.password)}`
-        proxyAuth = `Proxy-Authorization: Basic ${Buffer.from(cred).toString('base64')}\r\n`
-      }
-      sock.on('connect', () => {
-        sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${proxyAuth}\r\n`)
-      })
-      let head = ''
-      const onData = (chunk) => {
-        head += chunk.toString('latin1')
-        const i = head.indexOf('\r\n\r\n')
-        if (i === -1) return
-        const status = head.slice(0, head.indexOf('\r\n'))
-        if (!/^HTTP\/1\.[01] 200\b/.test(status)) {
-          sock.destroy(new Error(`CONNECT 代理失败: ${status}`))
-          return
-        }
-        sock.off('data', onData)
-        const rest = Buffer.from(head.slice(i + 4), 'latin1')
-        if (rest.length) sock.unshift(rest)
-        oncreate(null, sock)
-      }
-      sock.on('data', onData)
-      sock.on('error', oncreate)
-    },
-  })
+      sock.off('data', onData)
+      const rest = Buffer.from(head.slice(i + 4), 'latin1')
+      if (rest.length) sock.unshift(rest)
+      oncreate(null, sock)
+    }
+    sock.on('data', onData)
+    sock.on('error', oncreate)
+  }
+  return agent
 }
 
 /** 基于 node:http 的 JSON 请求（可指定 agent 走 CONNECT 隧道）。返回 {status, ok, body}。 */
