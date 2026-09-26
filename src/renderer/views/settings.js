@@ -150,6 +150,84 @@ export async function renderSettings(mid) {
   const jevCol = (cap, control, flex) => h('div', {
     style: { display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0, flex },
   }, cap, control)
+  // ---------------------------------------------------------------- Jev 测试
+  // 配完 key 当场验：连通性只问"通不通"，打标测试问"标得对不对"。
+  // 两个测试都不写账本、不记用量——测试是测试，数据是数据。
+  const jevTestOut = h('p', {
+    style: { margin: '6px 0 0', fontSize: 'var(--t-caption)', lineHeight: '1.6', minHeight: '16px' },
+  })
+  const jevTestBtn = h('button', {
+    class: 'btn', style: { height: '26px' },
+    onclick: async () => {
+      jevTestBtn.disabled = true
+      jevTestBtn.textContent = '测试中…'
+      jevTestOut.textContent = ''
+      jevTestOut.style.color = 'var(--text-3)'
+      try {
+        const r = await m.jevTest()
+        if (r.ok) {
+          jevTestOut.style.color = 'var(--green)'
+          jevTestOut.textContent = `✓ 连通 · ${r.model} · ${r.latency}ms · 返回「${r.text}」`
+        } else {
+          jevTestOut.style.color = 'var(--red)'
+          const why = {
+            'no-key': '未填密钥',
+            'bad-key': '密钥无效或无权访问（401）——检查密钥是否填对',
+            'bad-model': `模型「${r.model}」不存在或无权访问——换一个模型 ID`,
+            timeout: '超时（20s）',
+            empty: '模型无返回',
+            network: '请求失败，请检查地址与密钥',
+          }[r.reason] || r.reason
+          jevTestOut.textContent = `✗ ${why}${r.latency ? ` · ${r.latency}ms` : ''}`
+        }
+      } catch {
+        jevTestOut.style.color = 'var(--red)'
+        jevTestOut.textContent = '✗ 请求失败，请检查地址与密钥'
+      } finally {
+        jevTestBtn.disabled = false
+        jevTestBtn.textContent = '测试连接'
+      }
+    },
+  }, '测试连接')
+
+  const jevTagOut = h('p', {
+    style: { margin: '6px 0 0', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6', minHeight: '18px' },
+  })
+  const jevTagBox = h('textarea', {
+    class: 'txt', rows: '2', placeholder: '粘贴一段文本，看 Jev 怎么打标…',
+    style: { height: 'auto', padding: '7px 8px', resize: 'vertical', lineHeight: '1.5', marginTop: '10px' },
+  })
+  const jevTagBtn = h('button', {
+    class: 'btn', style: { marginTop: '6px' },
+    onclick: async () => {
+      const text = jevTagBox.value.trim()
+      if (!text) { jevTagOut.textContent = '先粘贴一段文本再试'; return }
+      jevTagBtn.disabled = true
+      jevTagOut.textContent = '打标中…'
+      try {
+        const r = await m.jevLabelTest(text)
+        if (r.ok) {
+          jevTagOut.textContent = `→ ${r.kind} · Jev Score ${Number(r.jevScore).toFixed(2)} · Noul ${Number(r.noul).toFixed(2)}`
+        } else {
+          // jevLabel 的 why 是 'HTTP 401' 这类原文，常见的一一说人话
+          const why = {
+            'no-key': '未填密钥',
+            'HTTP 401': '密钥无效或无权访问（401）——检查密钥是否填对',
+            'HTTP 404': '接口地址或模型不对（404）',
+            timeout: '超时（20s）',
+            unparsable: '接口通了，但返回的不是预期 JSON——确认模型是 Jev 系',
+            network: '请求失败，请检查地址与密钥',
+          }[r.why] || r.why
+          jevTagOut.textContent = `→ 打标失败：${why}`
+        }
+      } catch {
+        jevTagOut.textContent = '→ 打标失败，请检查接口与密钥'
+      } finally {
+        jevTagBtn.disabled = false
+      }
+    },
+  }, '打标测试')
+
   jevBody.append(
     h('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' } },
       jevCol(jevCap('接口地址'), txt(settings.jevBaseUrl, (v) => m.saveSettings({ jevBaseUrl: v }), 'https://openrouter.ai/api/v1'), '1 1 250px'),
@@ -158,6 +236,13 @@ export async function renderSettings(mid) {
     ),
     h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
       '默认跟随主模型，只有 System One Model 用独立端点时才填。密钥 AES-256-GCM 加密存储，机器绑定，不上传。'),
+    h('div', { style: { marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--hairline)' } },
+      jevTestBtn,
+      jevTestOut,
+      jevTagBox,
+      jevTagBtn,
+      jevTagOut,
+    ),
   )
   const jevRow = h('div', {},
     h('button', {

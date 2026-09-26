@@ -25,7 +25,7 @@ import {
   uid,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary, pickChannelsFromLibrary } from './extract.js'
-import { labelSource } from './labeler.js'
+import { labelSource, jevLabel } from './labeler.js'
 import { tracked } from './llmlog.js'
 import { genericFallback, channelLibrary, instantiate } from './templates.js'
 
@@ -679,6 +679,57 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   ipcMain.handle('settings:set', (_, patch) => saveSettings(patch))
   // 试标：不落库，只为在捕获之前验证打标器通不通、规则命中得对不对
   ipcMain.handle('label:test', (_, text) => labelSource(settings(), text))
+  // Jev 连通性测试：只打一次最小请求，验证 key / 端点 / 模型三件事。
+  // 不写账本、不记用量——测试是测试，数据是数据。
+  ipcMain.handle('jev:test', async () => {
+    const s = settings()
+    if (!s.jevKey) return { ok: false, reason: 'no-key' }
+    const t0 = Date.now()
+    try {
+      const res = await fetch(`${(s.jevBaseUrl || '').replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${s.jevKey}` },
+        body: JSON.stringify({
+          model: s.jevModel,
+          max_tokens: 16,
+          messages: [{ role: 'user', content: '回复「连通」两个字' }],
+        }),
+        signal: AbortSignal.timeout(20000),
+      })
+      if (!res.ok) {
+        const detail = await res.clone().json().then((b) => b?.error?.message || '').catch(() => '')
+        // 401 是 Jev 配置里最常见的坑：key 填了但服务端不认（比如 OpenRouter 的 key
+        // 没有走浏览器 credential 注入、出口根本没带 Authorization 头）。单独拎出来说人话。
+        if (res.status === 401) return { ok: false, reason: 'bad-key', latency: Date.now() - t0 }
+        if (res.status === 404 || /model.*(not exist|invalid|not found)/i.test(detail)) {
+          return { ok: false, reason: 'bad-model', model: s.jevModel, latency: Date.now() - t0 }
+        }
+        return { ok: false, reason: `HTTP ${res.status}`, latency: Date.now() - t0 }
+      }
+      const body = await res.json()
+      const text = body?.choices?.[0]?.message?.content?.trim()
+      if (text) return { ok: true, text: text.slice(0, 40), model: s.jevModel, latency: Date.now() - t0 }
+      return { ok: false, reason: 'empty', latency: Date.now() - t0 }
+    } catch (e) {
+      return { ok: false, reason: e.name === 'TimeoutError' ? 'timeout' : 'network', latency: Date.now() - t0 }
+    }
+  })
+  // Jev 打标测试：强制走 Jev 路径（不静默降级查表），只返回结果、不写账本。
+  // jevLabel 本身没有超时，测试里用竞速包一层 20s，避免按钮卡死。
+  ipcMain.handle('jev:labelTest', async (_, text) => {
+    const t = String(text || '').slice(0, 3000)
+    if (!t.trim()) return { ok: false, why: 'empty-input' }
+    const p = jevLabel(settings(), t)
+    p.catch(() => {}) // 竞速超时后原请求仍在后台，吞掉它的 rejection
+    try {
+      return await Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
+      ])
+    } catch (e) {
+      return { ok: false, why: e.message === 'timeout' ? 'timeout' : 'network' }
+    }
+  })
   // LLM 连通性测试：打一次最小请求，验证 key / 端点 / 模型三件事。
   // max_tokens 必须给足：推理模型（step-3 / o 系列）会把预算全花在 reasoning 上，
   // content 回来是空串、finish_reason 是 length。16 实测不够，512 起。

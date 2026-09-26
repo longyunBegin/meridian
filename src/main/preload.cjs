@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('meridian', {
   settings: () => ipcRenderer.invoke('settings:get'),
   labelTest: (text) => ipcRenderer.invoke('label:test', text),
   llmTest: () => ipcRenderer.invoke('llm:test'),
+  jevTest: () => ipcRenderer.invoke('jev:test'),
+  jevLabelTest: (text) => ipcRenderer.invoke('jev:labelTest', text),
   due: () => ipcRenderer.invoke('db:due'),
   calibration: () => ipcRenderer.invoke('db:calibration'),
   filterCalibration: () => ipcRenderer.invoke('db:filterCalibration'),
