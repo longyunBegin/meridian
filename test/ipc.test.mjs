@@ -188,5 +188,19 @@ ok('B 命题落在 B 主题', nodeNewB?.themeId === themeB.id, `实际 ${nodeNew
 ok('A 命题挂点仍是 A 的节点', nodeNewA?.parentId === nA.id)
 ok('B 命题挂点仍是 B 的节点', nodeNewB?.parentId === nB.id)
 
+console.log('\n— inbox:resolveMany 批量忽略 —')
+const rj1 = store.addInboxItem({ text: '忽略条目1', title: '忽略1', extracted: false })
+const rj2 = store.addInboxItem({ text: '忽略条目2', title: '忽略2', extracted: false })
+const rm = await fireAsync('inbox:resolveMany', [rj1.id, rj2.id], 'reject')
+ok('批量忽略返回 ok', rm?.ok === true)
+ok('两条都 resolved', rm?.resolved?.length === 2, `实际 ${rm?.resolved?.length}`)
+const rj1After = store.load().inbox.find((i) => i.id === rj1.id)
+const rj2After = store.load().inbox.find((i) => i.id === rj2.id)
+ok('忽略后状态 rejected', rj1After?.status === 'rejected' && rj2After?.status === 'rejected')
+ok('忽略后不在 pending 里',
+  !store.allInbox().filter((i) => i.status === 'pending').some((i) => i.id === rj1.id || i.id === rj2.id))
+const rmEmpty = await fireAsync('inbox:resolveMany', [], 'reject')
+ok('空数组不崩', rmEmpty?.ok === true && rmEmpty?.resolved?.length === 0)
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

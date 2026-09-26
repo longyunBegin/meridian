@@ -3049,7 +3049,10 @@ ok('C5: 场景名有中文映射', Object.keys(SCENARIO_LABELS).includes('extrac
 
 ok('D: today.js 三态分组', todaySrcGov.includes("groupHead('已抽取'") && todaySrcGov.includes("groupHead('待抽取'") && todaySrcGov.includes("groupHead('未匹配'"))
 ok('D: today.js 有「抽取这 N 条」「清空未匹配」', todaySrcGov.includes('`抽取这 ${waitItems.length} 条`') && todaySrcGov.includes('清空未匹配'))
-ok('D: 未抽取条目不可勾选入库', todaySrcGov.includes('const isSelectable = (item) => item.extracted !== false'))
+ok('D: 未抽取条目可勾选但不进批量入库',
+  todaySrcGov.includes('const isSelectable = (item) => !resolving.has(item.id)') &&
+  todaySrcGov.includes("resolve(splitPicked().importable, 'accept')") &&
+  todaySrcGov.includes("resolve(splitPicked().extractable, 'extract')"))
 ok('D: 未抽取详情不给归位表单', todaySrcGov.includes('const unextracted = item.extracted === false') && todaySrcGov.includes('const editable = !unextracted'))
 ok('D: 三态样式就位', stylesSrcS45.includes('.inbox-group-head'))
 ok('D: preload 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))

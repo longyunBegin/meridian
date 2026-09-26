@@ -1015,6 +1015,17 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return item
   })
 
+  // 批量忽略：今日收件箱分拣用，与单条 inbox:resolve 同语义
+  ipcMain.handle('inbox:resolveMany', (_, ids, action) => {
+    const resolved = []
+    for (const id of ids || []) {
+      const item = resolveInboxItem(id, action)
+      if (item && (action === 'accept' || action === 'reject')) markIntakeResolved(id, false)
+      if (item) resolved.push(item.id)
+    }
+    return { ok: true, resolved }
+  })
+
   // 批量入库：把选中的收件箱条目走捕获入库流水线（override 在 IPC 层应用并记 trace）
   ipcMain.handle('inbox:import', async (_, themeId, items, overrides) => {
     const s = settings()
