@@ -62,6 +62,8 @@ function createMain() {
     mainWin.webContents.on('render-process-gone', (_e, d) => console.error('[renderer] gone:', d.reason, d.exitCode, JSON.stringify(d)))
   }
   mainWin.once('ready-to-show', () => mainWin.show())
+  // 兜底：打包后 ready-to-show 偶发不触发，3 秒后强制显示，避免“进程在跑但没窗口”
+  setTimeout(() => { if (mainWin && !mainWin.isVisible()) mainWin.show() }, 3000)
   mainWin.on('closed', () => { mainWin = null })
   return mainWin
 }
