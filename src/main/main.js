@@ -73,7 +73,9 @@ import { dueSettlements } from './store.js'
 // ---------------------------------------------------------------- boot
 
 app.whenReady().then(async () => {
-  if (isMac) app.dock?.setIcon(join(HERE, '../renderer/assets/icons/icon-512.png'))
+  // 不再调用 app.dock.setIcon：Meridian.app 自带 bundle 图标（Info.plist + icon.icns），
+  // Tahoe 对 bundle 图标做现代处理（满尺寸 + 系统圆角遮罩）；setIcon 塞 PNG 反而会被当老式图标内缩。
+  // 源码模式（electron .）下 Dock 显示 Electron 默认图标，属正常。
   if (isMac) {
     const { session } = globalThis.__electron
     const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
