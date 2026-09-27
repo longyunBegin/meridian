@@ -9,12 +9,44 @@
   "scripts": {
     "start": "electron .",
     "test": "node test/engine.test.mjs && node test/ipc.test.mjs && node test/inbox-theme.test.mjs && node test/redesign.test.mjs && node test/sync.test.mjs && node test/briefing.test.mjs",
-    "shoot": "electron tools/shoot.mjs"
+    "shoot": "electron tools/shoot.mjs",
+    "dist": "electron-builder --mac"
   },
   "devDependencies": {
-    "electron": "^37.0.0"
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0"
   },
   "allowScripts": {
     "electron@37.10.3": true
+  },
+  "build": {
+    "appId": "com.meridian.app",
+    "productName": "Meridian",
+    "copyright": "Copyright © 2026",
+    "mac": {
+      "icon": "src/renderer/assets/icons/icon.icns",
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "Meridian ${version}"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    }
   }
 }
