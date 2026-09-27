@@ -17,4 +17,10 @@ log('app type: ' + typeof e.app)
 
 globalThis.__electron = e
 log('globalThis.__electron set, importing main.js')
-import('./main.js')
+// 打包后 main.js 在 app.asar 内，相对路径 import 会卡死；用 fileURL 显式定位
+const { pathToFileURL } = require('url')
+const mainUrl = pathToFileURL(path.join(__dirname, 'main.js')).href
+log('main.js url: ' + mainUrl)
+import(mainUrl).catch(err => {
+  log('import main.js FAILED: ' + (err && err.message))
+})
