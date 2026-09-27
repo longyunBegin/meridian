@@ -29,6 +29,8 @@ let agentError = null
 // 产品改名 Meridian，但账本目录保持历史名称「脉络」：老用户的数据、
 // 导出文件、外部引用都不因改名断链。必须在 app ready 之前调用。
 app.setPath('userData', join(app.getPath('appData'), '脉络'))
+// Dock 悬停与菜单栏显示项目名而非 Electron（源码方式运行时 bundle 名即 Electron）
+app.setName('Meridian')
 
 // ---------------------------------------------------------------- windows
 
