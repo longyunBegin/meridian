@@ -1,15 +1,10 @@
 const { app, BrowserWindow, globalShortcut, clipboard } = globalThis.__electron
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appendFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-const dlog = (m) => { try { appendFileSync(join(tmpdir(), 'meridian-boot.log'), new Date().toISOString() + ' ' + m + '\n') } catch {} }
-dlog('main.js imports start')
 import { load, settings, lastInboxPrune, exportIntent } from './store.js'
 import { startSyncServer } from './sync-server.js'
 import { startAgentServer } from './agent-server.js'
 import { ingestReadings } from './reading-ingest.js'
-dlog('main.js imports done')
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -66,9 +61,9 @@ function createMain() {
       console.log(`[renderer] ${msg}${src ? ` (${src.split('/').pop()}:${line})` : ''}`))
     mainWin.webContents.on('render-process-gone', (_e, d) => console.error('[renderer] gone:', d.reason, d.exitCode, JSON.stringify(d)))
   }
-  mainWin.once('ready-to-show', () => { dlog('ready-to-show fired'); mainWin.show() })
+  mainWin.once('ready-to-show', () => mainWin.show())
   // 兜底：打包后 ready-to-show 偶发不触发，3 秒后强制显示，避免“进程在跑但没窗口”
-  setTimeout(() => { dlog('fallback timeout, visible=' + (mainWin && mainWin.isVisible())); if (mainWin && !mainWin.isVisible()) mainWin.show() }, 3000)
+  setTimeout(() => { if (mainWin && !mainWin.isVisible()) mainWin.show() }, 3000)
   mainWin.on('closed', () => { mainWin = null })
   return mainWin
 }
@@ -80,7 +75,6 @@ import { dueSettlements } from './store.js'
 // ---------------------------------------------------------------- boot
 
 app.whenReady().then(async () => {
-  dlog('app.whenReady fired')
   // 不再调用 app.dock.setIcon：Meridian.app 自带 bundle 图标（Info.plist + icon.icns），
   // Tahoe 对 bundle 图标做现代处理（满尺寸 + 系统圆角遮罩）；setIcon 塞 PNG 反而会被当老式图标内缩。
   // 源码模式（electron .）下 Dock 显示 Electron 默认图标，属正常。
@@ -97,9 +91,7 @@ app.whenReady().then(async () => {
     })
   }
   load()
-  dlog('load() done, calling createMain()')
   createMain()
-  dlog('createMain() done')
   // 收件箱启动清理的告知。删的是「30 天以上没人看的待确认」，
   // 但即便是该删的也不能静默删。必须放在 createMain() 之后——mainWin 在此之前是 null。
   const pruned = lastInboxPrune()
