@@ -1,7 +1,10 @@
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const log = (msg) => {
-  fs.appendFileSync(path.join(__dirname, 'entry-debug.log'), msg + '\n')
+  try {
+    fs.appendFileSync(path.join(os.tmpdir(), 'meridian-entry-debug.log'), msg + '\n')
+  } catch {}
 }
 log('entry.cjs started')
 log('process.type: ' + process.type)
