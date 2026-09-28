@@ -409,9 +409,12 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'insp-h' }, '来源', h('b', {}, `${node.sources?.length || 0} 个独立源`)),
       node.sources?.length
         ? h('div', { class: 'src-list' }, ...node.sources.map((s) => h('div', { class: 'src-row' },
-            h('span', { class: `badge badge-${qualityClass(s.quality)}` }, s.kind),
-            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, s.label),
-            h('span', { class: 'q' }, `${s.quality} · ${s.at}`),
+            h('span', { class: `badge badge-${qualityClass(s.quality ?? 0.5)}` }, s.kind),
+            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: s.label }, s.platform || s.label),
+            s.url
+              ? h('button', { class: 'btn btn-src-link', title: `${s.url}\n点击在浏览器中打开原文`, onclick: () => m.openExternal(s.url) }, shortSourceUrl(s.url))
+              : null,
+            h('span', { class: 'q' }, `${s.quality != null ? s.quality : '—'} · ${s.at}`),
             s.rawId
               ? h('button', { class: 'btn btn-raw', title: '看当时读的原文', onclick: () => showRaw(s.rawId) }, '原文')
               : null,
@@ -491,4 +494,13 @@ function qualityClass(q) {
   if (q >= 0.9) return 'observation'
   if (q >= 0.6) return 'hypothesis'
   return 'axiom'
+}
+
+/** 来源链接短显示：去协议头，超长截断 */
+function shortSourceUrl(url) {
+  try {
+    const u = new URL(url)
+    const s = (u.host + u.pathname).replace(/\/$/, '')
+    return s.length > 40 ? s.slice(0, 39) + '…' : s
+  } catch { return url.length > 40 ? url.slice(0, 39) + '…' : url }
 }
