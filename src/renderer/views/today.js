@@ -255,12 +255,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   }, '批量入库')
   // 批量抽取主题选择器：默认「自动」（命题最多的主题）；手动指定后，
   // 本次抽取的条目都记到该主题下，后续入库跟着条目自己的主题走。
-  const shortThemeName = (t) => (t.name || '').replace(/^跟踪/, '').slice(0, 18)
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
   const extractThemePick = h('select', {
     class: 'inbox-extract-theme', title: '抽取主题：默认自动（命题最多的主题），可手动指定',
   }, h('option', { value: '' }, '自动主题'),
-    ...liveThemes.map((t) => h('option', { value: t.id }, shortThemeName(t))))
+    ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
   const extractPicked = h('button', {
     class: 'btn inbox-extract-picked',
     onclick: () => resolve(splitPicked().extractable, 'extract'),
@@ -509,7 +508,6 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
   // 主题切换器：换主题只改条目身上的 extractedThemeId；重渲染后归位图、
   // 目标环节下拉、挂点校验都跟着新主题走，旧主题的手动挂点按主题键隔离。
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
-  const shortThemeName = (t) => (t?.name || '').replace(/^跟踪/, '').slice(0, 18)
   const themeSelect = h('select', {
     class: 'inbox-theme-select', id: 'inbox-theme', disabled: busy || !liveThemes.length,
     title: '切换条目主题',
@@ -521,7 +519,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         const res = await m.inboxSetTheme(item.id, tid)
         if (res?.ok) {
           item.extractedThemeId = tid
-          toast(`已切换到「${shortThemeName(state.themes.find((t) => t.id === tid))}」`)
+          toast(`已切换到「${state.themes.find((t) => t.id === tid)?.name}」`)
           rerender ? rerender() : onRouteChange()
           onRouteChange()
         } else {
@@ -535,7 +533,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         e.target.disabled = busy
       }
     },
-  }, ...liveThemes.map((t) => h('option', { value: t.id }, shortThemeName(t))))
+  }, ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
   themeSelect.value = itemThemeId(item) || ''
   const confirm = h('button', {
     class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
