@@ -1259,6 +1259,14 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 /* ------------- 原文层 ------------- */
 
 .src-row .btn-raw { height: 18px; padding: 0 5px; font-size: var(--t-caption); flex: none; }
+/* 来源外链：链接样式的按钮，点击在系统浏览器打开原文 */
+.src-row .btn-src-link {
+  height: 18px; padding: 0 4px; font-size: var(--t-caption); flex: none;
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--accent); background: transparent; border: none; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px; text-align: left;
+}
+.src-row .btn-src-link:hover { filter: brightness(1.15); }
 
 .raw-box { display: none; margin-top: 9px; }
 .raw-box[data-on="true"] { display: block; }
