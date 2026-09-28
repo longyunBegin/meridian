@@ -76,7 +76,7 @@ contextBridge.exposeInMainWorld('meridian', {
   onChanged: (cb) => ipcRenderer.on('db:changed', () => cb()),
 
   // ---- 收件箱
-  inboxCapture: (text, channelMeta) => ipcRenderer.invoke('inbox:capture', text, channelMeta),
+  inboxCapture: (text, channelMeta, themeId) => ipcRenderer.invoke('inbox:capture', text, channelMeta, themeId),
   inboxList: (opts) => ipcRenderer.invoke('inbox:list', opts),
   inboxIgnored: () => ipcRenderer.invoke('inbox:ignored'),
   inboxResolve: (id, action) => ipcRenderer.invoke('inbox:resolve', id, action),
@@ -85,7 +85,8 @@ contextBridge.exposeInMainWorld('meridian', {
   inboxClear: () => ipcRenderer.invoke('inbox:clear'),
   inboxUndoAutoImport: (intakeEventId) => ipcRenderer.invoke('inbox:undoAutoImport', intakeEventId),
   inboxLastAutoImport: () => ipcRenderer.invoke('inbox:lastAutoImport'),
-  inboxExtract: (ids) => ipcRenderer.invoke('inbox:extract', ids),
+  inboxExtract: (ids, themeId) => ipcRenderer.invoke('inbox:extract', ids, themeId),
+  inboxSetTheme: (id, themeId) => ipcRenderer.invoke('inbox:setTheme', id, themeId),
   inboxClearUnextracted: () => ipcRenderer.invoke('inbox:clearUnextracted'),
   inboxPrune: (days, opts) => ipcRenderer.invoke('inbox:prune', days, opts),
   intakeSeries: (sinceDays) => ipcRenderer.invoke('intake:series', sinceDays),

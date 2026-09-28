@@ -1535,7 +1535,17 @@ select.inbox-parent-select {
   border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
   background: var(--surface-solid); font-size: var(--t-body); color: var(--text);
 }
-.inbox-route-theme { margin: 6px 0 0; font-size: var(--t-caption); color: var(--text-2); overflow-wrap: anywhere; }
+.inbox-route-theme { margin: 6px 0 0; font-size: var(--t-caption); color: var(--text-2); overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; }
+select.inbox-theme-select {
+  height: 28px; padding: 0 8px; max-width: 260px;
+  border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
+  background: var(--surface-solid); font-size: var(--t-caption); color: var(--text);
+}
+select.inbox-extract-theme {
+  height: 32px; padding: 0 8px; max-width: 150px;
+  border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
+  background: var(--surface-solid); font-size: var(--t-caption); color: var(--text-2);
+}
 .inbox-confidence { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 12px 0; font-size: var(--t-caption); color: var(--text-2); }
 .inbox-confidence > label, .inbox-confidence > span { flex: none; }
 .inbox-conf-slider { flex: 1; width: 100%; min-width: 0; height: 20px; margin: 0; accent-color: var(--accent); }

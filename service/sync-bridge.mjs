@@ -189,12 +189,41 @@ export function createBridge(config) {
       method: 'POST', token: config.serviceToken, body: { args: args || [] },
     })
 
+  /** inbox:import 建节点非幂等：回放前查 VM 侧条目状态，把已接受的过滤掉；
+   * 全部已接受则视为已应用（直接 ack，不重放）。 */
+  async function filterImportArgs(args) {
+    const [themeId, items, overrides] = args || []
+    if (!Array.isArray(items) || !items.length) return null
+    const ids = items.map((i) => i.id)
+    let res
+    try {
+      res = await servicePost('inbox:statuses', [ids])
+    } catch (err) {
+      throw new Error(`service 调用失败 inbox:statuses：${err.message}`)
+    }
+    const statuses = res.body?.statuses || {}
+    const pending = items.filter((i) => (statuses[i.id] ?? 'pending') === 'pending')
+    if (!pending.length) return null
+    const ov = {}
+    for (const i of pending) if (overrides?.[i.id] != null) ov[i.id] = overrides[i.id]
+    return [themeId, pending, ov]
+  }
+
   async function applyEntries(entries) {
     const acked = []
     for (const e of entries) {
       let res
+      let args = e.args
+      if (e.channel === 'inbox:import') {
+        args = await filterImportArgs(e.args)
+        if (!args) {
+          log(`重放 inbox:import：条目在 VM 侧均已接受，跳过并 ack（outbox ${e.id}）`)
+          acked.push(e.id)
+          continue
+        }
+      }
       try {
-        res = await servicePost(e.channel, e.args)
+        res = await servicePost(e.channel, args)
       } catch (err) {
         // service 本地不可达：整批停下，已 ack 的不动，剩下的下轮重试
         throw new Error(`service 调用失败 ${e.channel}：${err.message}`)

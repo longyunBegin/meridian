@@ -253,6 +253,14 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn btn-primary inbox-import-picked',
     onclick: () => resolve(splitPicked().importable, 'accept'),
   }, '批量入库')
+  // 批量抽取主题选择器：默认「自动」（命题最多的主题）；手动指定后，
+  // 本次抽取的条目都记到该主题下，后续入库跟着条目自己的主题走。
+  const shortThemeName = (t) => (t.name || '').replace(/^跟踪/, '').slice(0, 18)
+  const liveThemes = state.themes.filter((t) => !t.deletedAt)
+  const extractThemePick = h('select', {
+    class: 'inbox-extract-theme', title: '抽取主题：默认自动（命题最多的主题），可手动指定',
+  }, h('option', { value: '' }, '自动主题'),
+    ...liveThemes.map((t) => h('option', { value: t.id }, shortThemeName(t))))
   const extractPicked = h('button', {
     class: 'btn inbox-extract-picked',
     onclick: () => resolve(splitPicked().extractable, 'extract'),
@@ -276,6 +284,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     extractPicked.hidden = !extractable.length
     extractPicked.textContent = `抽取所选（${extractable.length}）`
     extractPicked.disabled = !extractable.length || extractable.some((item) => resolving.has(item.id))
+    extractThemePick.hidden = !extractable.length
     ignorePicked.hidden = !picked.size
     ignorePicked.textContent = `忽略所选（${picked.size}）`
     ignorePicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
@@ -295,7 +304,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       row.dataset.sel = String(selected)
       row.querySelector('.inbox-body').setAttribute('aria-pressed', String(selected))
     }
-    renderInboxDetail(detail, items.find((item) => item.id === id), allNodes, resolve, updateBatch)
+    renderInboxDetail(detail, items.find((item) => item.id === id), allNodes, resolve, updateBatch, () => select(id))
   }
 
   async function resolve(chosen, action) {
@@ -325,7 +334,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         }
         toast(`${total} 条命题已入库`)
       } else if (action === 'extract') {
-        const res = await m.inboxExtract(chosen.map((item) => item.id))
+        const themeId = extractThemePick.value || undefined
+        const res = await m.inboxExtract(chosen.map((item) => item.id), themeId)
         for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
         if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
       } else {
@@ -431,7 +441,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
       loadMore,
-      h('div', { class: 'inbox-import-bar' }, count, extractPicked, importPicked, ignorePicked),
+      h('div', { class: 'inbox-import-bar' }, count, extractThemePick, extractPicked, importPicked, ignorePicked),
     ),
     detail,
   ))
@@ -482,7 +492,7 @@ function unextractedNote(item) {
   return '标签库没有命中，留档不抽取。'
 }
 
-function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange) {
+function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rerender) {
   clear(panel)
   // 条目级主题：勾选、挂点下拉、归位图、入库都跟着条目自己的主题走，
   // 与渲染层当前主题无关——今日收件箱是全局的。
@@ -496,6 +506,37 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange) {
   const theme = state.themes.find((t) => t.id === itemThemeId(item))
   const conf = ov.confidence ?? lemmas[0]?.confidence ?? 50
   const sourceUrl = item.provenance?.url
+  // 主题切换器：换主题只改条目身上的 extractedThemeId；重渲染后归位图、
+  // 目标环节下拉、挂点校验都跟着新主题走，旧主题的手动挂点按主题键隔离。
+  const liveThemes = state.themes.filter((t) => !t.deletedAt)
+  const shortThemeName = (t) => (t?.name || '').replace(/^跟踪/, '').slice(0, 18)
+  const themeSelect = h('select', {
+    class: 'inbox-theme-select', id: 'inbox-theme', disabled: busy || !liveThemes.length,
+    title: '切换条目主题',
+    onchange: async (e) => {
+      const tid = e.target.value
+      if (!tid || tid === itemThemeId(item)) return
+      e.target.disabled = true
+      try {
+        const res = await m.inboxSetTheme(item.id, tid)
+        if (res?.ok) {
+          item.extractedThemeId = tid
+          toast(`已切换到「${shortThemeName(state.themes.find((t) => t.id === tid))}」`)
+          rerender ? rerender() : onRouteChange()
+          onRouteChange()
+        } else {
+          toast('切换主题失败：' + (res?.error || '请重试'), 'var(--red)')
+          e.target.value = itemThemeId(item)
+        }
+      } catch (err) {
+        toast('切换主题失败：' + (err.message || '请重试'), 'var(--red)')
+        e.target.value = itemThemeId(item)
+      } finally {
+        e.target.disabled = busy
+      }
+    },
+  }, ...liveThemes.map((t) => h('option', { value: t.id }, shortThemeName(t))))
+  themeSelect.value = itemThemeId(item) || ''
   const confirm = h('button', {
     class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
     onclick: () => onResolve([item], 'accept'),
@@ -595,7 +636,9 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange) {
       ),
       editable ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '确认归位'),
-        h('p', { class: 'inbox-route-theme' }, theme ? `主题 · ${theme.name}` : '该条目没有可用主题，无法入库。'),
+        h('div', { class: 'inbox-route-theme' },
+          h('label', { for: 'inbox-theme' }, '主题'), themeSelect,
+          theme ? null : h('span', { class: 'inbox-detail-note' }, '该条目没有可用主题，无法入库。')),
         routeNote,
         h('div', { class: 'inbox-routing' }, h('label', { for: 'inbox-parent' }, '目标环节'), parentSelect),
         h('div', { class: 'inbox-confidence' },

@@ -43,6 +43,7 @@
     },
     "files": [
       "src/**/*",
+      "service/db-schema.mjs",
       "package.json"
     ],
     "directories": {

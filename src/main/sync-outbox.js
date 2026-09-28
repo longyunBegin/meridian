@@ -35,6 +35,9 @@ export const OUTBOX_CHANNELS = new Set([
   'inbox:prune', // 按天清理：集合删除，重放收敛
   'inbox:clear', // 清空收件箱：filter 删除，重放幂等
   'inbox:clearUnextracted', // 清未抽取：同上
+  'inbox:extract', // 批量抽取：幂等（已抽取条目跳过）；回放时在 VM 侧重跑真实流水线
+  'inbox:import', // 批量入库：建节点非幂等！桥回放前先查 VM 侧条目状态，过滤掉已接受的（见 service/sync-bridge.mjs）
+  'inbox:setTheme', // 收件箱条目换主题：覆写 extractedThemeId，幂等
   'db:resolveConflict', // 冲突裁决：resolved 标志位覆写，幂等
   'db:settle', // 命题结算：settlement 覆写，不碰 confidence
   'theme:rename', // 主题改名：覆写，幂等
