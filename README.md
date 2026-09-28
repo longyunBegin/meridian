@@ -5,10 +5,10 @@
 > 本地优先的判断账本：信息搬进来 → 归位到主题脉络 → 沿产业链传导 → 到期结算。
 > 资产不是知识地图，是你的**校准曲线**。
 
-![Platform](https://img.shields.io/badge/平台-macOS-blue)
+![Platform](https://img.shields.io/badge/平台-macOS_|_Windows-blue)
 ![Electron](https://img.shields.io/badge/Electron-37-47848F)
 ![Node](https://img.shields.io/badge/Node-≥18-339933)
-![Tests](https://img.shields.io/badge/测试-969_通过-brightgreen)
+![Tests](https://img.shields.io/badge/测试-1142_通过-brightgreen)
 
 ---
 
@@ -85,6 +85,7 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 **信任**
 
 - 来源打标器可替换：内置关键词查表（默认）/ Jev 原生协议（直连 `api.typesafe.ai`）
+- 来源可回溯：节点检查器的每条来源可点击跳转原文，抓取时的原文快照随时在应用内可查
 - 质量分一律由 `SOURCE_QUALITY` 表裁决，换模型不漂移基准
 - 留痕层：每次模型介入的输入、输出、最终决策完整记录，可复现
 - 误杀审计：被筛掉的内容留裁决记录，后来从别的源入库自动回填记为误杀
@@ -93,12 +94,19 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 ## 安装
 
-### 环境要求
+### 直接下载安装包（推荐）
 
-- macOS（窗口 vibrancy 与全局热键依赖桌面端）
-- Node.js ≥ 18
+从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
 
-### 步骤
+- macOS：`Meridian-0.1.0-arm64.dmg`（Apple Silicon）或 `Meridian-0.1.0.dmg`（Intel）
+- Windows：`Meridian Setup 0.1.0.exe`（x64/arm64，实验性）
+
+macOS 首次启动：**右键点击 Meridian.app → 打开**（未做苹果开发者签名，只需操作一次，之后正常双击启动）。
+Windows：SmartScreen 拦截时选择"仍要运行"（未签名）。
+
+### 从源码运行
+
+环境要求：macOS（窗口 vibrancy 与全局热键依赖桌面端）、Node.js ≥ 18。
 
 ```bash
 git clone https://github.com/longyunBegin/meridian.git
@@ -199,7 +207,7 @@ npm start
 ## 开发
 
 ```bash
-npm test    # 引擎 + IPC + 改造测试（969 项，electron 已 stub，纯 Node 可跑）
+npm test    # 引擎 + IPC + 改造测试（1142 项，electron 已 stub，纯 Node 可跑）
 npm start   # 启动应用
 npm run shoot  # 视觉回归截图 → /tmp/meridian-shots/
 ```
@@ -225,6 +233,10 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 - ✅ 行式大纲骨架（模型吐纯文本，客户端确定性解析）
 - ✅ Jev 原生协议（直连 `api.typesafe.ai/v1/systemone`）
 - ✅ 新建主题三阶段 UX（骨架 → 标签 → 标签库，部分失败可恢复）
+- ✅ 收件箱批量分拣 + 主题可选
+- ✅ 节点来源可点击跳转原文
+- ✅ Mac ↔ VM 双向同步
+- ✅ Windows 安装包（实验性）
 - ✅ 更名 Meridian + 极简几何 Logo
 
 明确不做：多端同步、协作分享、荐股信号、移动端——详见 ROADMAP。
@@ -240,7 +252,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
 **支持 Windows / Linux 吗？**
-暂不支持。全局热键与窗口 vibrancy 目前只做了 macOS。
+Windows 有实验性安装包（见 Releases，未签名，首次公开测试）；Linux 暂不支持。全局热键与窗口 vibrancy 目前只做了 macOS。
 
 **数据存在哪？**
 `~/Library/Application Support/脉络/meridian.json`（判断层）+ 同目录 `raw.jsonl`（原文层）。
