@@ -1695,6 +1695,19 @@ export function setInboxExtraction(id, { extracted, matchScore, lemmas, themeId 
   return item
 }
 
+/** 收件箱条目换主题：只改条目身上的 extractedThemeId，不碰命题、挂点与置信度；
+ * 挂点有效性由渲染层按新主题重校验（inboxRouteValid），失效的由用户重选。 */
+export function setInboxTheme(id, themeId) {
+  const db = load()
+  const item = db.inbox.find((i) => i.id === id)
+  if (!item) return null
+  const theme = db.themes.find((t) => t.id === themeId && !t.deletedAt)
+  if (!theme) return null
+  item.extractedThemeId = themeId
+  persist()
+  return item
+}
+
 export function inboxCount() {
   return allInbox().length
 }

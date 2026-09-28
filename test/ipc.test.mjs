@@ -188,6 +188,29 @@ ok('B 命题落在 B 主题', nodeNewB?.themeId === themeB.id, `实际 ${nodeNew
 ok('A 命题挂点仍是 A 的节点', nodeNewA?.parentId === nA.id)
 ok('B 命题挂点仍是 B 的节点', nodeNewB?.parentId === nB.id)
 
+console.log('\n— inbox:setTheme 换主题 —')
+const itC = store.addInboxItem({
+  text: 'C 主题文本', title: 'C 条目', extracted: true, extractedThemeId: themeA.id,
+  lemmas: [{ title: 'C 新命题', type: 'observation', confidence: 70, parentId: nA.id }],
+})
+const st1 = await fireAsync('inbox:setTheme', itC.id, themeB.id)
+ok('换主题返回 ok', st1?.ok === true, `实际 ${JSON.stringify(st1)}`)
+ok('条目 extractedThemeId 已更新',
+  store.load().inbox.find((i) => i.id === itC.id)?.extractedThemeId === themeB.id)
+const stBad = await fireAsync('inbox:setTheme', itC.id, '不存在的主题')
+ok('换到不存在的主题返回 ok:false', stBad?.ok === false)
+ok('换到不存在的主题不改条目',
+  store.load().inbox.find((i) => i.id === itC.id)?.extractedThemeId === themeB.id)
+const stNoItem = await fireAsync('inbox:setTheme', '不存在的条目', themeA.id)
+ok('条目不存在返回 ok:false', stNoItem?.ok === false)
+
+console.log('\n— inbox:statuses 只读状态 —')
+const sts = await fireAsync('inbox:statuses', [itA.id, itC.id, '不存在的条目'])
+ok('返回 ok', sts?.ok === true)
+ok('已入库条目状态 accepted', sts?.statuses?.[itA.id] === 'accepted', `实际 ${sts?.statuses?.[itA.id]}`)
+ok('待处理条目状态 pending', sts?.statuses?.[itC.id] === 'pending', `实际 ${sts?.statuses?.[itC.id]}`)
+ok('不存在的条目状态 null', sts?.statuses?.['不存在的条目'] === null)
+
 console.log('\n— inbox:resolveMany 批量忽略 —')
 const rj1 = store.addInboxItem({ text: '忽略条目1', title: '忽略1', extracted: false })
 const rj2 = store.addInboxItem({ text: '忽略条目2', title: '忽略2', extracted: false })

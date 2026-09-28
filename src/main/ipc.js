@@ -10,7 +10,7 @@ import {
   appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -887,9 +887,11 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
 
   // ---- 收件箱 ----
   // ⌘⇧V 粘贴 → 免费过滤 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
-  const runCapture = async (text, channelMeta) => {
-    const bestTheme = bestThemeContext()
-    const defaultThemeId = bestTheme?.id || null
+  // themeId 可选：调用方指定则用指定的（主题追踪按内容实际主题传入）；
+  // 不传或主题无效时回退到命题最多的主题（bestThemeContext）。
+  const runCapture = async (text, channelMeta, themeId) => {
+    const liveThemeIds = new Set(load().themes.filter((t) => !t.deletedAt).map((t) => t.id))
+    const defaultThemeId = (themeId && liveThemeIds.has(themeId)) ? themeId : (bestThemeContext()?.id || null)
     const result = await processCapture(text, defaultThemeId, channelMeta)
 
     // 不确定性闸门
@@ -996,7 +998,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return { ok: true, autoImported: false, item, gateReasons: gate.reasons, skipped: result.skipped || null }
   }
 
-  ipcMain.handle('inbox:capture', (_, text, channelMeta) => runCapture(text, channelMeta))
+  ipcMain.handle('inbox:capture', (_, text, channelMeta, themeId) => runCapture(text, channelMeta, themeId))
   // 复盘页：LLM 账本
   ipcMain.handle('llm:usage', () => llmUsage())
 
@@ -1102,21 +1104,42 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
 
   // 主动决定：把「待抽取」组批量过一遍模型——让花费从自动变成主动的那个按钮
-  ipcMain.handle('inbox:extract', async (_, ids) => {
+  // themeId 可选：调用方指定则用指定的（批量抽取主题选择器 / 主题追踪按内容实际主题传入）；
+  // 不传或主题无效时回退到命题最多的主题（bestThemeContext），与渲染层当前主题无关。
+  ipcMain.handle('inbox:extract', async (_, ids, themeId) => {
     const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id))
     let extracted = 0
+    const liveThemeIds = new Set(load().themes.filter((t) => !t.deletedAt).map((t) => t.id))
+    const useThemeId = (themeId && liveThemeIds.has(themeId)) ? themeId : (bestThemeContext()?.id || null)
     for (const item of targets) {
       if (item.extracted) continue
-      // 抽取路由按命题最多的主题（bestThemeContext），与渲染层当前主题无关；
-      // 把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
-      const themeId = bestThemeContext()?.id || null
-      const result = await processCapture(item.text, themeId, item.provenance, { forceExtract: true })
+      // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
+      const result = await processCapture(item.text, useThemeId, item.provenance, { forceExtract: true })
       if (!result.lemmas.length) continue
-      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId })
+      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
       extracted++
     }
     getMainWindow?.()?.webContents.send('db:changed')
-    return { ok: true, extracted }
+    return { ok: true, extracted, themeId: useThemeId }
+  })
+
+  // 收件箱条目换主题：只改条目身上的 extractedThemeId；挂点按新主题重校验，失效的由用户重选。
+  ipcMain.handle('inbox:setTheme', (_, id, themeId) => {
+    const item = setInboxTheme(id, themeId)
+    if (!item) return { ok: false, error: '条目或主题不存在' }
+    getMainWindow?.()?.webContents.send('db:changed')
+    return { ok: true, themeId: item.extractedThemeId }
+  })
+
+  // 只读：给同步桥回放 inbox:import 前过滤 VM 侧已接受条目用（import 建节点非幂等）。
+  ipcMain.handle('inbox:statuses', (_, ids) => {
+    const db = load()
+    const statuses = {}
+    for (const id of ids || []) {
+      const item = db.inbox.find((i) => i.id === id)
+      statuses[id] = item ? item.status : null
+    }
+    return { ok: true, statuses }
   })
 
   ipcMain.handle('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))

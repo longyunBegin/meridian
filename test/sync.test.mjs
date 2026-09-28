@@ -36,11 +36,10 @@ registerIpc({ getMainWindow: () => undefined, enableOutbox: true })
 
 console.log('\n— outbox 白名单 —')
 ok('白名单含 inbox:resolve', outbox.OUTBOX_CHANNELS.has('inbox:resolve'))
-for (const ch of ['inbox:prune', 'inbox:clear', 'inbox:clearUnextracted', 'db:resolveConflict', 'db:settle', 'theme:rename', 'theme:update']) {
+for (const ch of ['inbox:prune', 'inbox:clear', 'inbox:clearUnextracted', 'db:resolveConflict', 'db:settle', 'theme:rename', 'theme:update', 'inbox:extract', 'inbox:import', 'inbox:setTheme']) {
   ok(`白名单含 ${ch}`, outbox.OUTBOX_CHANNELS.has(ch))
 }
-for (const ch of ['db:addNode', 'db:updateNode', 'db:removeNode', 'inbox:capture', 'inbox:import', 'inbox:extract',
-  'inbox:undoAutoImport', 'reading:add', 'reading:push', 'settings:set', 'theme:add', 'theme:remove',
+for (const ch of ['db:addNode', 'db:updateNode', 'db:removeNode', 'inbox:capture', 'inbox:undoAutoImport', 'reading:add', 'reading:push', 'settings:set', 'theme:add', 'theme:remove',
   'theme:regenerate', 'io:import', 'raw:clear']) {
   ok(`白名单排除 ${ch}`, !outbox.OUTBOX_CHANNELS.has(ch))
 }
