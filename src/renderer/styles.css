@@ -1537,12 +1537,12 @@ select.inbox-parent-select {
 }
 .inbox-route-theme { margin: 6px 0 0; font-size: var(--t-caption); color: var(--text-2); overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; }
 select.inbox-theme-select {
-  height: 28px; padding: 0 8px; max-width: 260px;
+  height: 28px; padding: 0 8px; max-width: 340px;
   border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
   background: var(--surface-solid); font-size: var(--t-caption); color: var(--text);
 }
 select.inbox-extract-theme {
-  height: 32px; padding: 0 8px; max-width: 150px;
+  height: 32px; padding: 0 8px; max-width: 210px;
   border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
   background: var(--surface-solid); font-size: var(--t-caption); color: var(--text-2);
 }
