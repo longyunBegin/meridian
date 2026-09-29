@@ -3,10 +3,12 @@
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::{
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
+    thread,
+    time::{Duration, Instant},
 };
 use tauri::{Manager, State};
 use uuid::Uuid;
@@ -18,6 +20,67 @@ struct BackendEndpoint {
 }
 struct BackendState(BackendEndpoint);
 struct Sidecar(Mutex<Child>);
+
+const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_STARTUP_DIAGNOSTICS: usize = 16 * 1024;
+
+fn readiness_port(line: &str) -> Option<u16> {
+    let message = serde_json::from_str::<Value>(line).ok()?;
+    if message.get("ready").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let port = message.get("port").and_then(Value::as_u64)?;
+    u16::try_from(port).ok().filter(|port| *port != 0)
+}
+
+fn append_diagnostic(buffer: &mut String, line: &str) {
+    buffer.push_str(line);
+    buffer.push('\n');
+    if buffer.len() > MAX_STARTUP_DIAGNOSTICS {
+        let excess = buffer.len() - MAX_STARTUP_DIAGNOSTICS;
+        let boundary = buffer
+            .char_indices()
+            .find(|(index, _)| *index >= excess)
+            .map(|(index, _)| index)
+            .unwrap_or(buffer.len());
+        buffer.drain(..boundary);
+    }
+}
+
+fn startup_failure(
+    child: &mut Child,
+    stderr: thread::JoinHandle<Vec<u8>>,
+    reason: &str,
+    stdout: &str,
+) -> String {
+    let status = match child.try_wait() {
+        Ok(Some(status)) => Some(status),
+        _ => {
+            let _ = child.kill();
+            child.wait().ok()
+        }
+    };
+    let stderr = stderr.join().unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr);
+    let status = status
+        .map(|status| match status.code() {
+            Some(code) => format!("exit code {code}"),
+            None => "terminated by signal".to_string(),
+        })
+        .unwrap_or_else(|| "status unavailable".to_string());
+    let mut details = Vec::new();
+    if !stderr.trim().is_empty() {
+        details.push(format!("stderr: {}", stderr.trim()));
+    }
+    if !stdout.trim().is_empty() {
+        details.push(format!("stdout: {}", stdout.trim()));
+    }
+    if details.is_empty() {
+        format!("{reason} ({status}; no startup output)")
+    } else {
+        format!("{reason} ({status}; {})", details.join("; "))
+    }
+}
 
 #[tauri::command]
 async fn backend_invoke(
@@ -138,38 +201,113 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), St
         .env("MERIDIAN_SIDECAR_TOKEN", &token)
         .env("MERIDIAN_USER_DATA_DIR", &data_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("could not launch Node sidecar ({}): {e}", node.display()))?;
     let stdout = child.stdout.take().ok_or("sidecar stdout unavailable")?;
-    let reader = BufReader::new(stdout);
-    let mut port = None;
-    for line in reader.lines().take(200) {
-        let line = line.map_err(|e| format!("sidecar startup read failed: {e}"))?;
-        if let Ok(message) = serde_json::from_str::<Value>(&line) {
-            if message.get("ready").and_then(Value::as_bool) == Some(true) {
-                port = message
-                    .get("port")
-                    .and_then(Value::as_u64)
-                    .map(|p| p as u16);
-                if port.is_some() {
+    let stderr = child.stderr.take().ok_or("sidecar stderr unavailable")?;
+    let stderr_reader = thread::spawn(move || {
+        let mut reader = stderr;
+        let mut output = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(size) => {
+                    output.extend_from_slice(&chunk[..size]);
+                    if output.len() > MAX_STARTUP_DIAGNOSTICS {
+                        let excess = output.len() - MAX_STARTUP_DIAGNOSTICS;
+                        output.drain(..excess);
+                    }
+                }
+            }
+        }
+        output
+    });
+    let (line_tx, line_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = line_tx.send(Ok(None));
+                    break;
+                }
+                Ok(_) => {
+                    let line = line.trim_end_matches(['\r', '\n']).to_string();
+                    if line_tx.send(Ok(Some(line))).is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = line_tx.send(Err(error.to_string()));
                     break;
                 }
             }
         }
+    });
+
+    let started = Instant::now();
+    let mut startup_output = String::new();
+    loop {
+        let remaining = SIDECAR_STARTUP_TIMEOUT.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(startup_failure(
+                &mut child,
+                stderr_reader,
+                "Node sidecar startup timed out before reporting readiness",
+                &startup_output,
+            ));
+        }
+        match line_rx.recv_timeout(remaining) {
+            Ok(Ok(Some(line))) => {
+                if let Some(port) = readiness_port(&line) {
+                    return Ok((
+                        child,
+                        BackendEndpoint {
+                            base: format!("http://127.0.0.1:{port}"),
+                            token,
+                            client: Client::new(),
+                        },
+                    ));
+                }
+                append_diagnostic(&mut startup_output, &line);
+            }
+            Ok(Ok(None)) => {
+                return Err(startup_failure(
+                    &mut child,
+                    stderr_reader,
+                    "Node sidecar closed stdout before reporting readiness",
+                    &startup_output,
+                ));
+            }
+            Ok(Err(error)) => {
+                return Err(startup_failure(
+                    &mut child,
+                    stderr_reader,
+                    &format!("could not read Node sidecar startup output: {error}"),
+                    &startup_output,
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(startup_failure(
+                    &mut child,
+                    stderr_reader,
+                    "Node sidecar startup timed out before reporting readiness",
+                    &startup_output,
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(startup_failure(
+                    &mut child,
+                    stderr_reader,
+                    "Node sidecar startup reader stopped before reporting readiness",
+                    &startup_output,
+                ));
+            }
+        }
     }
-    let port = port.ok_or_else(|| {
-        let _ = child.kill();
-        "Node sidecar exited before reporting readiness".to_string()
-    })?;
-    Ok((
-        child,
-        BackendEndpoint {
-            base: format!("http://127.0.0.1:{port}"),
-            token,
-            client: Client::new(),
-        },
-    ))
 }
 
 fn main() {
@@ -201,4 +339,36 @@ fn main() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append_diagnostic, readiness_port, MAX_STARTUP_DIAGNOSTICS};
+
+    #[test]
+    fn accepts_a_valid_sidecar_ready_frame() {
+        assert_eq!(
+            readiness_port(r#"{"ready":true,"host":"127.0.0.1","port":43210}"#),
+            Some(43210)
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_invalid_ready_ports() {
+        assert_eq!(readiness_port("not json"), None);
+        assert_eq!(readiness_port(r#"{"ready":false,"port":43210}"#), None);
+        assert_eq!(readiness_port(r#"{"ready":true,"port":0}"#), None);
+        assert_eq!(readiness_port(r#"{"ready":true,"port":65536}"#), None);
+        assert_eq!(readiness_port(r#"{"ready":true,"port":"43210"}"#), None);
+    }
+
+    #[test]
+    fn startup_diagnostics_keep_only_a_bounded_tail() {
+        let mut diagnostics = String::new();
+        append_diagnostic(&mut diagnostics, &"x".repeat(MAX_STARTUP_DIAGNOSTICS));
+        append_diagnostic(&mut diagnostics, "latest diagnostic");
+
+        assert!(diagnostics.len() <= MAX_STARTUP_DIAGNOSTICS);
+        assert!(diagnostics.ends_with("latest diagnostic\n"));
+    }
 }
