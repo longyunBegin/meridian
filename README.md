@@ -106,12 +106,26 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
 
-- **macOS（Apple Silicon）**：`Meridian_0.1.0_aarch64.dmg`——Tauri 2 构建，已在本机验证。未签名，首次打开请右键 → 打开。
-- **Windows**：`Meridian Setup 0.1.0.exe`（NSIS）。Tauri 的 Windows 安装包需在 Windows 本机构建，当前版本仍为 Electron 构建；Tauri Windows 包待目标系统构建验证。
+- **macOS（Apple Silicon）**：`Meridian_0.1.0_aarch64.dmg`——Tauri 2 构建。未签名，首次打开请右键 → 打开。
 
-> Tauri 2 桌面壳：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。Linux 不支持。
+> Intel Mac 与 Windows 暂不提供预编译包。Windows 用户请按下面的教程自行构建；Linux 不支持。
 
-### 从源码运行
+### Windows 自行构建
+
+1. 安装 [Node.js](https://nodejs.org) ≥ 22.13（LTS）和 [Rust](https://rustup.rs)（stable）
+2. 安装 Visual Studio C++ 生成工具（勾选"使用 C++ 的桌面开发"工作负载）；WebView2 运行时（Win10/11 一般自带）
+3. 拉代码、装依赖、构建：
+
+```powershell
+git clone https://github.com/longyunBegin/meridian.git
+cd meridian
+npm install
+npm run tauri:build
+```
+
+产物在 `src-tauri\target\release\bundle\nsis\`。安装时 SmartScreen 拦截选"仍要运行"（未签名）。
+
+### 从源码运行（开发）
 
 环境要求：macOS 或 Windows、Node.js ≥ 22.13、Rust stable，以及对应平台的 Tauri 构建工具链。Windows 需要 MSVC C++ 构建工具和 WebView2；macOS 需要 Xcode Command Line Tools。
 
@@ -249,7 +263,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 - ✅ 收件箱批量分拣 + 主题可选
 - ✅ 节点来源可点击跳转原文
 - ✅ Mac ↔ VM 双向同步
-- ⏳ Tauri Windows 安装包已配置，仍待目标系统构建验证
+- ⏳ Windows 安装包已配置（NSIS），需在 Windows 本机构建，暂不提供预编译包
 - ✅ 更名 Meridian + 极简几何 Logo
 
 明确不做：多端同步、协作分享、荐股信号、移动端——详见 ROADMAP。
@@ -265,7 +279,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
 **支持哪些桌面系统？**
-本分支目标为 macOS 和 Windows；Linux 不支持。macOS（Apple Silicon）DMG 已由 Tauri 工具链构建验证；Windows 安装包仍待对应系统构建验证。
+macOS（Apple Silicon）提供预编译 DMG；Windows 需按上面的教程自行构建；Linux 不支持。
 
 **数据存在哪？**
 macOS：`~/Library/Application Support/脉络/meridian.json`；Windows：`%APPDATA%\脉络\meridian.json`。原文层 `raw.jsonl` 位于同目录。
