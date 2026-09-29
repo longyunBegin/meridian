@@ -93,6 +93,10 @@ function copyMacOSNodeLibrary(execPath, outputDir, runCommand) {
     }
     const destination = join(outputDir, reference.split('/').at(-1))
     copyFileSync(source, destination)
+    // Homebrew ships libnode.*.dylib read-only; copyFileSync preserves the
+    // mode, and a read-only staged copy breaks the next build when
+    // tauri_build::copy_resources tries to overwrite it (EACCES).
+    chmodSync(destination, 0o644)
     copiedLibraries.push(destination)
   }
 
