@@ -54,8 +54,14 @@ registerDomainCommands({
   }),
 })
 
-try { await startSyncServer({ userDataDir: userData, broadcast: () => emit('db:changed') }) }
-catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
+try {
+  await startSyncServer({
+    userDataDir: userData,
+    broadcast: () => emit('db:changed'),
+    // VM op -> 本地领域命令直调：绕过 onSuccess，不进 Mac outbox，避免回环
+    applyOp: (channel, args) => registry.invokeWithoutHooks(channel, args),
+  })
+} catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
 try {
   agentServer = await startAgentServer({
     userData, ingest: ingestReadings, getIntent: store.exportIntent,

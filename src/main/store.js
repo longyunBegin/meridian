@@ -643,8 +643,9 @@ export function planPurge(scope, dryRunResult, confirmed) {
 export function addSource(id, source) {
   const node = getNode(id)
   if (!node) return { added: false, count: 0 }
-  const before = node.sources.length
-  node.sources = normalizeSources([...node.sources, source])
+  const cur = Array.isArray(node.sources) ? node.sources : []
+  const before = cur.length
+  node.sources = normalizeSources([...cur, source])
   const added = node.sources.length > before
   node.updatedAt = today()
   if (added) promoteMatchingIgnoredRoutes(node)
@@ -1609,9 +1610,10 @@ export function ignoredInbox() {
   return load().inbox.filter((i) => i.kind === 'route-proposal' && i.ignored)
 }
 
-export function addInboxItem(item) {
-  const entry = {
-    id: uid(),
+/** 收件箱条目字段白名单规范（addInboxItem 与 upsertInboxItem 共用）。 */
+function toInboxEntry(item, id) {
+  return {
+    id,
     text: item.text || '',
     title: item.title || '',
     label: item.label || null,
@@ -1637,11 +1639,65 @@ export function addInboxItem(item) {
     ...(item.observationId ? { observationId: item.observationId } : {}),
     ...(item.reading ? { reading: item.reading } : {}),
     status: 'pending',
-    createdAt: today(),
+    createdAt: item.createdAt || today(),
   }
+}
+
+export function addInboxItem(item) {
+  const entry = toInboxEntry(item, uid())
   load().inbox.push(entry)
   persist()
   return entry
+}
+
+/**
+ * 反向同步 VM→Mac：按 id 幂等 upsert 收件箱条目。
+ * 已存在则跳过——绝不覆盖用户在 Mac 侧已做的裁决（status/resolvedAt）。
+ * 只接受 pending 形态的条目（VM 侧 capture 只产生待裁决条目），fail-closed。
+ */
+export function upsertInboxItem(item) {
+  if (!item || typeof item.id !== 'string' || !item.id) return { ok: false, error: 'bad-item' }
+  const db = load()
+  if (db.inbox.some((i) => i.id === item.id)) return { ok: true, added: false, id: item.id }
+  const entry = toInboxEntry(item, item.id)
+  db.inbox.push(entry)
+  persist()
+  return { ok: true, added: true, id: item.id }
+}
+
+/**
+ * 反向同步 VM→Mac：按 id 幂等插入节点快照（capture autoImport 的新建节点）。
+ * 已存在则跳过——绝不触碰既有节点的 confidence（公理1）。
+ * 只做最小形状校验；插入的是 VM 侧落盘时的完整对象，与快照推送的最终状态一致。
+ */
+export function upsertNodeSnapshot(node) {
+  if (!node || typeof node.id !== 'string' || !node.id) return { ok: false, error: 'bad-node' }
+  if (typeof node.themeId !== 'string' || typeof node.title !== 'string') return { ok: false, error: 'bad-node-shape' }
+  const db = load()
+  if (db.nodes.some((n) => n.id === node.id)) return { ok: true, added: false, id: node.id }
+  // 快照缺字段时补默认数组：addSource/updateNode 等都假设 sources/history 存在，
+  // 一个坏 op 不能把整个 VM→Mac 队列卡死（500 会让桥永远停在同一游标）。
+  db.nodes.push({ history: [], sources: [], ...node })
+  persist()
+  return { ok: true, added: true, id: node.id }
+}
+
+/**
+ * 反向同步 VM→Mac：按 id 幂等插入原文记录（content-hash 去重天然收敛）。
+ */
+export function upsertRaw(entry) {
+  if (!entry || typeof entry.id !== 'string' || !entry.id || typeof entry.text !== 'string') {
+    return { ok: false, error: 'bad-raw' }
+  }
+  const cache = loadRaw()
+  if (cache.has(entry.id)) return { ok: true, added: false, id: entry.id }
+  const e = { ...entry }
+  cache.set(e.id, e)
+  if (e.sha256) rawBySha.set(e.sha256, e.id)
+  const file = RAW_FILE()
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, JSON.stringify(e) + '\n')
+  return { ok: true, added: true, id: entry.id }
 }
 
 export function resolveInboxItem(id, action) {

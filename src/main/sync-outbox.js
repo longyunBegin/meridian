@@ -45,7 +45,21 @@ export const OUTBOX_CHANNELS = new Set([
   'theme:update', // 主题更新：patch 覆写
 ])
 
+/**
+ * VM→Mac 方向的 op 白名单（双向 op log 的另一半）。
+ * 与 OUTBOX_CHANNELS 互补：这些 channel 只由 VM 侧产生（capture 结果），
+ * Mac 侧 /sync/ops 按 channel 原样调用本地 handler 应用。
+ * 语义要求：全部 insert-if-absent / 幂等追加，绝不修改既有节点的 confidence。
+ */
+export const VM_OP_CHANNELS = new Set([
+  'inbox:upsertItem', // 收件箱条目按 id 插入，已存在则跳过（绝不覆盖用户裁决状态）
+  'db:upsertNode', // 节点快照按 id 插入，已存在则跳过
+  'db:addSource', // 给已存在节点追加来源（normalizeSources 去重，收敛）
+  'raw:upsert', // 原文记录按 id 插入（content-hash 去重天然收敛）
+])
+
 const OUTBOX_NAME = 'sync-outbox.jsonl'
+const SEQ_NAME = 'sync-outbox.seq'
 
 function defaultDir() {
   return dataDirectory()
@@ -53,14 +67,34 @@ function defaultDir() {
 
 export const outboxFile = (dir = defaultDir()) => join(dir, OUTBOX_NAME)
 
+/** 读 seq 计数器（不存在视为 0）。 */
+function readSeq(dir) {
+  const f = join(dir, SEQ_NAME)
+  if (!existsSync(f)) return 0
+  const n = Number(readFileSync(f, 'utf8').trim())
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+}
+
+/** 原子写 seq 计数器。 */
+function writeSeq(dir, n) {
+  const f = join(dir, SEQ_NAME)
+  const tmp = f + '.tmp'
+  writeFileSync(tmp, String(n) + '\n')
+  renameSync(tmp, f)
+}
+
 /**
  * 记录一条 outbox。只在领域命令成功返回后调用；记录失败绝不影响用户操作本身。
+ * 每条 entry 带单调递增 seq，供双向同步做游标（cursor）续传。
  * @returns entry id，失败返回 null
  */
 export function recordOutbox(channel, args, dir = defaultDir()) {
   try {
-    const entry = { id: uid(), ts: Date.now(), channel, args }
+    migrateSeqIfNeeded(dir)
+    const seq = readSeq(dir) + 1
+    const entry = { id: uid(), ts: Date.now(), seq, channel, args }
     appendFileSync(outboxFile(dir), JSON.stringify(entry) + '\n')
+    writeSeq(dir, seq)
     return entry.id
   } catch (err) {
     console.error('[sync-outbox] 记录失败（已跳过，不影响本次操作）:', err?.message || err)
@@ -68,8 +102,40 @@ export function recordOutbox(channel, args, dir = defaultDir()) {
   }
 }
 
+/**
+ * 一次性迁移：给历史无 seq 条目按文件顺序补 seq 1..N，并初始化计数器。
+ * outbox 是 append-only，ack 只删整行不改序，位置即顺序，迁移后稳定。
+ */
+function migrateSeqIfNeeded(dir) {
+  if (existsSync(join(dir, SEQ_NAME))) return
+  const file = outboxFile(dir)
+  const entries = []
+  if (existsSync(file)) {
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      const t = line.trim()
+      if (!t) continue
+      try {
+        const e = JSON.parse(t)
+        if (e && typeof e.id === 'string' && typeof e.channel === 'string') entries.push(e)
+      } catch { /* 坏行在 readOutbox 里处理，这里只计数 */ }
+    }
+  }
+  let maxSeq = 0
+  entries.forEach((e, i) => {
+    if (typeof e.seq !== 'number' || e.seq <= 0) e.seq = i + 1
+    if (e.seq > maxSeq) maxSeq = e.seq
+  })
+  if (existsSync(file)) {
+    const tmp = file + '.tmp'
+    writeFileSync(tmp, entries.map((e) => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : ''))
+    renameSync(tmp, file)
+  }
+  writeSeq(dir, maxSeq)
+}
+
 /** 读出全部待同步条目。坏行跳过并告警，不中断。 */
-export function readOutbox(dir = defaultDir()) {
+export function readOutbox(dir = defaultDir(), since = 0) {
+  migrateSeqIfNeeded(dir)
   const file = outboxFile(dir)
   if (!existsSync(file)) return []
   const entries = []
@@ -78,7 +144,7 @@ export function readOutbox(dir = defaultDir()) {
     if (!t) continue
     try {
       const e = JSON.parse(t)
-      if (e && typeof e.id === 'string' && typeof e.channel === 'string') entries.push(e)
+      if (e && typeof e.id === 'string' && typeof e.channel === 'string' && (e.seq || 0) > since) entries.push(e)
     } catch (err) {
       console.error('[sync-outbox] 坏行跳过:', err?.message || err)
     }
@@ -103,3 +169,19 @@ export function ackOutbox(ids, dir = defaultDir()) {
   renameSync(tmp, file)
   return before.length - kept.length
 }
+
+/**
+ * 按游标确认：丢弃 seq <= cursor 的条目（双向 op log 的标准 ack）。
+ * @returns 移除条数
+ */
+export function ackOutboxCursor(cursor, dir = defaultDir()) {
+  const c = Number(cursor) || 0
+  const file = outboxFile(dir)
+  const before = readOutbox(dir)
+  const kept = before.filter((e) => (e.seq || 0) > c)
+  const tmp = file + '.tmp'
+  writeFileSync(tmp, kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length ? '\n' : ''))
+  renameSync(tmp, file)
+  return before.length - kept.length
+}
+

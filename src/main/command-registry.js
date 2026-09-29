@@ -27,16 +27,23 @@ export class CommandRegistry {
   }
 
   invoke(name, args = []) {
-    if (!Array.isArray(args)) throw new TypeError('command arguments must be an array')
-    const handler = this.#commands.get(name)
-    if (!handler) throw new Error(`unknown command: ${name}`)
-
-    const complete = (result) => {
+    return this.invokeWithoutHooks(name, args).then((result) => {
       if (!this.#onSuccess) return result
       const hook = this.#onSuccess(name, args, result)
       return hook && typeof hook.then === 'function' ? hook.then(() => result) : result
-    }
+    })
+  }
+
+  /**
+   * Invoke a command without the onSuccess hook (no outbox recording).
+   * Used by the Mac sync endpoint (/sync/ops) to apply VM-produced ops locally:
+   * the op originated on the VM, so recording it into the Mac outbox would loop.
+   */
+  invokeWithoutHooks(name, args = []) {
+    if (!Array.isArray(args)) throw new TypeError('command arguments must be an array')
+    const handler = this.#commands.get(name)
+    if (!handler) throw new Error(`unknown command: ${name}`)
     const result = handler(...args)
-    return result && typeof result.then === 'function' ? result.then(complete) : complete(result)
+    return result && typeof result.then === 'function' ? result : Promise.resolve(result)
   }
 }

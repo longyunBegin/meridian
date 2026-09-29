@@ -6,10 +6,10 @@ import {
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
   falseKillByChannel,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
-  appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
+  appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -18,6 +18,7 @@ import {
   getReading, readingsPage, readingEvidence, latestReadings, sourcesPage,
   assignReading, verifyReadingChain, exportIntent,
   updateTheme, kindToTags, sicToTags,
+  upsertNodeSnapshot,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid, readingSnapshot,
@@ -436,15 +437,17 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   const imported = []
   for (const l of result.lemmas) {
     if (l.action === 'merge' && l.mergeInto) {
-      addSource(l.mergeInto, {
+      const source = {
         kind: l.sourceKind || result.label.kind || '独立媒体',
         label: l.label || result.label.kind || '未注明',
         at: today(), rawId: raw.id,
         ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
         ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
         ...(result.resolvedChannel?.fetchedAt ? { fetchedAt: result.resolvedChannel.fetchedAt } : {}),
-      })
-      imported.push({ title: l.title, action: 'merge', id: l.mergeInto })
+      }
+      addSource(l.mergeInto, source)
+      // 同步用：VM 侧把这次 merge 记成 db:addSource op 时需要 source 本体
+      imported.push({ title: l.title, action: 'merge', id: l.mergeInto, source })
       continue
     }
     const node = addNode({
@@ -523,6 +526,10 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   if (!registry || typeof registry.register !== 'function') throw new TypeError('registry.register is required')
   const commands = registry
   commands.register('db:stats', () => stats())
+  // 双向 op log：VM 侧 capture 结果的按 id 幂等 upsert（只进 VM_OP_CHANNELS，不进 OUTBOX_CHANNELS，不回环）。
+  commands.register('inbox:upsertItem', (item) => upsertInboxItem(item))
+  commands.register('db:upsertNode', (node) => upsertNodeSnapshot(node))
+  commands.register('raw:upsert', (entry) => upsertRaw(entry))
   // 反向同步快照导出：VM 桥用它拿 readingSnapshot()（persist 写盘的同一形状），推给 Mac。
   // 只读，不进 outbox 白名单。
   commands.register('sync:snapshot', () => readingSnapshot())
@@ -932,7 +939,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       emit('db:changed')
       return {
         ok: true, autoImported: true, imported, count: imported.length,
-        intakeEventId: intakeEvent.id,
+        intakeEventId: intakeEvent.id, rawId,
       }
     }
 

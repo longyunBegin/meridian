@@ -10,8 +10,9 @@
  */
 
 import { CommandRegistry } from '../src/main/command-registry.js'
-import { load } from '../src/main/store.js'
+import { load, getNode, getRaw } from '../src/main/store.js'
 import { registerDomainCommands } from '../src/main/domain-commands.js'
+import { recordOutbox } from '../src/main/sync-outbox.js'
 import { readFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
@@ -83,6 +84,74 @@ function checkAuth(req) {
   return h === `Bearer ${TOKEN}`
 }
 
+/**
+ * 把一次 inbox:capture 的结果翻译成 VM op，记入本机 outbox（sync-outbox.jsonl）。
+ * op 形状与 Mac outbox 完全一致 {id,ts,seq,channel,args}，channel 限 VM_OP_CHANNELS：
+ *   - inbox:upsertItem  待裁决条目（pending / route-proposal），按 id 插入
+ *   - db:upsertNode     autoImport 新建的节点快照，按 id 插入（已存在跳过，不碰 confidence）
+ *   - db:addSource      autoImport merge：给已存在节点追加来源（去重收敛）
+ *   - raw:upsert        autoImport 的原文记录，按 id 插入
+ * 审计类副作用（intake 事件、trace）不同步，只同步主数据。
+ *
+ * 导出供测试（test/vm-oplog.test.mjs 用 MERIDIAN_SERVICE_NOLISTEN=1 导入本模块，
+ * 不占用 3791 端口）。
+ */
+export function recordVmCaptureOps(result) {
+  try {
+    if (!result || typeof result !== 'object') return
+    if (result.item) recordOutbox('inbox:upsertItem', [result.item])
+    for (const p of result.routeProposals || []) recordOutbox('inbox:upsertItem', [p])
+    for (const im of result.imported || []) {
+      if (im.action === 'new' && im.id) {
+        const node = getNode(im.id)
+        if (node) recordOutbox('db:upsertNode', [node])
+      } else if (im.action === 'merge' && im.id && im.source) {
+        recordOutbox('db:addSource', [im.id, im.source])
+      }
+    }
+    if (result.autoImported && result.rawId) {
+      const raw = getRaw(result.rawId)
+      if (raw) recordOutbox('raw:upsert', [raw])
+    }
+  } catch (e) {
+    console.error(`[meridian-service] VM op 记录失败（已跳过，不影响本次调用）: ${e?.message || e}`)
+  }
+}
+
+/**
+ * 把一次 inbox:capture 的结果翻译成 VM op，记入本机 outbox（sync-outbox.jsonl）。
+ * op 形状与 Mac outbox 完全一致 {id,ts,seq,channel,args}，channel 限 VM_OP_CHANNELS：
+ *   - inbox:upsertItem  待裁决条目（pending / route-proposal），按 id 插入
+ *   - db:upsertNode     autoImport 新建的节点快照，按 id 插入（已存在跳过，不碰 confidence）
+ *   - db:addSource      autoImport merge：给已存在节点追加来源（去重收敛）
+ *   - raw:upsert        autoImport 的原文记录，按 id 插入
+ * 审计类副作用（intake 事件、trace）不同步，只同步主数据。
+ *
+ * 导出供测试（test/vm-oplog.test.mjs 用 MERIDIAN_SERVICE_NOLISTEN=1 导入本模块，
+ * 不占用 3791 端口）。
+ */
+export function recordVmCaptureOps(result) {
+  try {
+    if (!result || typeof result !== 'object') return
+    if (result.item) recordOutbox('inbox:upsertItem', [result.item])
+    for (const p of result.routeProposals || []) recordOutbox('inbox:upsertItem', [p])
+    for (const im of result.imported || []) {
+      if (im.action === 'new' && im.id) {
+        const node = getNode(im.id)
+        if (node) recordOutbox('db:upsertNode', [node])
+      } else if (im.action === 'merge' && im.id && im.source) {
+        recordOutbox('db:addSource', [im.id, im.source])
+      }
+    }
+    if (result.autoImported && result.rawId) {
+      const raw = getRaw(result.rawId)
+      if (raw) recordOutbox('raw:upsert', [raw])
+    }
+  } catch (e) {
+    console.error('[meridian-service] VM op 记录失败（已跳过，不影响本次调用）: ' + (e?.message || e))
+  }
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
@@ -119,7 +188,12 @@ const server = createServer(async (req, res) => {
       const args = Array.isArray(body.args) ? body.args : []
 
       try {
-        const result = await registry.invoke(command, args)
+if (!process.env.MERIDIAN_SERVICE_NOLISTEN) {
+  server.listen(PORT, HOST, () => {
+    console.log(`[meridian-service] listening on http://${HOST}:${PORT} (${registry.names().length} commands, schema v${schemaVersion})`)
+    if (!TOKEN) console.warn('[meridian-service] 警告: token 为空，认证默认拒绝全部请求（配好 service/config.json 再用）')
+  })
+}
         return ok(res, result)
       } catch (e) {
         return err(res, 500, e?.message || String(e), DEBUG ? e?.stack : undefined)
@@ -132,7 +206,12 @@ const server = createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, HOST, () => {
-  console.log(`[meridian-service] listening on http://${HOST}:${PORT} (${registry.names().length} channels, schema v${schemaVersion})`)
-  if (!TOKEN) console.warn('[meridian-service] 警告: token 为空，认证默认拒绝全部请求（配好 service/config.json 再用）')
-})
+        const result = await registry.invoke(command, args)
+        // 双向 op log 的 VM 一半：VM 本机产生的变更记 op，供桥推给 Mac。
+        // 桥重放 Mac op 时带 X-Meridian-Replay 头，那些不记（源头在 Mac，避免回环）。
+        // 目前 VM 侧唯一的写入者是主题追踪的 inbox:capture；结果是确定的数据
+        // （条目/节点/来源/原文），记成 upsert 类 op，Mac 侧幂等应用。
+        // 注意：绝不重放 pipeline 本身（非确定性），只同步结果。
+        if (req.headers['x-meridian-replay'] !== '1' && command === 'inbox:capture') {
+          recordVmCaptureOps(result)
+        }
