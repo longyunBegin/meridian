@@ -15,6 +15,8 @@ try {
   const macLibrary = join(macLib, 'libnode.147.dylib')
   writeFileSync(macNode, 'mac-node executable')
   writeFileSync(macLibrary, 'libnode shared library')
+  // Homebrew ships libnode.*.dylib read-only; the staged copy must not inherit that.
+  chmodSync(macLibrary, 0o444)
   const macCommandCalls = []
   const macRun = (command, args) => {
     macCommandCalls.push([command, args])
