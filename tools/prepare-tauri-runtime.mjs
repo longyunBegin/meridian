@@ -98,9 +98,14 @@ function copyMacOSNodeLibrary(execPath, outputDir, runCommand) {
 
   // Relocating node.exe into the app changes its executable directory. This
   // rpath makes @rpath/libnode.*.dylib resolve beside the copied executable.
+  const stagedNode = join(outputDir, 'node.exe')
   if (!rpaths.includes('@executable_path')) {
-    runCommand('install_name_tool', ['-add_rpath', '@executable_path', join(outputDir, 'node.exe')])
+    runCommand('install_name_tool', ['-add_rpath', '@executable_path', stagedNode])
   }
+  // install_name_tool invalidates the copied executable's signature. Always
+  // sign the staged binary after its final load-command state is established;
+  // this also makes staging deterministic when the source already has the rpath.
+  runCommand('codesign', ['--force', '--sign', '-', stagedNode])
   return copiedLibraries
 }
 
