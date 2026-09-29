@@ -8,7 +8,7 @@
 ![Platform](https://img.shields.io/badge/平台-macOS_|_Windows-blue)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Node](https://img.shields.io/badge/Node-≥22.13-339933)
-![Tests](https://img.shields.io/badge/测试-1142_通过-brightgreen)
+![Tests](https://img.shields.io/badge/测试-1311_通过-brightgreen)
 
 ---
 
@@ -104,7 +104,12 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 ### 直接下载安装包（推荐）
 
-桌面包目标为 Tauri 2：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 可能包含早期构建。
+从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
+
+- **macOS（Apple Silicon）**：`Meridian_0.1.0_aarch64.dmg`——Tauri 2 构建，已在本机验证。未签名，首次打开请右键 → 打开。
+- **Windows**：`Meridian Setup 0.1.0.exe`（NSIS）。Tauri 的 Windows 安装包需在 Windows 本机构建，当前版本仍为 Electron 构建；Tauri Windows 包待目标系统构建验证。
+
+> Tauri 2 桌面壳：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。Linux 不支持。
 
 ### 从源码运行
 
@@ -260,7 +265,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
 **支持哪些桌面系统？**
-本分支目标为 macOS 和 Windows；Linux 不支持。Tauri 迁移分支的 macOS/Windows 安装包仍待对应系统构建验证。
+本分支目标为 macOS 和 Windows；Linux 不支持。macOS（Apple Silicon）DMG 已由 Tauri 工具链构建验证；Windows 安装包仍待对应系统构建验证。
 
 **数据存在哪？**
 macOS：`~/Library/Application Support/脉络/meridian.json`；Windows：`%APPDATA%\脉络\meridian.json`。原文层 `raw.jsonl` 位于同目录。
