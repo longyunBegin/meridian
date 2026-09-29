@@ -1,8 +1,7 @@
 /**
  * Mac 端同步端点（Tailscale 反向同步 Phase 3-1）。
  *
- * 在 main process 内独立运行的轻量 HTTP 服务，与 Electron 窗口无关，
- * app ready 后由 main.js 启动。VM 上的同步桥经 Tailscale 调用它：
+ * 独立运行的轻量 HTTP 服务，由桌面 sidecar 显式启动。VM 上的同步桥经 Tailscale 调用它：
  *
  *   GET  /sync/health       → { ok, outbox: 待同步条数 }
  *   GET  /sync/outbox       → { ok, entries: [{ id, ts, channel, args }] }
@@ -27,6 +26,7 @@ import { join } from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { readOutbox, ackOutbox, outboxCount } from './sync-outbox.js'
 import { load, invalidateDbCache } from './store.js'
+import { dataDirectory, emitPlatformEvent } from './runtime-services.js'
 
 export const SYNC_CONFIG_NAME = 'sync.config.json'
 const BODY_LIMIT = 32 * 1024 * 1024 // 快照约 MB 级
@@ -89,10 +89,8 @@ export function applySnapshotToDisk(userDataDir, snapshot, getRawSettings) {
   load()
 }
 
-/** main.js 用的真实依赖。 */
-export function defaultSyncDeps() {
-  const { app, BrowserWindow } = globalThis.__electron
-  const userDataDir = app.getPath('userData')
+/** Build sync dependencies from explicit filesystem and event services. */
+export function defaultSyncDeps({ userDataDir = dataDirectory(), broadcast = () => emitPlatformEvent('db:changed') } = {}) {
   const cfg = readSyncConfig(userDataDir) || {}
   return {
     token: cfg.token || '',
@@ -102,11 +100,7 @@ export function defaultSyncDeps() {
     hasSqlite: () => existsSync(join(userDataDir, 'meridian.sqlite')),
     getRawSettings: () => load().settings,
     applySnapshot: (snapshot) => applySnapshotToDisk(userDataDir, snapshot, () => load().settings),
-    broadcast: () => {
-      for (const w of BrowserWindow.getAllWindows()) {
-        try { w.webContents.send('db:changed') } catch { /* 窗口已关 */ }
-      }
-    },
+    broadcast,
   }
 }
 
@@ -164,8 +158,8 @@ export function createSyncServer(deps) {
 }
 
 /** main.js 调用：读配置 → 起服务。无 token 则不启动并打日志（fail-closed）。 */
-export async function startSyncServer() {
-  const deps = defaultSyncDeps()
+export async function startSyncServer(options) {
+  const deps = defaultSyncDeps(options)
   if (!deps.token) {
     console.warn('[sync] sync.config.json 缺失或 token 为空，Mac 同步端点未启动。按 src/main/sync.config.example.json 创建后再重启 App。')
     return null

@@ -1,7 +1,7 @@
 /**
- * IPC 层测试：收件箱链路 + 原文层 + 其他 handler。
+ * 领域命令测试：收件箱链路 + 原文层 + 其他服务。
  *
- * 运行：node test/ipc.test.mjs
+ * 运行：node test/commands.test.mjs
  */
 import { rmSync, mkdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -9,16 +9,15 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DATA = join(ROOT, 'test/.tmp/ipc-data')
-process.env.MERIDIAN_TEST_DATA = DATA
+process.env.MERIDIAN_USER_DATA_DIR = DATA
 
 rmSync(DATA, { recursive: true, force: true })
 mkdirSync(DATA, { recursive: true })
 
-const stub = await import('./electron-stub.mjs')
-globalThis.__electron = stub
+const { registry, invoke } = await import('./runtime-harness.mjs').then(({ createCommandTestHarness }) => createCommandTestHarness(DATA))
 
 const store = await import('../src/main/store.js')
-const { register: registerIpc } = await import('../src/main/ipc.js')
+const { registerDomainCommands } = await import('../src/main/domain-commands.js')
 
 let pass = 0
 let fail = 0
@@ -26,11 +25,11 @@ const ok = (name, cond, extra = '') => {
   cond ? pass++ : fail++
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
-const fire = (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
-const fireAsync = async (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
+const fire = invoke
+const fireAsync = invoke
 
 store.load()
-registerIpc({ getMainWindow: () => undefined })
+registerDomainCommands({ registry })
 
 const theme = store.addTheme('IPC 测试主题')
 
@@ -103,7 +102,7 @@ ok('被合并的命题多了一个源', target.sources.length === 1, `实际 ${t
 ok('新来源取了类型', target.sources[0]?.kind === '券商研报')
 ok('新来源也挂了 rawId', typeof target.sources[0]?.rawId === 'string')
 
-console.log('\n— 原文层的 IPC —')
+console.log('\n— 原文相关命令 —')
 ok('raw:stats 报得出条数', fire('raw:stats').count === 1)
 ok('raw:get 读得到', fire('raw:get', node.sources[0].rawId)?.text === TEXT)
 ok('raw:get 不存在的 id 返回 null', fire('raw:get', 'nope') === null)

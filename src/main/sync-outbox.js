@@ -28,6 +28,7 @@
 import { appendFileSync, readFileSync, existsSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { uid } from './store.js'
+import { dataDirectory } from './runtime-services.js'
 
 /** 收录进 outbox 的 channel 白名单。 */
 export const OUTBOX_CHANNELS = new Set([
@@ -47,13 +48,13 @@ export const OUTBOX_CHANNELS = new Set([
 const OUTBOX_NAME = 'sync-outbox.jsonl'
 
 function defaultDir() {
-  return globalThis.__electron.app.getPath('userData')
+  return dataDirectory()
 }
 
 export const outboxFile = (dir = defaultDir()) => join(dir, OUTBOX_NAME)
 
 /**
- * 记录一条 outbox。只在 handler 成功返回后调用；记录失败绝不影响用户操作本身。
+ * 记录一条 outbox。只在领域命令成功返回后调用；记录失败绝不影响用户操作本身。
  * @returns entry id，失败返回 null
  */
 export function recordOutbox(channel, args, dir = defaultDir()) {
@@ -101,21 +102,4 @@ export function ackOutbox(ids, dir = defaultDir()) {
   writeFileSync(tmp, kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length ? '\n' : ''))
   renameSync(tmp, file)
   return before.length - kept.length
-}
-
-/**
- * 把 ipcMain 包装成 outbox 感知版：白名单 channel 的 handler 成功后自动记录。
- * 非白名单 channel 原样透传。service（shim）与测试默认不启用。
- */
-export function withOutbox(rawIpcMain) {
-  return {
-    handle: (channel, fn) => {
-      if (!OUTBOX_CHANNELS.has(channel)) return rawIpcMain.handle(channel, fn)
-      return rawIpcMain.handle(channel, async (event, ...args) => {
-        const result = await fn(event, ...args)
-        recordOutbox(channel, args)
-        return result
-      })
-    },
-  }
 }

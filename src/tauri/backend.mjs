@@ -1,8 +1,10 @@
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { CommandRegistry } from '../main/command-registry.js'
+import { configurePlatformServices } from '../main/runtime-services.js'
+import { OUTBOX_CHANNELS, recordOutbox } from '../main/sync-outbox.js'
 
 const host = '127.0.0.1'
 const token = process.env.MERIDIAN_SIDECAR_TOKEN
@@ -17,39 +19,20 @@ function defaultDataDir() {
 
 const userData = defaultDataDir()
 mkdirSync(userData, { recursive: true })
-const handlers = new Map()
 const events = []
-const emit = (name, payload = null) => {
+function emit(name, payload = null) {
   events.push({ name, payload })
   if (events.length > 500) events.splice(0, events.length - 500)
 }
-const ipcMain = {
-  handle: (name, fn) => handlers.set(name, fn),
-  on: (name, fn) => handlers.set(name, fn),
-  removeHandler: (name) => handlers.delete(name),
-}
-const app = {
-  isPackaged: true,
-  getPath: (name) => name === 'appData' ? (process.env.APPDATA || homedir()) : userData,
-  on: () => {},
-  quit: () => process.exit(0),
-}
-function openNative(target, external = false) {
-  const command = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open'
-  const child = spawn(command, [target], { detached: true, stdio: 'ignore', windowsHide: true })
-  child.once('error', () => {})
-  child.unref()
-  return Promise.resolve(external ? true : '')
-}
-const shell = { openPath: (path) => openNative(path), openExternal: (url) => openNative(url, true) }
-const clipboard = { readText: () => '' }
-const webContents = { send: emit, once: () => {}, on: () => {} }
-const mainWindow = { webContents, isMinimized: () => false, isVisible: () => true, show: () => {}, focus: () => {}, restore: () => {} }
-globalThis.__electron = { app, ipcMain, shell, clipboard, BrowserWindow: { getAllWindows: () => [mainWindow] } }
+configurePlatformServices({ dataDirectory: userData, emitEvent: emit })
 
+const registry = new CommandRegistry({
+  onSuccess: (name, args) => {
+    if (OUTBOX_CHANNELS.has(name)) recordOutbox(name, args, userData)
+  },
+})
 const { load } = await import('../main/store.js')
-const { register } = await import('../main/ipc.js')
+const { registerDomainCommands } = await import('../main/domain-commands.js')
 const { startAgentServer } = await import('../main/agent-server.js')
 const { ingestReadings } = await import('../main/reading-ingest.js')
 const { startSyncServer } = await import('../main/sync-server.js')
@@ -61,17 +44,18 @@ const startupPrune = store.lastInboxPrune()
 if (startupPrune?.removed) emit('inbox:pruned', startupPrune)
 let agentServer = null
 let agentError = null
-register({
-  getMainWindow: () => mainWindow,
+registerDomainCommands({
+  registry,
+  emit,
   getAgentConnection: () => ({
     available: !!agentServer, host: store.settings().agentHost || host,
     port: agentServer?.port || null, path: join(userData, 'agent-port.json'),
     requireToken: agentServer?.requireToken, error: agentError,
   }),
-  enableOutbox: true,
 })
 
-try { await startSyncServer() } catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
+try { await startSyncServer({ userDataDir: userData, broadcast: () => emit('db:changed') }) }
+catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
 try {
   agentServer = await startAgentServer({
     userData, ingest: ingestReadings, getIntent: store.exportIntent,
@@ -109,10 +93,9 @@ const server = createServer(async (request, response) => {
   if (request.url !== '/invoke') return reply(response, 404, { error: 'not-found' })
   try {
     const body = await readBody(request)
-    if (typeof body.channel !== 'string' || !Array.isArray(body.args)) return reply(response, 400, { error: 'invalid-request' })
-    const handler = handlers.get(body.channel)
-    if (!handler) return reply(response, 404, { error: `unknown-channel:${body.channel}` })
-    const result = await handler({ sender: webContents }, ...body.args)
+    if (typeof body.command !== 'string' || !Array.isArray(body.args)) return reply(response, 400, { error: 'invalid-request' })
+    if (!registry.has(body.command)) return reply(response, 404, { error: `unknown-command:${body.command}` })
+    const result = await registry.invoke(body.command, body.args)
     return reply(response, 200, { result: result === undefined ? null : result })
   } catch (error) {
     console.error('[sidecar] command failed:', error?.stack || error)

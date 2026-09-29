@@ -1,6 +1,6 @@
 /**
  * 定时器：每 15 分钟检查到期结算，发通知 + dock 角标。
- * 纯函数部分（dueToNotify / isQuietHours）不依赖 Electron，可在测试桩里直接断言。
+ * 纯函数部分（dueToNotify / isQuietHours）不依赖桌面宿主，可在 Node 中直接断言。
  *
  * 2026-09-26：通道自动拉取已整体移除，调度器只保留到期结算通知。
  */

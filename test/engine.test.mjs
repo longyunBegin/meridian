@@ -1,21 +1,17 @@
 /**
  * 引擎测试：传导、结算、校准曲线、来源收敛度、误杀审计、共同前提、级联删除、模板。
  * 运行：npm test
- *
- * store.js 顶部用 `globalThis.__electron` 获取 electron，Node 下没有这个模块，
- * 所以先把它替换成 stub 再动态导入。替换只针对副本，不动源码。
  */
-import { readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { rmSync, mkdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SRC = join(ROOT, 'src/main/store.js')
-const CRYPTO_SRC = join(ROOT, 'src/main/crypto.js')
-const TMP_DIR = join(ROOT, 'test/.tmp')
-const TMP = join(TMP_DIR, 'store.under-test.mjs')
-const CRYPTO_TMP = join(TMP_DIR, 'crypto.js')
-const DATA = join(TMP_DIR, 'data')
+const DATA = join(ROOT, 'test/.tmp/data')
+process.env.MERIDIAN_USER_DATA_DIR = DATA
+rmSync(DATA, { recursive: true, force: true })
+mkdirSync(DATA, { recursive: true })
+const s = await import('../src/main/store.js')
 
 let pass = 0
 let fail = 0
@@ -24,25 +20,6 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
 
-mkdirSync(TMP_DIR, { recursive: true })
-writeFileSync(CRYPTO_TMP, readFileSync(CRYPTO_SRC, 'utf8'))
-// store.js 现在依赖 llmlog.js（账本落库接口注入），副本目录里也要有一份
-writeFileSync(join(TMP_DIR, 'llmlog.js'), readFileSync(join(ROOT, 'src/main/llmlog.js'), 'utf8'))
-writeFileSync(join(TMP_DIR, 'reading-store.js'), readFileSync(join(ROOT, 'src/main/reading-store.js'), 'utf8'))
-// store.js 现在依赖 service/db-schema.mjs（SQLite 持久层契约），副本目录里也要有一份
-mkdirSync(join(TMP_DIR, 'service'), { recursive: true })
-writeFileSync(join(TMP_DIR, 'service', 'db-schema.mjs'), readFileSync(join(ROOT, 'service/db-schema.mjs'), 'utf8'))
-writeFileSync(TMP, readFileSync(SRC, 'utf8')
-  .replace(
-    "const { app } = globalThis.__electron",
-    `const app = { getPath: () => ${JSON.stringify(DATA)} }`,
-  )
-  // 副本在 test/.tmp 里，../../service/ 会指到仓库外，改成副本内的 ./service/
-  .replace("'../../service/db-schema.mjs'", "'./service/db-schema.mjs'"),
-)
-rmSync(DATA, { recursive: true, force: true })
-
-const s = await import(pathToFileURL(TMP).href)
 const { load, addNode, updateNode, repropagate, settleLemma, calibration, dueSettlements, descendants, stats } = s
 load()
 
@@ -81,7 +58,7 @@ ok('应用按新权重重算为 52', Math.abs(app_.confidence - 52) < 0.01, `实
 ok('云仍为 70', Math.abs(cloud.confidence - 70) < 0.01, `实际 ${cloud.confidence}`)
 
 console.log('\n— 结算与校准曲线 —')
-const { version, genericFallback, instantiate } = await import(pathToFileURL(join(ROOT, 'src/main/templates.js')).href)
+const { version, genericFallback, instantiate } = await import('../src/main/templates.js')
 const settleTheme = s.addTheme('结算主题')
 const p1 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 确信', confidence: 90, settlement: { date: '2026-01-01' } })
 const p2 = addNode({ themeId: settleTheme.id, parentId: null, kind: 'lemma', title: '90% 错', confidence: 92, settlement: { date: '2026-01-01' } })

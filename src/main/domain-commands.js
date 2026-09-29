@@ -1,4 +1,3 @@
-const { ipcMain, shell, app, clipboard } = globalThis.__electron
 import {
   load, addNode, updateNode, removeNode, restoreNode, purgeDead, repropagate, suggestParent, settleLemma, getNode,
   allThemes, addTheme, removeTheme, restoreTheme, renameTheme, deletedThemes, allNodes, rootNodes, childrenOf,
@@ -29,9 +28,9 @@ import { tracked } from './llmlog.js'
 import { genericFallback, instantiate } from './templates.js'
 
 import { discoverTags } from './discover.js'
-import { withOutbox } from './sync-outbox.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
+import { emitPlatformEvent } from './runtime-services.js'
 import { ingestReadings } from './reading-ingest.js'
 
 function hashText(text) {
@@ -517,59 +516,55 @@ function tokenOverlap(a, b) {
   return false
 }
 
-// ---------------------------------------------------------------- ipc
+// ---------------------------------------------------------------- domain commands
 
-/**
- * 窗口相关的东西由 main.js 注入，不在这里 import。
- */
-function register({ getMainWindow, getAgentConnection = () => ({ available: false }), enableOutbox = false }) {
-  // 反向同步 outbox：只在 Mac 真实 App 显式开启（main.js 传 enableOutbox: true）。
-  // service（shim）与测试默认关闭。用局部变量遮蔽模块顶层的 ipcMain，
-  // 下面全部 ipcMain.handle 调用零改动，白名单 channel 自动被包装记录。
-  const ipcMain = enableOutbox ? withOutbox(globalThis.__electron.ipcMain) : globalThis.__electron.ipcMain
-  ipcMain.handle('db:stats', () => stats())
+/** Register domain operations with a transport-neutral command registry. */
+function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentConnection = () => ({ available: false }) }) {
+  if (!registry || typeof registry.register !== 'function') throw new TypeError('registry.register is required')
+  const commands = registry
+  commands.register('db:stats', () => stats())
   // 反向同步快照导出：VM 桥用它拿 readingSnapshot()（persist 写盘的同一形状），推给 Mac。
   // 只读，不进 outbox 白名单。
-  ipcMain.handle('sync:snapshot', () => readingSnapshot())
-  ipcMain.handle('db:nodes', (_, themeId) => allNodes().filter((n) => n.themeId === themeId))
-  ipcMain.handle('db:allNodes', () => allNodes())
-  ipcMain.handle('db:getNode', (_, id) => getNode(id))
-  ipcMain.handle('db:due', () => dueSettlements())
-  ipcMain.handle('db:calibration', () => calibration())
-  ipcMain.handle('db:filterCalibration', () => filterCalibration())
-  ipcMain.handle('db:falseKill', (_, days) => falseKillAudit(days))
-  ipcMain.handle('db:falseKillByChannel', (_, days) => falseKillByChannel(days))
-  ipcMain.handle('db:events', () => propagationEvents(14).slice(0, 40))
-  ipcMain.handle('db:conflicts', () => allConflicts().filter((c) => !c.resolved))
-  ipcMain.handle('db:resolveConflict', (_, id, verdict) => {
+  commands.register('sync:snapshot', () => readingSnapshot())
+  commands.register('db:nodes', (themeId) => allNodes().filter((n) => n.themeId === themeId))
+  commands.register('db:allNodes', () => allNodes())
+  commands.register('db:getNode', (id) => getNode(id))
+  commands.register('db:due', () => dueSettlements())
+  commands.register('db:calibration', () => calibration())
+  commands.register('db:filterCalibration', () => filterCalibration())
+  commands.register('db:falseKill', (days) => falseKillAudit(days))
+  commands.register('db:falseKillByChannel', (days) => falseKillByChannel(days))
+  commands.register('db:events', () => propagationEvents(14).slice(0, 40))
+  commands.register('db:conflicts', () => allConflicts().filter((c) => !c.resolved))
+  commands.register('db:resolveConflict', (id, verdict) => {
     if (!['a', 'b', 'both'].includes(verdict)) return { ok: false, error: '请选择有效的裁决' }
     const result = resolveConflict(id, verdict)
-    if (result) getMainWindow?.()?.webContents.send('db:changed')
+    if (result) emit('db:changed')
     return result
   })
-  ipcMain.handle('db:verdicts', () => allVerdicts())
-  ipcMain.handle('db:premises', () => sharedPremises())
-  ipcMain.handle('db:spawn', (_, branchId) => spawnFromScaffold(branchId))
-  ipcMain.handle('db:suggestParent', (_, text, themeId) => suggestParent(text, themeId))
+  commands.register('db:verdicts', () => allVerdicts())
+  commands.register('db:premises', () => sharedPremises())
+  commands.register('db:spawn', (branchId) => spawnFromScaffold(branchId))
+  commands.register('db:suggestParent', (text, themeId) => suggestParent(text, themeId))
 
-  ipcMain.handle('db:addNode', (_, input) => addNode(input))
-  ipcMain.handle('db:updateNode', (_, id, patch) => updateNode(id, patch))
-  ipcMain.handle('db:removeNode', (_, id) => removeNode(id))
-  ipcMain.handle('db:restoreNode', (_, id) => restoreNode(id))
-  ipcMain.handle('db:purgeDead', (_, scope, opts) => purgeDead(scope, opts))
-  ipcMain.handle('db:repropagate', (_, id) => repropagate(id))
-  ipcMain.handle('db:settle', (_, id, correct) => settleLemma(id, correct))
-  ipcMain.handle('db:addSource', (_, id, source) => addSource(id, source))
+  commands.register('db:addNode', (input) => addNode(input))
+  commands.register('db:updateNode', (id, patch) => updateNode(id, patch))
+  commands.register('db:removeNode', (id) => removeNode(id))
+  commands.register('db:restoreNode', (id) => restoreNode(id))
+  commands.register('db:purgeDead', (scope, opts) => purgeDead(scope, opts))
+  commands.register('db:repropagate', (id) => repropagate(id))
+  commands.register('db:settle', (id, correct) => settleLemma(id, correct))
+  commands.register('db:addSource', (id, source) => addSource(id, source))
 
-  ipcMain.handle('theme:all', () => allThemes())
-  ipcMain.handle('theme:deleted', () => deletedThemes())
-  ipcMain.handle('theme:add', (_, name) => addTheme(name))
-  ipcMain.handle('theme:remove', (_, id) => removeTheme(id))
-  ipcMain.handle('theme:restore', (_, id) => restoreTheme(id))
-  ipcMain.handle('theme:rename', (_, id, name) => renameTheme(id, name))
-  ipcMain.handle('theme:update', (_, id, patch) => updateTheme(id, patch))
-  ipcMain.handle('theme:tagLibrary:updateTag', (_, themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
-  ipcMain.handle('theme:tagLibrary:deleteTags', (_, themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
+  commands.register('theme:all', () => allThemes())
+  commands.register('theme:deleted', () => deletedThemes())
+  commands.register('theme:add', (name) => addTheme(name))
+  commands.register('theme:remove', (id) => removeTheme(id))
+  commands.register('theme:restore', (id) => restoreTheme(id))
+  commands.register('theme:rename', (id, name) => renameTheme(id, name))
+  commands.register('theme:update', (id, patch) => updateTheme(id, patch))
+  commands.register('theme:tagLibrary:updateTag', (themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
+  commands.register('theme:tagLibrary:deleteTags', (themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
 
   /** 正在铺骨架的 themeId。渲染层据此显示「生成中」而不是再给一个生成按钮——
    *  曾经建主题后立刻切到脉络页，那一刻节点还没落，界面照常给出「这个主题还没有骨架」
@@ -619,7 +614,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       // 没有进度就只有一句「生成中」，用户只能干等——每阶段起止都推一个事件，
       // 创建页据此点亮步骤。事件丢了也不怕，settle 时按结果一次性校准。
       const emitStage = (stage, state, extra = {}) => {
-        getMainWindow?.()?.webContents.send('theme:scaffoldProgress', { themeId, stage, state, ...extra })
+        emit('theme:scaffoldProgress', { themeId, stage, state, ...extra })
       }
 
       emitStage('skeleton', 'start')
@@ -698,19 +693,19 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       }
   }
 
-  ipcMain.handle('theme:scaffoldResult', (_, themeId) => scaffoldResults.get(themeId) || null)
+  commands.register('theme:scaffoldResult', (themeId) => scaffoldResults.get(themeId) || null)
   // 轮询兜底的另一半：渲染层先问「还在铺吗」，不铺了再取 scaffoldResult。
-  // 曾经只暴露了取结果、没暴露查状态，pollScaffold 每次都抛 No handler registered、
+  // 曾经只暴露了取结果、没暴露查状态，pollScaffold 每次都抛 No command registered、
   // 被 catch 吞掉——推送事件一丢，用户就永远卡在「骨架生成中」。
-  ipcMain.handle('theme:scaffoldStatus', () => [...scaffolding])
+  commands.register('theme:scaffoldStatus', () => [...scaffolding])
 
   // 建主题分两步：主题立即建好返回（UI 不必卡住），骨架异步铺。
   // 铺完由 db:changed 通知渲染层刷新——用户在等的时候还能看别的东西。
-  ipcMain.handle('theme:setupNew', async (_, description) => {
+  commands.register('theme:setupNew', async (description) => {
     const theme = addTheme(description)
     scaffoldTheme(theme.id, description, settings())
       .then((result) => {
-        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId: theme.id, ...result })
+        emit('theme:scaffolded', { themeId: theme.id, ...result })
       })
       .catch(() => {})
     return { ...theme, degraded: !settings().apiKey }
@@ -718,7 +713,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
 
   // 重新生成骨架：删掉原有的，再走一次 scaffoldTheme。
   // 破坏性操作——UI 必须先提示「将删除原有环节和命题」。
-  ipcMain.handle('theme:regenerate', async (_, themeId) => {
+  commands.register('theme:regenerate', async (themeId) => {
     const theme = allThemes().find((t) => t.id === themeId)
     if (!theme) return { ok: false, error: 'not-found' }
     // 删旧：整棵环节树 + 标签库
@@ -726,7 +721,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     updateTheme(themeId, { tags: [], tagLibrary: [] })
     scaffoldTheme(themeId, theme.name, settings())
       .then((result) => {
-        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId, ...result })
+        emit('theme:scaffolded', { themeId, ...result })
       })
       .catch(() => {})
     return { ok: true }
@@ -734,23 +729,23 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
 
   // 空白主题补生成骨架 + 标签库（E3）
   // 给已有主题补骨架。同样是异步——UI 立即返回，铺完由 theme:scaffolded 通知
-  ipcMain.handle('theme:scaffoldExisting', async (_, themeId, description) => {
+  commands.register('theme:scaffoldExisting', async (themeId, description) => {
     scaffoldTheme(themeId, description, settings())
       .then((result) => {
-        getMainWindow?.()?.webContents.send('theme:scaffolded', { themeId, ...result })
+        emit('theme:scaffolded', { themeId, ...result })
       })
       .catch(() => {})
     return { ok: true, async: true }
   })
 
-  ipcMain.handle('settings:get', () => ({ ...settings(), sourceQuality: SOURCE_QUALITY }))
-  ipcMain.handle('settings:set', (_, patch) => saveSettings(patch))
+  commands.register('settings:get', () => ({ ...settings(), sourceQuality: SOURCE_QUALITY }))
+  commands.register('settings:set', (patch) => saveSettings(patch))
   // 试标：不落库，只为在捕获之前验证打标器通不通、规则命中得对不对
-  ipcMain.handle('label:test', (_, text) => labelSource(settings(), text))
+  commands.register('label:test', (text) => labelSource(settings(), text))
   // Jev 连通性测试：往 baseUrl 本体 POST 一个最小原生请求，一次验证三件事——
   // 通不通（HTTP 200）、key 对不对（401 就挂）、模型有没有（看返回的 model）。
   // 不写账本、不记用量——测试是测试，数据是数据。
-  ipcMain.handle('jev:test', async () => {
+  commands.register('jev:test', async () => {
     const s = settings()
     if (!s.jevKey) return { ok: false, reason: 'no-key' }
     if (!s.jevBaseUrl) return { ok: false, reason: 'no-endpoint' }
@@ -787,7 +782,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
   // Jev 打标测试：强制走 Jev 路径（不静默降级查表），只返回结果、不写账本。
   // jevLabel 自带 20s 超时，这里的竞速只是双保险。
-  ipcMain.handle('jev:labelTest', async (_, text) => {
+  commands.register('jev:labelTest', async (text) => {
     const t = String(text || '').slice(0, 3000)
     if (!t.trim()) return { ok: false, why: 'empty-input' }
     const p = jevLabel(settings(), t)
@@ -795,7 +790,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     try {
       return await Promise.race([
         p,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
+        new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), 20000)),
       ])
     } catch (e) {
       return { ok: false, why: e.message === 'timeout' ? 'timeout' : 'network' }
@@ -804,7 +799,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   // LLM 连通性测试：打一次最小请求，验证 key / 端点 / 模型三件事。
   // max_tokens 必须给足：推理模型（step-3 / o 系列）会把预算全花在 reasoning 上，
   // content 回来是空串、finish_reason 是 length。16 实测不够，512 起。
-  ipcMain.handle('llm:test', async () => {
+  commands.register('llm:test', async () => {
     const s = settings()
     if (!s.apiKey) return { ok: false, reason: 'no-key' }
     const t0 = Date.now()
@@ -843,18 +838,17 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
 
   // 原文层：单独一个 stats，不并进 db:stats——那个每次渲染都调，会把原文文件拖进启动路径
-  ipcMain.handle('raw:stats', () => rawStats())
-  ipcMain.handle('raw:get', (_, id) => getRaw(id))
-  ipcMain.handle('raw:prune', () => pruneRaw())
-  ipcMain.handle('raw:clear', () => clearRaw())
-  ipcMain.handle('io:export', () => exportAll())
-  ipcMain.handle('io:import', (_, json) => importAll(json))
-  ipcMain.handle('io:readClipboard', () => clipboard.readText())
-  ipcMain.handle('db:commonUsGaap', () => COMMON_US_GAAP)
+  commands.register('raw:stats', () => rawStats())
+  commands.register('raw:get', (id) => getRaw(id))
+  commands.register('raw:prune', () => pruneRaw())
+  commands.register('raw:clear', () => clearRaw())
+  commands.register('io:export', () => exportAll())
+  commands.register('io:import', (json) => importAll(json))
+  commands.register('db:commonUsGaap', () => COMMON_US_GAAP)
 
-  ipcMain.handle('agent:process', (_, text, themeId) => processCapture(text, themeId))
+  commands.register('agent:process', (text, themeId) => processCapture(text, themeId))
 
-  ipcMain.handle('agent:socratic', async (_, nodeId) => {
+  commands.register('agent:socratic', async (nodeId) => {
     const node = allNodes().find((n) => n.id === nodeId)
     if (!node) return { ok: false, reason: 'not-found' }
     const context = node.parentId ? pathOf(node.parentId) : ''
@@ -862,28 +856,10 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
 
   // ---- 标的映射：只做可见性，不做信号 ----
-  ipcMain.handle('db:addTicker', (_, id, ticker) => addTicker(id, ticker))
-  ipcMain.handle('db:removeTicker', (_, id, code) => removeTicker(id, code))
-  ipcMain.handle('db:tickerLookup', (_, code, themeId) => nodesByTicker(code, themeId))
-  ipcMain.handle('db:tickers', (_, themeId) => allTickers(themeId))
-
-  // ---- 数据目录 ----
-
-  ipcMain.handle('io:openDataDir', async () => {
-    const path = app.getPath('userData')
-    try {
-      const error = await shell.openPath(path)
-      return error ? { ok: false, error } : { ok: true, path }
-    } catch (e) { return { ok: false, error: e.message || '无法打开数据目录' } }
-  })
-  ipcMain.handle('io:openExternal', (_, url) => {
-    if (typeof url !== 'string') return false
-    try {
-      const u = new URL(url)
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
-    } catch { return false }
-    return shell.openExternal(url)
-  })
+  commands.register('db:addTicker', (id, ticker) => addTicker(id, ticker))
+  commands.register('db:removeTicker', (id, code) => removeTicker(id, code))
+  commands.register('db:tickerLookup', (code, themeId) => nodesByTicker(code, themeId))
+  commands.register('db:tickers', (themeId) => allTickers(themeId))
 
   // ---- 收件箱 ----
   // ⌘⇧V 粘贴 → 免费过滤 → 打标 → 抽取 → 去重 → 冲突 → 闸门 → 自动归位 or 进收件箱
@@ -953,7 +929,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
           noulMaxScore: result.noulMaxScore, provenance: result.resolvedChannel || channel,
         },
       })
-      getMainWindow?.()?.webContents.send('db:changed')
+      emit('db:changed')
       return {
         ok: true, autoImported: true, imported, count: imported.length,
         intakeEventId: intakeEvent.id,
@@ -998,19 +974,19 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return { ok: true, autoImported: false, item, gateReasons: gate.reasons, skipped: result.skipped || null }
   }
 
-  ipcMain.handle('inbox:capture', (_, text, channelMeta, themeId) => runCapture(text, channelMeta, themeId))
+  commands.register('inbox:capture', (text, channelMeta, themeId) => runCapture(text, channelMeta, themeId))
   // 复盘页：LLM 账本
-  ipcMain.handle('llm:usage', () => llmUsage())
+  commands.register('llm:usage', () => llmUsage())
 
-  // 分页：无分页时每次渲染把全部 pending（含 text+lemmas）拉过 IPC，
+  // 分页：无分页时每次渲染把全部 pending（含 text+lemmas）拉过 domain command，
   // 而 refresh() 挂在 db:changed 上——改任何东西都会重跑一遍。
-  ipcMain.handle('inbox:list', (_, { limit = 50, offset = 0 } = {}) => {
+  commands.register('inbox:list', ({ limit = 50, offset = 0 } = {}) => {
     const pending = allInbox()
     return { items: pending.slice(offset, offset + limit), total: pending.length }
   })
-  ipcMain.handle('inbox:ignored', () => ignoredInbox())
+  commands.register('inbox:ignored', () => ignoredInbox())
 
-  ipcMain.handle('inbox:resolve', (_, id, action) => {
+  commands.register('inbox:resolve', (id, action) => {
     // 分类和幂等性由 store 中的原记录决定，不信任客户端的建议元数据。
     const item = resolveInboxItem(id, action)
     if (item && (action === 'accept' || action === 'reject')) markIntakeResolved(id, false)
@@ -1018,7 +994,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
 
   // 批量忽略：今日收件箱分拣用，与单条 inbox:resolve 同语义
-  ipcMain.handle('inbox:resolveMany', (_, ids, action) => {
+  commands.register('inbox:resolveMany', (ids, action) => {
     const resolved = []
     for (const id of ids || []) {
       const item = resolveInboxItem(id, action)
@@ -1028,8 +1004,8 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return { ok: true, resolved }
   })
 
-  // 批量入库：把选中的收件箱条目走捕获入库流水线（override 在 IPC 层应用并记 trace）
-  ipcMain.handle('inbox:import', async (_, themeId, items, overrides) => {
+  // 批量入库：把选中的收件箱条目走捕获入库流水线（override 在 domain command 层应用并记 trace）
+  commands.register('inbox:import', async (themeId, items, overrides) => {
     const s = settings()
     const ovMap = overrides || {}
     const results = []
@@ -1053,7 +1029,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
           results.push({ title: l.title, action: 'merge' })
           continue
         }
-        // IPC 层应用 override
+        // domain command 层应用 override
         const origConfidence = l.confidence
         const origParentId = l.parentId || null
         const finalConfidence = ov.confidence != null ? ov.confidence : l.confidence
@@ -1099,14 +1075,14 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       const hasAnyOverride = Object.keys(ov).length > 0 && (ov.confidence != null || ov.parentId != null)
       markIntakeResolved(item.id, hasAnyOverride)
     }
-    getMainWindow?.()?.webContents.send('db:changed')
+    emit('db:changed')
     return { ok: true, results }
   })
 
   // 主动决定：把「待抽取」组批量过一遍模型——让花费从自动变成主动的那个按钮
   // themeId 可选：调用方指定则用指定的（批量抽取主题选择器 / 主题追踪按内容实际主题传入）；
   // 不传或主题无效时回退到命题最多的主题（bestThemeContext），与渲染层当前主题无关。
-  ipcMain.handle('inbox:extract', async (_, ids, themeId) => {
+  commands.register('inbox:extract', async (ids, themeId) => {
     const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id))
     let extracted = 0
     const liveThemeIds = new Set(load().themes.filter((t) => !t.deletedAt).map((t) => t.id))
@@ -1119,20 +1095,20 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
       extracted++
     }
-    getMainWindow?.()?.webContents.send('db:changed')
+    emit('db:changed')
     return { ok: true, extracted, themeId: useThemeId }
   })
 
   // 收件箱条目换主题：只改条目身上的 extractedThemeId；挂点按新主题重校验，失效的由用户重选。
-  ipcMain.handle('inbox:setTheme', (_, id, themeId) => {
+  commands.register('inbox:setTheme', (id, themeId) => {
     const item = setInboxTheme(id, themeId)
     if (!item) return { ok: false, error: '条目或主题不存在' }
-    getMainWindow?.()?.webContents.send('db:changed')
+    emit('db:changed')
     return { ok: true, themeId: item.extractedThemeId }
   })
 
   // 只读：给同步桥回放 inbox:import 前过滤 VM 侧已接受条目用（import 建节点非幂等）。
-  ipcMain.handle('inbox:statuses', (_, ids) => {
+  commands.register('inbox:statuses', (ids) => {
     const db = load()
     const statuses = {}
     for (const id of ids || []) {
@@ -1142,12 +1118,12 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return { ok: true, statuses }
   })
 
-  ipcMain.handle('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
-  ipcMain.handle('inbox:prune', (_, days, opts) => pruneInbox(days, opts))
-  ipcMain.handle('inbox:clear', () => clearInbox())
+  commands.register('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
+  commands.register('inbox:prune', (days, opts) => pruneInbox(days, opts))
+  commands.register('inbox:clear', () => clearInbox())
 
   // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch
-  ipcMain.handle('inbox:undoAutoImport', (_, intakeEventId) => {
+  commands.register('inbox:undoAutoImport', (intakeEventId) => {
     const event = getIntakeEvent(intakeEventId)
     if (!event || event.outcome !== 'auto') return { ok: false }
     // 删除自动创建的节点 / 移除合并的来源
@@ -1173,28 +1149,28 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       })
     }
     markIntakeUndone(intakeEventId)
-    getMainWindow?.()?.webContents.send('db:changed')
+    emit('db:changed')
     return { ok: true }
   })
 
   // 恢复撤销入口：重启后渲染层用这个拿回最近一次自动归位
-  ipcMain.handle('inbox:lastAutoImport', () => {
+  commands.register('inbox:lastAutoImport', () => {
     const event = lastAutoIntakeEvent()
     if (!event) return null
     return { id: event.id, count: (event.lemmas || []).length }
   })
 
   // 采集漏斗按天聚合
-  ipcMain.handle('intake:series', (_, sinceDays) => intakeSeries(sinceDays))
+  commands.register('intake:series', (sinceDays) => intakeSeries(sinceDays))
 
   // ---- 留痕层 trace ----
-  ipcMain.handle('trace:all', () => allTraces())
-  ipcMain.handle('trace:byTarget', (_, targetId) => tracesByTarget(targetId))
-  ipcMain.handle('trace:modelCalibration', () => modelCalibration())
-  ipcMain.handle('trace:labelerDivergence', () => labelerDivergence())
+  commands.register('trace:all', () => allTraces())
+  commands.register('trace:byTarget', (targetId) => tracesByTarget(targetId))
+  commands.register('trace:modelCalibration', () => modelCalibration())
+  commands.register('trace:labelerDivergence', () => labelerDivergence())
 
   // ---- EDGAR 标签发现（仅手动触发）----
-  ipcMain.handle('edgar:discoverTags', async (_, ticker) => {
+  commands.register('edgar:discoverTags', async (ticker) => {
     try {
       return await discoverTags(ticker)
     } catch (e) {
@@ -1203,42 +1179,42 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   })
 
   // ---- 读数层 ----
-  ipcMain.handle('reading:add', (_, input) => addReading({
+  commands.register('reading:add', (input) => addReading({
     metric: input?.metric, value: input?.value, unit: input?.unit, asOf: input?.asOf,
     period: input?.period, basis: input?.basis, source: input?.source,
     channelId: input?.channelId, nodeId: input?.nodeId, tier: 'agent',
   }))
-  ipcMain.handle('reading:indicatorsFor', (_, reading) => indicatorsForReading(reading))
-  ipcMain.handle('reading:get', (_, id) => getReading(id))
-  ipcMain.handle('reading:page', (_, opts) => readingsPage(opts))
-  ipcMain.handle('reading:evidence', (_, opts) => readingEvidence(opts))
-  ipcMain.handle('reading:latest', () => latestReadings())
-  ipcMain.handle('source:page', (_, opts) => sourcesPage(opts))
-  ipcMain.handle('reading:assign', (_, id, nodeId) => {
+  commands.register('reading:indicatorsFor', (reading) => indicatorsForReading(reading))
+  commands.register('reading:get', (id) => getReading(id))
+  commands.register('reading:page', (opts) => readingsPage(opts))
+  commands.register('reading:evidence', (opts) => readingEvidence(opts))
+  commands.register('reading:latest', () => latestReadings())
+  commands.register('source:page', (opts) => sourcesPage(opts))
+  commands.register('reading:assign', (id, nodeId) => {
     const result = assignReading(id, nodeId)
-    if (result.ok) getMainWindow?.()?.webContents.send('db:changed')
+    if (result.ok) emit('db:changed')
     return result
   })
-  ipcMain.handle('reading:verify', (_, key) => verifyReadingChain(key))
-  ipcMain.handle('reading:push', async (_, envelope) => {
+  commands.register('reading:verify', (key) => verifyReadingChain(key))
+  commands.register('reading:push', async (envelope) => {
     const result = await ingestReadings(envelope, {
-      onProgress: (progress) => getMainWindow?.()?.webContents.send('reading:progress', progress),
+      onProgress: (progress) => emit('reading:progress', progress),
     })
-    if (result.accepted) getMainWindow?.()?.webContents.send('db:changed')
+    if (result.accepted) emit('db:changed')
     return result
   })
-  ipcMain.handle('agent:intent', () => exportIntent())
-  ipcMain.handle('agent:connection', () => getAgentConnection())
+  commands.register('agent:intent', () => exportIntent())
+  commands.register('agent:connection', () => getAgentConnection())
 
   // ---- 研究观点 ----
-  ipcMain.handle('research:add', (_, input) => addResearchNote(input))
-  ipcMain.handle('research:all', () => allResearchNotes())
-  ipcMain.handle('research:byNode', (_, nodeId) => researchNotesByNode(nodeId))
-  ipcMain.handle('research:hitRate', (_, notes, correct) => researchHitRate(notes, correct))
-  ipcMain.handle('research:vsInstitution', (_, days) => vsInstitution(days || 90))
+  commands.register('research:add', (input) => addResearchNote(input))
+  commands.register('research:all', () => allResearchNotes())
+  commands.register('research:byNode', (nodeId) => researchNotesByNode(nodeId))
+  commands.register('research:hitRate', (notes, correct) => researchHitRate(notes, correct))
+  commands.register('research:vsInstitution', (days) => vsInstitution(days || 90))
   // 旧的两步式骨架流程（先调 theme:generateSkeleton 取 JSON，再调 theme:instantiateSkeleton 落库）
   // 已被 theme:setupNew / theme:scaffoldExisting 的一步异步流程取代，渲染层无调用，移除。
 }
 
 
-export { register }
+export { registerDomainCommands }

@@ -300,7 +300,7 @@ async function boot() {
 }
 
 /**
- * 开发工具（tools/shoot.mjs）用 query 参数驱动到指定视图和选中节点，
+ * 开发工具（开发测试脚本）用 query 参数驱动到指定视图和选中节点，
  * 以便自动截图做视觉验证。正常启动时这些参数不存在，是无副作用的。
  */
 function applyUrlParams() {

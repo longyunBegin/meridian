@@ -1,23 +1,17 @@
 #!/usr/bin/env node
 /** Meridian single-truth HTTP 服务（Phase 1）。
  *
- * 复用 src/main/store.js（账本）与 src/main/ipc.js（约 90 个 channel 的 handler），
- * 通过 shim.mjs 喂 Electron 替身，把 ipcMain.handle(channel, fn) 登记的 handler
- * 原样暴露为 POST /api/:channel。业务逻辑零 fork——handler 就是桌面版用的那一个。
+ * 复用平台无关的账本和领域命令注册器，通过独立 HTTP adapter 暴露
+ * POST /api/:command。业务逻辑零 fork——命令就是桌面版用的那一套。
  *
- * TODO(推送事件 Phase 2)：ipc.js 里部分 handler 会调用
- *   getMainWindow?.()?.webContents.send('db:changed'|'theme:scaffolded'|'inbox:pruned'|'due:notify'|'reading:progress'|'inbox:changed' 等，…)
- * Phase 1 这里传 getMainWindow: () => null，所以这些推送全部是安全的 no-op。
+ * 当前独立服务宿主不启用实时事件推送；其余命令与桌面宿主共用相同业务逻辑。
  * 客户端目前靠轮询兜底；SSE/WebSocket 在 Phase 2 前补齐，补齐后接管推送，
  * 轮询逻辑保留作为断线兜底。
  */
 
-// 顺序不可换：shim 必须在任何业务模块之前 import，
-// 因为 store.js / ipc.js 等在模块顶层解构 globalThis.__electron。
-import './shim.mjs'
-import { __handlers } from './shim.mjs'
+import { CommandRegistry } from '../src/main/command-registry.js'
 import { load } from '../src/main/store.js'
-import { register } from '../src/main/ipc.js'
+import { registerDomainCommands } from '../src/main/domain-commands.js'
 import { readFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
@@ -40,6 +34,7 @@ function readConfig() {
   return fallback
 }
 const config = readConfig()
+const registry = new CommandRegistry()
 const HOST = process.env.HOST || config.host || '127.0.0.1'
 const PORT = Number(process.env.PORT || config.port || 3791)
 const TOKEN = process.env.MERIDIAN_TOKEN || config.token || ''
@@ -52,9 +47,9 @@ const schemaVersion = Number(ledger?.version) || 4
 let pkgVersion = 'unknown'
 try { pkgVersion = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version || pkgVersion } catch {}
 
-// handler 里的推送（webContents.send）全部落到 no-op；agent 连接标记为不可用。
-register({
-  getMainWindow: () => null,
+// 此服务宿主仅注入其支持的代理连接能力；领域事件默认不推送。
+registerDomainCommands({
+  registry,
   getAgentConnection: () => ({ available: false }),
 })
 
@@ -94,7 +89,7 @@ const server = createServer(async (req, res) => {
 
     // 免认证：给看门狗用。
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return ok(res, { ok: true, version: pkgVersion, schemaVersion, channels: __handlers.size })
+      return ok(res, { ok: true, version: pkgVersion, schemaVersion, channels: registry.names().length })
     }
 
     // 其余一律要求 Bearer token。
@@ -102,15 +97,15 @@ const server = createServer(async (req, res) => {
       return err(res, 401, 'unauthorized: 需要有效的 Authorization: Bearer <token>')
     }
 
-    if (req.method === 'GET' && url.pathname === '/api/channels') {
-      return ok(res, [...__handlers.keys()].sort())
+    if (req.method === 'GET' && ['/api/commands', '/api/channels'].includes(url.pathname)) {
+      return ok(res, registry.names().sort())
     }
 
     const m = req.method === 'POST' && /^\/api\/([A-Za-z0-9:_-]+)$/.exec(url.pathname)
     if (m) {
-      const channel = m[1]
-      const fn = __handlers.get(channel)
-      if (!fn) return err(res, 404, `未知 channel: ${channel}`)
+      const command = m[1]
+      const known = registry.has(command)
+      if (!known) return err(res, 404, `未知命令: ${command}`)
 
       let raw
       try { raw = await readBody(req) } catch (e) { return err(res, 400, e.message) }
@@ -124,8 +119,7 @@ const server = createServer(async (req, res) => {
       const args = Array.isArray(body.args) ? body.args : []
 
       try {
-        // 与 Electron 调用形态一致：fn(event, ...args)，event 用空对象占位。
-        const result = await fn({}, ...args)
+        const result = await registry.invoke(command, args)
         return ok(res, result)
       } catch (e) {
         return err(res, 500, e?.message || String(e), DEBUG ? e?.stack : undefined)
@@ -139,6 +133,6 @@ const server = createServer(async (req, res) => {
 })
 
 server.listen(PORT, HOST, () => {
-  console.log(`[meridian-service] listening on http://${HOST}:${PORT} (${__handlers.size} channels, schema v${schemaVersion})`)
+  console.log(`[meridian-service] listening on http://${HOST}:${PORT} (${registry.names().length} channels, schema v${schemaVersion})`)
   if (!TOKEN) console.warn('[meridian-service] 警告: token 为空，认证默认拒绝全部请求（配好 service/config.json 再用）')
 })

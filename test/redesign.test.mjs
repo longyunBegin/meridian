@@ -8,17 +8,16 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DATA = join(ROOT, 'test/.tmp/redesign-data')
-process.env.MERIDIAN_TEST_DATA = DATA
+process.env.MERIDIAN_USER_DATA_DIR = DATA
 
 rmSync(DATA, { recursive: true, force: true })
 mkdirSync(DATA, { recursive: true })
 
-const stub = await import('./electron-stub.mjs')
-globalThis.__electron = stub
+const { registry, invoke: fire } = await import('./runtime-harness.mjs').then(({ createCommandTestHarness }) => createCommandTestHarness(DATA))
 
 const store = await import('../src/main/store.js')
 const { groupReadings } = await import('../src/shared/readings.js')
-const { register: registerIpc } = await import('../src/main/ipc.js')
+const { registerDomainCommands } = await import('../src/main/domain-commands.js')
 const labeler = await import('../src/main/labeler.js')
 const fetcher = await import('../src/main/fetcher.js')
 const crypto = await import('../src/main/crypto.js')
@@ -29,15 +28,9 @@ const ok = (name, cond, extra = '') => {
   cond ? pass++ : fail++
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
-const fire = (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
 
 store.load()
-registerIpc({
-  resizeCapture: () => {},
-  showCapture: () => {},
-  hideCapture: () => {},
-  getMainWindow: () => undefined,
-})
+registerDomainCommands({ registry })
 
 const theme = store.addTheme('改造测试主题')
 
@@ -80,7 +73,7 @@ ok('clearInbox 清了 2 条', cleared === 2, `实际 ${cleared}`)
 ok('clearInbox 后 inbox 为空', store.allInbox().length === 0)
 
 // ============================================================
-console.log('\n— 收件箱 IPC: inbox:capture —')
+console.log('\n— 收件箱 命令: inbox:capture —')
 // ============================================================
 
 const captureResult = await fire('inbox:capture', '某公司财报显示营收增长30%')
@@ -91,7 +84,7 @@ ok('条目有 lemmas', Array.isArray(captureResult?.item?.lemmas))
 ok('收件箱有 1 条', store.allInbox().length === 1, `实际 ${store.allInbox().length}`)
 
 // ============================================================
-console.log('\n— 收件箱 IPC: inbox:list / resolve / clear —')
+console.log('\n— 收件箱 命令: inbox:list / resolve / clear —')
 // ============================================================
 
 // T1: inbox:list 分页——返回 { items, total }，不再全量数组
@@ -118,7 +111,7 @@ const clearResult = await fire('inbox:clear')
 ok('inbox:clear 返回清理数', typeof clearResult === 'number')
 
 // ============================================================
-console.log('\n— 收件箱 IPC: inbox:import 批量入库 —')
+console.log('\n— 收件箱 命令: inbox:import 批量入库 —')
 // ============================================================
 
 store.addInboxItem({
@@ -238,15 +231,15 @@ store.importAll(exported)
 ok('导入后 inbox 恢复', store.allInbox().length >= 1, `实际 ${store.allInbox().length}`)
 
 // ============================================================
-console.log('\n— 骨架生成 IPC（一步异步流 + 部分失败） —')
+console.log('\n— 骨架生成 命令（一步异步流 + 部分失败） —')
 // ============================================================
 
 // 旧的两步式 handler（先取 JSON 再落库）已被 theme:setupNew / theme:scaffoldExisting
 // 的一步异步流程取代，渲染层无调用——确认已移除，不留后门
-ok('旧骨架 handler 已移除', !stub.__handlers.has('theme:generateSkeleton') && !stub.__handlers.has('theme:instantiateSkeleton'))
+ok('旧骨架 handler 已移除', !registry.has('theme:generateSkeleton') && !registry.has('theme:instantiateSkeleton'))
 
 // 轮询兜底的另一半：theme:scaffoldStatus 必须存在
-ok('scaffoldStatus handler 存在', typeof stub.__handlers.get('theme:scaffoldStatus') === 'function')
+ok('scaffoldStatus handler 存在', registry.has('theme:scaffoldStatus'))
 ok('空闲时 scaffoldStatus 返回空数组', JSON.stringify(await fire('theme:scaffoldStatus')) === '[]')
 
 // 用 __testHooks 模拟真实 LLM 的延迟与部分失败（这台机器没有可用的真实 key）
@@ -555,6 +548,19 @@ ok('settings() 返回解密后的 apiKey', liveSettings.apiKey === 'sk-roundtrip
 const rawDb = store.load()
 ok('内部存储的 apiKey 是加密的', rawDb.settings.apiKey.startsWith('enc:v1:'), `实际 ${rawDb.settings.apiKey.slice(0, 20)}...`)
 
+// 后续采集回归验证本地分流与存储，不依赖远端模型服务是否可用。
+const realCaptureHook = scaffoldHooks.run
+scaffoldHooks.run = async (scenario, args) => {
+  if (scenario !== 'extract') return realCaptureHook ? realCaptureHook(scenario, args) : { ok: false, reason: 'no-key' }
+  const text = String(args.text || '')
+  const parentHint = (args.branchHints || []).find((title) => text.includes(title)) || null
+  return {
+    ok: true,
+    lemmas: [{ title: text, type: 'observation', confidence: 70, parentHint, tags: [], sourceKind: '一手数据' }],
+    usage: 1,
+  }
+}
+
 // ============================================================
 console.log('\n— 留痕层 trace —')
 
@@ -807,7 +813,13 @@ if (killVerdictsBefore.length > 0) {
 store.removeNode(existLemma.id)
 
 // 第二次捕获：同样的文本从别的源进来，这次作为新节点入库
-const killCap2 = await fire('inbox:capture', '算力 芯片 需求 超预期', { kind: '券商研报', quality: 0.8 })
+const runExtractForKillTest = scaffoldHooks.run
+scaffoldHooks.run = async (_scenario, { text }) => ({
+  ok: true,
+  lemmas: [{ title: text, type: 'observation', confidence: 80, parentHint: '算力', tags: [], sourceKind: '券商研报' }],
+})
+const killCap2 = await fire('inbox:capture', '算力 芯片 需求 超预期', { kind: '券商研报', quality: 0.8 }, killTheme.id)
+scaffoldHooks.run = runExtractForKillTest
 ok('误杀: 第二次捕获入库', killCap2?.ok === true)
 
 // 检查误杀闭环
@@ -1494,29 +1506,26 @@ ok('分组: 单条 latest = 自身', single[0].latest === single[0].items[0])
 // 折叠阈值不在此函数（由 UI 控制），但确认 items 返回全部
 ok('分组: items 返回全部', aGroup.items.length === 3)
 
-// IPC: openExternal 只允许 http/https
-const openResult1 = fire('io:openExternal', 'javascript:alert(1)')
-ok('IPC: openExternal 拒绝 javascript:', openResult1 === false)
-const openResult2 = fire('io:openExternal', 'file:///etc/passwd')
-ok('IPC: openExternal 拒绝 file:', openResult2 === false)
-const openResult3 = fire('io:openExternal', 'not-a-url')
-ok('IPC: openExternal 拒绝非 URL', openResult3 === false)
+// External URL validation is transport/platform independent; the Tauri bridge only opens validated URLs.
+const { normalizeExternalUrl } = await import('../src/shared/external-url.js')
+ok('openExternal 拒绝 javascript:', normalizeExternalUrl('javascript:alert(1)') === null)
+ok('openExternal 拒绝 file:', normalizeExternalUrl('file:///etc/passwd') === null)
+ok('openExternal 拒绝非 URL', normalizeExternalUrl('not-a-url') === null)
+ok('openExternal 允许 HTTP(S)', normalizeExternalUrl('https://example.com/path') === 'https://example.com/path')
 
-// preload.js 和 preload.cjs 同步
+// Tauri renderer bridge exposes the shared app API
 import { readFileSync as readFileSync2 } from 'node:fs'
 import { fileURLToPath as fileURLToPath2 } from 'node:url'
 const ROOT2 = join(dirname(fileURLToPath2(import.meta.url)), '..')
-const pj = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-// 提取桥接键对比（去掉 require/import 行差异）
-const extractKeys = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('preload: 两份桥接键同步', JSON.stringify(extractKeys(pj)) === JSON.stringify(extractKeys(pc)))
+const pj = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
+ok('bridge: Tauri uses the backend command adapter', pj.includes("invoke('backend_invoke', { command, args })"))
+// The shared Tauri bridge routes domain calls through the native host.
 
-// 语法检查。同步测试只比内容——preload 少个逗号照样「同步」，但 app 直接起不来。
+// 语法检查。同步测试只比内容——bridge 少个逗号照样「同步」，但 app 直接起不来。
 // 这一条是那次事故之后补的。
-import { default as vm } from 'node:vm'
-const syntaxOk = (src) => { try { new vm.Script(src); return true } catch { return false } }
-ok('preload: preload.js 语法可编译', syntaxOk(pj), '语法错误会让 app 起不来')
+import { spawnSync as syntaxSpawnSync } from 'node:child_process'
+const syntaxOk = (src) => syntaxSpawnSync(process.execPath, ['--input-type=module', '--check'], { input: src, encoding: 'utf8' }).status === 0
+ok('bridge: bridge.js 语法可编译', syntaxOk(pj), '语法错误会让 app 起不来')
 // ============================================================
 // R3: SEC EDGAR 取数器 — 已随通道系统移除（fetchers.js 已删除）
 // ============================================================
@@ -1584,22 +1593,19 @@ ok('兼容: 旧 channels 在加载后被清理', !('channels' in store.load()))
 // --- grep 验收 ---
 const vaultSrc = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const settingsSrc = readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
-const ipcSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-const preloadSrc = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const preloadCjsSrc = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const domainCommandsSrc = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
+const bridgeSrc = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 ok('验收: vault.js 无 inputs.kind ||', !vaultSrc.includes('inputs.kind ||'))
 ok('验收: vault.js 无 inputs.fetch ||', !vaultSrc.includes('inputs.fetch ||'))
 ok('验收: settings.js 无 通道与取数', !settingsSrc.includes('通道与取数'))
 ok('验收: settings.js 无 订阅源', !settingsSrc.includes('订阅源'))
-ok('验收: ipc.js 无 generatePills', !ipcSrc.includes('generatePills'))
-ok('验收: ipc.js 无 feedFetchAndLabel', !ipcSrc.includes('feedFetchAndLabel'))
-ok('验收: ipc.js 无 feedImport', !ipcSrc.includes('feedImport'))
-ok('验收: ipc.js 无 feed:list', !ipcSrc.includes('feed:list'))
-ok('验收: preload.js 无 feedFetchAndLabel', !preloadSrc.includes('feedFetchAndLabel'))
-ok('验收: preload.js 无 feedImport', !preloadSrc.includes('feedImport'))
-ok('验收: preload.cjs 无 feedFetchAndLabel', !preloadCjsSrc.includes('feedFetchAndLabel'))
-ok('验收: preload.cjs 无 feedImport', !preloadCjsSrc.includes('feedImport'))
+ok('验收: domain-commands.js 无 generatePills', !domainCommandsSrc.includes('generatePills'))
+ok('验收: domain-commands.js 无 feedFetchAndLabel', !domainCommandsSrc.includes('feedFetchAndLabel'))
+ok('验收: domain-commands.js 无 feedImport', !domainCommandsSrc.includes('feedImport'))
+ok('验收: domain-commands.js 无 feed:list', !domainCommandsSrc.includes('feed:list'))
+ok('验收: bridge.js 无 feedFetchAndLabel', !bridgeSrc.includes('feedFetchAndLabel'))
+ok('验收: bridge.js 无 feedImport', !bridgeSrc.includes('feedImport'))
 
 // feeds.js 已删除
 import { existsSync as existsSync2 } from 'node:fs'
@@ -1688,11 +1694,8 @@ ok('R7 验收: inspector.js 无 合计', !inspectorSrc.includes('合计'))
 ok('R7 验收: inspector.js 无 indicatorId 写入', !inspectorSrc.includes('indicatorId'))
 ok('R7 验收: vault.js 不写 indicatorId 属性', !vaultSrcR7.includes('indicatorId:') && !vaultSrcR7.match(/\{\s*indicatorId\s*[,:}]/))
 
-// preload 两份同步
-const pjR7 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcR7 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-const extractKeysR7 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('R7 验收: preload 两份同步', JSON.stringify(extractKeysR7(pjR7)) === JSON.stringify(extractKeysR7(pcR7)))
+// Tauri API bridge
+const pjR7 = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // v0.8：反查走按需证据，树内走每指标最新投影，不回传全量读数。
 ok('R7 v0.8: 检视面板按需加载证据', inspectorSrc.includes('readingPanel') && readingUiSrcV8.includes('m.readingEvidence('))
@@ -1748,10 +1751,9 @@ ok('O1: scheduler.js 无 companyfacts', !schedulerSrc.includes('companyfacts'))
 const discoverSrc = readFileSync2(join(ROOT2, 'src/main/discover.js'), 'utf8')
 ok('O1: discover.js 有 discoverTags', discoverSrc.includes('discoverTags'))
 ok('O1: discover.js 有 parseCompanyFacts', discoverSrc.includes('parseCompanyFacts'))
-// IPC + preload 桥
-ok('O1: ipc.js 有 edgar:discoverTags', readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8').includes('edgar:discoverTags'))
-ok('O1: preload.js 有 discoverTags', pjR7.includes('discoverTags'))
-ok('O1: preload.cjs 有 discoverTags', pcR7.includes('discoverTags'))
+// Tauri API bridge
+ok('O1: domain-commands.js 有 edgar:discoverTags', readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8').includes('edgar:discoverTags'))
+ok('O1: bridge.js 有 discoverTags', pjR7.includes('discoverTags'))
 // v0.8 不再要求用户发现内部标签，来源由读数自动形成。
 ok('O1 v0.8: 去掉标签配置，来源有独立分页', !vaultSrcR7.includes('发现标签') && readingUiSrcV8.includes('m.sourcesPage('))
 
@@ -1772,11 +1774,8 @@ ok('O4 v0.8: store 提供主关联和待归位入口', storeSrc.includes('indica
 ok('O5 v0.8: 检视面板直接提供读数入口', inspectorSrc.includes("from './readings.js'") && inspectorSrc.includes('readingPanel(node)'))
 ok('O5 v0.8: 空态说明手记或助手提供', inspectorSrc.includes('readingPanel') && readingUiSrcV8.includes('还没有读数') && readingUiSrcV8.includes('助手按主题'))
 
-// --- v0.6.3 preload 两份同步（再验一次，加了 discoverTags）---
-const pj63 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pc63 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-const extractKeys63 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('v0.6.3 验收: preload 两份同步', JSON.stringify(extractKeys63(pj63)) === JSON.stringify(extractKeys63(pc63)))
+// --- API bridge exposes discoverTags ---
+const pj63 = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // ============================================================
 // v0.6.4: F1-F5 修订
@@ -1785,7 +1784,7 @@ ok('v0.6.3 验收: preload 两份同步', JSON.stringify(extractKeys63(pj63)) ==
 console.log('\n— v0.6.4: F1-F5 修订 —')
 
 const vaultSrcF = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-const ipcSrcF = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const domainCommandsSrcF = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 
 // --- F1: v0.8 恢复 indicatorId 主关联，不再要求丢弃归位信息 ---
 const f1Indicator = store.addNode({ themeId: theme.id, kind: 'lemma', type: 'observation', title: 'F1 归位指标' })
@@ -1826,11 +1825,8 @@ ok('F4: vault.js 无手动录入表单', !vaultSrcF.includes('手动记一条读
 ok('F5 v0.8: 来源读取失败有重试，手填失败不丢内容', readingUiSrcV8.includes('重试') && readingUiSrcV8.includes('填写内容已保留'))
 
 
-// --- v0.6.4 preload 两份同步 ---
-const pj64 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pc64 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-const extractKeys64 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('v0.6.4 验收: preload 两份同步', JSON.stringify(extractKeys64(pj64)) === JSON.stringify(extractKeys64(pc64)))
+// --- API bridge parity ---
+const pj64 = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // ============================================================
 // 主题标签与通道相关性匹配
@@ -1897,22 +1893,18 @@ ok('T8: inspector.js 无 tags 输入框', !inspectorSrcT.includes("placeholder: 
 ok('T9: extract.js 有 generateThemeTags', extractSrc.includes('generateThemeTags'))
 ok('T9: generateThemeTags 无 key 返回 ok: false', extractSrc.includes("return { ok: false, reason: 'no-key' }"))
 
-// --- T10: IPC + preload ---
-ok('T10: ipc.js 有 theme:update', ipcSrcF.includes('theme:update'))
-ok('T10: ipc.js 无 channel:add', !ipcSrcF.includes('channel:add'))
-ok('T10: ipc.js 无 channel:update', !ipcSrcF.includes('channel:update'))
-ok('T10: preload.js 有 themeUpdate', pj64.includes('themeUpdate'))
-ok('T10: preload.cjs 有 themeUpdate', pc64.includes('themeUpdate'))
+// --- T10: 命令 + bridge ---
+ok('T10: domain-commands.js 有 theme:update', domainCommandsSrcF.includes('theme:update'))
+ok('T10: domain-commands.js 无 channel:add', !domainCommandsSrcF.includes('channel:add'))
+ok('T10: domain-commands.js 无 channel:update', !domainCommandsSrcF.includes('channel:update'))
+ok('T10: bridge.js 有 themeUpdate', pj64.includes('themeUpdate'))
 
 // --- T11: SIC 映射表 ---
 ok('T11: SIC_TO_TAG 有 3674', SIC_TO_TAG[3674] === '半导体')
 ok('T11: KIND_TO_TAGS 有 财报', KIND_TO_TAGS['财报 / 公告'].includes('财报'))
 
-// --- T12: preload 两份同步 ---
-const pjT = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcT = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-const extractKeysT = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('T12: preload 两份同步', JSON.stringify(extractKeysT(pjT)) === JSON.stringify(extractKeysT(pcT)))
+// --- T12: API bridge parity ---
+const pjT = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // ============================================================
 // latest tie-break 修复
@@ -1952,13 +1944,13 @@ ok('R5: scheduler.js 无 fetcher', !schedulerR5Src.includes('fetcher'))
 ok('R5: scheduler.js 只有一个 setInterval', (schedulerR5Src.match(/setInterval/g) || []).length === 1)
 ok('R5: scheduler.js 保留到期结算通知', schedulerR5Src.includes('dueToNotify'))
 
-const ipcR5Src = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-ok('R5: ipc.js 无 channel:fetch', !ipcR5Src.includes('channel:fetch'))
-ok('R5: ipc.js 无 channel:list', !ipcR5Src.includes('channel:list'))
-ok('R5: ipc.js 无 runChannelFetch', !ipcR5Src.includes('runChannelFetch'))
+const commandsR5Src = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
+ok('R5: domain-commands.js 无 channel:fetch', !commandsR5Src.includes('channel:fetch'))
+ok('R5: domain-commands.js 无 channel:list', !commandsR5Src.includes('channel:list'))
+ok('R5: domain-commands.js 无 runChannelFetch', !commandsR5Src.includes('runChannelFetch'))
 
-const mainR5Src = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
-ok('R5: main.js 不再传通道给调度器', !mainR5Src.includes('runChannel'))
+const mainR5Src = readFileSync2(join(ROOT2, 'src/tauri/backend.mjs'), 'utf8')
+ok('R5: desktop host starts scheduler without removed channel polling', !mainR5Src.includes('runChannel'))
 
 const storeR5Src = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 ok('R5: store.js 无 allChannels', !storeR5Src.includes('allChannels'))
@@ -1974,14 +1966,12 @@ ok('R5: propose.js 已删除', !existsSync2(join(ROOT2, 'src/main/propose.js')))
 
 console.log('\n— B: LLM 提议指针（已移除） —')
 
-const ipcBSrc = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-ok('B: ipc.js 无 llm:proposeLinks', !ipcBSrc.includes('llm:proposeLinks'))
+const commandsBSrc = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
+ok('B: domain-commands.js 无 llm:proposeLinks', !commandsBSrc.includes('llm:proposeLinks'))
 ok('B: propose.js 已删除', !existsSync2(join(ROOT2, 'src/main/propose.js')))
 
-const pjB = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcB = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-ok('B: preload.js 无 proposeLinks', !pjB.includes('proposeLinks'))
-ok('B: preload.cjs 无 proposeLinks', !pcB.includes('proposeLinks'))
+const pjB = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
+ok('B: bridge.js 无 proposeLinks', !pjB.includes('proposeLinks'))
 
 // --- v0.8 读数界面回归：手填不暗建通道 ---
 const inspectorBSrc = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
@@ -2073,23 +2063,18 @@ ok('D1: 旧数据导入后 researchNotes 为空数组', Array.isArray(store.allR
 store.importAll(JSON.stringify(exportData))
 ok('D1: 重新导入后 researchNotes 恢复', store.allResearchNotes().length > 0)
 
-// --- D: IPC handler ---
+// --- D: 命令 handler ---
 
-ok('D: IPC research:add 可调', await fire('research:add', { org: 'test', stance: 'bullish', title: 'IPC test', nodeId: dNode.id }) != null)
-ok('D: IPC research:all 可调', Array.isArray(await fire('research:all')))
-ok('D: IPC research:byNode 可调', Array.isArray(await fire('research:byNode', dNode.id)))
-ok('D: IPC research:vsInstitution 可调', await fire('research:vsInstitution', 90) != null)
+ok('D: 命令 research:add 可调', await fire('research:add', { org: 'test', stance: 'bullish', title: '命令 test', nodeId: dNode.id }) != null)
+ok('D: 命令 research:all 可调', Array.isArray(await fire('research:all')))
+ok('D: 命令 research:byNode 可调', Array.isArray(await fire('research:byNode', dNode.id)))
+ok('D: 命令 research:vsInstitution 可调', await fire('research:vsInstitution', 90) != null)
 
-// --- D: preload 同步 ---
+// --- D: API bridge ---
 
-const pjD = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcD = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-ok('D: preload.js 有 addResearch', pjD.includes('addResearch'))
-ok('D: preload.cjs 有 addResearch', pcD.includes('addResearch'))
-ok('D: preload.js 有 vsInstitution', pjD.includes('vsInstitution'))
-ok('D: preload.cjs 有 vsInstitution', pcD.includes('vsInstitution'))
-const extractKeysD = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('D: preload 两份同步', JSON.stringify(extractKeysD(pjD)) === JSON.stringify(extractKeysD(pcD)))
+const pjD = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
+ok('D: bridge.js 有 addResearch', pjD.includes('addResearch'))
+ok('D: bridge.js 有 vsInstitution', pjD.includes('vsInstitution'))
 
 // --- D: inspector.js 有研究观点区 ---
 
@@ -2129,12 +2114,11 @@ console.log('\n— v0.6.6: B1-B3 + I1-I5 —')
 
 const extractSrc66 = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
 const storeSrc66 = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
-const ipcSrc66 = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const domainCommandsSrc66 = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const appSrc66 = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 const settingsSrc66 = readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8')
-const pj66 = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pc66 = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const pj66 = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // --- B1: LLM 指标类型不匹配 ---
 
@@ -2182,8 +2166,8 @@ if (b1MonthNode) {
 ok('B2 v0.8: 来源页有 renderSources', readingUiSrcV8.includes('renderSources'))
 ok('B2 v0.8: 无内部 metric 配置', !vaultSrc66.includes('needsMetric') && readingUiSrcV8.includes('indicator: node.title'))
 ok('B2 v0.8: 不再要求用户发现 GAAP 标签', !vaultSrc66.includes('发现标签') && readingUiSrcV8.includes('来源随读数自动记录'))
-ok('B2: preload 无取数器入口', !pj66.includes('metricFetchers') && !pc66.includes('metricFetchers'))
-ok('B2: ipc.js 无取数器', !ipcSrc66.includes('METRIC_FETCHERS') && !ipcSrc66.includes('channel:metricFetchers'))
+ok('B2: bridge 无取数器入口', !pj66.includes('metricFetchers'))
+ok('B2: domain-commands.js 无取数器', !domainCommandsSrc66.includes('METRIC_FETCHERS') && !domainCommandsSrc66.includes('channel:metricFetchers'))
 
 // --- I1: v0.8 指标维度由查询限定，不在渲染层过滤全量 readings ---
 
@@ -2241,9 +2225,7 @@ if (i5Match2) {
   ok('I5: 清空后主题不在已删列表（彻底删除）', true)
 }
 
-// --- v0.6.6 验收: preload 两份同步 ---
-const extractKeys66 = (s) => s.split('\n').filter((l) => l.includes('ipcRenderer.invoke')).map((l) => l.trim().split(':')[0].trim()).sort()
-ok('v0.6.6 验收: preload 两份同步', JSON.stringify(extractKeys66(pj66)) === JSON.stringify(extractKeys66(pc66)))
+// --- v0.6.6 API bridge verification ---
 
 // ============================================================
 // 主题标签库与语义归位
@@ -2253,11 +2235,10 @@ console.log('\n— 标签库与语义归位 —')
 
 const extractSrcTL = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
 const storeSrcTL = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
-const ipcSrcTL = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const domainCommandsSrcTL = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
-const pjTL = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcTL = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const pjTL = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // --- T1: tagLibrary schema ---
 
@@ -2351,12 +2332,12 @@ ok('T2: deleteTagLibraryTags 后剩 1 个', tlAfterDelete.tagLibrary.length === 
 
 // --- T3: processCapture 接入匹配 + 提议归位 ---
 
-ok('T3: ipc.js 有 crossThemeMatch', ipcSrcTL.includes('crossThemeMatch'))
-ok('T3: ipc.js 有 routeProposals', ipcSrcTL.includes('routeProposals'))
-ok('T3: ipc.js 有 route-proposal', ipcSrcTL.includes("'route-proposal'"))
-ok('T3: ipc.js 有 recordTagHits', ipcSrcTL.includes('recordTagHits'))
-ok('T3: ipc.js theme:setupNew 调 generateTagLibrary', ipcSrcTL.includes('generateTagLibrary'))
-ok('T3: ipc.js 无 theme:fromTemplate', !ipcSrcTL.includes('theme:fromTemplate'))
+ok('T3: domain-commands.js 有 crossThemeMatch', domainCommandsSrcTL.includes('crossThemeMatch'))
+ok('T3: domain-commands.js 有 routeProposals', domainCommandsSrcTL.includes('routeProposals'))
+ok('T3: domain-commands.js 有 route-proposal', domainCommandsSrcTL.includes("'route-proposal'"))
+ok('T3: domain-commands.js 有 recordTagHits', domainCommandsSrcTL.includes('recordTagHits'))
+ok('T3: domain-commands.js theme:setupNew 调 generateTagLibrary', domainCommandsSrcTL.includes('generateTagLibrary'))
+ok('T3: domain-commands.js 无 theme:fromTemplate', !domainCommandsSrcTL.includes('theme:fromTemplate'))
 
 // --- T4: 标签库可视化 ---
 
@@ -2383,7 +2364,7 @@ ok('T5: lattice.js 有 removeTheme', latticeSrcTL.includes('removeTheme'))
 
 // --- T6: 画树不生成新环节 ---
 
-ok('T6: ipc.js 无 生成新环节', !ipcSrcTL.includes('生成新环节'))
+ok('T6: domain-commands.js 无 生成新环节', !domainCommandsSrcTL.includes('生成新环节'))
 
 // --- 领域中立（只检查新增的标签库代码，不查存量 SIC 映射/prompt 示例）---
 
@@ -2392,20 +2373,17 @@ ok('领域中立: TAG_LIBRARY_SYSTEM 无硬编码行业词', !tagLibPrompt.match
 ok('领域中立: matchTagLibrary 无硬编码行业词', !storeSrcTL.match(/function matchTagLibrary[\s\S]*?^}/m)?.[0]?.match(/光模块|半导体|hyperscaler/))
 ok('领域中立: lattice.js 无硬编码行业词', !latticeSrcTL.match(/光模块|半导体|hyperscaler/))
 
-// --- IPC + preload ---
+// --- command bridge ---
 
-ok('TL: ipc.js 有 tagLibrary:updateTag', ipcSrcTL.includes('tagLibrary:updateTag'))
-ok('TL: ipc.js 有 tagLibrary:deleteTags', ipcSrcTL.includes('tagLibrary:deleteTags'))
-ok('TL: preload.js 有 updateTagLibraryTag', pjTL.includes('updateTagLibraryTag'))
-ok('TL: preload.cjs 有 updateTagLibraryTag', pcTL.includes('updateTagLibraryTag'))
-ok('TL: preload.js 有 deleteTagLibraryTags', pjTL.includes('deleteTagLibraryTags'))
-ok('TL: preload.cjs 有 deleteTagLibraryTags', pcTL.includes('deleteTagLibraryTags'))
-ok('TL: preload 两份同步', pjTL.includes('updateTagLibraryTag') === pcTL.includes('updateTagLibraryTag'))
+ok('TL: domain-commands.js 有 tagLibrary:updateTag', domainCommandsSrcTL.includes('tagLibrary:updateTag'))
+ok('TL: domain-commands.js 有 tagLibrary:deleteTags', domainCommandsSrcTL.includes('tagLibrary:deleteTags'))
+ok('TL: bridge.js 有 updateTagLibraryTag', pjTL.includes('updateTagLibraryTag'))
+ok('TL: bridge.js 有 deleteTagLibraryTags', pjTL.includes('deleteTagLibraryTags'))
 
-// --- IPC 可调 ---
+// --- 命令 可调 ---
 
-ok('TL: IPC tagLibrary:updateTag 可调', await fire('theme:tagLibrary:updateTag', tlTheme.id, 'tl_a', { name: '改过' }) != null)
-ok('TL: IPC tagLibrary:deleteTags 可调', typeof await fire('theme:tagLibrary:deleteTags', tlTheme.id, []) === 'number')
+ok('TL: 命令 tagLibrary:updateTag 可调', await fire('theme:tagLibrary:updateTag', tlTheme.id, 'tl_a', { name: '改过' }) != null)
+ok('TL: 命令 tagLibrary:deleteTags 可调', typeof await fire('theme:tagLibrary:deleteTags', tlTheme.id, []) === 'number')
 
 // ============================================================
 // 主题入口与读数拆分（E + R）
@@ -2417,9 +2395,8 @@ const appSrcER = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 const vaultSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const latticeSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
 const inspectorSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
-const ipcSrcER = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
-const pjER = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcER = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const domainCommandsSrcER = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
+const pjER = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // --- E1: 单一路径建主题 ---
 
@@ -2446,14 +2423,12 @@ ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !lat
 ok('E3: lattice.js 有 renderSkeletonPrompt', latticeSrcER.includes('function renderSkeletonPrompt'))
 ok('E3: lattice.js 有骨架提示', latticeSrcER.includes('还没有骨架'))
 ok('E3: lattice.js 有 scaffoldExisting 调用', latticeSrcER.includes('scaffoldExisting'))
-ok('E3: ipc.js 有 scaffoldTheme 共用函数', ipcSrcER.includes('async function scaffoldTheme'))
-ok('E3: ipc.js 有 theme:scaffoldExisting', ipcSrcER.includes('theme:scaffoldExisting'))
+ok('E3: domain-commands.js 有 scaffoldTheme 共用函数', domainCommandsSrcER.includes('async function scaffoldTheme'))
+ok('E3: domain-commands.js 有 theme:scaffoldExisting', domainCommandsSrcER.includes('theme:scaffoldExisting'))
 // 异步化后 setupNew / scaffoldExisting 都不再 await scaffoldTheme——
 // 主题立即返回，骨架后台铺，铺完由 theme:scaffolded 通知
-ok('E3: setupNew 异步调 scaffoldTheme', ipcSrcER.includes('scaffoldTheme(theme.id, description, settings())') && !ipcSrcER.includes('await scaffoldTheme(theme.id'))
-ok('E3: preload.js 有 scaffoldExisting', pjER.includes('scaffoldExisting'))
-ok('E3: preload.cjs 有 scaffoldExisting', pcER.includes('scaffoldExisting'))
-ok('E3: preload 两份同步', pjER.includes('scaffoldExisting') === pcER.includes('scaffoldExisting'))
+ok('E3: setupNew 异步调 scaffoldTheme', domainCommandsSrcER.includes('scaffoldTheme(theme.id, description, settings())') && !domainCommandsSrcER.includes('await scaffoldTheme(theme.id'))
+ok('E3: bridge.js 有 scaffoldExisting', pjER.includes('scaffoldExisting'))
 
 // E3 端到端：空白主题补生成
 const e3Theme = store.addTheme('E3 空白主题')
@@ -2540,11 +2515,11 @@ const oldReading = store.addReading({ metric: 'old.test', value: 1, unit: 'USD',
 ok('验收 v0.8: 失效旧关联保留为待归位', oldReading.added === true && oldReading.reading.indicatorId === null)
 
 // 3. scaffoldTheme 不写 indicatorId
-const scaffoldThemeSrc = ipcSrcER.slice(
-  ipcSrcER.indexOf('async function scaffoldTheme'),
-  ipcSrcER.indexOf("ipcMain.handle('theme:setupNew'"),
+const scaffoldThemeSrc = domainCommandsSrcER.slice(
+  domainCommandsSrcER.indexOf('async function scaffoldTheme'),
+  domainCommandsSrcER.indexOf("commands.register('theme:setupNew'"),
 )
-ok('验收: ipc.js scaffoldTheme 无 indicatorId', !scaffoldThemeSrc.includes('indicatorId'))
+ok('验收: domain-commands.js scaffoldTheme 无 indicatorId', !scaffoldThemeSrc.includes('indicatorId'))
 
 // ============================================================
 // v0.7: S4 图交互 + S5 字阶
@@ -2612,7 +2587,7 @@ const c2IgnoredAt = c2New.ignoredAt
 await fire('inbox:resolve', c2New.id, 'reject')
 ok('C2: 路由拒绝不写 verdict 且幂等', store.allVerdicts().length === c2Before && c2New.ignored === true && !!c2IgnoredAt && c2New.ignoredAt === c2IgnoredAt)
 ok('C2: ignored 不出现在活动队列/计数', store.allInbox().length === 0 && store.inboxCount() === 0 && store.stats().inbox === 0)
-ok('C2: ignored getter 与 IPC 返回保留记录', store.ignoredInbox()[0]?.id === c2New.id && (await fire('inbox:ignored'))[0]?.id === c2New.id)
+ok('C2: ignored getter 与 命令 返回保留记录', store.ignoredInbox()[0]?.id === c2New.id && (await fire('inbox:ignored'))[0]?.id === c2New.id)
 const c2Ordinary = store.addInboxItem({ title: 'ordinary rejection', label: { kind: '独立媒体', quality: 0.65 } })
 await fire('inbox:resolve', c2Ordinary.id, 'reject', { kind: 'route-proposal' })
 const c2ResolvedAt = c2Ordinary.resolvedAt
@@ -2714,7 +2689,7 @@ try {
   const imported = await fire('inbox:import', captureTheme.id, [capture.item])
   const raw = store.getRaw(store.getNode(imported.results[0].id).sources[0].rawId)
   ok('C1: 纯文本 raw label 标记手工粘贴及日期', raw.label === `手工粘贴 · ${store.today()}`)
-  ok('C1: 剪贴板读取桥可调用', typeof await fire('io:readClipboard') === 'string')
+  ok('C1: 剪贴板读取桥走 Tauri 插件而非领域 command', !registry.has('io:readClipboard') && pj.includes("readClipboard: () => readText().catch(() => '')"))
   const url = 'https://example.com/cleanup-source'
   globalThis.fetch = async (requested) => {
     if (requested !== url) throw new Error('测试不允许外网请求')
@@ -2727,21 +2702,20 @@ try {
   ok('C1: URL raw label 使用原始地址', store.getRaw(urlNode.sources[0].rawId).label === url)
   ok('C1: 入库来源继续保留 URL 与抓取时间', urlNode.sources[0].url === url && !!urlNode.sources[0].fetchedAt)
   const gaapLabels = await fire('db:commonUsGaap')
-  ok('C6: 中文指标映射通过 IPC 提供', gaapLabels.some(({ tag, label }) => tag === 'Revenues' && label === '总收入'))
+  ok('C6: 中文指标映射通过 命令 提供', gaapLabels.some(({ tag, label }) => tag === 'Revenues' && label === '总收入'))
 } finally {
   globalThis.fetch = cleanupFetch
   store.importAll(cleanupSnapshot)
 }
 const cleanupToday = readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8')
-const cleanupMain = readFileSync2(join(ROOT2, 'src/main/main.js'), 'utf8')
-const cleanupPreload = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const cleanupPreloadCjs = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
-ok('C1: 两份 preload 完全同步', cleanupPreload === cleanupPreloadCjs)
+const cleanupMain = readFileSync2(join(ROOT2, 'src/tauri/backend.mjs'), 'utf8')
+const cleanupBridge = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
+ok('C1: desktop bridge has no obsolete input-focus event', !/inbox:focus|onInboxFocus/.test(cleanupBridge))
 ok('C1: 输入框和拖拽清理干净', !/inbox-textarea|ondrop|ondragover|inboxDraft/.test(cleanupToday + stylesSrcS45))
-ok('C1: 输入聚焦推送全链路清理', !/inbox:focus|onInboxFocus/.test(cleanupMain + cleanupPreload + cleanupPreloadCjs + appSrcER))
+ok('C1: 输入聚焦推送全链路清理', !/inbox:focus|onInboxFocus/.test(cleanupMain + cleanupBridge + appSrcER))
 ok('C1: 侧栏按钮读取剪贴板且空态有提示', appSrcER.includes('m.readClipboard()') && appSrcER.includes('剪贴板是空的'))
 ok('C3: Windows 字体在 Mac 字体之后', stylesSrcS45.indexOf('Segoe UI') > stylesSrcS45.indexOf('Hiragino Sans GB') && stylesSrcS45.includes('Microsoft YaHei'))
-ok('C3: mica 仅用于 win32', cleanupMain.includes("process.platform === 'win32' ? { backgroundMaterial: 'mica' }"))
+ok('C3: Tauri release targets remain macOS and Windows', JSON.stringify(JSON.parse(readFileSync2(join(ROOT2, 'src-tauri/tauri.conf.json'), 'utf8')).bundle.targets) === JSON.stringify(['dmg', 'nsis']))
 ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree'") && appSrcER.includes("localStorage.setItem('meridian.shape', shape)"))
 ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
 // 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」
@@ -2759,17 +2733,17 @@ ok('C6 v0.8: 不铺通道筛选，按天虚拟化有界渲染', !vaultSrcER.incl
 // LLM 成本治理：A（lastFetch 精度）B（免费过滤层）C（节流与归因）D（收件箱三态）
 // ============================================================
 
+scaffoldHooks.run = realCaptureHook
 console.log('\n— 成本治理：A/B 免费过滤层 —')
 
 const { readUsage, __testHooks: llmHooks, SCENARIO_LABELS } = await import('../src/main/llmlog.js')
 const { startScheduler, isQuietHours: govQuiet } = await import('../src/main/scheduler.js')
-const ipcSrcGov = readFileSync2(join(ROOT2, 'src/main/ipc.js'), 'utf8')
+const domainCommandsSrcGov = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const todaySrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8')
 const storeSrcGov = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 const schedulerSrcGov = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
-const pjGov = readFileSync2(join(ROOT2, 'src/main/preload.js'), 'utf8')
-const pcGov = readFileSync2(join(ROOT2, 'src/main/preload.cjs'), 'utf8')
+const pjGov = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
 // ---- C4：token 读取（原来 9 个调用点一处都没读 usage）----
 
@@ -2778,7 +2752,7 @@ ok('C4: readUsage 读 total_tokens', await readUsage(usageRes) === 42)
 ok('C4: readUsage 不消费原响应体', (await usageRes.json())?.usage?.total_tokens === 42)
 ok('C4: readUsage 无 usage 返回 0', await readUsage(new Response('{}', { headers: { 'content-type': 'application/json' } })) === 0)
 ok('C4: readUsage 解析失败返回 0', await readUsage(new Response('not json', { headers: { 'content-type': 'application/json' } })) === 0)
-ok('C4: 调用点只在 tracked 里记账', ipcSrcGov.includes('tracked(') && !ipcSrcGov.includes('recordLlmUsage'))
+ok('C4: 调用点只在 tracked 里记账', domainCommandsSrcGov.includes('tracked(') && !domainCommandsSrcGov.includes('recordLlmUsage'))
 
 // ---- C5：Jev 原生协议（state/questions 直连 baseUrl 本体）----
 
@@ -2858,8 +2832,8 @@ ok('C5: jevLabel 无 key 不发请求', jevNoKey.ok === false && jevNoKey.why ==
 globalThis.fetch = realFetch
 
 // jev:test 的 handler 走原生最小 ping（只验形状：不拼 /chat/completions、body 为原生）
-ok('E2: jev:test 不再拼 /chat/completions', !ipcSrcGov.includes("jevBaseUrl || '')}/chat/completions"))
-ok('E2: jev:test 用原生 state/questions 最小请求', ipcSrcGov.includes("questions: { ok: { type: 'noul'") && ipcSrcGov.includes("state: 'ping'"))
+ok('E2: jev:test 不再拼 /chat/completions', !domainCommandsSrcGov.includes("jevBaseUrl || '')}/chat/completions"))
+ok('E2: jev:test 用原生 state/questions 最小请求', domainCommandsSrcGov.includes("questions: { ok: { type: 'noul'") && domainCommandsSrcGov.includes("state: 'ping'"))
 
 const usageToday = () => store.llmUsage().daily.find((d) => d.date === store.today()) || { calls: 0, failed: 0, degraded: 0, tokens: 0, byScenario: {} }
 // 账本是同一个对象，比较前先拍快照，否则 before/after 是同一个引用
@@ -3045,7 +3019,7 @@ ok('C5: 复盘页有 LLM 段', vaultSrcGov.includes('LLM 调用') && vaultSrcGov
 ok('C5: 复盘页说明 token 来源', vaultSrcGov.includes('模型不返回时按 0 计'))
 ok('C5: 场景名有中文映射', Object.keys(SCENARIO_LABELS).includes('extract') && SCENARIO_LABELS.extract === '抽取')
 
-// ---- D：界面与 IPC 接线 ----
+// ---- D：界面与 命令 接线 ----
 
 ok('D: today.js 三态分组', todaySrcGov.includes("groupHead('已抽取'") && todaySrcGov.includes("groupHead('待抽取'") && todaySrcGov.includes("groupHead('未匹配'"))
 ok('D: today.js 有「抽取这 N 条」「清空未匹配」', todaySrcGov.includes('`抽取这 ${waitItems.length} 条`') && todaySrcGov.includes('清空未匹配'))
@@ -3055,9 +3029,8 @@ ok('D: 未抽取条目可勾选但不进批量入库',
   todaySrcGov.includes("resolve(splitPicked().extractable, 'extract')"))
 ok('D: 未抽取详情不给归位表单', todaySrcGov.includes('const unextracted = item.extracted === false') && todaySrcGov.includes('const editable = !unextracted'))
 ok('D: 三态样式就位', stylesSrcS45.includes('.inbox-group-head'))
-ok('D: preload 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))
-ok('C5/C6: preload 有 llmUsage、无 channelMatchRates', pjGov.includes('llmUsage:') && !pjGov.includes('channelMatchRates'))
-ok('C5/C6: 两份 preload 仍然完全同步', pjGov === pcGov && pjGov.includes('inboxExtract') === pcGov.includes('inboxExtract'))
+ok('D: bridge 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))
+ok('C5/C6: bridge 有 llmUsage、无 channelMatchRates', pjGov.includes('llmUsage:') && !pjGov.includes('channelMatchRates'))
 
 // 收尾：恢复抽取桩与设置，别把 stub 留给后面的断言
 llmHooks.run = realRunHook
@@ -3576,15 +3549,16 @@ await v8Test('意图导出含树、标签库和未结算判断；零配置也有
   v8Assert.ok(!JSON.stringify(intent).includes('apiKey'))
 })
 
-// 子进程只载入 store 和 Electron 替身，绝不 import 真实 main、启应用或触达真实 userData。
+// 子进程只载入存储服务并注入临时目录，不启动桌面宿主或触达真实用户数据。
 const v8Reload = (expression) => {
   const code = `
-    globalThis.__electron = await import(${JSON.stringify(new URL('./electron-stub.mjs', import.meta.url).href)})
+    const runtime = await import(${JSON.stringify(new URL('../src/main/runtime-services.js', import.meta.url).href)})
+    runtime.configurePlatformServices({ dataDirectory: process.env.MERIDIAN_USER_DATA_DIR })
     const store = await import(${JSON.stringify(new URL('../src/main/store.js', import.meta.url).href)})
     store.load()
     console.log(JSON.stringify(${expression}))
   `
-  const child = v8SpawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, MERIDIAN_TEST_DATA: DATA }, encoding: 'utf8', timeout: 10000 })
+  const child = v8SpawnSync(process.execPath, ['--input-type=module', '-e', code], { env: { ...process.env, MERIDIAN_USER_DATA_DIR: DATA }, encoding: 'utf8', timeout: 10000 })
   v8Assert.equal(child.status, 0, child.stderr || String(child.error || ''))
   return JSON.parse(child.stdout.trim().split('\n').at(-1))
 }
@@ -3847,26 +3821,6 @@ await v8Test('接入只有 HTTP 与 MCP，没有文件投递', async () => {
 })
 
 
-await v8Test('打开数据目录用 handle，成功路径和 shell 错误均可见', async () => {
-  const ipc = v8Fs.readFileSync(join(ROOT, 'src/main/ipc.js'), 'utf8')
-  v8Assert.match(ipc, /ipcMain\.handle\(['"]io:openDataDir['"]/)
-  v8Assert.doesNotMatch(ipc, /ipcMain\.on\(['"]io:openDataDir['"]/)
-  const original = stub.shell.openPath
-  const opened = []
-  try {
-    stub.shell.openPath = async (path) => { opened.push(path); return '' }
-    const success = await fire('io:openDataDir')
-    v8Assert.equal(success.ok, true)
-    v8Assert.equal(success.path, DATA)
-    v8Assert.deepEqual(opened, [DATA])
-    stub.shell.openPath = async () => '测试路径不可访问'
-    const failure = await fire('io:openDataDir')
-    v8Assert.equal(failure.ok, false)
-    v8Assert.equal(failure.error, '测试路径不可访问')
-  } finally { stub.shell.openPath = original }
-  v8Assert.equal(v8Fs.readFileSync(join(ROOT, 'src/main/preload.js'), 'utf8'), v8Fs.readFileSync(join(ROOT, 'src/main/preload.cjs'), 'utf8'))
-})
-
 await v8Test('新版存证导出不能删除事件后冒充旧数据导入', async () => {
   const { indicator } = v8Reset()
   v8Add(indicator)
@@ -4006,8 +3960,9 @@ await v8Test('摄入队列并发有界，MCP 拒绝非法初始化参数', async
 //    先建目录再谈损坏，否则一次误删就让摄入永久失效。
 await v8Test('数据目录被外部删除后自动重建，追加不崩且链自洽', async () => {
   const { indicator } = v8Reset()
-  // 读数账本就在 MERIDIAN_TEST_DATA 下，删整个目录模拟「用户手动删了数据文件夹」
-  const dir = process.env.MERIDIAN_TEST_DATA
+  // 读数账本位于平台注入的数据目录，删整个目录模拟「用户手动删了数据文件夹」
+  const { dataDirectory } = await import('../src/main/runtime-services.js')
+  const dir = dataDirectory()
   v8Assert.ok(dir, '拿得到数据目录')
   v8Fs.rmSync(dir, { recursive: true, force: true })
   v8Assert.ok(!v8Fs.existsSync(dir), '目录已删')

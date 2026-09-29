@@ -45,20 +45,20 @@ try {
     body: JSON.stringify(body),
   })
 
-  const unauthorized = await post('/invoke', { channel: 'theme:all', args: [] }, false)
+  const unauthorized = await post('/invoke', { command: 'theme:all', args: [] }, false)
   assert.equal(unauthorized.status, 403, 'sidecar rejects requests without its per-run token')
 
-  const themesResponse = await post('/invoke', { channel: 'theme:all', args: [] })
+  const themesResponse = await post('/invoke', { command: 'theme:all', args: [] })
   assert.equal(themesResponse.status, 200)
   const themes = (await themesResponse.json()).result
   assert.equal(themes[0]?.id, 'legacy-theme', 'existing meridian.json data stays readable')
 
-  const statsResponse = await post('/invoke', { channel: 'db:stats', args: [] })
-  assert.equal(statsResponse.status, 200, 'existing IPC-backed stats command is callable')
+  const statsResponse = await post('/invoke', { command: 'db:stats', args: [] })
+  assert.equal(statsResponse.status, 200, 'domain stats command is callable')
   assert.ok((await statsResponse.json()).result)
 
-  const unknown = await post('/invoke', { channel: 'not-a-registered-command', args: [] })
-  assert.equal(unknown.status, 404, 'only registered IPC handlers are exposed')
+  const unknown = await post('/invoke', { command: 'not-a-registered-command', args: [] })
+  assert.equal(unknown.status, 404, 'only registered domain commands are exposed')
 
   const events = await post('/events')
   assert.equal(events.status, 200)

@@ -1,15 +1,14 @@
 # Meridian Service
 
-桌面 App 之外的第二种运行形态：把 `src/main/` 的账本与 IPC handler 原样搬到
-一个 HTTP 服务里（`server.mjs`），供局域网内可信设备调用。业务逻辑零 fork——
-跑的就是桌面版用的同一个 handler。
+桌面 App 之外的第二种运行形态：把 `src/main/` 的账本与领域命令注册到
+独立 HTTP 服务（`server.mjs`），供局域网内可信设备调用。业务逻辑零 fork——
+桌面与 HTTP host 调用同一套命令。
 
 ## 目录
 
 | 文件 | 说明 |
 |---|---|
-| `server.mjs` | HTTP 服务：`POST /api/:channel`，`GET /healthz`（免认证探活） |
-| `shim.mjs` | Electron 替身（`globalThis.__electron`），必须在业务模块之前 import |
+| `server.mjs` | HTTP transport adapter：`POST /api/:command`，`GET /healthz`（免认证探活） |
 | `db-schema.mjs` | SQLite 契约：`SCHEMA_VERSION` / `initSchema` / `TABLES` / `dbToRows` / `rowsToDb` |
 | `migrate-json-to-sqlite.mjs` | 一次性迁移：`meridian.json` → `meridian.sqlite`（见下） |
 | `config.example.json` | 配置模板；真实 `config.json` 不进 git |

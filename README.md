@@ -102,7 +102,7 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 ### 直接下载安装包（推荐）
 
-本分支已切换为 Tauri 打包：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 中可能仍是旧版 Electron 包。
+桌面包目标为 Tauri 2：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 可能包含早期构建。
 
 ### 从源码运行
 
@@ -209,21 +209,21 @@ npm start
 ## 开发
 
 ```bash
-npm test                 # 引擎、IPC、业务回归与 Tauri 侧车集成测试
+npm test                 # 引擎、领域命令、业务回归与 Tauri 侧车集成测试
 npm run build:ui         # 只构建前端，不需要原生桌面库
 npm run tauri:dev        # 启动桌面开发版，需要本机 Tauri 工具链
 npm run tauri:prepare    # 为发布包暂存本机 Node 运行时
 npm run tauri:build      # macOS DMG 或 Windows NSIS 安装包
 ```
 
-Tauri 窗口和渲染桥接已迁移；现有业务层仍由随包 Node 侧车承载，以保留账本、捕获、模型接入和可选同步的既有行为。Node 24.19.0 在本机测得 126 MB 原始体积（gzip -6 后 44.3 MB），因此当前方案不是纯 Rust 的最小体积方案。完整说明见 [`docs/TAURI_MIGRATION.md`](docs/TAURI_MIGRATION.md)。
+Tauri 宿主只负责原生桌面能力；随包 Node 侧车通过平台无关的命令注册表承载业务和存储，保留账本、捕获、模型接入及可选同步行为。Node 24.19.0 在本机测得 126 MB 原始体积（gzip -6 后 44.3 MB），因此当前方案不是纯 Rust 的最小体积方案。完整说明见 [`docs/TAURI_MIGRATION.md`](docs/TAURI_MIGRATION.md)。
 
 ```
 src-tauri/         Tauri 2 Rust 宿主、权限和平台打包配置
 src/tauri/         Node 业务侧车与受限 loopback JSON-RPC 桥接
-src/main/          业务：引擎、捕获、加密、本地服务及 IPC 命令
+src/main/          领域服务：引擎、捕获、加密、存储与命令注册表
 src/renderer/      原生 DOM 前端；Tauri bridge 保留原 renderer API
-test/              业务回归、Electron shim 和 Tauri 侧车集成测试
+test/              业务回归、服务适配器和 Tauri 侧车集成测试
 tools/             Node 运行时打包暂存工具
 docs/ROADMAP.md    迭代路线（按价值/成本排序）
 ```

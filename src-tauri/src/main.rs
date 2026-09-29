@@ -22,7 +22,7 @@ struct Sidecar(Mutex<Child>);
 #[tauri::command]
 async fn backend_invoke(
     state: State<'_, BackendState>,
-    channel: String,
+    command: String,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let endpoint = &state.0;
@@ -30,7 +30,7 @@ async fn backend_invoke(
         .client
         .post(format!("{}/invoke", endpoint.base))
         .header("x-meridian-token", &endpoint.token)
-        .json(&json!({ "channel": channel, "args": args }))
+        .json(&json!({ "command": command, "args": args }))
         .send()
         .await
         .map_err(|e| format!("backend unavailable: {e}"))?;
@@ -65,7 +65,7 @@ async fn backend_events(state: State<'_, BackendState>) -> Result<Vec<Value>, St
         .map_err(|e| format!("invalid event response: {e}"))
 }
 
-fn legacy_user_data_dir() -> Result<PathBuf, String> {
+fn application_data_directory() -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     {
         let base = std::env::var_os("APPDATA")
@@ -100,8 +100,8 @@ fn legacy_user_data_dir() -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn legacy_data_dir() -> Result<String, String> {
-    legacy_user_data_dir().map(|path| path.to_string_lossy().into_owned())
+fn application_data_dir() -> Result<String, String> {
+    application_data_directory().map(|path| path.to_string_lossy().into_owned())
 }
 
 fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), String> {
@@ -129,7 +129,7 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), St
     if !script.exists() {
         return Err(format!("missing sidecar entry: {}", script.display()));
     }
-    let data_dir = legacy_user_data_dir()?;
+    let data_dir = application_data_directory()?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create data directory: {e}"))?;
     let token = Uuid::new_v4().to_string();
     let mut child = Command::new(&node)
@@ -181,7 +181,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_invoke,
             backend_events,
-            legacy_data_dir
+            application_data_dir
         ])
         .setup(|app| {
             let (child, endpoint) = launch_sidecar(app.handle()).map_err(std::io::Error::other)?;

@@ -3,11 +3,12 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut'
 import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { normalizeExternalUrl } from '../../shared/external-url.js'
 
 const listeners = new Map()
-const call = (channel, ...args) => {
+const call = (command, ...args) => {
   while (args.length && args.at(-1) === undefined) args.pop()
-  return invoke('backend_invoke', { channel, args })
+  return invoke('backend_invoke', { command, args })
 }
 const subscribe = (event, callback) => {
   if (!listeners.has(event)) listeners.set(event, new Set())
@@ -52,14 +53,14 @@ export function createMeridianBridge() {
     readClipboard: () => readText().catch(() => ''), commonUsGaap: () => call('db:commonUsGaap'),
     exportAll: () => call('io:export'), importAll: (json) => call('io:import', json),
     openDataDir: async () => {
-      try { const path = await invoke('legacy_data_dir'); await openPath(path); return { ok: true, path } }
+      try { const path = await invoke('application_data_dir'); await openPath(path); return { ok: true, path } }
       catch (error) { return { ok: false, error: error?.message || String(error) } }
     },
     openExternal: async (url) => {
       try {
-        const parsed = new URL(url)
-        if (!['http:', 'https:'].includes(parsed.protocol)) return false
-        await openUrl(parsed.toString())
+        const safeUrl = normalizeExternalUrl(url)
+        if (!safeUrl) return false
+        await openUrl(safeUrl)
         return true
       } catch { return false }
     },

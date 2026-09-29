@@ -6,12 +6,12 @@ import { __testHooks as llmHooks } from './llmlog.js'
 import { ReadingStore, digest, normalizeName, observationKey, validateReading } from './reading-store.js'
 import { DatabaseSync } from 'node:sqlite'
 import { initSchema, dbToRows, rowsToDb, TABLES } from '../../service/db-schema.mjs'
-const { app } = globalThis.__electron
+import { dataDirectory } from './runtime-services.js'
 
-const DATA_FILE = () => join(app.getPath('userData'), 'meridian.json')
+const DATA_FILE = () => join(dataDirectory(), 'meridian.json')
 /** SQLite durability 文件。存在即表示"已切换到 SQLite 持久层"，load/persist 都走它；
  *  不存在则走 legacy JSON 路径（向后兼容，测试也走这条）。 */
-const SQLITE_FILE = () => join(app.getPath('userData'), 'meridian.sqlite')
+const SQLITE_FILE = () => join(dataDirectory(), 'meridian.sqlite')
 
 /** 来源质量基准表。打标器只负责选类型，质量分一律由这张表裁决。 */
 export const SOURCE_QUALITY = [
@@ -211,7 +211,7 @@ function readSqlite() {
 }
 
 function readingsStore() {
-  if (!readingStore) readingStore = new ReadingStore(app.getPath('userData'))
+  if (!readingStore) readingStore = new ReadingStore(dataDirectory())
   return readingStore
 }
 
@@ -1424,7 +1424,7 @@ export function saveSettings(patch) {
  * 用 JSONL 而不是 JSON：追加是 O(1)，进程崩了最坏丢半行（读的时候跳过），
  * 不必为了加一条而重写整个文件。
  */
-const RAW_FILE = () => join(app.getPath('userData'), 'raw.jsonl')
+const RAW_FILE = () => join(dataDirectory(), 'raw.jsonl')
 
 let rawCache = null
 let rawBySha = null

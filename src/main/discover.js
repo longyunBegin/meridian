@@ -10,8 +10,7 @@ import { COMMON_US_GAAP, SYNONYM_GROUPS, kindToTags, sicToTags } from './store.j
 import { labelSource } from './labeler.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-
-const { app } = globalThis.__electron
+import { dataDirectory } from './runtime-services.js'
 
 /** SEC EDGAR 硬要求：不带 UA 全站 403。邮箱要换成真实的。 */
 const UA = 'Meridian/0.6 (contact: meridian@example.com)'
@@ -32,7 +31,7 @@ async function resolveTicker(ticker) {
     if (hit) return hit
   }
   // 尝试本地文件缓存
-  const cacheFile = join(app.getPath('userData'), 'sec-tickers.json')
+  const cacheFile = join(dataDirectory(), 'sec-tickers.json')
   if (!tickerCache && existsSync(cacheFile)) {
     try {
       const cached = JSON.parse(readFileSync(cacheFile, 'utf8'))
@@ -127,7 +126,7 @@ export async function discoverTags(ticker) {
   if (!t) return { tags: [], error: '请填 ticker', entityName: null }
 
   const { cik, title } = await resolveTicker(t)
-  const cacheFile = join(app.getPath('userData'), `sec-facts-${cik}.json`)
+  const cacheFile = join(dataDirectory(), `sec-facts-${cik}.json`)
 
   // 本地缓存
   if (existsSync(cacheFile)) {

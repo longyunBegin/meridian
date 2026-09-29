@@ -10,16 +10,15 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DATA = join(ROOT, 'test/.tmp/sync-data')
-process.env.MERIDIAN_TEST_DATA = DATA
+process.env.MERIDIAN_USER_DATA_DIR = DATA
 
 rmSync(DATA, { recursive: true, force: true })
 mkdirSync(DATA, { recursive: true })
 
-const stub = await import('./electron-stub.mjs')
-globalThis.__electron = stub
+const { registry, invoke: fire } = await import('./runtime-harness.mjs').then(({ createCommandTestHarness }) => createCommandTestHarness(DATA, { outbox: true }))
 
 const store = await import('../src/main/store.js')
-const { register: registerIpc } = await import('../src/main/ipc.js')
+const { registerDomainCommands } = await import('../src/main/domain-commands.js')
 const outbox = await import('../src/main/sync-outbox.js')
 const syncSrv = await import('../src/main/sync-server.js')
 
@@ -29,10 +28,9 @@ const ok = (name, cond, extra = '') => {
   cond ? pass++ : fail++
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
-const fire = async (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
 
 store.load()
-registerIpc({ getMainWindow: () => undefined, enableOutbox: true })
+registerDomainCommands({ registry })
 
 console.log('\n— outbox 白名单 —')
 ok('白名单含 inbox:resolve', outbox.OUTBOX_CHANNELS.has('inbox:resolve'))
