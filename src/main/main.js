@@ -68,7 +68,7 @@ function createMain() {
   return mainWin
 }
 
-import { register } from './ipc.js'
+import { register, invokeChannel } from './ipc.js'
 import { startScheduler } from './scheduler.js'
 import { dueSettlements } from './store.js'
 
@@ -111,9 +111,10 @@ app.whenReady().then(async () => {
     // 反向同步：用户写操作进 outbox，供 VM 桥经 Tailscale 拉取重放。
     enableOutbox: true,
   })
-  // Mac 同步端点（Tailscale 反向同步）：无 sync.config.json 则不启动，不影响 App 本体。
+  // Mac 同步端点（双向 op log）：无 sync.config.json 则不启动，不影响 App 本体。
+  // applyOp 把 VM 侧的 op 落到本地 handler（与渲染层调的是同一套 handler）。
   try {
-    await startSyncServer()
+    await startSyncServer({ applyOp: (channel, args) => invokeChannel(channel, ...args) })
   } catch (e) {
     console.error('[sync] 同步端点启动失败（App 本体不受影响）:', e.message || e)
   }
