@@ -36,7 +36,7 @@
       "../service/db-schema.mjs": "sidecar/meridian/service/db-schema.mjs",
       "../src/tauri/backend.mjs": "sidecar/meridian/src/tauri/backend.mjs",
       "../package.json": "sidecar/meridian/package.json",
-      "runtime/node.exe": "sidecar/runtime/node.exe"
+      "runtime/": "sidecar/runtime/"
     },
     "icon": [
       "../src/renderer/assets/icons/icon-32.png",

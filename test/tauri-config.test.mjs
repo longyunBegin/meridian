@@ -13,14 +13,18 @@ for (const [source, destination] of Object.entries(resources)) {
   assert.ok(destination.startsWith('sidecar/'), `sidecar resources must stay in a collision-free subdirectory: ${destination}`)
   const relativeToRoot = relative(root, sourcePath)
   assert.ok(relativeToRoot && !relativeToRoot.startsWith('..'), `resource path escapes the project: ${source}`)
-  if (source === 'runtime/node.exe') {
-    assert.match(readFileSync(resolve(root, 'tools/prepare-tauri-runtime.mjs'), 'utf8'), /join\(outputDir, 'node\.exe'\)/)
+  if (source === 'runtime/') {
+    assert.equal(destination, 'sidecar/runtime/', 'the complete runtime directory must be recursively bundled')
+    const prepareScript = readFileSync(resolve(root, 'tools/prepare-tauri-runtime.mjs'), 'utf8')
+    assert.match(prepareScript, /copyMacOSNodeLibrary/)
+    assert.match(prepareScript, /copyWindowsRuntimeDlls/)
   } else {
     assert.ok(existsSync(sourcePath), `bundle resource source does not exist: ${sourcePath}`)
   }
 }
+assert.ok(Object.hasOwn(resources, 'runtime/'), 'Tauri must bundle the whole generated runtime directory')
 assert.deepEqual(config.bundle.targets, ['dmg', 'nsis'])
 assert.equal(config.version, JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version)
 const cargoVersion = readFileSync(resolve(configDir, 'Cargo.toml'), 'utf8').match(/^version = "([^"]+)"/m)?.[1]
 assert.equal(config.version, cargoVersion, 'Cargo version must match the app version')
-console.log(`Tauri bundle config: ${Object.keys(resources).length} resources resolve; macOS DMG and Windows NSIS targets only`)
+console.log(`Tauri bundle config: ${Object.keys(resources).length} resources resolve; complete runtime directory is recursively bundled`)
