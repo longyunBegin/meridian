@@ -1,6 +1,11 @@
 node_modules/
 test/.tmp/
 src/main/entry-debug.log
+dist/
+target/
+src-tauri/target/
+src-tauri/runtime/
+src-tauri/gen/schemas/
 
 # meridian service 本地/敏感产物
 service/config.json

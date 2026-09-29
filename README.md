@@ -6,8 +6,8 @@
 > 资产不是知识地图，是你的**校准曲线**。
 
 ![Platform](https://img.shields.io/badge/平台-macOS_|_Windows-blue)
-![Electron](https://img.shields.io/badge/Electron-37-47848F)
-![Node](https://img.shields.io/badge/Node-≥18-339933)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
+![Node](https://img.shields.io/badge/Node-≥22.13-339933)
 ![Tests](https://img.shields.io/badge/测试-1142_通过-brightgreen)
 
 ---
@@ -102,17 +102,11 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 ### 直接下载安装包（推荐）
 
-从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
-
-- macOS：`Meridian-0.1.0-arm64.dmg`（Apple Silicon）或 `Meridian-0.1.0.dmg`（Intel）
-- Windows：`Meridian Setup 0.1.0.exe`（x64/arm64，实验性）
-
-macOS 首次启动：**右键点击 Meridian.app → 打开**（未做苹果开发者签名，只需操作一次，之后正常双击启动）。
-Windows：SmartScreen 拦截时选择"仍要运行"（未签名）。
+本分支已切换为 Tauri 打包：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 中可能仍是旧版 Electron 包。
 
 ### 从源码运行
 
-环境要求：macOS（窗口 vibrancy 与全局热键依赖桌面端）、Node.js ≥ 18。
+环境要求：macOS 或 Windows、Node.js ≥ 22.13、Rust stable，以及对应平台的 Tauri 构建工具链。Windows 需要 MSVC C++ 构建工具和 WebView2；macOS 需要 Xcode Command Line Tools。
 
 ```bash
 git clone https://github.com/longyunBegin/meridian.git
@@ -120,6 +114,8 @@ cd meridian
 npm install
 npm start
 ```
+
+`npm start` 使用 Tauri 2。发布构建在目标系统本机执行：macOS 生成 DMG，Windows 生成 NSIS 安装包；当前不配置 Linux 或跨平台交叉编译。
 
 > 曾用名「脉络」。改名后账本目录保持历史名称（`~/Library/Application Support/脉络/`），老用户数据不断链。
 
@@ -202,7 +198,7 @@ npm start
 
 ## 数据与隐私
 
-- **本地优先**：判断层是单个 JSON，原文层是 JSONL，都在 `~/Library/Application Support/脉络/`，设置页一键打开
+- **本地优先**：判断层是 JSON/SQLite，原文层是 JSONL；macOS 存于 `~/Library/Application Support/脉络/`，Windows 存于 `%APPDATA%\脉络\`，设置页可一键打开
 - **你的数据你带走**：随时导出 / 导入完整账本
 - **密钥加密**：API Key 用 AES-256-GCM 加密落盘，密钥由机器信息派生，换机器读不出来
 - **原文可清**：设置页可清理无引用原文或全清原文——判断、置信度、校准曲线不受影响
@@ -213,18 +209,22 @@ npm start
 ## 开发
 
 ```bash
-npm test    # 引擎 + IPC + 改造测试（1142 项，electron 已 stub，纯 Node 可跑）
-npm start   # 启动应用
-npm run shoot  # 视觉回归截图 → /tmp/meridian-shots/
+npm test                 # 引擎、IPC、业务回归与 Tauri 侧车集成测试
+npm run build:ui         # 只构建前端，不需要原生桌面库
+npm run tauri:dev        # 启动桌面开发版，需要本机 Tauri 工具链
+npm run tauri:prepare    # 为发布包暂存本机 Node 运行时
+npm run tauri:build      # macOS DMG 或 Windows NSIS 安装包
 ```
 
+Tauri 窗口和渲染桥接已迁移；现有业务层仍由随包 Node 侧车承载，以保留账本、捕获、模型接入和可选同步的既有行为。Node 24.19.0 在本机测得 126 MB 原始体积（gzip -6 后 44.3 MB），因此当前方案不是纯 Rust 的最小体积方案。完整说明见 [`docs/TAURI_MIGRATION.md`](docs/TAURI_MIGRATION.md)。
+
 ```
-src/
-  main/            主进程：引擎（store.js）、抽取（extract.js）、打标（labeler.js）、
-                   抓取（fetcher.js）、加密（crypto.js）、订阅源（feeds.js）、IPC（ipc.js）
-  renderer/        渲染进程：无框架，原生 DOM；views/ 下是今日 / 脉络 / 图 / 库 / 设置
-test/              engine.test.mjs / ipc.test.mjs / redesign.test.mjs / electron-stub.mjs
-tools/shoot.mjs    视觉回归截图
+src-tauri/         Tauri 2 Rust 宿主、权限和平台打包配置
+src/tauri/         Node 业务侧车与受限 loopback JSON-RPC 桥接
+src/main/          业务：引擎、捕获、加密、本地服务及 IPC 命令
+src/renderer/      原生 DOM 前端；Tauri bridge 保留原 renderer API
+test/              业务回归、Electron shim 和 Tauri 侧车集成测试
+tools/             Node 运行时打包暂存工具
 docs/ROADMAP.md    迭代路线（按价值/成本排序）
 ```
 
@@ -242,7 +242,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 - ✅ 收件箱批量分拣 + 主题可选
 - ✅ 节点来源可点击跳转原文
 - ✅ Mac ↔ VM 双向同步
-- ✅ Windows 安装包（实验性）
+- ⏳ Tauri Windows 安装包已配置，仍待目标系统构建验证
 - ✅ 更名 Meridian + 极简几何 Logo
 
 明确不做：多端同步、协作分享、荐股信号、移动端——详见 ROADMAP。
@@ -257,11 +257,11 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 **没有大模型 Key 能用吗？**
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
-**支持 Windows / Linux 吗？**
-Windows 有实验性安装包（见 Releases，未签名，首次公开测试）；Linux 暂不支持。全局热键与窗口 vibrancy 目前只做了 macOS。
+**支持哪些桌面系统？**
+本分支目标为 macOS 和 Windows；Linux 不支持。Tauri 迁移分支的 macOS/Windows 安装包仍待对应系统构建验证。
 
 **数据存在哪？**
-`~/Library/Application Support/脉络/meridian.json`（判断层）+ 同目录 `raw.jsonl`（原文层）。
+macOS：`~/Library/Application Support/脉络/meridian.json`；Windows：`%APPDATA%\脉络\meridian.json`。原文层 `raw.jsonl` 位于同目录。
 
 ---
 

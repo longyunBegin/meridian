@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Meridian",
+  "version": "0.1.0",
+  "identifier": "com.meridian.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:ui",
+    "frontendDist": "../dist/renderer"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Meridian",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 640,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "nsis"],
+    "category": "Productivity",
+    "shortDescription": "本地优先的判断账本",
+    "resources": {
+      "../src/main/": "sidecar/meridian/src/main/",
+      "../src/shared/": "sidecar/meridian/src/shared/",
+      "../service/db-schema.mjs": "sidecar/meridian/service/db-schema.mjs",
+      "../src/tauri/backend.mjs": "sidecar/meridian/src/tauri/backend.mjs",
+      "../package.json": "sidecar/meridian/package.json",
+      "runtime/node.exe": "sidecar/runtime/node.exe"
+    },
+    "icon": [
+      "../src/renderer/assets/icons/icon-32.png",
+      "../src/renderer/assets/icons/icon-128.png",
+      "../src/renderer/assets/icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
