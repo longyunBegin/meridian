@@ -1,5 +1,5 @@
 /**
- * 反向同步测试（Mac 端）：outbox 白名单 + sync-server 端点。
+ * 双向 op log 同步测试（Mac 端）：outbox seq/游标 + sync-server 端点 + VM op 白名单 + upsert 幂等。
  *
  * 运行：node test/sync.test.mjs（已接入 npm test）
  * 隔离：MERIDIAN_TEST_DATA 指向 test/.tmp/sync-data，绝不碰真实账本。
@@ -19,7 +19,7 @@ const stub = await import('./electron-stub.mjs')
 globalThis.__electron = stub
 
 const store = await import('../src/main/store.js')
-const { register: registerIpc } = await import('../src/main/ipc.js')
+const { register: registerIpc, invokeChannel } = await import('../src/main/ipc.js')
 const outbox = await import('../src/main/sync-outbox.js')
 const syncSrv = await import('../src/main/sync-server.js')
 
@@ -34,7 +34,7 @@ const fire = async (ch, ...args) => stub.__handlers.get(ch)({}, ...args)
 store.load()
 registerIpc({ getMainWindow: () => undefined, enableOutbox: true })
 
-console.log('\n— outbox 白名单 —')
+console.log('\n— outbox 白名单（Mac→VM）—')
 ok('白名单含 inbox:resolve', outbox.OUTBOX_CHANNELS.has('inbox:resolve'))
 for (const ch of ['inbox:prune', 'inbox:clear', 'inbox:clearUnextracted', 'db:resolveConflict', 'db:settle', 'theme:rename', 'theme:update', 'inbox:extract', 'inbox:import', 'inbox:setTheme']) {
   ok(`白名单含 ${ch}`, outbox.OUTBOX_CHANNELS.has(ch))
@@ -44,55 +44,105 @@ for (const ch of ['db:addNode', 'db:updateNode', 'db:removeNode', 'inbox:capture
   ok(`白名单排除 ${ch}`, !outbox.OUTBOX_CHANNELS.has(ch))
 }
 
-console.log('\n— outbox 记录 —')
+console.log('\n— VM op 白名单（VM→Mac）—')
+for (const ch of ['inbox:upsertItem', 'db:upsertNode', 'db:addSource', 'raw:upsert']) {
+  ok(`VM 白名单含 ${ch}`, outbox.VM_OP_CHANNELS.has(ch))
+}
+for (const ch of ['inbox:resolve', 'db:settle', 'inbox:capture', 'db:updateNode', 'db:removeNode', 'settings:set']) {
+  ok(`VM 白名单排除 ${ch}`, !outbox.VM_OP_CHANNELS.has(ch))
+}
+ok('VM op handler 已登记', (() => { try { invokeChannel('inbox:upsertItem', null); return true } catch { return false } })())
+ok('未知 channel 抛错', (() => { try { invokeChannel('nope:nope'); return false } catch { return true } })())
+
+console.log('\n— outbox 记录带 seq —')
 const item = store.addInboxItem({ text: '同步测试条目', title: '同步测试' })
 const r1 = await fire('inbox:resolve', item.id, 'reject')
 ok('inbox:resolve 成功', r1?.status === 'rejected')
 let entries = outbox.readOutbox(DATA)
 ok('记录了 1 条', entries.length === 1, `实际 ${entries.length}`)
 ok('channel 正确', entries[0]?.channel === 'inbox:resolve')
-ok('args 正确', JSON.stringify(entries[0]?.args) === JSON.stringify([item.id, 'reject']))
-ok('entry 有唯一 id', typeof entries[0]?.id === 'string' && entries[0].id.length > 0)
+ok('seq 从 1 开始单调', entries[0]?.seq === 1)
 ok('entry 有 ts', typeof entries[0]?.ts === 'number')
 
-console.log('\n— 重放幂等（bridge 崩在 apply/ack 之间会重放）—')
-const r2 = await fire('inbox:resolve', item.id, 'reject')
-ok('重复裁决不抛错', r2?.status === 'rejected')
-ok('重复裁决又记了一条（重放安全由 VM 端幂等保证）', outbox.readOutbox(DATA).length === 2)
+console.log('\n— seq 游标拉取/ack —')
+await fire('inbox:resolve', item.id, 'ignore')
+entries = outbox.readOutbox(DATA)
+ok('两条 seq 是 1,2', entries.length === 2 && entries[0].seq === 1 && entries[1].seq === 2)
+const later = outbox.readOutbox(DATA, 1)
+ok('since=1 只返回 seq>1 的', later.length === 1 && later[0].seq === 2)
+ok('ackOutboxCursor(1) 清掉 1 条', outbox.ackOutboxCursor(1, DATA) === 1)
+ok('只剩 seq=2', outbox.readOutbox(DATA).length === 1 && outbox.readOutbox(DATA)[0].seq === 2)
+ok('ackOutboxCursor(2) 清空', outbox.ackOutboxCursor(2, DATA) === 0 || outbox.readOutbox(DATA).length === 0)
+
+console.log('\n— 老 outbox 无 seq 自动迁移 —')
+const LEGACY = join(DATA, 'legacy-dir')
+mkdirSync(LEGACY, { recursive: true })
+writeFileSync(join(LEGACY, 'sync-outbox.jsonl'),
+  JSON.stringify({ id: 'old-a', ts: 1, channel: 'db:settle', args: ['n1', true] }) + '\n' +
+  JSON.stringify({ id: 'old-b', ts: 2, channel: 'db:settle', args: ['n2', false] }) + '\n')
+const migrated = outbox.readOutbox(LEGACY)
+ok('迁移后两条都有 seq 1,2', migrated.length === 2 && migrated[0].seq === 1 && migrated[1].seq === 2)
+const rid3 = outbox.recordOutbox('db:settle', ['n3', true], LEGACY)
+ok('迁移后新记录 seq=3', outbox.readOutbox(LEGACY).some((e) => e.id === rid3 && e.seq === 3))
+ok('seq 计数器文件存在', existsSync(join(LEGACY, 'sync-outbox.seq')))
 
 console.log('\n— 非白名单不记录 —')
 await fire('db:stats')
 await fire('inbox:list', {})
-ok('读操作不记录', outbox.readOutbox(DATA).length === 2)
-const n0 = outbox.readOutbox(DATA).length
-ok('db:addNode（lemma 变更）不在白名单', !outbox.OUTBOX_CHANNELS.has('db:addNode'))
+ok('读操作不记录', outbox.readOutbox(DATA).length === 0)
 
 console.log('\n— 记录失败不影响用户操作 —')
 const circular = {}
 circular.self = circular
 const rid = outbox.recordOutbox('inbox:resolve', [circular], DATA)
 ok('不可序列化 args 返回 null 不抛错', rid === null)
-ok('坏记录没写进文件', outbox.readOutbox(DATA).length === n0)
 
-console.log('\n— ack —')
-const ids = outbox.readOutbox(DATA).map((e) => e.id)
-ok('ack 第一条返回 1', outbox.ackOutbox([ids[0]], DATA) === 1)
-ok('还剩 1 条', outbox.readOutbox(DATA).length === 1)
-ok('ack 不存在的 id 返回 0', outbox.ackOutbox(['no-such-id'], DATA) === 0)
-ok('ack 剩余', outbox.ackOutbox([ids[1]], DATA) === 1)
-ok('outbox 空了', outbox.outboxCount(DATA) === 0)
+console.log('\n— upsertInboxItem 幂等且不覆盖裁决 —')
+const vmItem = { id: 'vm-item-1', text: 'VM 来的条目', title: 't', extracted: true, matchScore: 0.9, createdAt: '2026-09-29' }
+const u1 = store.upsertInboxItem(vmItem)
+ok('首次 upsert added=true', u1.ok && u1.added === true)
+// 用户在 Mac 侧裁决了这条
+store.resolveInboxItem('vm-item-1', 'accept')
+const u2 = store.upsertInboxItem(vmItem)
+ok('重复 upsert added=false', u2.ok && u2.added === false)
+const kept = store.load().inbox.find((i) => i.id === 'vm-item-1')
+ok('用户裁决未被覆盖', kept?.status === 'accepted' && kept?.resolvedAt)
+ok('坏条目被拒', store.upsertInboxItem(null).ok === false && store.upsertInboxItem({}).ok === false)
 
-console.log('\n— sync-server 端点 —')
+console.log('\n— upsertNodeSnapshot 幂等且不碰 confidence —')
+const snapNode = { id: 'vm-node-1', themeId: 'th1', title: 'VM 建的节点', confidence: 42, history: [], sources: [], createdAt: '2026-09-29' }
+const un1 = store.upsertNodeSnapshot(snapNode)
+ok('首次 upsert added=true', un1.ok && un1.added === true)
+// 模拟 confidence 被用户/系统改了，再 upsert 旧快照
+store.updateNode('vm-node-1', { confidence: 90 })
+const un2 = store.upsertNodeSnapshot({ ...snapNode, confidence: 42 })
+ok('重复 upsert added=false', un2.ok && un2.added === false)
+ok('confidence 未被覆盖', store.getNode('vm-node-1')?.confidence === 90)
+ok('坏节点被拒', store.upsertNodeSnapshot(null).ok === false && store.upsertNodeSnapshot({ id: 'x' }).ok === false)
+
+console.log('\n— upsertRaw 按 id 幂等 —')
+const ur1 = store.upsertRaw({ id: 'raw-1', text: '原文内容', sha256: 'abc', createdAt: '2026-09-29' })
+ok('首次 upsert added=true', ur1.ok && ur1.added === true)
+const ur2 = store.upsertRaw({ id: 'raw-1', text: '原文内容', sha256: 'abc' })
+ok('重复 upsert added=false', ur2.ok && ur2.added === false)
+ok('坏原文被拒', store.upsertRaw({ id: 'raw-2' }).ok === false)
+
+console.log('\n— invokeChannel 调 VM op 不进 Mac outbox —')
+const before = outbox.outboxCount(DATA)
+invokeChannel('inbox:upsertItem', { id: 'vm-item-2', text: '直接调用', title: 't' })
+ok('本地调用不记 outbox', outbox.outboxCount(DATA) === before)
+ok('条目已入库', store.allInbox().some((i) => i.id === 'vm-item-2'))
+
+console.log('\n— sync-server 端点（双向 op log）—')
 const TOKEN = 'test-sync-token'
-let appliedSnapshot = null
+const applied = []
 let broadcastCount = 0
 const srv = syncSrv.createSyncServer({
   token: TOKEN,
   host: '127.0.0.1',
   port: 0,
   outboxDir: DATA,
-  hasSqlite: () => false,
-  applySnapshot: async (s) => { appliedSnapshot = s },
+  applyOp: async (channel, args) => { applied.push({ channel, args }); return invokeChannel(channel, ...args) },
   broadcast: () => { broadcastCount++ },
 })
 const { port } = await srv.start()
@@ -113,54 +163,70 @@ h = await jget('/sync/health', { authorization: 'Bearer wrong' })
 ok('错 token → 401', h.status === 401)
 h = await jget('/sync/health', H)
 ok('health 200', h.status === 200 && h.body.ok === true)
-ok('health 带 outbox 计数', h.body.outbox === 0)
+ok('health 标 oplog', h.body.oplog === true)
+ok('health 带 vmCursor', typeof h.body.vmCursor === 'number')
+ok('health 带 outbox 计数', typeof h.body.outbox === 'number')
 
-outbox.recordOutbox('db:settle', ['node1', true], DATA)
+console.log('\n— /sync/ops 白名单应用 —')
+const opsBody = {
+  entries: [
+    { id: 'op-1', ts: 1, seq: 1, channel: 'inbox:upsertItem', args: [{ id: 'vm-op-item-1', text: 'op 条目', title: 't' }] },
+    { id: 'op-2', ts: 2, seq: 2, channel: 'db:upsertNode', args: [{ id: 'vm-op-node-1', themeId: 'th1', title: 'op 节点' }] },
+    { id: 'op-3', ts: 3, seq: 3, channel: 'db:addSource', args: ['vm-op-node-1', { kind: '媒体', label: 'l', at: '2026-09-29' }] },
+  ],
+}
+let r = await jpost('/sync/ops', opsBody, H)
+ok('/sync/ops 200', r.status === 200 && r.body.ok === true)
+ok('三个 op 都应用了', applied.length === 3)
+ok('返回 applied=3', r.body.applied === 3)
+ok('VM 游标持久化', syncSrv.readVmCursor(DATA) === 3)
+ok('op 条目进了收件箱', store.allInbox().some((i) => i.id === 'vm-op-item-1'))
+ok('op 节点已创建', !!store.getNode('vm-op-node-1'))
+ok('广播了 db:changed', broadcastCount === 1)
+
+console.log('\n— /sync/ops 幂等重放 —')
+const before2 = store.allInbox().length
+r = await jpost('/sync/ops', opsBody, H)
+ok('重放返回 200', r.status === 200)
+ok('无重复条目', store.allInbox().length === before2)
+ok('applied 仍是 3（seq<=cursor 跳过）', r.body.applied === 3)
+ok('count=0（实际没应用）', r.body.count === 0)
+
+console.log('\n— /sync/ops fail-closed —')
+r = await jpost('/sync/ops', { entries: [{ id: 'bad-1', ts: 1, seq: 4, channel: 'db:removeNode', args: ['x'] }] }, H)
+ok('非白名单 channel → 400', r.status === 400)
+ok('游标未动', syncSrv.readVmCursor(DATA) === 3)
+r = await jpost('/sync/ops', { entries: [{ id: 'bad-2' }] }, H)
+ok('畸形 entry → 400', r.status === 400)
+r = await jpost('/sync/ops', { nope: 1 }, H)
+ok('entries 非数组 → 400', r.status === 400)
+
+console.log('\n— /sync/outbox 游标拉取 + ack —')
+outbox.recordOutbox('db:settle', ['n1', true], DATA)
+outbox.recordOutbox('inbox:resolve', ['i1', 'reject'], DATA)
 let ob = await jget('/sync/outbox', H)
-ok('outbox 200 且有 1 条', ob.status === 200 && ob.body.entries.length === 1)
-ok('entry 形状完整', ob.body.entries[0].channel === 'db:settle' && Array.isArray(ob.body.entries[0].args))
-
-let snap = await jpost('/sync/snapshot', { nodes: [], version: 4 }, H)
-ok('outbox 非空时快照 → 409', snap.status === 409 && snap.body.error === 'outbox-not-empty')
-
-const ackId = ob.body.entries[0].id
-const ack = await jpost('/sync/outbox/ack', { ids: [ackId] }, H)
-ok('ack → 200', ack.status === 200 && ack.body.acked === 1)
+ok('outbox 200', ob.status === 200)
+const allEntries = ob.body.entries
+ok('entry 带 seq', allEntries.every((e) => typeof e.seq === 'number'))
+const since = allEntries[0].seq
+ob = await jget(`/sync/outbox?since=${since}`, H)
+ok('since 过滤', ob.body.entries.every((e) => e.seq > since))
+const lastSeq = allEntries[allEntries.length - 1].seq
+const ack = await jpost('/sync/outbox/ack', { cursor: lastSeq }, H)
+ok('按游标 ack → 200', ack.status === 200 && ack.body.acked >= 1)
 ob = await jget('/sync/outbox', H)
 ok('ack 后 outbox 空', ob.body.entries.length === 0)
 
-snap = await jpost('/sync/snapshot', { nodes: [{ id: 'n1' }], version: 4 }, H)
-ok('快照 200', snap.status === 200 && snap.body.ok === true)
-ok('applySnapshot 被调用', appliedSnapshot?.nodes?.[0]?.id === 'n1')
-ok('广播了 db:changed', broadcastCount === 1)
-
-snap = await jpost('/sync/snapshot', { noNodes: true }, H)
-ok('坏快照 → 400', snap.status === 400)
 const nf = await jget('/nope', H)
 ok('未知路由 → 404', nf.status === 404)
+r = await jpost('/sync/snapshot', { nodes: [] }, H)
+ok('/sync/snapshot 已退役 → 404', r.status === 404)
 await srv.stop()
 
-console.log('\n— hasSqlite 时拒绝快照 —')
-const srv2 = syncSrv.createSyncServer({
-  token: TOKEN, host: '127.0.0.1', port: 0, outboxDir: DATA,
-  hasSqlite: () => true, applySnapshot: async () => {}, broadcast: () => {},
-})
-const p2 = await srv2.start()
-const r409 = await fetch(`http://127.0.0.1:${p2.port}/sync/snapshot`, {
-  method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
-  body: JSON.stringify({ nodes: [], version: 4 }),
-})
-ok('sqlite 已启用 → 409', r409.status === 409)
-await srv2.stop()
-
-console.log('\n— 快照落盘保留本机 settings —')
-const localSettings = store.load().settings
-const snapshot = { version: 4, nodes: [{ id: 's1', title: '快照节点' }], themes: [], inbox: [], settings: { apiKey: 'vm 的密钥，必须被丢弃' } }
-syncSrv.applySnapshotToDisk(DATA, snapshot, () => store.load().settings)
-const written = JSON.parse(readFileSync(join(DATA, 'meridian.json'), 'utf8'))
-ok('settings 被本机值覆盖', JSON.stringify(written.settings) === JSON.stringify(localSettings))
-ok('快照数据写进去了', written.nodes?.[0]?.id === 's1')
-ok('load() 重读到新数据（缓存已失效）', store.load().nodes.some((n) => n.id === 's1'))
+console.log('\n— applyOp 缺失 fail-closed —')
+let threw = false
+try { syncSrv.createSyncServer({ token: TOKEN, host: '127.0.0.1', port: 0, outboxDir: DATA, broadcast: () => {} }) } catch { threw = true }
+ok('无 applyOp 拒绝启动', threw)
 
 console.log(`\n${pass} 通过, ${fail} 失败`)
 process.exit(fail ? 1 : 0)

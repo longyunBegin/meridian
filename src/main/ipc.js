@@ -7,10 +7,10 @@ import {
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
   falseKillByChannel,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
-  appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
+  appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -19,6 +19,7 @@ import {
   getReading, readingsPage, readingEvidence, latestReadings, sourcesPage,
   assignReading, verifyReadingChain, exportIntent,
   updateTheme, kindToTags, sicToTags,
+  upsertNodeSnapshot,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid, readingSnapshot,
@@ -437,15 +438,17 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   const imported = []
   for (const l of result.lemmas) {
     if (l.action === 'merge' && l.mergeInto) {
-      addSource(l.mergeInto, {
+      const source = {
         kind: l.sourceKind || result.label.kind || '独立媒体',
         label: l.label || result.label.kind || '未注明',
         at: today(), rawId: raw.id,
         ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
         ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
         ...(result.resolvedChannel?.fetchedAt ? { fetchedAt: result.resolvedChannel.fetchedAt } : {}),
-      })
-      imported.push({ title: l.title, action: 'merge', id: l.mergeInto })
+      }
+      addSource(l.mergeInto, source)
+      // 同步用：VM 侧把这次 merge 记成 db:addSource op 时需要 source 本体
+      imported.push({ title: l.title, action: 'merge', id: l.mergeInto, source })
       continue
     }
     const node = addNode({
@@ -520,6 +523,19 @@ function tokenOverlap(a, b) {
 // ---------------------------------------------------------------- ipc
 
 /**
+ * channel → 原生 handler（register 时登记，供 Mac 同步端点 /sync/ops 本地应用 VM op 用）。
+ * 存的是 outbox 包装之前的原始 fn：VM op 绝不进 Mac outbox，避免回环。
+ */
+const channelHandlers = new Map()
+
+/** 程序化调用本地 handler（形态与 service 的 __handlers.get 一致，event 用空对象占位）。 */
+export function invokeChannel(channel, ...args) {
+  const fn = channelHandlers.get(channel)
+  if (!fn) throw new Error(`未知 channel: ${channel}`)
+  return fn({}, ...args)
+}
+
+/**
  * 窗口相关的东西由 main.js 注入，不在这里 import。
  */
 function register({ getMainWindow, getAgentConnection = () => ({ available: false }), enableOutbox = false }) {
@@ -527,6 +543,12 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
   // service（shim）与测试默认关闭。用局部变量遮蔽模块顶层的 ipcMain，
   // 下面全部 ipcMain.handle 调用零改动，白名单 channel 自动被包装记录。
   const ipcMain = enableOutbox ? withOutbox(globalThis.__electron.ipcMain) : globalThis.__electron.ipcMain
+  // 登记 handler 映射（保持原有 handle 语义，只追加记录）。
+  const rawHandle = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = (channel, fn) => {
+    channelHandlers.set(channel, fn)
+    return rawHandle(channel, fn)
+  }
   ipcMain.handle('db:stats', () => stats())
   // 反向同步快照导出：VM 桥用它拿 readingSnapshot()（persist 写盘的同一形状），推给 Mac。
   // 只读，不进 outbox 白名单。
@@ -956,7 +978,7 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
       getMainWindow?.()?.webContents.send('db:changed')
       return {
         ok: true, autoImported: true, imported, count: imported.length,
-        intakeEventId: intakeEvent.id,
+        intakeEventId: intakeEvent.id, rawId,
       }
     }
 
@@ -1009,6 +1031,10 @@ function register({ getMainWindow, getAgentConnection = () => ({ available: fals
     return { items: pending.slice(offset, offset + limit), total: pending.length }
   })
   ipcMain.handle('inbox:ignored', () => ignoredInbox())
+  // 双向 op log：VM 侧 capture 结果的按 id 幂等 upsert（只进 VM_OP_CHANNELS，不进 OUTBOX_CHANNELS，不回环）。
+  ipcMain.handle('inbox:upsertItem', (_, item) => upsertInboxItem(item))
+  ipcMain.handle('db:upsertNode', (_, node) => upsertNodeSnapshot(node))
+  ipcMain.handle('raw:upsert', (_, entry) => upsertRaw(entry))
 
   ipcMain.handle('inbox:resolve', (_, id, action) => {
     // 分类和幂等性由 store 中的原记录决定，不信任客户端的建议元数据。
