@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -55,6 +55,25 @@ function resolveNodeLibrary(reference, rpaths, execPath) {
   return candidates.find((candidate) => existsSync(candidate))
 }
 
+function cleanGeneratedRuntimeArtifacts(outputDir) {
+  for (const entry of readdirSync(outputDir, { withFileTypes: true })) {
+    const isGeneratedNodeArtifact = entry.name === 'node.exe'
+      || /^libnode(?:\.\d+)?\.dylib$/.test(entry.name)
+      || entry.name.toLowerCase().endsWith('.dll')
+    if (!isGeneratedNodeArtifact) continue
+
+    const artifact = join(outputDir, entry.name)
+    const details = lstatSync(artifact)
+    if (!details.isFile() && !details.isSymbolicLink()) {
+      throw new Error(`Refusing to remove non-file generated Node runtime artifact: ${artifact}`)
+    }
+    // Windows may refuse to unlink read-only files. Clear the read-only bit
+    // immediately before removing a regular file; symlinks are only unlinked.
+    if (details.isFile()) chmodSync(artifact, 0o666)
+    unlinkSync(artifact)
+  }
+}
+
 function copyMacOSNodeLibrary(execPath, outputDir, runCommand) {
   const dependencies = runCommand('otool', ['-L', execPath])
   const libraryReferences = dependencies
@@ -106,6 +125,7 @@ export function prepareRuntime({
   }
 
   mkdirSync(outputDir, { recursive: true })
+  cleanGeneratedRuntimeArtifacts(outputDir)
   const output = join(outputDir, 'node.exe')
   copyFileSync(execPath, output)
   if (platform !== 'win32') chmodSync(output, 0o755)
