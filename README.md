@@ -14,9 +14,11 @@
 
 ## 演示
 
-[![产品发布片](docs/demo-film-poster.jpg)](docs/demo-film.mp4)
+[![产品片《一根弦》](docs/demo-film-poster.jpg)](docs/demo-film.mp4)
 
-*62 秒产品发布片（点击封面播放）：信息过载 → 脉络登场 → 一句话搭起判断骨架 → 每天读数落定 → 每条结论一键回到原文。黑白影像、中文旁白、中文字幕。*
+*60 秒产品片《一根弦》（点击封面播放）：一条消息拨响一根弦 → 满屏噪音 → `⌘⇧V` 把一根弦理直、搬进来 → 一句话织出产业链 → 上游一拨，振动沿传导权重逐跳变轻，直到自己停下 → 到期结算，校准曲线一点点贴近对角线。*
+
+*画面与弦音全部由代码生成（`node tools/film/film.mjs`）；片中的传导数字与校准命中率由真实引擎 `store.js` 计算，校准样本为合成数据。*
 
 ### 录屏：双主题骨架生成
 
@@ -216,6 +218,7 @@ npm start
 npm test    # 引擎 + IPC + 改造测试（1142 项，electron 已 stub，纯 Node 可跑）
 npm start   # 启动应用
 npm run shoot  # 视觉回归截图 → /tmp/meridian-shots/
+node tools/film/film.mjs   # 重新生成产品片 → test/.tmp/film/（--stills 3,12.5 只出静帧）
 ```
 
 ```
@@ -225,6 +228,7 @@ src/
   renderer/        渲染进程：无框架，原生 DOM；views/ 下是今日 / 脉络 / 图 / 库 / 设置
 test/              engine.test.mjs / ipc.test.mjs / redesign.test.mjs / electron-stub.mjs
 tools/shoot.mjs    视觉回归截图
+tools/film/        产品片《一根弦》生成器：Canvas 逐帧 + 弦音合成 + ffmpeg，数字取自真实引擎
 docs/ROADMAP.md    迭代路线（按价值/成本排序）
 ```
 
