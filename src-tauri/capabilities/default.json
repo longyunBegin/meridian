@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Meridian main desktop window capabilities",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "global-shortcut:allow-register",
@@ -11,9 +13,14 @@
     "notification:default",
     {
       "identifier": "opener:allow-open-path",
-      "scope": {
-        "allow": [{ "path": "$APPDATA/脉络" }, { "path": "$APPDATA/脉络/**" }]
-      }
+      "allow": [
+        {
+          "path": "$APPDATA/脉络"
+        },
+        {
+          "path": "$APPDATA/脉络/**"
+        }
+      ]
     },
     "opener:allow-open-url",
     "opener:allow-default-urls"
