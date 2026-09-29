@@ -10,6 +10,7 @@
     "clipboard-manager:allow-read-text",
     "notification:default",
     "opener:allow-open-path",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
   ]
 }
