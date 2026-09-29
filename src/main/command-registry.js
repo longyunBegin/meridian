@@ -27,11 +27,13 @@ export class CommandRegistry {
   }
 
   invoke(name, args = []) {
-    return this.invokeWithoutHooks(name, args).then((result) => {
+    const complete = (result) => {
       if (!this.#onSuccess) return result
       const hook = this.#onSuccess(name, args, result)
       return hook && typeof hook.then === 'function' ? hook.then(() => result) : result
-    })
+    }
+    const result = this.invokeWithoutHooks(name, args)
+    return result && typeof result.then === 'function' ? result.then(complete) : complete(result)
   }
 
   /**
@@ -43,7 +45,6 @@ export class CommandRegistry {
     if (!Array.isArray(args)) throw new TypeError('command arguments must be an array')
     const handler = this.#commands.get(name)
     if (!handler) throw new Error(`unknown command: ${name}`)
-    const result = handler(...args)
-    return result && typeof result.then === 'function' ? result : Promise.resolve(result)
+    return handler(...args)
   }
 }

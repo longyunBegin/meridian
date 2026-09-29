@@ -49,8 +49,8 @@ for (const ch of ['inbox:upsertItem', 'db:upsertNode', 'db:addSource', 'raw:upse
 for (const ch of ['inbox:resolve', 'db:settle', 'inbox:capture', 'db:updateNode', 'db:removeNode', 'settings:set']) {
   ok(`VM 白名单排除 ${ch}`, !outbox.VM_OP_CHANNELS.has(ch))
 }
-ok('VM op handler 已登记', await registry.invokeWithoutHooks('inbox:upsertItem', [null]).then(() => true, () => false))
-ok('未知 channel 抛错', await registry.invokeWithoutHooks('nope:nope', []).then(() => false, () => true))
+ok('VM op handler 已登记', (() => { try { registry.invokeWithoutHooks('inbox:upsertItem', [null]); return true } catch { return false } })())
+ok('未知 channel 抛错', (() => { try { registry.invokeWithoutHooks('nope:nope', []); return false } catch { return true } })())
 
 console.log('\n— outbox 记录带 seq —')
 const item = store.addInboxItem({ text: '同步测试条目', title: '同步测试' })
