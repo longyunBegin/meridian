@@ -27,7 +27,14 @@ function emit(name, payload = null) {
 configurePlatformServices({ dataDirectory: userData, emitEvent: emit })
 
 const registry = new CommandRegistry({
-  onSuccess: (name, args) => {
+  onSuccess: (name, args, result) => {
+    // 清空类命令按 id 精确同步：录制源头算好的 deletedIds，而非 filter 参数——
+    // filter 的 extracted 谓词按设备各自持有状态，重放会删出不同集合（2026-09-30 分叉教训）。
+    if ((name === 'inbox:clearUnextracted' || name === 'inbox:clear')
+        && result && Array.isArray(result.deletedIds) && result.deletedIds.length > 0) {
+      recordOutbox('inbox:deleteIds', [result.deletedIds], userData)
+      return
+    }
     if (OUTBOX_CHANNELS.has(name)) recordOutbox(name, args, userData)
   },
 })

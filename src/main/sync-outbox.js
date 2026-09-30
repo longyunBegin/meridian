@@ -34,8 +34,11 @@ import { dataDirectory } from './runtime-services.js'
 export const OUTBOX_CHANNELS = new Set([
   'inbox:resolve', // 收件箱裁决 accept/reject：幂等（非 pending 直接返回原条目）
   'inbox:prune', // 按天清理：集合删除，重放收敛
-  'inbox:clear', // 清空收件箱：filter 删除，重放幂等
-  'inbox:clearUnextracted', // 清未抽取：同上
+  'inbox:deleteIds', // 按 id 精确删除（clear/clearUnextracted 的同步形态）：源头在录制前已算好
+                     // deletedIds，回放不重算 extracted/pending 谓词（谓词依赖按设备各自持有的
+                     // extracted 状态，重算会导致两端删出不同集合）。幂等：不存在的 id 跳过。
+  'inbox:clear', // 旧版录制的 filter 删除：保留回放兼容（新版录制已改走 inbox:deleteIds）
+  'inbox:clearUnextracted', // 同上
   'inbox:extract', // 批量抽取：幂等（已抽取条目跳过）；回放时在 VM 侧重跑真实流水线
   'inbox:import', // 批量入库：建节点非幂等！桥回放前先查 VM 侧条目状态，过滤掉已接受的（见 service/sync-bridge.mjs）
   'inbox:setTheme', // 收件箱条目换主题：覆写 extractedThemeId，幂等

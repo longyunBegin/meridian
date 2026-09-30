@@ -34,7 +34,7 @@ registerDomainCommands({ registry })
 
 console.log('\n— outbox 白名单（Mac→VM）—')
 ok('白名单含 inbox:resolve', outbox.OUTBOX_CHANNELS.has('inbox:resolve'))
-for (const ch of ['inbox:prune', 'inbox:clear', 'inbox:clearUnextracted', 'db:resolveConflict', 'db:settle', 'theme:rename', 'theme:update', 'inbox:extract', 'inbox:import', 'inbox:setTheme']) {
+for (const ch of ['inbox:prune', 'inbox:deleteIds', 'inbox:clear', 'inbox:clearUnextracted', 'db:resolveConflict', 'db:settle', 'theme:rename', 'theme:update', 'inbox:extract', 'inbox:import', 'inbox:setTheme']) {
   ok(`白名单含 ${ch}`, outbox.OUTBOX_CHANNELS.has(ch))
 }
 for (const ch of ['db:addNode', 'db:updateNode', 'db:removeNode', 'inbox:capture', 'inbox:undoAutoImport', 'reading:add', 'reading:push', 'settings:set', 'theme:add', 'theme:remove',
@@ -219,6 +219,40 @@ const nf = await jget('/nope', H)
 ok('未知路由 → 404', nf.status === 404)
 r = await jpost('/sync/snapshot', { nodes: [] }, H)
 ok('/sync/snapshot 已退役 → 404', r.status === 404)
+
+console.log('\n— 清空类按 id 精确同步（2026-09-30 分叉回归）—')
+// 录制侧：源头算好 deletedIds，outbox 里记 inbox:deleteIds 而非 filter 参数
+const rc1 = store.addInboxItem({ text: '回归1', title: '回归1', extracted: false })
+const rc2 = store.addInboxItem({ text: '回归2', title: '回归2', extracted: false })
+const rc3 = store.addInboxItem({ text: '回归3', title: '回归3', extracted: true })
+const obBefore = outbox.readOutbox(DATA).length
+const clr = await fire('inbox:clearUnextracted')
+ok('clearUnextracted 返回 deletedIds', clr.removed === 2 && clr.deletedIds.length === 2, `实际 ${clr.removed}`)
+const clearOps = outbox.readOutbox(DATA).slice(obBefore)
+ok('outbox 只记 1 条', clearOps.length === 1, `实际 ${clearOps.length}`)
+ok('记的是 inbox:deleteIds 而非 inbox:clearUnextracted',
+  clearOps[0]?.channel === 'inbox:deleteIds', `实际 ${clearOps[0]?.channel}`)
+ok('deleteIds 精确对应源头被删集合',
+  JSON.stringify([...clearOps[0].args[0]].sort()) === JSON.stringify([rc1.id, rc2.id].sort()))
+ok('源头已抽取条目不在删除列表', !clearOps[0].args[0].includes(rc3.id))
+// 回放侧：接收端 extracted 状态与源头不一致时，仍按 id 精确执行，不重算谓词
+const rp1 = store.addInboxItem({ text: '回放删1', title: '回放删1', extracted: false })
+const rp2 = store.addInboxItem({ text: '回放删2', title: '回放删2', extracted: true })
+const rpKeep = store.addInboxItem({ text: '回放保留', title: '回放保留', extracted: false })
+const delN = await fire('inbox:deleteIds', [rp1.id, rp2.id, 'ghost-id'])
+const restIds = new Set(store.load().inbox.map((i) => i.id))
+ok('deleteIds 按 id 删除（不看本地 extracted）', delN === 2 && !restIds.has(rp1.id) && !restIds.has(rp2.id))
+ok('不在删除列表的未抽取条目不受影响（旧 filter 回放会误删它）', restIds.has(rpKeep.id))
+ok('deleteIds 对未知 id 幂等', (await fire('inbox:deleteIds', ['ghost-id'])) === 0)
+ok('deleteIds 空数组返回 0', (await fire('inbox:deleteIds', [])) === 0)
+ok('deleteIds 非数组返回 0', (await fire('inbox:deleteIds', null)) === 0)
+// inbox:clear 同样走 deleteIds 录制
+const cc1 = store.addInboxItem({ text: '回归clear', title: '回归clear', extracted: false })
+await fire('inbox:resolve', cc1.id, 'reject')
+const obBefore2 = outbox.readOutbox(DATA).length
+await fire('inbox:clear')
+const clearOps2 = outbox.readOutbox(DATA).slice(obBefore2)
+ok('inbox:clear 也录制为 inbox:deleteIds', clearOps2.length === 1 && clearOps2[0]?.channel === 'inbox:deleteIds')
 await srv.stop()
 
 console.log('\n— applyOp 缺失 fail-closed —')

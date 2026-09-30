@@ -1727,15 +1727,40 @@ export function resolveInboxItem(id, action) {
  * 清收件箱。onlyUnextracted: true 时只清「没花过钱」的未抽取条目——
  * 已抽取的仍在等人裁决，批量清掉会丢内容。
  */
+/**
+ * 清空收件箱（用户主动操作）。
+ * @returns {{removed:number, deletedIds:string[]}} 本次实际删除的条目 id 列表，
+ *   供双向同步按 id 精确回放（inbox:deleteIds）。注意：不要在回放侧重算谓词——
+ *   extracted 是按设备各自持有的状态，重算会导致两端删出不同集合（2026-09-30
+ *   实测分叉：Mac 侧已抽取豁免的 2 条在 VM 侧被 filter 回放误删）。
+ */
 export function clearInbox({ onlyUnextracted = false, exceptIds = [] } = {}) {
   const db = load()
-  const before = db.inbox.length
   const spared = new Set(Array.isArray(exceptIds) ? exceptIds : [])
-  if (onlyUnextracted) {
-    db.inbox = db.inbox.filter((i) => i.extracted !== false || i.ignored || spared.has(i.id))
-  } else {
-    db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored || spared.has(i.id))
-  }
+  const deletedIds = []
+  db.inbox = db.inbox.filter((i) => {
+    const kill = onlyUnextracted
+      ? (i.extracted === false && !i.ignored && !spared.has(i.id))
+      : (i.status !== 'pending' && !i.ignored && !spared.has(i.id))
+    if (kill) deletedIds.push(i.id)
+    return !kill
+  })
+  persist()
+  return { removed: deletedIds.length, deletedIds }
+}
+
+/**
+ * 按 id 精确删除收件箱条目（同步回放用）。
+ * 语义：源头在出 outbox 前已算好 deletedIds，这里只按 id 执行，不重算
+ * extracted/pending 谓词，保证两端删除集合完全一致。幂等：不存在的 id 跳过。
+ */
+export function deleteInboxIds(ids) {
+  const list = Array.isArray(ids) ? ids.filter((i) => typeof i === 'string') : []
+  if (!list.length) return 0
+  const db = load()
+  const set = new Set(list)
+  const before = db.inbox.length
+  db.inbox = db.inbox.filter((i) => !set.has(i.id))
   persist()
   return before - db.inbox.length
 }

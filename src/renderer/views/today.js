@@ -471,7 +471,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     onclick: async () => {
       // 抽取中的条目不受影响：后端按 exceptIds 排除
       const spared = [...extracting]
-      const removed = await m.inboxClearUnextracted(spared)
+      const clearRes = await m.inboxClearUnextracted(spared)
+      const removed = typeof clearRes === 'number' ? clearRes : (clearRes?.removed ?? 0)
       toast(spared.length ? `已清空 ${removed} 条未匹配（抽取中的 ${spared.length} 条不受影响）` : `已清空 ${removed} 条未匹配`)
       await refresh()
       await renderToday(mid)

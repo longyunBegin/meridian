@@ -297,11 +297,13 @@ console.log('\n— inbox:clearUnextracted 排除抽取中条目 —')
 const cu1 = store.addInboxItem({ text: '清空测试条目一', title: '清空1', extracted: false })
 const cu2 = store.addInboxItem({ text: '清空测试条目二', title: '清空2', extracted: false })
 const cu3 = store.addInboxItem({ text: '清空测试条目三', title: '清空3', extracted: false })
-const removedN = await fireAsync('inbox:clearUnextracted', [cu1.id])
+const clearRes = await fireAsync('inbox:clearUnextracted', [cu1.id])
 const inboxIds = new Set(store.load().inbox.map((i) => i.id))
 ok('exceptIds 中的条目被保留', inboxIds.has(cu1.id))
 ok('其余未抽取被清空', !inboxIds.has(cu2.id) && !inboxIds.has(cu3.id))
-ok('返回清空数量', removedN >= 2, `实际 ${removedN}`)
+ok('返回清空数量', clearRes.removed >= 2, `实际 ${clearRes.removed}`)
+ok('返回的 deletedIds 精确对应被删条目',
+  clearRes.deletedIds.includes(cu2.id) && clearRes.deletedIds.includes(cu3.id) && !clearRes.deletedIds.includes(cu1.id))
 
 console.log('\n— inbox:extract 跳过中途被忽略的条目 —')
 let gateOpen = false

@@ -9,7 +9,7 @@ import {
   appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -1169,9 +1169,13 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, statuses }
   })
 
+  // 清空类命令返回 { removed, deletedIds }：分发层的 onSuccess 钩子据此把
+  // outbox 记录写成 inbox:deleteIds（按 id 精确回放），而非录制 filter 参数。
   commands.register('inbox:clearUnextracted', (exceptIds) => clearInbox({ onlyUnextracted: true, exceptIds }))
   commands.register('inbox:prune', (days, opts) => pruneInbox(days, opts))
   commands.register('inbox:clear', () => clearInbox())
+  // 按 id 精确删除（双向同步回放用）：源头已定集合，这里不重算谓词，幂等。
+  commands.register('inbox:deleteIds', (ids) => deleteInboxIds(ids))
 
   // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch
   commands.register('inbox:undoAutoImport', (intakeEventId) => {

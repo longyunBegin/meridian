@@ -69,7 +69,8 @@ ok('reject 后状态为 rejected', rejected?.status === 'rejected')
 ok('allInbox 为空', store.allInbox().length === 0, `实际 ${store.allInbox().length}`)
 
 const cleared = store.clearInbox()
-ok('clearInbox 清了 2 条', cleared === 2, `实际 ${cleared}`)
+ok('clearInbox 清了 2 条', cleared.removed === 2, `实际 ${cleared.removed}`)
+ok('clearInbox 返回被删 id', Array.isArray(cleared.deletedIds) && cleared.deletedIds.length === 2)
 ok('clearInbox 后 inbox 为空', store.allInbox().length === 0)
 
 // ============================================================
@@ -108,7 +109,8 @@ ok('inbox:resolve 返回条目', resolveResult?.id === listResult.items[0].id)
 ok('reject 后 verdicts 增加', store.allVerdicts().length > 0, `实际 ${store.allVerdicts().length}`)
 
 const clearResult = await fire('inbox:clear')
-ok('inbox:clear 返回清理数', typeof clearResult === 'number')
+ok('inbox:clear 返回清理数', typeof clearResult?.removed === 'number')
+ok('inbox:clear 返回被删 id 列表', Array.isArray(clearResult?.deletedIds))
 
 // ============================================================
 console.log('\n— 收件箱 命令: inbox:import 批量入库 —')
@@ -2986,7 +2988,8 @@ const d2 = await fire('inbox:capture', '未匹配三态测试二：社区团购�
 const dKept = store.allInbox().filter((i) => i.extracted !== false).length
 const dPending = store.allInbox().filter((i) => i.extracted === false).length
 const dCleared = await fire('inbox:clearUnextracted')
-ok('D: 清空未匹配清掉全部未抽取条目', dCleared === dPending, `实际 ${dCleared} / ${dPending}`)
+ok('D: 清空未匹配清掉全部未抽取条目', dCleared.removed === dPending, `实际 ${dCleared.removed} / ${dPending}`)
+ok('D: 返回的 deletedIds 与实际删除一致', Array.isArray(dCleared.deletedIds) && dCleared.deletedIds.length === dPending)
 ok('D: 已抽取条目一条未动', store.allInbox().filter((i) => i.extracted !== false).length === dKept)
 ok('D: 未抽取条目清空后归零', store.allInbox().filter((i) => i.extracted === false).length === 0)
 ok('D: 被清的确实是未匹配那条', d2?.item?.extracted === false && !store.allInbox().some((i) => i.id === d2.item.id))
