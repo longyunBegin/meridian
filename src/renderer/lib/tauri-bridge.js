@@ -73,7 +73,7 @@ export function createMeridianBridge() {
     inboxImport: (themeId, items, overrides) => call('inbox:import', themeId, items, overrides), inboxClear: () => call('inbox:clear'),
     inboxUndoAutoImport: (id) => call('inbox:undoAutoImport', id), inboxLastAutoImport: () => call('inbox:lastAutoImport'),
     inboxExtract: (ids, themeId) => call('inbox:extract', ids, themeId), inboxExtractCancel: () => call('inbox:extract:cancel'), inboxSetTheme: (id, themeId) => call('inbox:setTheme', id, themeId),
-    inboxClearUnextracted: () => call('inbox:clearUnextracted'), inboxPrune: (days, opts) => call('inbox:prune', days, opts),
+    inboxClearUnextracted: (exceptIds) => call('inbox:clearUnextracted', exceptIds), inboxPrune: (days, opts) => call('inbox:prune', days, opts),
     intakeSeries: (days) => call('intake:series', days), llmUsage: () => call('llm:usage'),
     traceAll: () => call('trace:all'), traceByTarget: (id) => call('trace:byTarget', id),
     traceModelCalibration: () => call('trace:modelCalibration'), traceLabelerDivergence: () => call('trace:labelerDivergence'),

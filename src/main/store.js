@@ -1727,13 +1727,14 @@ export function resolveInboxItem(id, action) {
  * 清收件箱。onlyUnextracted: true 时只清「没花过钱」的未抽取条目——
  * 已抽取的仍在等人裁决，批量清掉会丢内容。
  */
-export function clearInbox({ onlyUnextracted = false } = {}) {
+export function clearInbox({ onlyUnextracted = false, exceptIds = [] } = {}) {
   const db = load()
   const before = db.inbox.length
+  const spared = new Set(Array.isArray(exceptIds) ? exceptIds : [])
   if (onlyUnextracted) {
-    db.inbox = db.inbox.filter((i) => i.extracted !== false || i.ignored)
+    db.inbox = db.inbox.filter((i) => i.extracted !== false || i.ignored || spared.has(i.id))
   } else {
-    db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored)
+    db.inbox = db.inbox.filter((i) => i.status === 'pending' || i.ignored || spared.has(i.id))
   }
   persist()
   return before - db.inbox.length
