@@ -1,6 +1,4 @@
 import { isTauri } from '@tauri-apps/api/core'
-import { check } from '@tauri-apps/plugin-updater'
-import { relaunch } from '@tauri-apps/plugin-process'
 import { h } from './dom.js'
 import { shouldAutoCheck, updateProgress } from './update-policy.js'
 
@@ -11,6 +9,27 @@ const CHECK_TIMEOUT_MS = 15_000
 let checkPromise = null
 let checkedThisSession = false
 let updateDialog = null
+let pluginCache = null
+
+/**
+ * Lazily load the updater/process plugins. Returns null if unavailable.
+ * This keeps a plugin failure from breaking the entire app at import time:
+ * updater.js is transitively imported by app.js via settings.js, so a throw
+ * here would blank the whole window.
+ */
+async function loadPlugins() {
+  if (pluginCache !== null) return pluginCache
+  try {
+    const [{ check }, { relaunch }] = await Promise.all([
+      import('@tauri-apps/plugin-updater'),
+      import('@tauri-apps/plugin-process'),
+    ])
+    pluginCache = { check, relaunch }
+  } catch {
+    pluginCache = null
+  }
+  return pluginCache
+}
 
 function storageGet(key) {
   try { return localStorage.getItem(key) } catch { return null }
@@ -100,7 +119,10 @@ function presentUpdate(update) {
         installed = true
         status.textContent = '更新已安装，正在重新启动…'
         // Windows NSIS handles restart from the installer; macOS requires an explicit relaunch.
-        if (!/Windows/i.test(navigator.userAgent)) await relaunch()
+        if (!/Windows/i.test(navigator.userAgent)) {
+          const plugins = await loadPlugins()
+          if (plugins) await plugins.relaunch()
+        }
       } catch {
         if (installed) {
           status.textContent = '更新已安装，但应用未能自动重启。请手动重新打开 Meridian。'
@@ -159,7 +181,9 @@ export async function checkForUpdates({ automatic = false } = {}) {
   storageSet(LAST_ATTEMPT_KEY, Date.now())
   checkPromise = (async () => {
     try {
-      const update = await check({ timeout: CHECK_TIMEOUT_MS })
+      const plugins = await loadPlugins()
+      if (!plugins) return { status: 'unsupported' }
+      const update = await plugins.check({ timeout: CHECK_TIMEOUT_MS })
       storageSet(LAST_SUCCESS_KEY, Date.now())
       if (!update) return { status: 'current' }
       presentUpdate(update)

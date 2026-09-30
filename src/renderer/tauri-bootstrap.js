@@ -30,6 +30,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   window.setInterval(pollEvents, 700)
   await import('./app.js')
-  const { initializeUpdater } = await import('./lib/updater.js')
-  initializeUpdater()
+  try {
+    const { initializeUpdater } = await import('./lib/updater.js')
+    initializeUpdater()
+  } catch (error) {
+    // The updater must never break the main app. Log and continue.
+    console.warn('[meridian] updater unavailable:', error?.message || error)
+  }
 })
