@@ -72,7 +72,7 @@ export function createMeridianBridge() {
     inboxResolve: (id, action) => call('inbox:resolve', id, action), inboxResolveMany: (ids, action) => call('inbox:resolveMany', ids, action),
     inboxImport: (themeId, items, overrides) => call('inbox:import', themeId, items, overrides), inboxClear: () => call('inbox:clear'),
     inboxUndoAutoImport: (id) => call('inbox:undoAutoImport', id), inboxLastAutoImport: () => call('inbox:lastAutoImport'),
-    inboxExtract: (ids, themeId) => call('inbox:extract', ids, themeId), inboxSetTheme: (id, themeId) => call('inbox:setTheme', id, themeId),
+    inboxExtract: (ids, themeId) => call('inbox:extract', ids, themeId), inboxExtractCancel: () => call('inbox:extract:cancel'), inboxSetTheme: (id, themeId) => call('inbox:setTheme', id, themeId),
     inboxClearUnextracted: () => call('inbox:clearUnextracted'), inboxPrune: (days, opts) => call('inbox:prune', days, opts),
     intakeSeries: (days) => call('intake:series', days), llmUsage: () => call('llm:usage'),
     traceAll: () => call('trace:all'), traceByTarget: (id) => call('trace:byTarget', id),
@@ -88,7 +88,7 @@ export function createMeridianBridge() {
     researchByNode: (id) => call('research:byNode', id), researchHitRate: (notes, correct) => call('research:hitRate', notes, correct),
     vsInstitution: (days) => call('research:vsInstitution', days),
     onInboxPaste: (cb) => subscribe('inbox:paste', cb), onDueNotify: (cb) => subscribe('due:notify', cb),
-    onInboxPruned: (cb) => subscribe('inbox:pruned', cb),
+    onInboxPruned: (cb) => subscribe('inbox:pruned', cb), onInboxExtractProgress: (cb) => subscribe('inbox:extract:progress', cb),
   }
 
   api.configureHotkey = async (shortcut) => {
