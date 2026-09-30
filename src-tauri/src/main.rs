@@ -130,25 +130,31 @@ async fn backend_events(state: State<'_, BackendState>) -> Result<Vec<Value>, St
 
 /// 设置 macOS Dock 角标（到期未结算数）。count 为 0 时清除。
 #[tauri::command]
-fn set_dock_badge(count: i64) -> Result<(), String> {
+fn set_dock_badge(app: tauri::AppHandle, count: i64) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        use objc2_app_kit::{NSApplication, NSDockTile};
-        use objc2_foundation::NSString;
+        app.run_on_main_thread(move || {
+            use objc2::MainThreadMarker;
+            use objc2_app_kit::NSApplication;
+            use objc2_foundation::NSString;
 
-        let app = NSApplication::sharedApplication();
-        let tile = app.dockTile();
-        if count > 0 {
-            let label = NSString::from_str(&count.to_string());
-            tile.setBadgeLabel(Some(&label));
-        } else {
-            tile.setBadgeLabel(None);
-        }
+            if let Some(mtm) = MainThreadMarker::new() {
+                let app = NSApplication::sharedApplication(mtm);
+                let tile = app.dockTile();
+                if count > 0 {
+                    let label = NSString::from_str(&count.to_string());
+                    tile.setBadgeLabel(Some(&label));
+                } else {
+                    tile.setBadgeLabel(None);
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = count;
+        let _ = (app, count);
         Ok(())
     }
 }
