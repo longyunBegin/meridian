@@ -41,6 +41,9 @@ export function safeSourceLink(url) {
   } }, '打开来源')
 }
 const note = (text) => h('p', { class: 'reading-note', role: 'status' }, text)
+// macOS 风格：/Users/xxx/... → ~/...；其他平台原样展示——
+// 界面上裸挂绝对路径像调试残留。
+const shortenHome = (p) => (p ? String(p).replace(/^\/Users\/[^/]+/, '~') : '—')
 function failure(box, retry, text = '暂时无法读取，请重试。') {
   clear(box).append(note(text), h('button', { class: 'btn', onclick: retry }, '重试'))
 }
@@ -464,7 +467,16 @@ export function renderSources(mid) {
             note(`Bearer ${c.token.slice(0, 8)}…${c.token.slice(-4)}（共 ${c.token.length} 位）`)),
           h('button', { class: 'btn', onclick: () => copy(c.token, '访问凭据') }, '复制凭据'),
         ) : note('当前未启用访问凭据——只监听本机时才建议这样。'),
-        note(`地址与端口可在 设置 → 界面 → 监听地址 / 端口 里改。完整信息也写在 ${c.path}（权限 0600）。`),
+        note('地址与端口可在 设置 → 界面 → 监听地址 / 端口 里改。'),
+        h('div', { class: 'connection-row' },
+          h('div', { class: 'connection-main' },
+            h('b', {}, '连接信息文件'),
+            note(`${shortenHome(c.path)}（权限 0600）`)),
+          h('button', { class: 'btn', onclick: async () => {
+            const r = await m.openDataDir()
+            if (!r?.ok) toast('打不开数据目录：' + (r?.error || '未知错误'), 'var(--red)')
+          } }, '在访达中显示'),
+        ),
       )
     } catch { failure(info, loadConnection, '连接信息读取失败。') }
   }

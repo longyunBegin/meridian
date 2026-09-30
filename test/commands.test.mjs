@@ -296,5 +296,17 @@ ok('坏条目未抽取', store.load().inbox.find((i) => i.id === exBad.id)?.extr
 extractHooks.run = realExtractHook
 store.saveSettings({ apiKey: prevApiKey })
 
+console.log('\n— db:updateNode 发出 db:changed —')
+const dbEvents = []
+configurePlatformServices({ emitEvent: (name, payload) => dbEvents.push({ name, payload }) })
+const renameTarget = store.allNodes()[0]
+const updRes = await fireAsync('db:updateNode', renameTarget.id, { title: 'IPC 改名测试' })
+ok('db:updateNode 成功返回节点', !!updRes && updRes.id === renameTarget.id)
+ok('成功更新后发出 db:changed', dbEvents.some((e) => e.name === 'db:changed'))
+dbEvents.length = 0
+const updMissing = await fireAsync('db:updateNode', 'no-such-node', { title: 'x' })
+ok('不存在的节点返回 null', updMissing === null)
+ok('空更新不发 db:changed', !dbEvents.some((e) => e.name === 'db:changed'))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

@@ -555,7 +555,13 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('db:suggestParent', (text, themeId) => suggestParent(text, themeId))
 
   commands.register('db:addNode', (input) => addNode(input))
-  commands.register('db:updateNode', (id, patch) => updateNode(id, patch))
+  // updateNode 以前不发 db:changed：今日页"改任何东西都会重跑"的假设落空，
+  // 检查器改结算日只靠手动 refresh() 兜底，兜底失效时页面静默过期。补上事件。
+  commands.register('db:updateNode', (id, patch) => {
+    const result = updateNode(id, patch)
+    if (result) emit('db:changed')
+    return result
+  })
   commands.register('db:removeNode', (id) => removeNode(id))
   commands.register('db:restoreNode', (id) => restoreNode(id))
   commands.register('db:purgeDead', (scope, opts) => purgeDead(scope, opts))
