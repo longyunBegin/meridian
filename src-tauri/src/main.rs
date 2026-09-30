@@ -128,35 +128,14 @@ async fn backend_events(state: State<'_, BackendState>) -> Result<Vec<Value>, St
         .map_err(|e| format!("invalid event response: {e}"))
 }
 
-/// 设置 macOS Dock 角标（到期未结算数）。count 为 0 时清除。
+/// 设置 Dock 角标（到期未结算数）。count 为 0 时清除。
+/// 用 Tauri 内置 set_badge_count（macOS/Windows 通用）。
 #[tauri::command]
 fn set_dock_badge(app: tauri::AppHandle, count: i64) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        app.run_on_main_thread(move || {
-            use objc2::MainThreadMarker;
-            use objc2_app_kit::NSApplication;
-            use objc2_foundation::NSString;
-
-            if let Some(mtm) = MainThreadMarker::new() {
-                let app = NSApplication::sharedApplication(mtm);
-                let tile = app.dockTile();
-                if count > 0 {
-                    let label = NSString::from_str(&count.to_string());
-                    tile.setBadgeLabel(Some(&label));
-                } else {
-                    tile.setBadgeLabel(None);
-                }
-            }
-        })
-        .map_err(|e| e.to_string())?;
-        Ok(())
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_badge_count(if count > 0 { Some(count) } else { None });
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (app, count);
-        Ok(())
-    }
+    Ok(())
 }
 
 /// 把主窗口带到前台并聚焦（通知点击、Dock 点击时调用）。
@@ -404,7 +383,8 @@ fn main() {
                     }
                 }
             }
-            // macOS：点击 Dock 图标或通知时，把主窗口带到前台
+            // macOS：点击 Dock 图标或通知时，把主窗口带到前台（Reopen 仅 macOS 有）
+            #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 if let Some(window) = handle.get_webview_window("main") {
                     let _ = window.unminimize();
