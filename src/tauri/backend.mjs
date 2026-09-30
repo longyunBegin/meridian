@@ -83,7 +83,7 @@ try {
 const stopScheduler = startScheduler({
   due: () => store.dueSettlements(),
   notify: (notice) => emit('system:notification', notice),
-  badge: () => {}, onClick: () => emit('due:notify'),
+  badge: (count) => emit('system:badge', { count }), onClick: () => emit('due:notify'),
 })
 
 async function readBody(request) {

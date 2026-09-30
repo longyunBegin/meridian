@@ -18,7 +18,10 @@
         "height": 780,
         "minWidth": 900,
         "minHeight": 640,
-        "center": true
+        "center": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -28,7 +31,11 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["app", "dmg", "nsis"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
     "category": "Productivity",
     "shortDescription": "本地优先的判断账本",
     "resources": {

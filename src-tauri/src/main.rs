@@ -128,6 +128,56 @@ async fn backend_events(state: State<'_, BackendState>) -> Result<Vec<Value>, St
         .map_err(|e| format!("invalid event response: {e}"))
 }
 
+/// 设置 macOS Dock 角标（到期未结算数）。count 为 0 时清除。
+#[tauri::command]
+fn set_dock_badge(count: i64) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSApplication, NSDockTile};
+        use objc2_foundation::NSString;
+
+        let app = NSApplication::sharedApplication();
+        let tile = app.dockTile();
+        if count > 0 {
+            let label = NSString::from_str(&count.to_string());
+            tile.setBadgeLabel(Some(&label));
+        } else {
+            tile.setBadgeLabel(None);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = count;
+        Ok(())
+    }
+}
+
+/// 把主窗口带到前台并聚焦（通知点击、Dock 点击时调用）。
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// macOS 标题栏毛玻璃（vibrancy）。窗口需 transparent。
+#[cfg(target_os = "macos")]
+fn apply_vibrancy(window: &tauri::WebviewWindow) {
+    use tauri::window::Effect;
+    use tauri::window::EffectState;
+
+    let _ = window.set_effects(Some(
+        tauri::window::EffectsBuilder::new()
+            .effect(Effect::Sidebar)
+            .state(EffectState::Active)
+            .build(),
+    ));
+}
+
 fn application_data_directory() -> Result<PathBuf, String> {
     #[cfg(target_os = "windows")]
     {
@@ -321,24 +371,42 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             backend_invoke,
             backend_events,
-            application_data_dir
+            application_data_dir,
+            set_dock_badge,
+            focus_main_window
         ])
         .setup(|app| {
             let (child, endpoint) = launch_sidecar(app.handle()).map_err(std::io::Error::other)?;
             app.manage(BackendState(endpoint));
             app.manage(Sidecar(Mutex::new(child)));
+            // macOS 毛玻璃：主窗口用 Sidebar vibrancy
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                apply_vibrancy(&window);
+            }
             Ok(())
         });
     let app = builder
         .build(tauri::generate_context!())
         .expect("failed to build Meridian");
     app.run(|handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
-            if let Some(sidecar) = handle.try_state::<Sidecar>() {
-                if let Ok(mut child) = sidecar.0.lock() {
-                    let _ = child.kill();
+        match event {
+            tauri::RunEvent::Exit => {
+                if let Some(sidecar) = handle.try_state::<Sidecar>() {
+                    if let Ok(mut child) = sidecar.0.lock() {
+                        let _ = child.kill();
+                    }
                 }
             }
+            // macOS：点击 Dock 图标或通知时，把主窗口带到前台
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
         }
     });
 }
