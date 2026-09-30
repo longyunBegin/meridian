@@ -2348,6 +2348,16 @@ ok('T4: lattice.js 有 全选命中 0', latticeSrcTL.includes('全选命中 0'))
 ok('T4: lattice.js 有 删除所选', latticeSrcTL.includes('删除所选'))
 ok('T4: lattice.js 无 prompt(', !latticeSrcTL.includes('prompt('))
 
+// --- T4b: 树形 全部展开 / 一键合起 ---
+
+ok('T4b: lattice.js 有 expandAll', latticeSrcTL.includes('function expandAll'))
+ok('T4b: lattice.js 有 collapseAll', latticeSrcTL.includes('function collapseAll'))
+ok('T4b: expandAll 把有子节点的 id 加入 state.open', latticeSrcTL.includes('state.open.add(pid)'))
+ok('T4b: collapseAll 清空 state.open', latticeSrcTL.includes('state.open.clear()'))
+ok('T4b: 头部有 全部展开 按钮', latticeSrcTL.includes('全部展开'))
+ok('T4b: 头部有 全部收起 按钮', latticeSrcTL.includes('全部收起'))
+ok('T4b: 搜索时禁用展开/收起', latticeSrcTL.includes('搜索中已全部展开'))
+
 // T4: 无禁用词
 ok('T4: lattice.js 无加权', !latticeSrcTL.includes('加权'))
 ok('T4: lattice.js 无汇总', !latticeSrcTL.includes('汇总'))
