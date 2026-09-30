@@ -224,5 +224,77 @@ ok('忽略后不在 pending 里',
 const rmEmpty = await fireAsync('inbox:resolveMany', [], 'reject')
 ok('空数组不崩', rmEmpty?.ok === true && rmEmpty?.resolved?.length === 0)
 
+console.log('\n— inbox:extract 进度事件 + 有限并发 + 取消 —')
+// harness 默认吞掉 emit，这里换一个只收抽取进度事件的收集器
+const { configurePlatformServices } = await import('../src/main/runtime-services.js')
+const { __testHooks: extractHooks } = await import('../src/main/llmlog.js')
+const extractEvents = []
+configurePlatformServices({ emitEvent: (name, payload) => { if (name === 'inbox:extract:progress') extractEvents.push(payload) } })
+const prevApiKey = store.settings().apiKey
+store.saveSettings({ apiKey: '<redacted>' })
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const realExtractHook = extractHooks.run
+extractHooks.run = async (scenario) => {
+  await sleep(30)
+  if (scenario === 'extract') return { ok: true, lemmas: [{ title: '抽取出的命题', type: 'observation', confidence: 70 }] }
+  return { ok: false, reason: 'timeout' }
+}
+const ex1 = store.addInboxItem({ text: '抽取条目一，讲某供应链的订单情况。', title: '抽取1', extracted: false })
+const ex2 = store.addInboxItem({ text: '抽取条目二，讲某公司的产能扩张。', title: '抽取2', extracted: false })
+const ex3 = store.addInboxItem({ text: '抽取条目三，讲某产品的价格走势。', title: '抽取3', extracted: false })
+extractEvents.length = 0
+const exRes = await fireAsync('inbox:extract', [ex1.id, ex2.id, ex3.id])
+ok('抽取返回 ok', exRes?.ok === true)
+ok('三条都抽取成功', exRes?.extracted === 3 && exRes?.total === 3, `实际 extracted=${exRes?.extracted} total=${exRes?.total}`)
+const phases = extractEvents.map((e) => e.phase)
+ok('进度事件有 start/item/done', phases[0] === 'start' && phases.at(-1) === 'done' && phases.filter((p) => p === 'item').length === 3,
+  `实际 ${JSON.stringify(phases)}`)
+const dones = extractEvents.filter((e) => e.phase === 'item').map((e) => e.done).sort((a, b) => a - b)
+ok('逐条进度 done 递增 1..3', JSON.stringify(dones) === '[1,2,3]', `实际 ${JSON.stringify(dones)}`)
+ok('三条都标为已抽取', [ex1.id, ex2.id, ex3.id].every((id) => store.load().inbox.find((i) => i.id === id)?.extracted === true))
+// 已抽取过的不再重复抽取
+const noOpRes = await fireAsync('inbox:extract', [ex1.id])
+ok('已抽取过的不再重复抽取', noOpRes?.ok === true && noOpRes?.extracted === 0 && noOpRes?.total === 0,
+  `实际 ${JSON.stringify({ extracted: noOpRes?.extracted, total: noOpRes?.total })}`)
+
+// 并发重入：第一批还没跑完时再调，直接拒绝；取消后在飞的跑完、没起跑的不再起
+extractHooks.run = async (scenario) => {
+  await sleep(300)
+  if (scenario === 'extract') return { ok: true, lemmas: [{ title: '慢抽取命题', type: 'observation', confidence: 70 }] }
+  return { ok: false, reason: 'timeout' }
+}
+const slowIds = []
+for (let i = 4; i <= 8; i++) slowIds.push(store.addInboxItem({ text: `慢速抽取条目${i}`, title: `抽取${i}`, extracted: false }).id)
+const slowPromise = fireAsync('inbox:extract', slowIds)
+await sleep(50) // 让第一批先占住 extractRun
+const reenter = await fireAsync('inbox:extract', [slowIds[0]])
+ok('并发重入被拒绝', reenter?.ok === false && reenter?.error === 'extract-in-progress', `实际 ${JSON.stringify(reenter)}`)
+const cancelRes = await fireAsync('inbox:extract:cancel')
+ok('取消命令返回 ok', cancelRes?.ok === true && cancelRes?.cancelled === true)
+const slowRes = await slowPromise
+ok('取消后整批标记 cancelled', slowRes?.cancelled === true, `实际 cancelled=${slowRes?.cancelled}`)
+ok('取消后在飞的 3 条落盘、没起跑的不再抽取', slowRes?.extracted === 3 && slowRes?.total === 5,
+  `实际 extracted=${slowRes?.extracted} total=${slowRes?.total}`)
+
+// 单条失败不掀翻整批
+extractHooks.run = async (scenario, args) => {
+  await sleep(10)
+  if (scenario !== 'extract') return { ok: false, reason: 'timeout' }
+  if (args?.text?.includes('坏条目')) throw new Error('LLM 炸了')
+  return { ok: true, lemmas: [{ title: '好条目命题', type: 'observation', confidence: 70 }] }
+}
+const exGood = store.addInboxItem({ text: '好条目内容', title: '抽取好', extracted: false })
+const exBad = store.addInboxItem({ text: '坏条目内容', title: '抽取坏', extracted: false })
+extractEvents.length = 0
+const partRes = await fireAsync('inbox:extract', [exGood.id, exBad.id])
+ok('部分失败整批仍 ok', partRes?.ok === true && partRes?.extracted === 1, `实际 extracted=${partRes?.extracted}`)
+const failEvt = extractEvents.find((e) => e.phase === 'item' && e.itemId === exBad.id)
+ok('失败条目进度事件 ok=false', failEvt?.ok === false)
+ok('好条目已抽取', store.load().inbox.find((i) => i.id === exGood.id)?.extracted === true)
+ok('坏条目未抽取', store.load().inbox.find((i) => i.id === exBad.id)?.extracted !== true)
+
+extractHooks.run = realExtractHook
+store.saveSettings({ apiKey: prevApiKey })
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

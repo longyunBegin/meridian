@@ -1089,21 +1089,53 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   // 主动决定：把「待抽取」组批量过一遍模型——让花费从自动变成主动的那个按钮
   // themeId 可选：调用方指定则用指定的（批量抽取主题选择器 / 主题追踪按内容实际主题传入）；
   // 不传或主题无效时回退到命题最多的主题（bestThemeContext），与渲染层当前主题无关。
+  // 抽取是长任务：一次 IPC 里逐条 emit 进度事件，前端据此点亮行状态；
+  // 有限并发(3)降墙钟；取消令牌让用户中途叫停——已抽完的条目已落盘，不回滚。
+  // 并发重入保护：同一时间只跑一批抽取（同步桥回放是串行的，不受影响）。
+  let extractRun = null
   commands.register('inbox:extract', async (ids, themeId) => {
-    const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id))
-    let extracted = 0
+    if (extractRun) return { ok: false, error: 'extract-in-progress' }
+    const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id)).filter((i) => !i.extracted)
     const liveThemeIds = new Set(load().themes.filter((t) => !t.deletedAt).map((t) => t.id))
     const useThemeId = (themeId && liveThemeIds.has(themeId)) ? themeId : (bestThemeContext()?.id || null)
-    for (const item of targets) {
-      if (item.extracted) continue
-      // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
-      const result = await processCapture(item.text, useThemeId, item.provenance, { forceExtract: true })
-      if (!result.lemmas.length) continue
-      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
-      extracted++
+    const total = targets.length
+    const run = { cancelled: false }
+    extractRun = run
+    const CONCURRENCY = 3
+    let extracted = 0
+    let done = 0
+    let cursor = 0
+    emit('inbox:extract:progress', { done: 0, total, itemId: null, ok: true, phase: 'start' })
+    const worker = async () => {
+      while (cursor < targets.length) {
+        if (run.cancelled) return
+        const item = targets[cursor++]
+        let ok = false
+        try {
+          // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
+          const result = await processCapture(item.text, useThemeId, item.provenance, { forceExtract: true })
+          if (result?.lemmas?.length) {
+            setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
+            extracted++
+            ok = true
+          }
+        } catch {
+          // 单条失败不掀翻整批：记为失败继续下一条（此前是抛错即中止整批）
+          ok = false
+        }
+        done++
+        emit('inbox:extract:progress', { done, total, itemId: item.id, ok, phase: 'item' })
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(total, 1)) }, () => worker()))
+    extractRun = null
+    emit('inbox:extract:progress', { done, total, itemId: null, ok: true, phase: 'done', cancelled: run.cancelled })
     emit('db:changed')
-    return { ok: true, extracted, themeId: useThemeId }
+    return { ok: true, extracted, total, cancelled: run.cancelled, themeId: useThemeId }
+  })
+  commands.register('inbox:extract:cancel', () => {
+    if (extractRun) extractRun.cancelled = true
+    return { ok: true, cancelled: !!extractRun }
   })
 
   // 收件箱条目换主题：只改条目身上的 extractedThemeId；挂点按新主题重校验，失效的由用户重选。
