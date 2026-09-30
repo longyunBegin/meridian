@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.1.3（2026-09-30）
+
+### 修复
+
+- Apple Silicon macOS 发布同时构建 `.app` updater target 与 DMG，确保生成并发布签名的 `.app.tar.gz` 更新包
+
 ## v0.1.2（2026-09-30）
 
 ### 修复
