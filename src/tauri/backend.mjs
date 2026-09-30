@@ -26,6 +26,10 @@ function emit(name, payload = null) {
 }
 configurePlatformServices({ dataDirectory: userData, emitEvent: emit })
 
+// 结算后立刻刷新 Dock 角标，不等 15 分钟的 scheduler tick。
+// store 在 registry 之后才 import，用可变引用延迟绑定。
+let refreshBadge = null
+
 const registry = new CommandRegistry({
   onSuccess: (name, args, result) => {
     // 清空类命令按 id 精确同步：录制源头算好的 deletedIds，而非 filter 参数——
@@ -36,6 +40,8 @@ const registry = new CommandRegistry({
       return
     }
     if (OUTBOX_CHANNELS.has(name)) recordOutbox(name, args, userData)
+    // 结算命令成功后立刻刷新角标
+    if (name === 'db:settle') refreshBadge?.()
   },
 })
 const { load } = await import('../main/store.js')
@@ -45,6 +51,14 @@ const { ingestReadings } = await import('../main/reading-ingest.js')
 const { startSyncServer } = await import('../main/sync-server.js')
 const { startScheduler } = await import('../main/scheduler.js')
 const store = await import('../main/store.js')
+
+// 绑定角标刷新函数：结算后立刻 emit，tauri-bootstrap.js 会调 set_dock_badge
+refreshBadge = () => {
+  try {
+    const count = store.dueSettlements().length
+    emit('system:badge', { count })
+  } catch {}
+}
 
 load()
 const startupPrune = store.lastInboxPrune()

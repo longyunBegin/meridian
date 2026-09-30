@@ -39,6 +39,17 @@ function storageSet(key, value) {
   try { localStorage.setItem(key, String(value)) } catch { /* Storage may be unavailable; keep the app usable. */ }
 }
 
+/** 把 GitHub 自动生成的 markdown 更新说明转成纯文本，去掉 **、链接等格式符号。 */
+function stripMarkdown(text) {
+  return String(text || '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')  // **加粗** -> 加粗
+    .replace(/__([^_]+)__/g, '$1')      // __加粗__ -> 加粗
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // [文字](链接) -> 文字
+    .replace(/^#{1,6}\s+/gm, '')        // 标题 # -> 去掉
+    .replace(/`([^`]+)`/g, '$1')        // `代码` -> 代码
+    .trim()
+}
+
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '0 KB'
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -59,9 +70,9 @@ function presentUpdate(update) {
   let receivedBytes = 0
   let totalBytes = null
 
-  const status = h('p', { class: 'update-status-line', role: 'status', 'aria-live': 'polite' }, '准备下载…')
+  const status = h('p', { class: 'update-status-line', role: 'status', 'aria-live': 'polite' }, '')
   const progress = h('progress', { class: 'update-progress', max: '100', hidden: true })
-  const notes = String(update.body || '').trim() || '此版本没有附带更新说明。'
+  const notes = stripMarkdown(update.body) || '此版本没有附带更新说明。'
   const mainButton = h('button', {
     class: 'btn btn-primary',
     onclick: async () => {
