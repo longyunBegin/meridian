@@ -74,14 +74,32 @@ function cleanGeneratedRuntimeArtifacts(outputDir) {
   }
 }
 
+function isSystemMacOSLibrary(reference) {
+  return reference.startsWith('/System/Library/')
+    || reference.startsWith('/System/Volumes/Preboot/Cryptexes/OS/usr/lib/')
+    || reference.startsWith('/usr/lib/')
+}
+
+function isMacOSNodeLibrary(reference) {
+  return /(?:^|\/)libnode(?:\.\d+)?\.dylib$/.test(reference)
+}
+
 function copyMacOSNodeLibrary(execPath, outputDir, runCommand) {
   const dependencies = runCommand('otool', ['-L', execPath])
-  const libraryReferences = dependencies
+  const references = dependencies
     .split(/\r?\n/)
-    .map((line) => line.trim().match(/^(\S*libnode(?:\.\d+)?\.dylib)\s+\(/)?.[1])
+    .map((line) => line.trim().match(/^(\S+)\s+\(/)?.[1])
     .filter(Boolean)
+  const libraryReferences = references.filter(isMacOSNodeLibrary)
+  const unsupportedReferences = references.filter((reference) => !isSystemMacOSLibrary(reference) && !isMacOSNodeLibrary(reference))
+  if (unsupportedReferences.length > 0) {
+    throw new Error(`Unsupported non-system macOS Node dependency ${unsupportedReferences.join(', ')} in ${execPath}; refusing to package an incomplete runtime`)
+  }
   if (libraryReferences.length === 0) {
-    throw new Error(`Could not find a libnode dependency in ${execPath}; refusing to package an incomplete macOS Node runtime`)
+    // Official macOS Node distributions can be self-contained executables with
+    // only OS-provided dylibs. Keep those binaries unchanged; do not require a
+    // libnode.dylib that the distribution does not ship.
+    return []
   }
 
   const rpaths = readRpaths(runCommand('otool', ['-l', execPath]))

@@ -103,14 +103,23 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 ## 安装
 
 ### 直接下载安装包（推荐）
-
 从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
 
-- **macOS（Apple Silicon）**：`Meridian_0.1.0_aarch64.dmg`——Tauri 2 构建。未签名，首次打开请右键 → 打开。
+适用于当前系统的最新版：
 
-> Intel Mac 与 Windows 暂不提供预编译包。Windows 用户请按下面的教程自行构建；Linux 不支持。
+- **macOS（Apple Silicon）**：`Meridian_<version>_aarch64.dmg`。未配置 Apple Developer ID 签名或公证，首次安装可能显示 Gatekeeper「无法验证开发者」警告；右键点击应用并选择「打开」。这与应用内更新使用的 Tauri 更新包签名是两套不同机制。
+- **Windows x64**：`Meridian_<version>_x64-setup.exe`（NSIS 安装包）。安装包未签名；若 SmartScreen 拦截，选择「仍要运行」。
 
-### Windows 自行构建
+### 应用内更新
+
+- 从 v0.1.0 升级时，先从 GitHub Releases 手动安装一次带 updater 的 v0.1.1 引导版本（macOS 用 DMG，Windows 用 NSIS 安装包）。v0.1.0 没有 updater 插件或公钥，不能通过应用内更新跨越这一步。
+- v0.1.1 及之后的桌面版启动时最多每 24 小时静默检查一次；设置页也可手动点「检查更新」。发现更新后会显示版本说明和下载进度，下载结束后由用户确认安装并重启。
+- Tauri 构建会把应用版本写入更新包的签名可信注释；updater 强制校验签名版本与 manifest 一致，updater 与 Windows 安装器都拒绝降级。
+- 发布工作流在推送 `vMAJOR.MINOR.PATCH` 标签或手动选择已有标签时构建 Apple Silicon macOS 与 Windows x64。每个平台先上传安装包和 `.sig`，再由一个汇总 job 生成同时包含 `darwin-aarch64`、`windows-x86_64` 的 `latest.json`，全部资产上传后才发布 Release。
+- 发布前需在 GitHub 仓库 Actions secrets 中添加 `TAURI_SIGNING_PRIVATE_KEY`（Tauri updater 私钥文件的完整内容）；当前私钥未设密码，因此不需要密码 secret。私钥不可提交到仓库。只有私钥加密保存时才额外设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+- `TAURI_SIGNING_PRIVATE_KEY` 是 Tauri updater 的包签名密钥，不是 Apple Developer ID 证书；不需要新增 Apple credentials、签名或公证步骤。
+
+### Windows 自行构建（可选）
 
 1. 安装 [Node.js](https://nodejs.org) ≥ 22.13（LTS）和 [Rust](https://rustup.rs)（stable）
 2. 安装 Visual Studio C++ 生成工具（勾选"使用 C++ 的桌面开发"工作负载）；WebView2 运行时（Win10/11 一般自带）
@@ -223,7 +232,7 @@ npm start
 - **你的数据你带走**：随时导出 / 导入完整账本
 - **密钥加密**：API Key 用 AES-256-GCM 加密落盘，密钥由机器信息派生，换机器读不出来
 - **原文可清**：设置页可清理无引用原文或全清原文——判断、置信度、校准曲线不受影响
-- **不上传**：除你配置的大模型 / 打标服务调用外，无任何网络外发
+- **不上传账本**：自动更新只向 GitHub 查询版本并下载带签名的应用更新包，不上传本地判断、原文或设置；其他网络请求仅来自你配置的大模型 / 打标服务
 
 ---
 

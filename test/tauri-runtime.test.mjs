@@ -45,6 +45,7 @@ try {
   writeFileSync(preservedMacFile, 'keep unrelated runtime data')
   const stagedMacLibrary = join(macOutput, 'libnode.147.dylib')
   chmodSync(stagedMacLibrary, 0o444)
+  chmodSync(macLibrary, 0o644)
   writeFileSync(macLibrary, 'updated libnode shared library')
   prepareRuntime({ platform: 'darwin', execPath: macNode, outputDir: macOutput, runCommand: macRun })
   assert.equal(readFileSync(stagedMacLibrary, 'utf8'), 'updated libnode shared library')
@@ -75,6 +76,35 @@ try {
     ['otool', ['-l', macNode]],
     ['codesign', ['--force', '--sign', '-', join(tempRoot, 'mac-existing-rpath-output', 'node.exe')]],
   ], 'an existing rpath should not be duplicated, and the staged executable should still be signed')
+
+  const standaloneOutput = join(tempRoot, 'mac-standalone-output')
+  const standaloneCalls = []
+  const standaloneResult = prepareRuntime({
+    platform: 'darwin',
+    execPath: macNode,
+    outputDir: standaloneOutput,
+    runCommand: (command, args) => {
+      standaloneCalls.push([command, args])
+      assert.equal(command, 'otool')
+      assert.deepEqual(args, ['-L', macNode])
+      return `${macNode}:\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 2500.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 60158.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.0.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n`
+    },
+  })
+  assert.equal(readFileSync(join(standaloneOutput, 'node.exe'), 'utf8'), 'mac-node executable')
+  assert.deepEqual(standaloneResult.extras, [], 'a self-contained Node binary needs no bundled libnode')
+  assert.deepEqual(standaloneCalls, [['otool', ['-L', macNode]]], 'system-only dependencies must leave the copied executable unchanged')
+
+  const nonSystemNode = join(tempRoot, 'non-system-node')
+  writeFileSync(nonSystemNode, 'Node with unsupported dynamic dependency')
+  assert.throws(() => prepareRuntime({
+    platform: 'darwin',
+    execPath: nonSystemNode,
+    outputDir: join(tempRoot, 'mac-non-system-dependency-output'),
+    runCommand: (_command, args) => {
+      assert.deepEqual(args, ['-L', nonSystemNode])
+      return `${nonSystemNode}:\n\t@rpath/libicuuc.74.dylib (compatibility version 74.0.0, current version 74.0.0)\n`
+    },
+  }), /Unsupported non-system macOS Node dependency @rpath\/libicuuc\.74\.dylib/)
 
   const signingFailureCalls = []
   assert.throws(() => prepareRuntime({

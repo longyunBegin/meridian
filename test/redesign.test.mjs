@@ -2727,7 +2727,7 @@ ok('C1: 输入框和拖拽清理干净', !/inbox-textarea|ondrop|ondragover|inbo
 ok('C1: 输入聚焦推送全链路清理', !/inbox:focus|onInboxFocus/.test(cleanupMain + cleanupBridge + appSrcER))
 ok('C1: 侧栏按钮读取剪贴板且空态有提示', appSrcER.includes('m.readClipboard()') && appSrcER.includes('剪贴板是空的'))
 ok('C3: Windows 字体在 Mac 字体之后', stylesSrcS45.indexOf('Segoe UI') > stylesSrcS45.indexOf('Hiragino Sans GB') && stylesSrcS45.includes('Microsoft YaHei'))
-ok('C3: Tauri release targets remain macOS and Windows', JSON.stringify(JSON.parse(readFileSync2(join(ROOT2, 'src-tauri/tauri.conf.json'), 'utf8')).bundle.targets) === JSON.stringify(['dmg', 'nsis']))
+ok('C3: Tauri release targets include macOS updater app, DMG, and Windows NSIS', JSON.stringify(JSON.parse(readFileSync2(join(ROOT2, 'src-tauri/tauri.conf.json'), 'utf8')).bundle.targets) === JSON.stringify(['app', 'dmg', 'nsis']))
 ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree'") && appSrcER.includes("localStorage.setItem('meridian.shape', shape)"))
 ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
 // 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」

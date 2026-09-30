@@ -1739,3 +1739,29 @@ select.inbox-extract-theme {
     animation-iteration-count: 1 !important;
   }
 }
+
+
+/* ------------- 应用内更新 ------------- */
+.update-settings-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.update-settings-status, .update-settings-note {
+  margin: 0; font-size: var(--t-caption); color: var(--text-2); line-height: 1.55;
+}
+.update-settings-note { margin-top: 8px; color: var(--text-3); }
+.update-dialog {
+  width: min(560px, calc(100vw - 40px)); max-height: min(680px, calc(100vh - 40px));
+  border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 0;
+  background: var(--surface-solid); color: var(--text); box-shadow: 0 16px 60px rgba(0, 0, 0, .24);
+}
+.update-dialog::backdrop { background: rgba(0, 0, 0, .32); backdrop-filter: blur(3px); }
+.update-dialog-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+  padding: 22px 24px 16px; border-bottom: 1px solid var(--hairline-soft);
+}
+.update-dialog-head h2 { margin: 2px 0 0; font-size: var(--t-head); }
+.update-eyebrow { margin: 0; color: var(--text-3); font-size: var(--t-caption); letter-spacing: .08em; font-weight: 700; }
+.update-version-current { color: var(--text-3); font-size: var(--t-caption); white-space: nowrap; padding-top: 3px; }
+.update-dialog-body { padding: 18px 24px 8px; }
+.update-notes { margin: 0 0 16px; color: var(--text-2); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+.update-progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.update-status-line { min-height: 20px; margin: 9px 0 0; color: var(--text-3); font-size: var(--t-caption); }
+.update-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px 22px; }

@@ -1,9 +1,16 @@
 # 更新日志
 
-## 未发布
+## v0.1.3（2026-09-30）
 
 ### 修复
 
+- Apple Silicon macOS 发布同时构建 `.app` updater target 与 DMG，确保生成并发布签名的 `.app.tar.gz` 更新包
+
+## v0.1.2（2026-09-30）
+
+### 修复
+
+- 修复 GitHub macOS Apple Silicon 发布：若官方 Node 可执行文件仅依赖 macOS 系统 dylib，不再错误要求并不存在的 `libnode.dylib`；仍会打包共享 `libnode`，并拒绝未处理的非系统动态依赖
 - 清空类同步改按 ID 精确回放：此前 `inbox:clearUnextracted` 按 `extracted` 谓词回放，两端抽取状态不一致时会删出不同集合；现改为按 ID 精确同步（新增 `inbox:deleteIds` 命令，幂等），旧 `inbox:clear` / `inbox:clearUnextracted` 保留回放兼容
 - 检查器结算区：空到期日明确显示"未设置"（不再用原生日期框的空值，避免被误读成今天）；选日期后要点"确定"才写入账本，"更改/清除"同理；异步研究观点面板加节点 ID 守卫（切换节点后丢弃过期结果）；结算写入加乐观更新本地缓存
 

@@ -1,5 +1,6 @@
 import { h, clear, confirmToast, toast } from '../lib/dom.js'
 import { state } from '../app.js'
+import { checkForUpdates, updaterAvailable } from '../lib/updater.js'
 
 const m = window.meridian
 
@@ -96,6 +97,36 @@ export async function renderSettings(mid) {
     toast.style.color = color
     setTimeout(() => { toast.textContent = '' }, 3000)
   }
+
+  const canCheckForUpdates = updaterAvailable()
+  const updateStatus = h('p', {
+    class: 'update-settings-status', role: 'status', 'aria-live': 'polite',
+  }, canCheckForUpdates ? '启动时每 24 小时最多静默检查一次。' : '应用内更新仅适用于桌面版。')
+  const updateButton = h('button', {
+    class: 'btn btn-primary', disabled: !canCheckForUpdates,
+    onclick: async () => {
+      updateButton.disabled = true
+      updateButton.textContent = '检查中…'
+      updateStatus.textContent = '正在检查更新…'
+      try {
+        const result = await checkForUpdates()
+        if (result.status === 'current') updateStatus.textContent = '当前已是最新版本。'
+        else if (result.status === 'update') updateStatus.textContent = `发现 v${result.version}，更新说明与下载进度已打开。`
+        else if (result.status === 'failed') updateStatus.textContent = '检查失败，可能是网络暂时不可用；应用可继续使用，请稍后重试。'
+        else if (result.status === 'unsupported') updateStatus.textContent = '应用内更新仅适用于桌面版。'
+      } finally {
+        updateButton.disabled = !canCheckForUpdates
+        updateButton.textContent = '检查更新'
+      }
+    },
+  }, '检查更新')
+  const updateSection = h('section', { class: 'sect' },
+    h('div', { class: 'sect-h' }, h('h2', {}, '关于与更新')),
+    h('div', { class: 'sect-b' },
+      h('div', { class: 'update-settings-row' }, updateButton, updateStatus),
+      h('p', { class: 'update-settings-note' }, '发现更新后会显示版本说明和下载进度；下载完成后需由你确认安装并重启。'),
+    ),
+  )
 
   const mb = (b) => (b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`)
 
@@ -307,6 +338,8 @@ export async function renderSettings(mid) {
       h('p', {}, '归位与打标。没有 key 也能用——捕获时整段原文会存成一条观测命题。'),
       toast,
     ),
+
+    updateSection,
 
     h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '来源打标器')),
