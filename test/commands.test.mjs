@@ -293,6 +293,42 @@ ok('失败条目进度事件 ok=false', failEvt?.ok === false)
 ok('好条目已抽取', store.load().inbox.find((i) => i.id === exGood.id)?.extracted === true)
 ok('坏条目未抽取', store.load().inbox.find((i) => i.id === exBad.id)?.extracted !== true)
 
+console.log('\n— inbox:clearUnextracted 排除抽取中条目 —')
+const cu1 = store.addInboxItem({ text: '清空测试条目一', title: '清空1', extracted: false })
+const cu2 = store.addInboxItem({ text: '清空测试条目二', title: '清空2', extracted: false })
+const cu3 = store.addInboxItem({ text: '清空测试条目三', title: '清空3', extracted: false })
+const removedN = await fireAsync('inbox:clearUnextracted', [cu1.id])
+const inboxIds = new Set(store.load().inbox.map((i) => i.id))
+ok('exceptIds 中的条目被保留', inboxIds.has(cu1.id))
+ok('其余未抽取被清空', !inboxIds.has(cu2.id) && !inboxIds.has(cu3.id))
+ok('返回清空数量', removedN >= 2, `实际 ${removedN}`)
+
+console.log('\n— inbox:extract 跳过中途被忽略的条目 —')
+let gateOpen = false
+const extractTexts = []
+extractHooks.run = async (scenario, args) => {
+  if (scenario !== 'extract') return { ok: false, reason: 'timeout' }
+  extractTexts.push(args?.text)
+  while (!gateOpen) await sleep(10)
+  return { ok: true, lemmas: [{ title: '门控命题', type: 'observation', confidence: 70 }] }
+}
+const gIds = []
+for (let i = 1; i <= 4; i++) gIds.push(store.addInboxItem({ text: `门控抽取条目${i}内容`, title: `门控${i}`, extracted: false }).id)
+extractEvents.length = 0
+extractTexts.length = 0
+const gatePromise = fireAsync('inbox:extract', gIds)
+await sleep(150) // 3 个 worker 各取走一条并卡在 hook 里，第四条还在队列里
+store.resolveInboxItem(gIds[3], 'reject') // 抽取中忽略第四条
+gateOpen = true
+const gateRes = await gatePromise
+ok('被忽略的条目不计入抽取', gateRes?.extracted === 3 && gateRes?.total === 4,
+  `实际 extracted=${gateRes?.extracted} total=${gateRes?.total}`)
+ok('被忽略的条目没跑 LLM', !extractTexts.some((t) => t && t.includes('门控抽取条目4')), `实际跑了 ${extractTexts.length} 次`)
+const skipEvt = extractEvents.find((e) => e.phase === 'item' && e.itemId === gIds[3])
+ok('跳过事件带 skipped 标记', skipEvt?.skipped === true)
+ok('被忽略条目保持未抽取', store.load().inbox.find((i) => i.id === gIds[3])?.extracted !== true)
+gateOpen = false
+
 extractHooks.run = realExtractHook
 store.saveSettings({ apiKey: prevApiKey })
 

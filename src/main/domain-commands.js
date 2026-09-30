@@ -1116,6 +1116,12 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       while (cursor < targets.length) {
         if (run.cancelled) return
         const item = targets[cursor++]
+        // 条目可能在抽取中被清空/忽略：跳过，不白跑 LLM（前端不画失败徽标）
+        if (!allInbox().some((i) => i.id === item.id)) {
+          done++
+          emit('inbox:extract:progress', { done, total, itemId: item.id, ok: false, skipped: true, phase: 'item' })
+          continue
+        }
         let ok = false
         try {
           // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
@@ -1163,7 +1169,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, statuses }
   })
 
-  commands.register('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
+  commands.register('inbox:clearUnextracted', (exceptIds) => clearInbox({ onlyUnextracted: true, exceptIds }))
   commands.register('inbox:prune', (days, opts) => pruneInbox(days, opts))
   commands.register('inbox:clear', () => clearInbox())
 
