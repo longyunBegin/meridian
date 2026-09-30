@@ -1,0 +1,133 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable vMAJOR.MINOR.PATCH tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test updater-enabled release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run complete test suite
+        run: npm test
+
+  build:
+    name: Build ${{ matrix.platform }} updater assets
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin
+            target: aarch64-apple-darwin
+            runner: macos-26
+            artifact: updater-assets-darwin-aarch64
+          - platform: windows
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            artifact: updater-assets-windows-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Verify Apple Silicon build host
+        if: matrix.platform == 'darwin'
+        run: test "$(uname -m)" = arm64 || { echo '::error::The macOS updater build requires an Apple Silicon runner.'; exit 1; }
+        shell: bash
+      - name: Install frontend dependencies
+        run: npm ci
+        shell: bash
+      - name: Require updater signing secret
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo '::error::Add the TAURI_SIGNING_PRIVATE_KEY repository Actions secret before publishing signed updater assets.'
+            exit 1
+          fi
+        shell: bash
+      - name: Build signed desktop bundles
+        run: npm run tauri:build -- --target "${{ matrix.target }}"
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Normalize signed updater assets
+        run: node tools/package-updater-assets.mjs --platform "${{ matrix.platform }}" --target "${{ matrix.target }}" --output release-assets
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish merged signed release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-assets-*
+          path: release-assets
+          merge-multiple: true
+      - name: Validate tag, package version, and release ordering
+        shell: bash
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft,isPrerelease > /tmp/meridian-releases.json
+          node tools/validate-release-version.mjs --tag "$TAG" --releases /tmp/meridian-releases.json
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists; refusing to replace published assets."
+            exit 1
+          fi
+      - name: Generate release notes and the merged updater manifest
+        shell: bash
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" -f "tag_name=$TAG" --jq .body > /tmp/meridian-release-notes.md
+          node tools/create-updater-manifest.mjs --assets release-assets --tag "$TAG" --notes-file /tmp/meridian-release-notes.md --output release-assets/latest.json
+      # tauri-action@v1 currently defaults uploadUpdaterJson=true. A per-platform matrix upload can leave a platform-local latest.json; keep one manifest writer here instead.
+      - name: Create draft, upload all assets, then publish
+        shell: bash
+        run: |
+          version="${TAG#v}"
+          gh release create "$TAG" --draft --verify-tag --title "Meridian $version" --notes-file /tmp/meridian-release-notes.md --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"

@@ -104,6 +104,17 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 桌面包目标为 Tauri 2：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 可能包含早期构建。
 
+macOS 安装包没有使用 Apple Developer ID 签名或公证，首次安装仍可能显示 Gatekeeper「无法验证开发者」警告。这与应用内更新使用的 Tauri 更新包签名是两套不同机制；本项目不配置 Apple 签名或公证。
+
+### 应用内更新
+
+- 从 v0.1.0 升级时，先从 GitHub Releases 手动安装一次带 updater 的 v0.1.1 引导版本（macOS 用 DMG，Windows 用 NSIS 安装包）。v0.1.0 没有 updater 插件或公钥，不能通过应用内更新跨越这一步。
+- v0.1.1 及之后的桌面版启动时最多每 24 小时静默检查一次；设置页也可手动点「检查更新」。发现更新后会显示版本说明和下载进度，下载结束后由用户确认安装并重启。
+- Tauri 构建会把应用版本写入更新包的签名可信注释；updater 强制校验签名版本与 manifest 一致，updater 与 Windows 安装器都拒绝降级。
+- 发布工作流在推送 `vMAJOR.MINOR.PATCH` 标签或手动选择已有标签时构建 Apple Silicon macOS 与 Windows x64。每个平台先上传安装包和 `.sig`，再由一个汇总 job 生成同时包含 `darwin-aarch64`、`windows-x86_64` 的 `latest.json`，全部资产上传后才发布 Release。
+- 发布前需在 GitHub 仓库 Actions secrets 中添加 `TAURI_SIGNING_PRIVATE_KEY`（Tauri updater 私钥文件的完整内容）；当前私钥未设密码，因此不需要密码 secret。私钥不可提交到仓库。只有私钥加密保存时才额外设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+- `TAURI_SIGNING_PRIVATE_KEY` 是 Tauri updater 的包签名密钥，不是 Apple Developer ID 证书；不需要新增 Apple credentials、签名或公证步骤。
+
 ### 从源码运行
 
 环境要求：macOS 或 Windows、Node.js ≥ 22.13、Rust stable，以及对应平台的 Tauri 构建工具链。Windows 需要 MSVC C++ 构建工具和 WebView2；macOS 需要 Xcode Command Line Tools。
@@ -202,7 +213,7 @@ npm start
 - **你的数据你带走**：随时导出 / 导入完整账本
 - **密钥加密**：API Key 用 AES-256-GCM 加密落盘，密钥由机器信息派生，换机器读不出来
 - **原文可清**：设置页可清理无引用原文或全清原文——判断、置信度、校准曲线不受影响
-- **不上传**：除你配置的大模型 / 打标服务调用外，无任何网络外发
+- **不上传账本**：自动更新只向 GitHub 查询版本并下载带签名的应用更新包，不上传本地判断、原文或设置；其他网络请求仅来自你配置的大模型 / 打标服务
 
 ---
 

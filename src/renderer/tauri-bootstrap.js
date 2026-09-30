@@ -30,4 +30,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   window.setInterval(pollEvents, 700)
   await import('./app.js')
+  const { initializeUpdater } = await import('./lib/updater.js')
+  initializeUpdater()
 })
