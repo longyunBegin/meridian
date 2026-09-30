@@ -307,17 +307,54 @@ export function renderInspectorLattice(aside) {
     ...kinds.map((k) => h('option', { value: k.label }, `${k.label} · ${k.q}`)),
   )
 
-  const dueInput = h('input', {
-    class: 'txt', type: 'date', value: node.settlement?.date || '',
-    onchange: async (e) => {
-      await m.updateNode(node.id, { settlement: e.target.value ? { date: e.target.value, resolved: null, correct: null } : null })
+  // 结算区：空状态明确显示"未设置"（不用原生日期框的空值，避免被误读成今天）；
+  // 选日期后要点"确定"才写入，避免误触。nid 闭包绑定节点 id，异步回调里不再信任外层 node。
+  const nid = node.id
+  const dueBody = h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flex: '1', flexWrap: 'wrap' } })
+  let dueEditing = false
+  const freshSettlement = () => state.nodes.find((n) => n.id === nid)?.settlement || null
+  async function saveDue(v) {
+    try {
+      await m.updateNode(nid, { settlement: v ? { date: v, resolved: null, correct: null } : null })
+      // 乐观更新本地缓存：即使随后 refresh 失败，下次渲染也不会停在旧值上
+      const cached = state.nodes.find((n) => n.id === nid)
+      if (cached) cached.settlement = v ? { date: v, resolved: null, correct: null } : null
+    } finally {
       await refresh()
-    },
-  })
-  const settled = node.settlement?.resolved
-    ? h('span', { class: `badge ${node.settlement.correct ? 'badge-observation' : 'badge-hypothesis'}` },
-      node.settlement.correct ? '已命中' : '已证伪')
-    : h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '未结算')
+    }
+  }
+  function paintDue() {
+    clear(dueBody)
+    const date = freshSettlement()?.date || ''
+    if (dueEditing) {
+      const inp = h('input', { class: 'txt', type: 'date', value: date, style: { flex: '1', minWidth: '140px' } })
+      const ok = h('button', { class: 'btn btn-primary', onclick: async () => {
+        dueEditing = false
+        await saveDue(inp.value || null)
+      } }, '确定')
+      const cancel = h('button', { class: 'btn', onclick: () => { dueEditing = false; paintDue() } }, '取消')
+      dueBody.append(inp, ok, cancel)
+      try { inp.showPicker() } catch { /* 旧 WebView 没有 showPicker，用户手动点开 */ }
+    } else if (date) {
+      dueBody.append(
+        h('span', { style: { fontSize: 'var(--t-body)' } }, date.replaceAll('-', '/')),
+        h('button', { class: 'btn', onclick: () => { dueEditing = true; paintDue() } }, '更改'),
+        h('button', { class: 'btn', onclick: () => saveDue(null) }, '清除'),
+      )
+    } else {
+      dueBody.append(
+        h('span', { style: { color: 'var(--text-3)', fontSize: 'var(--t-body)' } }, '未设置'),
+        h('button', { class: 'btn', onclick: () => { dueEditing = true; paintDue() } }, '设置日期'),
+      )
+    }
+  }
+  paintDue()
+  const settledBadge = () => {
+    const s = freshSettlement()
+    return s?.resolved
+      ? h('span', { class: `badge ${s.correct ? 'badge-observation' : 'badge-hypothesis'}` }, s.correct ? '已命中' : '已证伪')
+      : h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '未结算')
+  }
 
   const tagInput = h('input', {
     class: 'txt', placeholder: '用逗号分隔，如：能源成本, 半导体周期',
@@ -446,7 +483,8 @@ export function renderInspectorLattice(aside) {
         '命题上挂涉及的标的，可反查这条产业链位置影响哪些票。不输出买卖建议、评分、目标价。'),
     ),
     readingPanel(node),
-    (() => { const rp = h('div'); researchPanel(node).then((el) => { rp.replaceWith(el) }); return rp })(),
+    // 异步缺口守卫：面板回来时若用户已切到别的节点，直接丢弃，不污染当前检查器
+    (() => { const rp = h('div'); const rid = node.id; researchPanel(node).then((el) => { if (state.selectedId !== rid) return; rp.replaceWith(el) }); return rp })(),
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '苏格拉底追问'),
       socraticBtn,
@@ -474,8 +512,8 @@ export function renderInspectorLattice(aside) {
         h('span', { style: { color: 'var(--orange)' } }, '■ 传导')) : null,
     ),
     h('div', { class: 'insp-section' },
-      h('div', { class: 'insp-h' }, '结算', settled),
-      h('div', { class: 'field' }, h('label', {}, '到期日'), dueInput),
+      h('div', { class: 'insp-h' }, '结算', settledBadge()),
+      h('div', { class: 'field' }, h('label', {}, '到期日'), dueBody),
       h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
         '到期后系统会问你：还想下这个注吗？答案进入你的校准曲线。'),
     ),

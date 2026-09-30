@@ -6,10 +6,10 @@ import {
   addVerdict, allVerdicts, allConflicts, resolveConflict, promoteMatchingVerdicts,
   falseKillByChannel,
   sharedPremises, spawnFromScaffold, findSimilar, addConflict, addSource,
-  appendRaw, getRaw, rawStats, pruneRaw, clearRaw, today,
+  appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, resolveInboxItem, clearInbox, setInboxExtraction, setInboxTheme, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -18,6 +18,7 @@ import {
   getReading, readingsPage, readingEvidence, latestReadings, sourcesPage,
   assignReading, verifyReadingChain, exportIntent,
   updateTheme, kindToTags, sicToTags,
+  upsertNodeSnapshot,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
   matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid, readingSnapshot,
@@ -436,15 +437,17 @@ function autoImport(result, themeId, gateReasons, batchId, intakeId) {
   const imported = []
   for (const l of result.lemmas) {
     if (l.action === 'merge' && l.mergeInto) {
-      addSource(l.mergeInto, {
+      const source = {
         kind: l.sourceKind || result.label.kind || '独立媒体',
         label: l.label || result.label.kind || '未注明',
         at: today(), rawId: raw.id,
         ...(result.resolvedChannel?.platform ? { platform: result.resolvedChannel.platform } : {}),
         ...(result.resolvedChannel?.url ? { url: result.resolvedChannel.url } : {}),
         ...(result.resolvedChannel?.fetchedAt ? { fetchedAt: result.resolvedChannel.fetchedAt } : {}),
-      })
-      imported.push({ title: l.title, action: 'merge', id: l.mergeInto })
+      }
+      addSource(l.mergeInto, source)
+      // 同步用：VM 侧把这次 merge 记成 db:addSource op 时需要 source 本体
+      imported.push({ title: l.title, action: 'merge', id: l.mergeInto, source })
       continue
     }
     const node = addNode({
@@ -523,6 +526,10 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   if (!registry || typeof registry.register !== 'function') throw new TypeError('registry.register is required')
   const commands = registry
   commands.register('db:stats', () => stats())
+  // 双向 op log：VM 侧 capture 结果的按 id 幂等 upsert（只进 VM_OP_CHANNELS，不进 OUTBOX_CHANNELS，不回环）。
+  commands.register('inbox:upsertItem', (item) => upsertInboxItem(item))
+  commands.register('db:upsertNode', (node) => upsertNodeSnapshot(node))
+  commands.register('raw:upsert', (entry) => upsertRaw(entry))
   // 反向同步快照导出：VM 桥用它拿 readingSnapshot()（persist 写盘的同一形状），推给 Mac。
   // 只读，不进 outbox 白名单。
   commands.register('sync:snapshot', () => readingSnapshot())
@@ -548,7 +555,13 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('db:suggestParent', (text, themeId) => suggestParent(text, themeId))
 
   commands.register('db:addNode', (input) => addNode(input))
-  commands.register('db:updateNode', (id, patch) => updateNode(id, patch))
+  // updateNode 以前不发 db:changed：今日页"改任何东西都会重跑"的假设落空，
+  // 检查器改结算日只靠手动 refresh() 兜底，兜底失效时页面静默过期。补上事件。
+  commands.register('db:updateNode', (id, patch) => {
+    const result = updateNode(id, patch)
+    if (result) emit('db:changed')
+    return result
+  })
   commands.register('db:removeNode', (id) => removeNode(id))
   commands.register('db:restoreNode', (id) => restoreNode(id))
   commands.register('db:purgeDead', (scope, opts) => purgeDead(scope, opts))
@@ -932,7 +945,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       emit('db:changed')
       return {
         ok: true, autoImported: true, imported, count: imported.length,
-        intakeEventId: intakeEvent.id,
+        intakeEventId: intakeEvent.id, rawId,
       }
     }
 
@@ -1082,21 +1095,59 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   // 主动决定：把「待抽取」组批量过一遍模型——让花费从自动变成主动的那个按钮
   // themeId 可选：调用方指定则用指定的（批量抽取主题选择器 / 主题追踪按内容实际主题传入）；
   // 不传或主题无效时回退到命题最多的主题（bestThemeContext），与渲染层当前主题无关。
+  // 抽取是长任务：一次 IPC 里逐条 emit 进度事件，前端据此点亮行状态；
+  // 有限并发(3)降墙钟；取消令牌让用户中途叫停——已抽完的条目已落盘，不回滚。
+  // 并发重入保护：同一时间只跑一批抽取（同步桥回放是串行的，不受影响）。
+  let extractRun = null
   commands.register('inbox:extract', async (ids, themeId) => {
-    const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id))
-    let extracted = 0
+    if (extractRun) return { ok: false, error: 'extract-in-progress' }
+    const targets = allInbox().filter((i) => !ids?.length || ids.includes(i.id)).filter((i) => !i.extracted)
     const liveThemeIds = new Set(load().themes.filter((t) => !t.deletedAt).map((t) => t.id))
     const useThemeId = (themeId && liveThemeIds.has(themeId)) ? themeId : (bestThemeContext()?.id || null)
-    for (const item of targets) {
-      if (item.extracted) continue
-      // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
-      const result = await processCapture(item.text, useThemeId, item.provenance, { forceExtract: true })
-      if (!result.lemmas.length) continue
-      setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
-      extracted++
+    const total = targets.length
+    const run = { cancelled: false }
+    extractRun = run
+    const CONCURRENCY = 3
+    let extracted = 0
+    let done = 0
+    let cursor = 0
+    emit('inbox:extract:progress', { done: 0, total, itemId: null, ok: true, phase: 'start' })
+    const worker = async () => {
+      while (cursor < targets.length) {
+        if (run.cancelled) return
+        const item = targets[cursor++]
+        // 条目可能在抽取中被清空/忽略：跳过，不白跑 LLM（前端不画失败徽标）
+        if (!allInbox().some((i) => i.id === item.id)) {
+          done++
+          emit('inbox:extract:progress', { done, total, itemId: item.id, ok: false, skipped: true, phase: 'item' })
+          continue
+        }
+        let ok = false
+        try {
+          // 抽取路由按所用主题；把所用主题记在条目上，后续勾选/入库都跟着条目自己的主题走。
+          const result = await processCapture(item.text, useThemeId, item.provenance, { forceExtract: true })
+          if (result?.lemmas?.length) {
+            setInboxExtraction(item.id, { extracted: true, matchScore: result.matchScore || 0, lemmas: result.lemmas, themeId: useThemeId })
+            extracted++
+            ok = true
+          }
+        } catch {
+          // 单条失败不掀翻整批：记为失败继续下一条（此前是抛错即中止整批）
+          ok = false
+        }
+        done++
+        emit('inbox:extract:progress', { done, total, itemId: item.id, ok, phase: 'item' })
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(total, 1)) }, () => worker()))
+    extractRun = null
+    emit('inbox:extract:progress', { done, total, itemId: null, ok: true, phase: 'done', cancelled: run.cancelled })
     emit('db:changed')
-    return { ok: true, extracted, themeId: useThemeId }
+    return { ok: true, extracted, total, cancelled: run.cancelled, themeId: useThemeId }
+  })
+  commands.register('inbox:extract:cancel', () => {
+    if (extractRun) extractRun.cancelled = true
+    return { ok: true, cancelled: !!extractRun }
   })
 
   // 收件箱条目换主题：只改条目身上的 extractedThemeId；挂点按新主题重校验，失效的由用户重选。
@@ -1118,9 +1169,13 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, statuses }
   })
 
-  commands.register('inbox:clearUnextracted', () => clearInbox({ onlyUnextracted: true }))
+  // 清空类命令返回 { removed, deletedIds }：分发层的 onSuccess 钩子据此把
+  // outbox 记录写成 inbox:deleteIds（按 id 精确回放），而非录制 filter 参数。
+  commands.register('inbox:clearUnextracted', (exceptIds) => clearInbox({ onlyUnextracted: true, exceptIds }))
   commands.register('inbox:prune', (days, opts) => pruneInbox(days, opts))
   commands.register('inbox:clear', () => clearInbox())
+  // 按 id 精确删除（双向同步回放用）：源头已定集合，这里不重算谓词，幂等。
+  commands.register('inbox:deleteIds', (ids) => deleteInboxIds(ids))
 
   // 撤销自动归位：按 intakeEventId 撤销，不再依赖渲染层传 batch
   commands.register('inbox:undoAutoImport', (intakeEventId) => {

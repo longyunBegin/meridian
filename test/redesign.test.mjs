@@ -69,7 +69,8 @@ ok('reject 后状态为 rejected', rejected?.status === 'rejected')
 ok('allInbox 为空', store.allInbox().length === 0, `实际 ${store.allInbox().length}`)
 
 const cleared = store.clearInbox()
-ok('clearInbox 清了 2 条', cleared === 2, `实际 ${cleared}`)
+ok('clearInbox 清了 2 条', cleared.removed === 2, `实际 ${cleared.removed}`)
+ok('clearInbox 返回被删 id', Array.isArray(cleared.deletedIds) && cleared.deletedIds.length === 2)
 ok('clearInbox 后 inbox 为空', store.allInbox().length === 0)
 
 // ============================================================
@@ -108,7 +109,8 @@ ok('inbox:resolve 返回条目', resolveResult?.id === listResult.items[0].id)
 ok('reject 后 verdicts 增加', store.allVerdicts().length > 0, `实际 ${store.allVerdicts().length}`)
 
 const clearResult = await fire('inbox:clear')
-ok('inbox:clear 返回清理数', typeof clearResult === 'number')
+ok('inbox:clear 返回清理数', typeof clearResult?.removed === 'number')
+ok('inbox:clear 返回被删 id 列表', Array.isArray(clearResult?.deletedIds))
 
 // ============================================================
 console.log('\n— 收件箱 命令: inbox:import 批量入库 —')
@@ -2348,6 +2350,16 @@ ok('T4: lattice.js 有 全选命中 0', latticeSrcTL.includes('全选命中 0'))
 ok('T4: lattice.js 有 删除所选', latticeSrcTL.includes('删除所选'))
 ok('T4: lattice.js 无 prompt(', !latticeSrcTL.includes('prompt('))
 
+// --- T4b: 树形 全部展开 / 一键合起 ---
+
+ok('T4b: lattice.js 有 expandAll', latticeSrcTL.includes('function expandAll'))
+ok('T4b: lattice.js 有 collapseAll', latticeSrcTL.includes('function collapseAll'))
+ok('T4b: expandAll 把有子节点的 id 加入 state.open', latticeSrcTL.includes('state.open.add(pid)'))
+ok('T4b: collapseAll 清空 state.open', latticeSrcTL.includes('state.open.clear()'))
+ok('T4b: 头部有 全部展开 按钮', latticeSrcTL.includes('全部展开'))
+ok('T4b: 头部有 全部收起 按钮', latticeSrcTL.includes('全部收起'))
+ok('T4b: 搜索时禁用展开/收起', latticeSrcTL.includes('搜索中已全部展开'))
+
 // T4: 无禁用词
 ok('T4: lattice.js 无加权', !latticeSrcTL.includes('加权'))
 ok('T4: lattice.js 无汇总', !latticeSrcTL.includes('汇总'))
@@ -2976,7 +2988,8 @@ const d2 = await fire('inbox:capture', '未匹配三态测试二：社区团购�
 const dKept = store.allInbox().filter((i) => i.extracted !== false).length
 const dPending = store.allInbox().filter((i) => i.extracted === false).length
 const dCleared = await fire('inbox:clearUnextracted')
-ok('D: 清空未匹配清掉全部未抽取条目', dCleared === dPending, `实际 ${dCleared} / ${dPending}`)
+ok('D: 清空未匹配清掉全部未抽取条目', dCleared.removed === dPending, `实际 ${dCleared.removed} / ${dPending}`)
+ok('D: 返回的 deletedIds 与实际删除一致', Array.isArray(dCleared.deletedIds) && dCleared.deletedIds.length === dPending)
 ok('D: 已抽取条目一条未动', store.allInbox().filter((i) => i.extracted !== false).length === dKept)
 ok('D: 未抽取条目清空后归零', store.allInbox().filter((i) => i.extracted === false).length === 0)
 ok('D: 被清的确实是未匹配那条', d2?.item?.extracted === false && !store.allInbox().some((i) => i.id === d2.item.id))

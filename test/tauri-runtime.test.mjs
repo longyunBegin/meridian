@@ -15,6 +15,8 @@ try {
   const macLibrary = join(macLib, 'libnode.147.dylib')
   writeFileSync(macNode, 'mac-node executable')
   writeFileSync(macLibrary, 'libnode shared library')
+  // Homebrew ships libnode.*.dylib read-only; the staged copy must not inherit that.
+  chmodSync(macLibrary, 0o444)
   const macCommandCalls = []
   const macRun = (command, args) => {
     macCommandCalls.push([command, args])
@@ -43,6 +45,7 @@ try {
   writeFileSync(preservedMacFile, 'keep unrelated runtime data')
   const stagedMacLibrary = join(macOutput, 'libnode.147.dylib')
   chmodSync(stagedMacLibrary, 0o444)
+  chmodSync(macLibrary, 0o644)
   writeFileSync(macLibrary, 'updated libnode shared library')
   prepareRuntime({ platform: 'darwin', execPath: macNode, outputDir: macOutput, runCommand: macRun })
   assert.equal(readFileSync(stagedMacLibrary, 'utf8'), 'updated libnode shared library')

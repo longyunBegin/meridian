@@ -14,6 +14,14 @@ let renderSeq = 0
 let selectedInboxId = null
 const overrides = new Map()
 const resolving = new Set()
+// 抽取进度：抽取中的条目独立成「抽取中」分组（置顶），组头一条进度条 + 取消按钮。
+// 整页重画成本高（全量 inbox 过 IPC），进度事件只做定点 DOM 修补；
+// 最终一致性靠 db:changed → refresh。extractDone/Total 让重渲染时组头进度不丢。
+const extracting = new Set()
+let extractActive = false
+let extractDone = 0
+let extractTotal = 0
+let extractUnsub = null
 let lastAutoImport = null
 let cachedAllNodes = []
 const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
@@ -334,9 +342,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         toast(`${total} 条命题已入库`)
       } else if (action === 'extract') {
         const themeId = extractThemePick.value || undefined
-        const res = await m.inboxExtract(chosen.map((item) => item.id), themeId)
+        const res = await runExtract(chosen.map((item) => item.id), themeId)
         for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
-        if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
+        extractResultToast(res)
       } else {
         if (chosen.length === 1) {
           await m.inboxResolve(chosen[0].id, 'reject')
@@ -355,10 +363,91 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     }
   }
 
-  // 三态分组：已抽取（现有行为）/ 待抽取（弱匹配）/ 未匹配（标签库不认，但内容留着）
-  const extractedItems = items.filter((item) => item.extracted !== false)
-  const waitItems = items.filter((item) => item.extracted === false && item.matchScore > 0)
-  const unmatchedItems = items.filter((item) => item.extracted === false && !(item.matchScore > 0))
+  // ---- 抽取进度反馈：后端逐条 emit inbox:extract:progress，前端定点修补 ----
+  function ensureExtractSubscription() {
+    if (extractUnsub || typeof m.onInboxExtractProgress !== 'function') return
+    extractUnsub = m.onInboxExtractProgress((p) => {
+      if (!p || !extractActive) return
+      if (p.phase === 'start') {
+        extractDone = 0
+        extractTotal = p.total
+        paintExtractProgress(0, p.total)
+        return
+      }
+      if (p.phase === 'done') return // 收尾走 IPC 返回 + db:changed 整页刷新
+      extracting.delete(p.itemId)
+      extractDone = p.done
+      paintExtractProgress(p.done, p.total)
+      // 被清空/忽略的条目后端会跳过（skipped）：不画失败徽标，行随整批结束重排
+      if (!p.skipped) paintExtractRow(p.itemId, p.ok)
+    })
+  }
+  /** 「抽取中」分组头：进度条 + 取消按钮（替代此前的悬浮 toast，一个真相源） */
+  function extractingGroupHead() {
+    return h('div', { class: 'inbox-group-head extracting-head' },
+      h('span', { class: 'inbox-group-label' }, '抽取中'),
+      h('span', { class: 'extract-progress-text' }, `正在抽取 ${extractDone}/${extractTotal}`),
+      h('span', { class: 'extract-progress-track' }, h('span', {
+        class: 'extract-progress-fill',
+        style: { width: extractTotal ? `${Math.round((extractDone / extractTotal) * 100)}%` : '0%' },
+      })),
+      h('button', {
+        class: 'btn',
+        onclick: async (e) => {
+          e.target.disabled = true
+          e.target.textContent = '取消中…'
+          try { await m.inboxExtractCancel() } catch { /* 后端无该命令时静默 */ }
+        },
+      }, '取消'),
+    )
+  }
+  function paintExtractProgress(done, total) {
+    const head = document.querySelector('.extracting-head')
+    if (!head) return
+    const text = head.querySelector('.extract-progress-text')
+    if (text) text.textContent = `正在抽取 ${done}/${total}`
+    const fill = head.querySelector('.extract-progress-fill')
+    if (fill) fill.style.width = total ? `${Math.round((done / total) * 100)}%` : '0%'
+  }
+  function paintExtractRow(itemId, ok) {
+    const meta = document.querySelector(`.inbox-item[data-id="${itemId}"] .inbox-meta`)
+    if (!meta) return
+    meta.querySelector('.extracting')?.remove()
+    meta.append(h('span', { class: ok ? 'extract-ok' : 'extract-fail' }, ok ? '已抽取 ✓' : '抽取失败'))
+  }
+  // 三个抽取入口共用：批量栏「抽取所选」、「抽取这 N 条」、未匹配组抽取
+  async function runExtract(ids, themeId) {
+    const targets = ids.filter((id) => !extracting.has(id))
+    if (extractActive) return { ok: false, error: 'extract-in-progress' }
+    if (!targets.length) return { ok: true, extracted: 0, total: 0 }
+    extractActive = true
+    extractDone = 0
+    extractTotal = targets.length
+    for (const id of targets) extracting.add(id)
+    ensureExtractSubscription()
+    // 立刻重排：「抽取中」分组出现、组头进度条就位（行内徽标由重渲染按 extracting 集合带出）
+    await refresh()
+    await renderToday(mid)
+    try {
+      return await m.inboxExtract(targets, themeId)
+    } finally {
+      extractActive = false
+      extracting.clear()
+      // db:changed 会触发整页刷新收尾：「抽取中」分组消失，条目各归其位
+    }
+  }
+  function extractResultToast(res) {
+    if (!res) return
+    if (res.error === 'extract-in-progress') { toast('抽取已在进行中，稍等一下', 'var(--red)'); return }
+    if (res.error) { toast('抽取失败：' + res.error, 'var(--red)'); return }
+    toast(res.cancelled ? `已取消，已抽取 ${res.extracted} 条` : (res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目'))
+  }
+
+  // 四态分组：抽取中（独立置顶，组头一条进度条）/ 已抽取 / 待抽取 / 未匹配
+  const extractingItems = items.filter((item) => extracting.has(item.id))
+  const extractedItems = items.filter((item) => item.extracted !== false && !extracting.has(item.id))
+  const waitItems = items.filter((item) => item.extracted === false && item.matchScore > 0 && !extracting.has(item.id))
+  const unmatchedItems = items.filter((item) => item.extracted === false && !(item.matchScore > 0) && !extracting.has(item.id))
   const groupHead = (label, n, caption, actions = []) => h('div', { class: 'inbox-group-head' },
     h('span', { class: 'inbox-group-label' }, label),
     h('span', { class: 'inbox-group-count' }, String(n)),
@@ -370,9 +459,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn', disabled: inboxLoading,
     onclick: async () => {
       extractAll.disabled = true
-      extractAll.textContent = '抽取中…'
-      const res = await m.inboxExtract(waitItems.map((item) => item.id))
-      if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
+      const res = await runExtract(waitItems.map((item) => item.id))
+      extractAll.disabled = false
+      extractResultToast(res)
       await refresh()
       await renderToday(mid)
     },
@@ -380,8 +469,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const clearUnmatched = h('button', {
     class: 'btn',
     onclick: async () => {
-      const removed = await m.inboxClearUnextracted()
-      toast(`已清空 ${removed} 条未匹配`)
+      // 抽取中的条目不受影响：后端按 exceptIds 排除
+      const spared = [...extracting]
+      const clearRes = await m.inboxClearUnextracted(spared)
+      const removed = typeof clearRes === 'number' ? clearRes : (clearRes?.removed ?? 0)
+      toast(spared.length ? `已清空 ${removed} 条未匹配（抽取中的 ${spared.length} 条不受影响）` : `已清空 ${removed} 条未匹配`)
       await refresh()
       await renderToday(mid)
     },
@@ -392,9 +484,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn', disabled: inboxLoading,
     onclick: async () => {
       extractUnmatched.disabled = true
-      extractUnmatched.textContent = '抽取中…'
-      const res = await m.inboxExtract(unmatchedItems.map((item) => item.id))
-      if (!res?.error) toast(res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目')
+      const res = await runExtract(unmatchedItems.map((item) => item.id))
+      extractUnmatched.disabled = false
+      extractResultToast(res)
       await refresh()
       await renderToday(mid)
     },
@@ -417,6 +509,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     }
   }
 
+  appendItems(extractingItems, { head: extractingGroupHead() })
   appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '核对信息，再归位到脉络') })
   appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
   appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [extractUnmatched, clearUnmatched]) })
@@ -480,6 +573,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
         item.extracted !== false && lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
         item.extracted !== false && lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
         resolving.has(item.id) ? h('span', {}, '处理中…') : null,
+        extracting.has(item.id) ? h('span', { class: 'extracting' }, '抽取中…') : null,
       ),
     ),
   )

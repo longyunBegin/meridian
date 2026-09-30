@@ -27,7 +27,14 @@ function emit(name, payload = null) {
 configurePlatformServices({ dataDirectory: userData, emitEvent: emit })
 
 const registry = new CommandRegistry({
-  onSuccess: (name, args) => {
+  onSuccess: (name, args, result) => {
+    // 清空类命令按 id 精确同步：录制源头算好的 deletedIds，而非 filter 参数——
+    // filter 的 extracted 谓词按设备各自持有状态，重放会删出不同集合（2026-09-30 分叉教训）。
+    if ((name === 'inbox:clearUnextracted' || name === 'inbox:clear')
+        && result && Array.isArray(result.deletedIds) && result.deletedIds.length > 0) {
+      recordOutbox('inbox:deleteIds', [result.deletedIds], userData)
+      return
+    }
     if (OUTBOX_CHANNELS.has(name)) recordOutbox(name, args, userData)
   },
 })
@@ -54,8 +61,14 @@ registerDomainCommands({
   }),
 })
 
-try { await startSyncServer({ userDataDir: userData, broadcast: () => emit('db:changed') }) }
-catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
+try {
+  await startSyncServer({
+    userDataDir: userData,
+    broadcast: () => emit('db:changed'),
+    // VM op -> 本地领域命令直调：绕过 onSuccess，不进 Mac outbox，避免回环
+    applyOp: (channel, args) => registry.invokeWithoutHooks(channel, args),
+  })
+} catch (error) { console.error('[sync] optional endpoint unavailable:', error.message) }
 try {
   agentServer = await startAgentServer({
     userData, ingest: ingestReadings, getIntent: store.exportIntent,

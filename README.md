@@ -8,15 +8,17 @@
 ![Platform](https://img.shields.io/badge/平台-macOS_|_Windows-blue)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Node](https://img.shields.io/badge/Node-≥22.13-339933)
-![Tests](https://img.shields.io/badge/测试-1142_通过-brightgreen)
+![Tests](https://img.shields.io/badge/测试-1311_通过-brightgreen)
 
 ---
 
 ## 演示
 
-[![产品发布片](docs/demo-film-poster.jpg)](docs/demo-film.mp4)
+[![产品片《一根弦》](docs/demo-film-poster.jpg)](docs/demo-film.mp4)
 
-*62 秒产品发布片（点击封面播放）：信息过载 → 脉络登场 → 一句话搭起判断骨架 → 每天读数落定 → 每条结论一键回到原文。黑白影像、中文旁白、中文字幕。*
+*60 秒产品片《一根弦》（点击封面播放）：一条消息拨响一根弦 → 满屏噪音 → `⌘⇧V` 把一根弦理直、搬进来 → 一句话织出产业链 → 上游一拨，振动沿传导权重逐跳变轻，直到自己停下 → 到期结算，校准曲线一点点贴近对角线。*
+
+*画面与弦音全部由代码生成（`node tools/film/film.mjs`）；片中的传导数字与校准命中率由真实引擎 `store.js` 计算，校准样本为合成数据。*
 
 ### 录屏：双主题骨架生成
 
@@ -101,10 +103,12 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 ## 安装
 
 ### 直接下载安装包（推荐）
+从 [Releases](https://github.com/longyunBegin/meridian/releases) 下载：
 
-桌面包目标为 Tauri 2：macOS 输出 `.dmg`，Windows 输出 NSIS `.exe`。这些构建产物尚未由本分支的 macOS/Windows 工具链验证或发布；现有 Releases 可能包含早期构建。
+适用于当前系统的最新版：
 
-macOS 安装包没有使用 Apple Developer ID 签名或公证，首次安装仍可能显示 Gatekeeper「无法验证开发者」警告。这与应用内更新使用的 Tauri 更新包签名是两套不同机制；本项目不配置 Apple 签名或公证。
+- **macOS（Apple Silicon）**：`Meridian_<version>_aarch64.dmg`。未配置 Apple Developer ID 签名或公证，首次安装可能显示 Gatekeeper「无法验证开发者」警告；右键点击应用并选择「打开」。这与应用内更新使用的 Tauri 更新包签名是两套不同机制。
+- **Windows x64**：`Meridian_<version>_x64-setup.exe`（NSIS 安装包）。安装包未签名；若 SmartScreen 拦截，选择「仍要运行」。
 
 ### 应用内更新
 
@@ -115,7 +119,22 @@ macOS 安装包没有使用 Apple Developer ID 签名或公证，首次安装仍
 - 发布前需在 GitHub 仓库 Actions secrets 中添加 `TAURI_SIGNING_PRIVATE_KEY`（Tauri updater 私钥文件的完整内容）；当前私钥未设密码，因此不需要密码 secret。私钥不可提交到仓库。只有私钥加密保存时才额外设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
 - `TAURI_SIGNING_PRIVATE_KEY` 是 Tauri updater 的包签名密钥，不是 Apple Developer ID 证书；不需要新增 Apple credentials、签名或公证步骤。
 
-### 从源码运行
+### Windows 自行构建（可选）
+
+1. 安装 [Node.js](https://nodejs.org) ≥ 22.13（LTS）和 [Rust](https://rustup.rs)（stable）
+2. 安装 Visual Studio C++ 生成工具（勾选"使用 C++ 的桌面开发"工作负载）；WebView2 运行时（Win10/11 一般自带）
+3. 拉代码、装依赖、构建：
+
+```powershell
+git clone https://github.com/longyunBegin/meridian.git
+cd meridian
+npm install
+npm run tauri:build
+```
+
+产物在 `src-tauri\target\release\bundle\nsis\`。安装时 SmartScreen 拦截选"仍要运行"（未签名）。
+
+### 从源码运行（开发）
 
 环境要求：macOS 或 Windows、Node.js ≥ 22.13、Rust stable，以及对应平台的 Tauri 构建工具链。Windows 需要 MSVC C++ 构建工具和 WebView2；macOS 需要 Xcode Command Line Tools。
 
@@ -253,7 +272,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 - ✅ 收件箱批量分拣 + 主题可选
 - ✅ 节点来源可点击跳转原文
 - ✅ Mac ↔ VM 双向同步
-- ⏳ Tauri Windows 安装包已配置，仍待目标系统构建验证
+- ⏳ Windows 安装包已配置（NSIS），需在 Windows 本机构建，暂不提供预编译包
 - ✅ 更名 Meridian + 极简几何 Logo
 
 明确不做：多端同步、协作分享、荐股信号、移动端——详见 ROADMAP。
@@ -269,7 +288,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
 **支持哪些桌面系统？**
-本分支目标为 macOS 和 Windows；Linux 不支持。Tauri 迁移分支的 macOS/Windows 安装包仍待对应系统构建验证。
+macOS（Apple Silicon）提供预编译 DMG；Windows 需按上面的教程自行构建；Linux 不支持。
 
 **数据存在哪？**
 macOS：`~/Library/Application Support/脉络/meridian.json`；Windows：`%APPDATA%\脉络\meridian.json`。原文层 `raw.jsonl` 位于同目录。

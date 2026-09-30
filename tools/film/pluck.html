@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Meridian · 一根弦（样片）</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { width: 100vw; height: auto; display: block; }
+</style>
+<script src="./draw.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/*
+ * 6 秒样片：只有拨弦一幕。每一帧只由时间 t 决定，任何一帧都可单独重渲。
+ * 主进程调用 __init(timeline) 后，逐帧调用 __frame(i) 取回 PNG（base64）。
+ */
+const D = window.Draw
+let TL = null
+let ctx = null
+let grain = []
+
+window.__init = async (timeline) => {
+  TL = timeline
+  const c = document.getElementById('c')
+  c.width = TL.W
+  c.height = TL.H
+  ctx = c.getContext('2d')
+  grain = D.buildGrain(20260929)
+  await D.loadFonts()
+  return { w: c.width, h: c.height }
+}
+
+function render(t) {
+  D.background(ctx, TL.W, TL.H)
+  D.chrome(ctx, TL.theme, D.smooth(0.2, 0.8, t))
+  for (const e of TL.edges) D.edge(ctx, TL, e, t)
+  for (const n of TL.nodes) D.node(ctx, TL, n, t)
+  D.evidence(ctx, TL, t)
+  D.subtitles(ctx, TL.subtitles, t, TL.W, TL.H)
+  const fade = D.smooth(0, TL.fadeIn, t) * (1 - D.smooth(TL.fadeOutFrom, TL.DURATION, t))
+  D.grainAndFade(ctx, grain, Math.round(t * TL.FPS), TL.W, TL.H, fade)
+}
+
+window.__frame = (i) => {
+  render(i / TL.FPS)
+  return document.getElementById('c').toDataURL('image/png').slice('data:image/png;base64,'.length)
+}
+</script>
+</body>
+</html>

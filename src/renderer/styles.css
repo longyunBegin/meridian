@@ -1714,6 +1714,17 @@ select.inbox-extract-theme {
 .toast-error { background: var(--red); color: white; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }
 .toast-btn { padding: 3px 10px; font-size: var(--t-body); font-weight: 600; color: var(--accent, #0071e3); background: none; border: none; cursor: pointer; border-radius: var(--r-sm); }
 .toast-btn:hover { background: var(--hover); }
+.toast-btn:disabled { color: var(--text-3); cursor: default; }
+
+/* 抽取进度浮层：复用 toast 底座，加进度条与取消按钮 */
+.extract-progress-toast { min-width: 260px; }
+.extract-progress-text { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.extract-progress-track { flex: 1; height: 4px; min-width: 80px; border-radius: 2px; background: var(--fill-2, rgba(120, 120, 128, 0.16)); overflow: hidden; }
+.extract-progress-fill { display: block; height: 100%; width: 0%; border-radius: 2px; background: var(--accent); transition: width 0.3s ease; }
+/* 收件箱行内抽取状态徽标 */
+.extracting { color: var(--text-3); }
+.extract-ok { color: var(--green); }
+.extract-fail { color: var(--red); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 .review-day-header { font-size: var(--t-caption); color: var(--text-3); padding: 2px 0; font-variant-numeric: tabular-nums; }
 

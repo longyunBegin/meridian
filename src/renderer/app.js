@@ -829,6 +829,8 @@ function renderNewTheme() {
 function renderInspector() {
   const aside = $('#inspect')
   clear(aside)
+  // 打上本次渲染的节点 id：若复现"检查器与选中节点不一致"，可直接从 DOM 取证
+  aside.dataset.nodeId = state.selectedId || ''
   if (state.view === 'lattice' && state.themeId) renderInspectorLattice(aside)
   else aside.append(h('div', { class: 'insp-empty' }, h('span', {}, '')))
 }

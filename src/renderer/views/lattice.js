@@ -270,6 +270,9 @@ export function renderLattice(mid) {
   )
 
   // 树形管逐条编辑，图管看清结构——同一个主题、同一个选中项，来回切不丢上下文
+  // treeEl：头部的展开/收起按钮在树容器创建之前构造，用引用转交
+  let treeEl = null
+  const searching = state.query.trim() !== ''
   const head = h('div', { class: 'mid-head hairline-b' },
     h('h1', {}, theme ? theme.name : ''),
     h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, headStats),
@@ -317,6 +320,14 @@ export function renderLattice(mid) {
       }, '图'),
     ),
     isGraph ? null : h('button', {
+      class: 'btn', title: searching ? '搜索中已全部展开' : '展开整棵树',
+      disabled: searching, onclick: () => expandAll(treeEl),
+    }, '全部展开'),
+    isGraph ? null : h('button', {
+      class: 'btn', title: searching ? '搜索中已全部展开' : '收起整棵树，只留根节点',
+      disabled: searching, onclick: () => collapseAll(treeEl),
+    }, '全部收起'),
+    isGraph ? null : h('button', {
       class: 'btn btn-icon', title: '新建环节', onclick: () => newNode(null),
     }, icon('plus', 14)),
   )
@@ -336,6 +347,7 @@ export function renderLattice(mid) {
   }
 
   const tree = h('div', { class: 'tree' })
+  treeEl = tree
   for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), h('div', { class: 'tree-wrap' }, tree)]) if (el) mid.append(el)
   paint(tree)
   wireKeys(tree)
@@ -539,6 +551,21 @@ function paint(container) {
 
 function toggle(id, container) {
   state.open.has(id) ? state.open.delete(id) : state.open.add(id)
+  paint(container)
+}
+
+/** 全部展开：所有有子节点的节点一次加入展开集，一次重绘 */
+function expandAll(container) {
+  const byParent = flatten()
+  for (const [pid, kids] of byParent) {
+    if (pid && kids.length) state.open.add(pid)
+  }
+  paint(container)
+}
+
+/** 一键合起：清空展开集，只留根节点（环节层），一次重绘 */
+function collapseAll(container) {
+  state.open.clear()
   paint(container)
 }
 

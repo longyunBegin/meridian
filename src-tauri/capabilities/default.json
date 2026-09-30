@@ -2,15 +2,28 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Meridian main desktop window capabilities",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "clipboard-manager:allow-read-text",
     "notification:default",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$APPDATA/脉络"
+        },
+        {
+          "path": "$APPDATA/脉络/**"
+        }
+      ]
+    },
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "updater:default",
     "process:allow-restart"
   ]

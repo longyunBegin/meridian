@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Meridian · 一根弦</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  canvas { width: 100vw; height: auto; display: block; }
+</style>
+<script src="./draw.js"></script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/*
+ * 60 秒成片渲染器。每一帧只由时间 t 决定，任何一帧都可单独重渲。
+ * 主进程调用 __init(timeline) 后，逐帧调用 __frame(i) 取回 PNG（base64）。
+ * 时间、数据、声音事件全部来自 film-timeline.mjs，这里只负责画。
+ */
+const D = window.Draw
+const { smooth, easeOut, easeIn, easeInOut, lerp, rgba, BLUE, SANS, NUM, MONO } = D
+const KEYS = 'system-ui, "SF Pro Display", "PingFang SC", sans-serif'
+const ORANGE = [255, 149, 0]
+const GREEN = [52, 199, 89]
+const RED = [255, 59, 48]
+
+let F = null      // 成片时间轴
+let P = null      // 拨弦一幕的子时间轴（绝对时刻）
+let ctx = null
+let grain = []
+let logo = null
+
+window.__init = async (timeline) => {
+  F = timeline
+  P = F.pluck
+  const c = document.getElementById('c')
+  c.width = F.W
+  c.height = F.H
+  ctx = c.getContext('2d')
+  grain = D.buildGrain(20260929)
+  await D.loadFonts()
+  await document.fonts.load(`500 46px ${KEYS}`)
+  logo = new Image()
+  logo.src = F.s7.logo
+  await logo.decode()
+  return { w: c.width, h: c.height }
+}
+
+const node = (k) => P.nodes.find((n) => n.key === k)
+
+// ------------------------------------------------------------------ S1 一根弦
+
+function s1(t) {
+  const alpha = smooth(0.2, 1.0, t) * (1 - smooth(5.0, 5.8, t))
+  if (alpha <= 0.001) return
+  const T = 1.0, s0 = 0.36, y = 500
+  const dt = t - T
+  const N = 220
+  const pts = []
+  let peak = 0
+  for (let i = 0; i <= N; i++) {
+    const s = i / N
+    let d = 0
+    if (dt > 0) {
+      const A = 46
+      const pulse = A * 0.5 * Math.exp(-dt / 0.55)
+      const v = 0.42, w = 0.035
+      d += pulse * (Math.exp(-Math.pow((s - (s0 - v * dt)) / w, 2)) + Math.exp(-Math.pow((s - (s0 + v * dt)) / w, 2)))
+      d += A * 0.55 * Math.exp(-dt / 0.8) * Math.sin(Math.PI * s) * Math.sin(2 * Math.PI * 3.8 * dt) * smooth(0, 0.12, dt)
+    }
+    peak = Math.max(peak, Math.abs(d))
+    pts.push([-40 + s * (F.W + 80), y - d])
+  }
+  D.silver(ctx, pts, { heat: D.clamp01(peak / 30), alpha })
+  const px = -40 + s0 * (F.W + 80)
+  // 一条消息落在弦上
+  if (t >= 0.55 && t < T) {
+    const k = easeIn((t - 0.55) / (T - 0.55))
+    const yy = lerp(300, y - 8, k)
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath()
+      ctx.arc(px, yy - i * 10 * k, 6 - i * 0.8, 0, Math.PI * 2)
+      ctx.fillStyle = rgba(BLUE, (0.9 - i * 0.14) * alpha)
+      ctx.fill()
+    }
+  }
+  if (dt > 0) D.glowDot(ctx, px, y, 60, alpha * 0.8 * Math.exp(-dt / 0.5))
+}
+
+// ------------------------------------------------------------------ S2 噪音
+
+function s2(t) {
+  const [t0, t1] = F.SCENES.s2
+  if (t < t0 || t >= t1) return
+  const chaos = (t - t0) / (t1 - t0)
+  const jx = chaos * 3 * (Math.sin(t * 37) + Math.sin(t * 23.3)) / 2
+  const jy = chaos * 3 * (Math.sin(t * 29.1) + Math.sin(t * 41.7)) / 2
+  ctx.save()
+  ctx.translate(jx, jy)
+  const N = 70
+  for (const th of F.noise.threads) {
+    if (t < th.appear) continue
+    const a = th.alpha * smooth(th.appear, th.appear + 0.4, t)
+    const dx = Math.cos(th.angle), dy = Math.sin(th.angle)
+    const L = 2600
+    const x0 = th.cx - dx * L / 2, y0 = th.cy - dy * L / 2
+    const pts = []
+    let peak = 0
+    for (let i = 0; i <= N; i++) {
+      const s = i / N
+      let d = 0
+      for (const p of th.plucks) {
+        const pdt = t - p.t
+        if (pdt <= 0 || pdt > 2.5) continue
+        d += p.amp * Math.exp(-pdt / 0.5) * Math.sin(Math.PI * s) * Math.sin(2 * Math.PI * p.f * pdt) * smooth(0, 0.06, pdt)
+      }
+      peak = Math.max(peak, Math.abs(d))
+      pts.push([x0 + dx * L * s - dy * d, y0 + dy * L * s + dx * d])
+    }
+    D.silver(ctx, pts, { heat: D.clamp01(peak / 25), alpha: a, blue: false, core: 1.3 })
+  }
+  ctx.restore()
+  for (const h of F.noise.headlines) {
+    const a = smooth(h.t, h.t + 0.25, t) * (1 - smooth(h.t + 1.3, h.t + 1.6, t)) * 0.55
+    if (a <= 0.001) continue
+    ctx.font = `400 ${h.size}px ${SANS}`
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = `rgba(205,205,210,${a})`
+    ctx.fillText(h.text, h.x + jx, h.y + jy)
+  }
+}
+
+// ------------------------------------------------------------------ S3 ⌘⇧V
+
+const CRUMPLE = [[58, 1400, 0.4], [34, 620, 2.1], [22, 330, 4.0], [14, 190, 1.3], [9, 110, 5.2]]
+
+function straightenK(t) {
+  const [a, b] = F.s3.straightenT
+  if (t < a) return 1
+  const u = (t - a) / (b - a)
+  if (u >= 1) return 0
+  return Math.exp(-4.5 * u) * Math.cos(2.5 * Math.PI * u) * (1 - smooth(0.75, 1, u))
+}
+
+function keycap(x, y, glyph, press, alpha) {
+  const w = 104, h = 104, r = 20
+  ctx.save()
+  ctx.globalAlpha *= alpha
+  ctx.beginPath(); ctx.roundRect(x, y + 8, w, h, r); ctx.fillStyle = '#0b0b0c'; ctx.fill()
+  const top = y + 5 * press
+  const g = ctx.createLinearGradient(x, top, x, top + h)
+  g.addColorStop(0, press > 0.01 ? '#2f3340' : '#3a3a3c')
+  g.addColorStop(1, '#232325')
+  ctx.beginPath(); ctx.roundRect(x, top, w, h, r); ctx.fillStyle = g; ctx.fill()
+  ctx.strokeStyle = press > 0.01 ? rgba(BLUE, 0.35 + 0.5 * press) : 'rgba(255,255,255,0.16)'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.font = `500 46px ${KEYS}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = 'rgba(245,245,247,0.92)'
+  ctx.fillText(glyph, x + w / 2, top + h / 2 + 2)
+  ctx.restore()
+}
+
+function s3(t) {
+  const [t0] = F.SCENES.s3
+  if (t < t0 || t >= 17.4) return
+  const out = 1 - smooth(16.6, 17.4, t)
+  const K = straightenK(t)
+  const bright = lerp(0.5, 1, smooth(12.3, 12.7, t))
+  const T = 13.25
+  const N = 220
+  const pts = []
+  let peak = 0
+  for (let i = 0; i <= N; i++) {
+    const x = -40 + (i / N) * (F.W + 80)
+    let d = 0
+    for (const [a, lam, ph] of CRUMPLE) d += a * Math.sin((2 * Math.PI * x) / lam + ph)
+    d *= K
+    const dt = t - T
+    let v = 0
+    if (dt > 0) v = 16 * Math.exp(-dt / 0.7) * Math.sin(Math.PI * (i / N)) * Math.sin(2 * Math.PI * 4.2 * dt)
+    peak = Math.max(peak, Math.abs(v))
+    pts.push([x, 500 + d - v])
+  }
+  D.silver(ctx, pts, { heat: D.clamp01(peak / 20), alpha: bright * out })
+
+  const keysA = smooth(11.4, 11.9, t) * (1 - smooth(14.6, 15.2, t))
+  if (keysA > 0.001) {
+    const press = smooth(F.s3.pressT, F.s3.pressT + 0.08, t) * (1 - smooth(F.s3.releaseT, F.s3.releaseT + 0.1, t))
+    const rise = 14 * (1 - smooth(11.4, 11.9, t))
+    const x0 = 960 - (3 * 104 + 2 * 24) / 2
+    ;['⌘', '⇧', 'V'].forEach((g, i) => keycap(x0 + i * 128, 740 + rise, g, press, keysA))
+    const flash = t >= F.s3.pressT ? Math.exp(-(t - F.s3.pressT) / 0.5) : 0
+    D.glowDot(ctx, 960, 792, 260, 0.18 * flash * keysA)
+  }
+
+  const pt = F.s3.pearlT
+  if (t >= pt) {
+    const u = (t - pt) / 0.35
+    const pop = u < 1 ? easeOut(u) * (1 + 0.3 * Math.sin(Math.PI * u)) : 1
+    const a = 1 - smooth(17.0, 17.4, t)
+    ctx.save()
+    ctx.globalAlpha = a
+    D.glowDot(ctx, 960, 500, 50, 0.6 * Math.exp(-(t - pt) / 0.6))
+    D.pearl(ctx, 960, 500, 11 * pop)
+    const chipA = smooth(14.0, 14.4, t) * (1 - smooth(16.6, 17.2, t))
+    ctx.font = `400 22px ${SANS}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = `rgba(142,142,147,${chipA})`
+    ctx.fillText('已进入收件箱', 960, 556)
+    ctx.restore()
+  }
+}
+
+// ------------------------------------------------------------------ S4–S6 传导树
+
+function popScale(t, pk) {
+  if (t < pk) return 0
+  const u = (t - pk) / 0.35
+  return u < 1 ? easeOut(u) * (1 + 0.3 * Math.sin(Math.PI * u)) : 1
+}
+
+function tree(t) {
+  if (t < 16.6 || t >= 42.0) return
+  const inA = smooth(16.6, 17.4, t)
+  const dimOthers = smooth(38.0, 38.8, t)
+  const treeOut = 1 - smooth(41.4, 42.0, t)
+  const pops = F.s4.pops
+
+  // 弦的两端从全屏收回到产业链两端
+  const k = easeInOut((t - 19.0) / 0.8)
+  const first = node('optics'), last = node('produce')
+  const xL = lerp(-40, first.x, k), xR = lerp(F.W + 40, last.x, k)
+  const extA = inA * (1 - smooth(19.6, 19.8, t))
+  if (extA > 0.001) {
+    D.silver(ctx, [[xL, first.y], [first.x, first.y]], { alpha: extA })
+    D.silver(ctx, [[last.x, last.y], [xR, last.y]], { alpha: extA })
+  }
+
+  D.chrome(ctx, P.theme, smooth(20.0, 20.6, t) * (1 - smooth(38.0, 38.6, t)))
+
+  const weightA = smooth(22.4, 23.2, t)
+  for (const e of P.edges) {
+    const isBranch = e.to === 'power'
+    const grow = isBranch ? easeOut((t - (pops.power - 0.4)) / 0.4) : 1
+    const wf = F.s4.weightFlash.find((w) => w.from === e.from && w.to === e.to)
+    const flash = smooth(wf.t, wf.t + 0.12, t) * (1 - smooth(wf.t + 0.35, wf.t + 0.8, t))
+    const focus = e.to === 'apps' ? 1 : 1 - 0.82 * dimOthers
+    D.edge(ctx, P, e, t, { grow, alpha: inA * treeOut * focus, weightAlpha: weightA, weightFlash: flash })
+  }
+  for (const n of P.nodes) {
+    const pk = pops[n.key]
+    const focus = n.key === 'apps' ? 1 : 1 - 0.82 * dimOthers
+    if (t >= pk && t < pk + 1) D.glowDot(ctx, n.x, n.y, 40, 0.5 * Math.exp(-(t - pk) / 0.4) * treeOut)
+    D.node(ctx, P, n, t, {
+      alpha: treeOut * focus,
+      pop: popScale(t, pk),
+      titleAlpha: smooth(pk + 0.1, pk + 0.4, t),
+      numberAlpha: smooth(pk + 0.25, pk + 0.55, t),
+    })
+  }
+  D.evidence(ctx, P, t, 1 - smooth(38.0, 38.6, t))
+
+  // S4 输入框：一句话新建主题
+  const boxA = smooth(17.0, 17.3, t) * (1 - smooth(19.2, 19.8, t))
+  if (boxA > 0.001) {
+    const lift = 20 * smooth(19.2, 19.8, t)
+    const w = 640, h = 84, x = 960 - w / 2, y = 300 - h / 2 - lift
+    ctx.save()
+    ctx.globalAlpha = boxA
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 20)
+    ctx.fillStyle = 'rgba(38,38,40,0.92)'; ctx.fill()
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1; ctx.stroke()
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.font = `400 24px ${SANS}`
+    ctx.fillStyle = 'rgba(142,142,147,0.95)'
+    ctx.fillText('新建主题', x + 32, y + h / 2)
+    const labelW = ctx.measureText('新建主题').width
+    const typed = F.s4.typed.slice(0, F.s4.typeTimes.filter((tt) => tt <= t).length)
+    ctx.font = `500 34px ${SANS}`
+    ctx.fillStyle = 'rgba(245,245,247,0.95)'
+    const tx = x + 32 + labelW + 24
+    ctx.fillText(typed, tx, y + h / 2)
+    const typing = F.s4.typeTimes.some((tt) => t >= tt && t < tt + 0.3)
+    if (typing || Math.floor((t - 17.0) * 2) % 2 === 0) {
+      const cw = ctx.measureText(typed).width
+      ctx.fillStyle = rgba(BLUE, 1)
+      ctx.fillRect(tx + cw + 4, y + h / 2 - 20, 3, 40)
+    }
+    ctx.restore()
+  }
+
+  // S6 结算日标签
+  const tagA = smooth(38.6, 39.2, t) * treeOut
+  if (tagA > 0.001) {
+    const n = node('apps')
+    const j = F.s6.judged
+    ctx.save()
+    ctx.globalAlpha = tagA
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'
+    ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(n.x, n.y + 112); ctx.lineTo(n.x, n.y + 140); ctx.stroke()
+    ctx.font = `500 22px ${SANS}`
+    const label = `结算日 · ${j.date}`
+    const w = ctx.measureText(label).width + 64, h = 46
+    const x = n.x - w / 2, y = n.y + 140
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 23)
+    ctx.fillStyle = 'rgba(38,38,40,0.95)'; ctx.fill()
+    ctx.strokeStyle = rgba(ORANGE, 0.5); ctx.stroke()
+    ctx.beginPath(); ctx.arc(x + 26, y + h / 2, 5, 0, Math.PI * 2); ctx.fillStyle = rgba(ORANGE, 1); ctx.fill()
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+    ctx.fillStyle = 'rgba(245,245,247,0.92)'
+    ctx.fillText(label, x + 42, y + h / 2 + 1)
+    ctx.restore()
+  }
+}
+
+// ------------------------------------------------------------------ S6 结算与校准
+
+function fmtDate(ms) {
+  const d = new Date(ms)
+  const p = (v) => String(v).padStart(2, '0')
+  return `${d.getUTCFullYear()} · ${p(d.getUTCMonth() + 1)} · ${p(d.getUTCDate())}`
+}
+
+function dateRoll(t) {
+  const r = F.dateRoll
+  const a = smooth(39.2, 39.5, t) * (1 - smooth(41.4, 42.0, t))
+  if (a <= 0.001) return
+  const day = Math.round(r.days * easeInOut((t - r.t0) / (r.t1 - r.t0)))
+  ctx.save()
+  ctx.globalAlpha = a
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.font = `300 64px ${NUM}`
+  ctx.letterSpacing = '4px'
+  ctx.fillStyle = 'rgba(245,245,247,0.95)'
+  ctx.fillText(fmtDate(r.from + day * 864e5), 960, 250)
+  ctx.letterSpacing = '0px'
+  const left = r.days - day
+  ctx.font = `400 24px ${SANS}`
+  ctx.fillStyle = left === 0 ? rgba(ORANGE, 1) : 'rgba(142,142,147,0.95)'
+  ctx.fillText(left === 0 ? '今天到期' : `距离结算还有 ${left} 天`, 960, 298)
+  ctx.restore()
+}
+
+function button(x, y, w, h, text, col, bgA, scale, alpha) {
+  ctx.save()
+  ctx.globalAlpha *= alpha
+  ctx.translate(x + w / 2, y + h / 2)
+  ctx.scale(scale, scale)
+  ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, 12)
+  ctx.fillStyle = col ? rgba(col, bgA) : `rgba(255,255,255,${bgA})`
+  ctx.fill()
+  ctx.font = `500 22px ${SANS}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = col ? rgba(col, 1) : 'rgba(245,245,247,0.9)'
+  ctx.fillText(text, 0, 1)
+  ctx.restore()
+}
+
+const CARD = { x: 460, y: 430, w: 1000, h: 230 }
+const HIT_BTN = { w: 96, h: 48 }
+
+function hitButtonCenter() {
+  const right = CARD.x + CARD.w - 36
+  const x = right - 116 - 12 - 96 - 12 - HIT_BTN.w
+  return { x: x + HIT_BTN.w / 2, y: CARD.y + 140 }
+}
+
+function settleCard(t) {
+  const a = smooth(41.8, 42.3, t) * (1 - smooth(43.8, 44.5, t))
+  const qA = smooth(42.3, 42.8, t) * (1 - smooth(43.8, 44.5, t))
+  if (qA > 0.001) {
+    ctx.save()
+    ctx.globalAlpha = qA
+    ctx.font = `500 56px ${SANS}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = 'rgba(245,245,247,0.96)'
+    ctx.fillText('还想下这个注吗？', 960, 340)
+    ctx.restore()
+  }
+  if (a <= 0.001) return
+  const j = F.s6.judged
+  const slide = -60 * smooth(43.8, 44.5, t)
+  const { x, y, w, h } = CARD
+  ctx.save()
+  ctx.globalAlpha = a
+  ctx.translate(slide, 0)
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 22)
+  ctx.fillStyle = 'rgba(30,30,32,0.96)'; ctx.fill()
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.stroke()
+  ctx.textBaseline = 'alphabetic'
+  ctx.textAlign = 'left'
+  ctx.font = `600 24px ${SANS}`
+  ctx.fillStyle = 'rgba(245,245,247,0.9)'
+  ctx.fillText('到期未结算', x + 36, y + 54)
+  ctx.textAlign = 'right'
+  ctx.font = `400 22px ${NUM}`
+  ctx.fillStyle = 'rgba(142,142,147,0.9)'
+  ctx.fillText('1', x + w - 36, y + 54)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  ctx.fillRect(x + 36, y + 78, w - 72, 1)
+  ctx.beginPath(); ctx.arc(x + 44, y + 128, 7, 0, Math.PI * 2); ctx.fillStyle = rgba(BLUE, 1); ctx.fill()
+  ctx.textAlign = 'left'
+  ctx.font = `500 32px ${SANS}`
+  ctx.fillStyle = 'rgba(245,245,247,0.95)'
+  ctx.fillText(j.title, x + 64, y + 139)
+  ctx.font = `400 20px ${SANS}`
+  ctx.fillStyle = 'rgba(142,142,147,0.95)'
+  ctx.fillText(`当时 ${j.confidence} · 到期 ${j.date} · ${j.path}`, x + 64, y + 180)
+
+  const press = smooth(43.3, 43.38, t) * (1 - smooth(43.55, 43.7, t))
+  const sel = smooth(43.3, 43.4, t)
+  const hb = hitButtonCenter()
+  button(hb.x - HIT_BTN.w / 2, hb.y - HIT_BTN.h / 2, HIT_BTN.w, HIT_BTN.h, '对了', GREEN, lerp(0.14, 0.34, sel), 1 - 0.05 * press, 1)
+  button(hb.x + HIT_BTN.w / 2 + 12, hb.y - 24, 96, 48, '错了', RED, 0.12, 1, 1 - 0.5 * sel)
+  button(hb.x + HIT_BTN.w / 2 + 12 + 96 + 12, hb.y - 24, 116, 48, '再等等', null, 0.08, 1, 1 - 0.5 * sel)
+  ctx.restore()
+}
+
+const CH = { left: 600, right: 1320, top: 230, bottom: 780 }
+const cx = (c) => CH.left + ((c - 50) / 50) * (CH.right - CH.left)
+const cy = (v) => CH.bottom - (v / 100) * (CH.bottom - CH.top)
+
+/** 某档位在时刻 t 的命中率（百分比）：在相邻两个引擎快照之间缓动。 */
+function accuracyAt(c, t) {
+  const { snapTimes, calib } = F.s6
+  const bucket = Math.min(10, Math.floor(c / 10)) * 10
+  const val = (k) => calib.snapshots[k].buckets.find((b) => b.bucket === bucket).accuracy * 100
+  let k = -1
+  for (let i = 0; i < snapTimes.length; i++) if (t >= snapTimes[i]) k = i
+  if (k < 0) return null
+  if (k === 0) return val(0)
+  return lerp(val(k - 1), val(k), easeInOut((t - snapTimes[k]) / 0.7))
+}
+
+function settledAt(t) {
+  const { snapTimes, calib } = F.s6
+  let k = -1
+  for (let i = 0; i < snapTimes.length; i++) if (t >= snapTimes[i]) k = i
+  if (k < 0) return 0
+  const prev = k === 0 ? 0 : calib.snapshots[k - 1].settled
+  return Math.round(lerp(prev, calib.snapshots[k].settled, easeOut((t - snapTimes[k]) / 0.6)))
+}
+
+function chart(t) {
+  const a = smooth(44.2, 44.9, t) * (1 - smooth(52.0, 52.8, t))
+  // 结算的那一条飞进曲线
+  if (t >= 43.8 && t < 45.0) {
+    const hb = hitButtonCenter()
+    const k = easeInOut((t - 43.8) / 1.2)
+    const tx = cx(F.s6.calib.confidences[0]), ty = cy(0)
+    const mx = (hb.x + tx) / 2, my = Math.min(hb.y, ty) - 180
+    const x = (1 - k) * (1 - k) * hb.x + 2 * (1 - k) * k * mx + k * k * tx
+    const y = (1 - k) * (1 - k) * hb.y + 2 * (1 - k) * k * my + k * k * ty
+    D.glowDot(ctx, x, y, 30, 0.9 * (1 - smooth(0.85, 1, k)))
+  }
+  if (a <= 0.001) return
+  const { calib, snapTimes } = F.s6
+  ctx.save()
+  ctx.globalAlpha = a
+
+  ctx.textBaseline = 'alphabetic'
+  ctx.textAlign = 'left'
+  ctx.font = `600 28px ${SANS}`
+  ctx.fillStyle = 'rgba(245,245,247,0.95)'
+  ctx.fillText('命题校准曲线', CH.left, CH.top - 74)
+  ctx.textAlign = 'right'
+  ctx.font = `400 22px ${SANS}`
+  ctx.fillStyle = 'rgba(142,142,147,0.95)'
+  ctx.fillText(`已结算 ${settledAt(t)} 条`, CH.right, CH.top - 74)
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'
+  ctx.lineWidth = 1
+  ctx.font = `400 18px ${NUM}`
+  ctx.fillStyle = 'rgba(142,142,147,0.85)'
+  for (const v of [0, 25, 50, 75, 100]) {
+    ctx.beginPath(); ctx.moveTo(CH.left, cy(v)); ctx.lineTo(CH.right, cy(v)); ctx.stroke()
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle'
+    ctx.fillText(`${v}%`, CH.left - 16, cy(v))
+  }
+  for (let c = 50; c <= 100; c += 10) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    ctx.fillText(`${c}%`, cx(c), CH.bottom + 14)
+  }
+  ctx.font = `400 20px ${SANS}`
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+  ctx.fillText('当时的把握', (CH.left + CH.right) / 2, CH.bottom + 46)
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
+  ctx.fillText('实际命中率', CH.left, CH.top - 26)
+
+  ctx.save()
+  ctx.setLineDash([8, 8])
+  ctx.strokeStyle = 'rgba(245,245,247,0.35)'
+  ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.moveTo(cx(50), cy(50)); ctx.lineTo(cx(100), cy(100)); ctx.stroke()
+  ctx.restore()
+  ctx.font = `400 18px ${SANS}`
+  ctx.fillStyle = 'rgba(245,245,247,0.5)'
+  ctx.textAlign = 'right'
+  ctx.fillText('完美校准', cx(100) - 8, cy(100) + 28)
+
+  const pts = calib.confidences.map((c) => ({ c, v: accuracyAt(c, t) })).filter((p) => p.v !== null)
+  if (pts.length) {
+    const appear = smooth(snapTimes[0], snapTimes[0] + 0.4, t)
+    ctx.save()
+    ctx.globalAlpha *= appear
+    ctx.setLineDash([3, 5])
+    ctx.strokeStyle = rgba(BLUE, 0.45)
+    ctx.lineWidth = 1.5
+    for (const p of pts) { ctx.beginPath(); ctx.moveTo(cx(p.c), cy(p.v)); ctx.lineTo(cx(p.c), cy(p.c)); ctx.stroke() }
+    ctx.setLineDash([])
+    ctx.strokeStyle = rgba(BLUE, 0.95)
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    pts.forEach((p, i) => (i ? ctx.lineTo(cx(p.c), cy(p.v)) : ctx.moveTo(cx(p.c), cy(p.v))))
+    ctx.stroke()
+    for (const p of pts) {
+      const since = Math.min(...snapTimes.filter((s) => s <= t).map((s) => t - s))
+      D.glowDot(ctx, cx(p.c), cy(p.v), 34, 0.5 * Math.exp(-since / 0.5))
+      D.pearl(ctx, cx(p.c), cy(p.v), 9)
+    }
+    const hi = pts.find((p) => p.c >= 70 && p.c < 80)
+    if (hi) {
+      // 点贴近底轴时标签放上方，避免压住横轴刻度
+      const x = cx(hi.c) + 26, y = hi.v < 20 ? cy(hi.v) - 44 : cy(hi.v) + 8
+      ctx.font = `500 22px ${SANS}`
+      const label = `七成把握 → 实际 ${Math.round(hi.v)}%`
+      const w = ctx.measureText(label).width + 32
+      ctx.beginPath(); ctx.roundRect(x, y - 22, w, 44, 12)
+      ctx.fillStyle = 'rgba(38,38,40,0.92)'; ctx.fill()
+      ctx.strokeStyle = rgba(BLUE, 0.4); ctx.lineWidth = 1; ctx.stroke()
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+      ctx.fillStyle = 'rgba(245,245,247,0.95)'
+      ctx.fillText(label, x + 16, y + 1)
+    }
+    ctx.restore()
+  }
+  ctx.font = `400 16px ${SANS}`
+  ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = 'rgba(142,142,147,0.7)'
+  ctx.fillText('示意：合成样本，结算与命中率由真实引擎计算', CH.right, CH.bottom + 100)
+  ctx.restore()
+}
+
+// ------------------------------------------------------------------ S7 片尾
+
+const SPHERE = { x: 960, y: 420, size: 520 }
+
+function sphereCircles() {
+  const rnd = D.mulberry32(8080)
+  const out = []
+  for (let i = 0; i < 18; i++) {
+    const z = rnd() * 2 - 1, th = rnd() * Math.PI * 2
+    const r = Math.sqrt(1 - z * z)
+    out.push([r * Math.cos(th), r * Math.sin(th), z])
+  }
+  return out
+}
+let CIRCLES = null
+
+function s7(t) {
+  if (t < 52.0) return
+  CIRCLES = CIRCLES || sphereCircles()
+  const procA = smooth(52.3, 52.8, t) * (1 - smooth(54.5, 55.5, t))
+  const R = 185
+  if (procA > 0.001) {
+    const rot = 0.35 * (t - 52)
+    const cr = Math.cos(rot), sr = Math.sin(rot)
+    CIRCLES.forEach((nv, i) => {
+      const grow = easeInOut((t - (52.4 + i * 0.07)) / 1.1)
+      if (grow <= 0) return
+      const helper = Math.abs(nv[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]
+      const u = [nv[1] * helper[2] - nv[2] * helper[1], nv[2] * helper[0] - nv[0] * helper[2], nv[0] * helper[1] - nv[1] * helper[0]]
+      const ul = Math.hypot(...u); u[0] /= ul; u[1] /= ul; u[2] /= ul
+      const v = [nv[1] * u[2] - nv[2] * u[1], nv[2] * u[0] - nv[0] * u[2], nv[0] * u[1] - nv[1] * u[0]]
+      const pts = []
+      const M = 90
+      for (let j = 0; j <= M; j++) {
+        const a = (j / M) * Math.PI * 2 * grow
+        const px = R * (Math.cos(a) * u[0] + Math.sin(a) * v[0])
+        const py = R * (Math.cos(a) * u[1] + Math.sin(a) * v[1])
+        const pz = R * (Math.cos(a) * u[2] + Math.sin(a) * v[2])
+        pts.push([SPHERE.x + px * cr + pz * sr, SPHERE.y + py])
+      }
+      D.silver(ctx, pts, { alpha: procA * 0.8, core: 1.5 })
+    })
+  }
+  const logoA = smooth(54.5, 55.5, t)
+  const s = SPHERE.size
+  const x0 = SPHERE.x - s / 2, y0 = SPHERE.y - s / 2
+  if (logoA > 0.001) {
+    ctx.save()
+    ctx.globalAlpha = logoA
+    ctx.globalCompositeOperation = 'screen' // 原图黑底在黑背景上自然消失
+    ctx.drawImage(logo, x0, y0, s, s)
+    ctx.restore()
+    F.s7.logoPearls.forEach(([lx, ly], i) => {
+      const pt = 55.2 + i * 0.18
+      if (t < pt) return
+      const x = x0 + (lx * s) / F.s7.logoSize, y = y0 + (ly * s) / F.s7.logoSize
+      D.glowDot(ctx, x, y, 46, logoA * (0.12 + 0.8 * Math.exp(-(t - pt) / 0.6)))
+    })
+  }
+
+  const wordA = smooth(56.0, 56.8, t)
+  if (wordA > 0.001) {
+    ctx.save()
+    ctx.textBaseline = 'alphabetic'
+    ctx.textAlign = 'left'
+    ctx.font = `300 84px ${NUM}`
+    ctx.letterSpacing = '10px'
+    const wm = ctx.measureText('Meridian').width
+    ctx.letterSpacing = '0px'
+    ctx.font = `400 34px ${SANS}`
+    const wc = ctx.measureText('脉络').width
+    const total = wm + 28 + wc
+    const sx = 960 - total / 2
+    const y = 772 + 10 * (1 - wordA)
+    ctx.font = `300 84px ${NUM}`
+    ctx.letterSpacing = '10px'
+    ctx.fillStyle = `rgba(245,245,247,${0.96 * wordA})`
+    ctx.fillText('Meridian', sx, y)
+    ctx.letterSpacing = '0px'
+    ctx.font = `400 34px ${SANS}`
+    ctx.fillStyle = `rgba(142,142,147,${0.95 * wordA})`
+    ctx.fillText('脉络', sx + wm + 28, y)
+    ctx.restore()
+  }
+  const tagA = smooth(56.6, 57.4, t)
+  const smallA = smooth(57.4, 58.0, t)
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  if (tagA > 0.001) {
+    ctx.font = `400 40px ${SANS}`
+    ctx.fillStyle = `rgba(245,245,247,${0.92 * tagA})`
+    ctx.fillText('把判断，调准。', 960, 846)
+  }
+  if (smallA > 0.001) {
+    ctx.font = `400 22px ${SANS}`
+    ctx.fillStyle = `rgba(142,142,147,${0.8 * smallA})`
+    ctx.fillText('本地优先 · 账本存在你自己的电脑里 · macOS / Windows', 960, 912)
+    ctx.font = `400 22px ${MONO}`
+    ctx.fillStyle = `rgba(142,142,147,${0.7 * smallA})`
+    ctx.fillText('github.com/longyunBegin/meridian', 960, 948)
+  }
+  ctx.restore()
+}
+
+// ------------------------------------------------------------------ 合成
+
+function render(t) {
+  D.background(ctx, F.W, F.H)
+  s1(t)
+  s2(t)
+  s3(t)
+  tree(t)
+  if (t >= 38 && t < 53) { dateRoll(t); settleCard(t); chart(t) }
+  s7(t)
+  D.subtitles(ctx, F.subtitles, t, F.W, F.H)
+  const fade = smooth(0, 0.5, t) * (1 - smooth(F.fadeOutFrom, F.DURATION, t))
+  D.grainAndFade(ctx, grain, Math.round(t * F.FPS), F.W, F.H, fade)
+}
+
+window.__frame = (i) => {
+  render(i / F.FPS)
+  return document.getElementById('c').toDataURL('image/png').slice('data:image/png;base64,'.length)
+}
+</script>
+</body>
+</html>
