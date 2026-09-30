@@ -67,8 +67,7 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 **捕获**
 
 - 全局热键 `⌘⇧V`：任何地方选中的文本，一个热键进收件箱
-- 粘贴 URL 自动抓取网页正文，并按域名推断来源通道
-- RSS / Atom 订阅源定时拉取，走同一条捕获流水线
+- 粘贴 URL 自动抓取网页正文，并按域名推断来源
 - 不确定性闸门：能自动归位的信息直接入库，拿不准的才进收件箱
 
 **组织**
@@ -112,8 +111,8 @@ Meridian 是一个桌面应用，帮你把日常读到的信息沉淀成**可复
 
 ### 应用内更新
 
-- 从 v0.1.0 升级时，先从 GitHub Releases 手动安装一次带 updater 的 v0.1.1 引导版本（macOS 用 DMG，Windows 用 NSIS 安装包）。v0.1.0 没有 updater 插件或公钥，不能通过应用内更新跨越这一步。
-- v0.1.1 及之后的桌面版启动时最多每 24 小时静默检查一次；设置页也可手动点「检查更新」。发现更新后会显示版本说明和下载进度，下载结束后由用户确认安装并重启。
+- 从 v0.1.0 升级时，先从 GitHub Releases 手动安装一次带 updater 的 v0.1.2 引导版本（macOS 用 DMG，Windows 用 NSIS 安装包）。v0.1.0 没有 updater 插件或公钥，不能通过应用内更新跨越这一步。
+- v0.1.2 及之后的桌面版启动时最多每 24 小时静默检查一次；设置页也可手动点「检查更新」。发现更新后会显示版本说明和下载进度，下载结束后由用户确认安装并重启。
 - Tauri 构建会把应用版本写入更新包的签名可信注释；updater 强制校验签名版本与 manifest 一致，updater 与 Windows 安装器都拒绝降级。
 - 发布工作流在推送 `vMAJOR.MINOR.PATCH` 标签或手动选择已有标签时构建 Apple Silicon macOS 与 Windows x64。每个平台先上传安装包和 `.sig`，再由一个汇总 job 生成同时包含 `darwin-aarch64`、`windows-x86_64` 的 `latest.json`，全部资产上传后才发布 Release。
 - 发布前需在 GitHub 仓库 Actions secrets 中添加 `TAURI_SIGNING_PRIVATE_KEY`（Tauri updater 私钥文件的完整内容）；当前私钥未设密码，因此不需要密码 secret。私钥不可提交到仓库。只有私钥加密保存时才额外设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
@@ -272,7 +271,9 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 - ✅ 收件箱批量分拣 + 主题可选
 - ✅ 节点来源可点击跳转原文
 - ✅ Mac ↔ VM 双向同步
-- ⏳ Windows 安装包已配置（NSIS），需在 Windows 本机构建，暂不提供预编译包
+- ✅ 自动更新器（应用内检查 / 下载 / 签名验证 / 安装重启）
+- ✅ Windows 预编译安装包（NSIS，随 Release 发布）
+- ⏳ Linux 支持暂无计划
 - ✅ 更名 Meridian + 极简几何 Logo
 
 明确不做：多端同步、协作分享、荐股信号、移动端——详见 ROADMAP。
@@ -288,7 +289,7 @@ docs/ROADMAP.md    迭代路线（按价值/成本排序）
 能。核心的搬运、归位、传导、结算都不依赖模型；收件箱降级为整段原文存成观测命题。
 
 **支持哪些桌面系统？**
-macOS（Apple Silicon）提供预编译 DMG；Windows 需按上面的教程自行构建；Linux 不支持。
+macOS（Apple Silicon）和 Windows（x64）都提供预编译安装包；Linux 不支持。
 
 **数据存在哪？**
 macOS：`~/Library/Application Support/脉络/meridian.json`；Windows：`%APPDATA%\脉络\meridian.json`。原文层 `raw.jsonl` 位于同目录。
