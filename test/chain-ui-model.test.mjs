@@ -3,6 +3,7 @@ import {
   LEDGER_PAGE_SIZE, FLOATING_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT,
   paginate, countFloating, floatingStatusKey, selectGraphWindow, affectedNodeIdForEvent,
   requestChainEventJump, consumeChainEventJump, verifiedLedgerPrefix, eventsThroughSequence,
+  compactEventSummary, searchGraphNodes, independentMediaEvidence,
 } from '../src/renderer/lib/chain-ui-model.js'
 
 let pass = 0
@@ -98,6 +99,38 @@ const futureLookupFixture = [
 ]
 const historyLookupRows = eventsThroughSequence(futureLookupFixture, { ok: true }, 1)
 ok('历史账本名称解析集合不含所选序号之后的未来事件', historyLookupRows.length === 1 && historyLookupRows[0].id === 'v1')
+
+const event681 = compactEventSummary({
+  id: 'event-681', seq: 681, type: 'evidence.appended',
+  payload: { sourceKind: 'primary-data', text: '年报披露的实际订单数量' },
+})
+ok('第 681 条事件可折叠为有信息的一行摘要', event681 === '第 681 条 · 新增证据 · 一手数据', event681)
+const ledger681 = Array.from({ length: 681 }, (_, i) => ({ id: `event-${i + 1}`, seq: i + 1 }))
+const visited681 = []
+for (let page = 1; page <= Math.ceil(ledger681.length / LEDGER_PAGE_SIZE); page++) {
+  visited681.push(...paginate(ledger681, page, LEDGER_PAGE_SIZE).items.map((row) => row.id))
+}
+ok('681 条事件仍可分页逐条访问且没有被折叠/分页移除', visited681.length === 681
+  && new Set(visited681).size === 681 && visited681.at(-1) === 'event-681')
+
+const searchNodes = [
+  { id: 's1', kind: 'claim', title: '需求增长', currentText: '年报预计订单上升' },
+  { id: 's2', kind: 'evidence', title: '独立媒体报道', currentText: '港口装运数据' },
+]
+ok('图谱搜索支持正文筛选并可用空查询清空', searchGraphNodes(searchNodes, '年报').length === 1
+  && searchGraphNodes(searchNodes, '年报')[0].id === 's1' && searchGraphNodes(searchNodes, '').length === 0)
+
+const mediaNodes = Array.from({ length: 30 }, (_, i) => ({
+  id: `media-${i + 1}`, kind: 'evidence', title: `独立媒体报道 ${i + 1}`, sourceKind: '独立媒体',
+}))
+const mediaEvents = mediaNodes.map((node, i) => ({
+  id: node.id, seq: i + 1, type: 'evidence.appended', at: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T12:00:00Z`,
+  payload: { sourceKind: '独立媒体', sourceLabel: `媒体来源 ${i + 1}`, text: `独立报道标题 ${i + 1}` },
+}))
+const mediaGroupRows = independentMediaEvidence([...mediaNodes, { id: 'primary', kind: 'evidence', sourceKind: '一手数据' }], mediaEvents)
+ok('30 条独立媒体仅分组展示；每条来源节点和来源事件仍独立保留', mediaGroupRows.length === 30
+  && new Set(mediaGroupRows.map(({ node }) => node.id)).size === 30
+  && mediaGroupRows.every(({ event }, i) => event?.payload?.sourceLabel === `媒体来源 ${i + 1}`))
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

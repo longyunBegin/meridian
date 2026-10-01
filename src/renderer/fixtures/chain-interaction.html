@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meridian chain interaction fixture</title>
+  <style>
+    html,body{height:auto;min-height:100%;overflow:auto;background:#f5f5f7;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{padding:18px}
+    #fixture-root{max-width:1500px;margin:auto}
+    #fixture-report{position:static;max-width:min(1500px,100%);max-height:30vh;overflow:auto;margin:18px auto;padding:10px 12px;background:#111;color:#d7f8df;border:1px solid #3a6;border-radius:8px;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap}
+    #fixture-report.fail{color:#ffd4d4;border-color:#d44}
+  </style>
+</head>
+<body>
+  <main id="fixture-root"></main>
+  <main id="empty-fixture"></main>
+  <main id="invalid-fixture"></main>
+  <pre id="fixture-report">Fixture starting…</pre>
+  <script type="module">
+    import '../styles.css'
+
+    const events = []
+    const nodes = []
+    const edges = []
+    const addEvent = (type, payload, id) => {
+      const seq = events.length + 1
+      const event = {
+        id: id || `event-${seq}`, seq, type, at: `2026-09-${String((seq % 28) + 1).padStart(2, '0')}T12:00:00.000Z`,
+        actor: 'fixture', prevHash: seq === 1 ? null : `sha256:fixture-${seq - 1}`,
+        hash: `sha256:fixture-${seq}`, payload,
+      }
+      events.push(event)
+      return event
+    }
+    const makeClaim = (number) => {
+      const id = `claim-${String(number).padStart(2, '0')}`
+      const event = addEvent('claim.created', {
+        title: `核心观点 ${number}`, coreInfo: `可验证的市场观察 ${number}`, status: 'pending',
+        sourceRef: `fixture:claim:${number}`,
+      }, id)
+      nodes.push({
+        id, kind: 'claim', title: event.payload.title, currentText: event.payload.coreInfo,
+        status: 'pending', correct: null, resolved: null, archived: false, superseded: false,
+        createdSeq: event.seq, sourceKind: null, sourceRef: event.payload.sourceRef,
+        eventIds: [id], provenanceEventIds: [id], external: false,
+      })
+    }
+    for (let i = 1; i <= 33; i++) makeClaim(i)
+
+    const mediaIds = []
+    for (let i = 1; i <= 30; i++) {
+      const id = `media-${String(i).padStart(2, '0')}`
+      const event = addEvent('evidence.appended', {
+        text: `相似报道：港口吞吐量变化与地区产能线索 ${String.fromCharCode(64 + i)}`,
+        sourceKind: '独立媒体', sourceLabel: `媒体来源 ${String(i).padStart(2, '0')}`,
+        publishedAt: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T08:00:00.000Z`,
+        sourceRef: `fixture:media:${i}`,
+        evidenceRefs: [{ type: 'url', id: `https://example.invalid/report-${i}`, title: `媒体稿件 ${i}` }],
+      }, id)
+      nodes.push({
+        id, kind: 'evidence', title: event.payload.text.slice(0, 28), currentText: event.payload.text,
+        status: 'pending', correct: null, resolved: null, archived: false, superseded: false,
+        createdSeq: event.seq, sourceKind: '独立媒体', sourceRef: event.payload.sourceRef,
+        eventIds: [id], provenanceEventIds: [id], external: false,
+      })
+      mediaIds.push(id)
+    }
+
+    for (let i = 0; i < mediaIds.length; i++) {
+      const from = mediaIds[i]
+      const to = `claim-${String((i % 33) + 1).padStart(2, '0')}`
+      const event = addEvent('relation.declared', {
+        rel: 'supports', from: { eventId: from }, to: { eventId: to },
+        reviewStatus: i === 0 ? 'pending-review' : 'confirmed',
+        sourceRef: `fixture:relation:${i + 1}`,
+      }, `relation-media-${i + 1}`)
+      edges.push({
+        id: event.id, eventId: event.id, seq: event.seq, rel: 'supports', from, to,
+        pendingReview: i === 0, reviewDecision: null, reviewReason: '', reviewEventId: null,
+        reviewedAt: null, reviewedBy: null, mapping: '', provenanceEventIds: [event.id], sourceRef: event.payload.sourceRef,
+      })
+    }
+    const derivesEvent = addEvent('relation.declared', {
+      rel: 'derives', from: { eventId: mediaIds[0] }, to: { eventId: mediaIds[1] }, reviewStatus: 'pending-review',
+    }, 'relation-derives')
+    edges.push({ id: derivesEvent.id, eventId: derivesEvent.id, seq: derivesEvent.seq, rel: 'derives', from: mediaIds[0], to: mediaIds[1], pendingReview: true, provenanceEventIds: [derivesEvent.id] })
+    const contradictEvent = addEvent('relation.declared', {
+      rel: 'contradicts', from: { eventId: mediaIds[1] }, to: { eventId: 'claim-02' }, reviewStatus: 'confirmed',
+    }, 'relation-contradicts')
+    edges.push({ id: contradictEvent.id, eventId: contradictEvent.id, seq: contradictEvent.seq, rel: 'contradicts', from: mediaIds[1], to: 'claim-02', pendingReview: false, provenanceEventIds: [contradictEvent.id] })
+
+    while (events.length < 680) addEvent('settlement.recorded', {
+      sourceRef: 'fixture:claim:1', date: '2026-09-30', resolved: false, correct: null,
+      reason: `合成账本回归行 ${events.length + 1}`,
+    })
+    const finalEvidence = addEvent('evidence.appended', {
+      text: '第 681 条：经核对的年度订单一手数据', sourceKind: 'primary-data', sourceLabel: '一手数据',
+      sourceRef: 'fixture:primary-data:681',
+    }, 'event-681')
+    nodes.push({
+      id: finalEvidence.id, kind: 'evidence', title: '第 681 条：经核对的年度订单', currentText: finalEvidence.payload.text,
+      status: 'pending', correct: null, resolved: null, archived: false, superseded: false,
+      createdSeq: finalEvidence.seq, sourceKind: 'primary-data', sourceRef: finalEvidence.payload.sourceRef,
+      eventIds: [finalEvidence.id], provenanceEventIds: [finalEvidence.id], external: false,
+    })
+
+    const integrity = { ok: true, count: events.length, lastValidSeq: events.length, verified: true }
+    const fullProjection = {
+      nodes, allNodes: nodes, edges, allEdges: edges, floating: [],
+      integrity, selectedAt: events.at(-1)?.at || null,
+    }
+    const emptyProjection = { nodes: [], allNodes: [], edges: [], allEdges: [], floating: [], integrity: { ok: true, count: 0, lastValidSeq: 0 } }
+    const invalidProjection = { ...fullProjection, integrity: { ok: false, count: events.length, lastValidSeq: events.length - 1, reason: 'fixture tail corrupted' } }
+    window.meridian = {
+      async chainEvents(themeId) { return { events: themeId === 'empty-theme' ? [] : events, integrity } },
+      async chainProjection(themeId) { return themeId === 'empty-theme' ? emptyProjection : themeId === 'invalid-theme' ? invalidProjection : fullProjection },
+      async chainProjectionAt(themeId, requestedSeq) {
+        const seq = Math.max(0, Math.min(events.length, Number(requestedSeq) || 0))
+        const visibleNodes = nodes.filter((node) => node.createdSeq <= seq)
+        const visibleEdges = edges.filter((edge) => edge.seq <= seq)
+        return {
+          nodes: visibleNodes, allNodes: visibleNodes, edges: visibleEdges, allEdges: visibleEdges,
+          floating: [], integrity: { ok: true, count: seq, lastValidSeq: seq }, selectedSeq: seq,
+          selectedAt: events.filter((event) => event.seq <= seq).at(-1)?.at || null,
+        }
+      },
+      async chainVerify() { return { ok: true, lastValidSeq: events.length, count: events.length } },
+      async chainAddEvidence() { return { ok: true } },
+      async chainMountEvent() { return { ok: true } },
+      async chainReviewRelation() { return { ok: true } },
+      async chainArchiveNode() { return { ok: true } },
+      async chainRestoreNode() { return { ok: true } },
+    }
+
+    const { renderChainSection, openNodeDetail } = await import('../views/chain.js')
+    const theme = { id: 'fixture-theme', name: '浏览器交互回归' }
+    const opts = {
+      onOpen: (node, more = {}) => openNodeDetail(theme, node, { ...more, onChanged() {} }),
+      onChanged() {},
+    }
+    document.querySelector('#fixture-root').append(renderChainSection(theme, opts))
+    const report = document.querySelector('#fixture-report')
+    const results = []
+    const check = (label, condition, detail = '') => {
+      const row = { label, passed: Boolean(condition), detail: detail || '' }
+      results.push(row)
+      if (!row.passed) report.classList.add('fail')
+      report.textContent = results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.label}${r.detail ? ` — ${r.detail}` : ''}`).join('\n')
+    }
+    const waitFor = async (predicate, description, timeout = 4000) => {
+      const end = Date.now() + timeout
+      while (Date.now() < end) {
+        if (predicate()) return true
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      check(`等待：${description}`, false, '超时')
+      return false
+    }
+    const pause = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
+    const press = (target, key) => target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    const closeDrawer = async () => {
+      if (!document.querySelector('.chain-drawer')) return
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await pause()
+    }
+
+    try {
+      await waitFor(() => document.querySelector('.cog-graph-canvas .cog-svg') && document.querySelector('[data-event-id="event-681"]'), '链图和第 681 条事件完成首绘')
+      const rootEdges = document.querySelectorAll('.cog-edge-topic')
+      const graphNodesInSvg = [...document.querySelectorAll('.cog-node:not(.is-theme)')].length
+      check('33+ 节点图默认仅显示 20 个观点骨架且无证据节点/主题虚线扇', graphNodesInSvg === 20
+        && document.querySelectorAll('.cog-node[data-kind="evidence"]').length === 0 && rootEdges.length === 0,
+        `可视主张 ${graphNodesInSvg}，证据 0，主题边 ${rootEdges.length}`)
+      check('观点骨架按关联簇/尚无显式关系分组显示淡色背景', document.querySelectorAll('.cog-clusters .cog-cluster-bg').length > 0)
+      const claimPager = document.querySelector('.cog-claim-pager')
+      check('全量主张通过 20 项分页可读，不会静默截断', claimPager?.textContent.includes('观点 1–20 / 33')
+        && [...document.querySelectorAll('.cog-claim-page-button')].at(-1)?.disabled === false)
+      const graphPane = document.querySelector('.cog-graph-pane')
+      const chainSection = document.querySelector('.chain-section')
+      check('默认图谱全宽，账本抽屉关闭时不占版面', graphPane?.clientWidth >= chainSection?.clientWidth * 0.9
+        && document.querySelector('.cog-ledger-drawer')?.hidden === true)
+      const ledgerButton = document.querySelector('.cog-ledger-open')
+      const ledgerDrawer = document.querySelector('.cog-ledger-drawer')
+      const integrityBadge = document.querySelector('[data-ledger-status]')
+      check('顶栏常驻通过态徽标正确报告 681 条事件', integrityBadge?.textContent === '✓ 681 事件 · 校验通过'
+        && integrityBadge.getAttribute('role') === 'status')
+      ledgerButton?.click()
+      check('账本按钮打开含版本滑杆的抽屉并标记展开', !ledgerDrawer?.hidden
+        && ledgerButton?.getAttribute('aria-expanded') === 'true'
+        && Boolean(ledgerDrawer?.querySelector('.cog-time-slider')))
+      press(document.activeElement, 'Escape')
+      check('Escape 关闭账本抽屉并把键盘焦点还给入口', ledgerDrawer?.hidden
+        && ledgerButton?.getAttribute('aria-expanded') === 'false' && document.activeElement === ledgerButton)
+      ledgerButton?.click()
+      document.querySelectorAll('.cog-claim-page-button')[1]?.click()
+      check('下一页可访问第 21–33 条观点', document.querySelector('.cog-claim-page-label')?.textContent.includes('观点 21–33 / 33')
+        && document.querySelectorAll('.cog-node:not(.is-theme)').length === 13)
+      document.querySelector('.cog-claim-page-button')?.click()
+      const hoverNode = document.querySelector('.cog-node[data-node-id^="claim-"]')
+      hoverNode?.dispatchEvent(new MouseEvent('mouseenter'))
+      check('悬停相关观点仅出现一条主题虚线', document.querySelectorAll('.cog-edge-topic').length === 1)
+      hoverNode?.dispatchEvent(new MouseEvent('mouseleave'))
+      check('离开节点后主题虚线再次隐藏', document.querySelectorAll('.cog-edge-topic').length === 0)
+
+      const replayStates = document.querySelectorAll('[data-replay-status]')
+      check('live 状态不重复显示版本；历史回放专用状态仅保留一个顶栏位', replayStates.length === 1
+        && replayStates[0].hidden && !replayStates[0].textContent.trim())
+      const liveOnlyHidden = ['.cog-live-button', '.cog-focus-detail', '.cog-focus-clear', '.cog-search-results']
+        .map((selector) => document.querySelector(selector))
+      check('live 状态真正隐藏回放退出、无焦点操作和空搜索面板', liveOnlyHidden.every((el) => el?.hidden
+        && getComputedStyle(el).display === 'none'))
+      const legend = document.querySelector('.cog-graph-legend-corner')
+      check('关系文字图例常驻可见并含方向、状态与主题说明', Boolean(legend) && !legend.hidden
+        && ['supports', 'derives', 'contradicts', 'pending-review'].every((rel) => legend.textContent.includes(rel))
+        && legend.textContent.includes('from 指向 to') && legend.textContent.includes('虚线'))
+
+      let pages = 0
+      while (!document.querySelector('[data-event-id="event-681"]') && pages++ < 25) {
+        const next = [...document.querySelectorAll('.cog-page-btn')].at(-1)
+        if (!next || next.disabled) break
+        next.click()
+        await pause(5)
+      }
+      const latestCard = document.querySelector('[data-event-id="event-681"]')
+      const latestDisclosure = latestCard?.querySelector('.cog-ev-disclosure')
+      check('第 681 条默认折叠为单行有意义摘要', Boolean(latestCard && latestDisclosure && !latestDisclosure.open
+        && latestCard.querySelector('.cog-ev-summary')?.textContent.includes('第 681 条 · 新增证据 · 一手数据')))
+      latestDisclosure?.querySelector('summary')?.click()
+      check('展开事件后可读对象、变化、来源与技术哈希', Boolean(latestDisclosure?.open
+        && latestDisclosure.querySelector('.cog-ev-readable') && latestDisclosure.querySelector('.cog-ev-technical')
+        && latestDisclosure.textContent.includes('sha256:fixture-680')))
+      latestCard?.querySelector('.cog-event-focus')?.click()
+      check('账本定位将第 681 条联动到本地证据读数且保留主题骨架', document.querySelector('.cog-local-focus [data-node-id="event-681"]') !== null
+        && document.querySelectorAll('.cog-node:not(.is-theme)').length === 20)
+
+      const mediaGroup = document.querySelector('.cog-media-group')
+      check('独立媒体来源默认合并为可展开的计数入口', Boolean(mediaGroup && !mediaGroup.open
+        && mediaGroup.querySelector('summary')?.textContent.includes('独立媒体 ×30')))
+      mediaGroup?.querySelector('summary')?.click()
+      const mediaItems = [...(mediaGroup?.querySelectorAll('.cog-media-item') || [])]
+      check('展开后 30 条来源均有标题、来源、日期和独立详情路径', mediaGroup?.open && mediaItems.length === 30
+        && mediaItems[0].textContent.includes('标题关键词') && mediaItems[0].textContent.includes('媒体来源 01')
+        && mediaItems[0].textContent.includes('日期') && Boolean(mediaItems[0].querySelector('.cog-media-open')))
+      mediaItems[0]?.querySelector('.cog-media-locate')?.click()
+      check('媒体分组中的单条定位在局部读数中选中对应原始证据节点', document.querySelector('.cog-local-focus [data-node-id="media-01"]') !== null)
+      mediaItems[0]?.querySelector('.cog-media-open')?.click()
+      await waitFor(() => document.querySelector('.chain-drawer-name'), '打开独立媒体证据详情')
+      check('单条媒体详情仍可打开原始证据记录', document.querySelector('.chain-drawer-name')?.textContent.includes('相似报道'))
+      await closeDrawer()
+
+      const search = document.querySelector('.cog-node-search')
+      search.value = '核心观点'
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+      check('33 项图谱搜索结果明确分页显示首组 30 项', document.querySelectorAll('.cog-search-result').length === 30
+        && document.querySelector('.cog-search-page-label')?.textContent.includes('结果 1–30 / 33'))
+      const firstResultGroup = document.querySelectorAll('.cog-search-result')
+      press(firstResultGroup[firstResultGroup.length - 1], 'ArrowDown')
+      check('搜索末项按 ArrowDown 可到达第 31–33 项', document.querySelectorAll('.cog-search-result').length === 3
+        && document.querySelector('.cog-search-page-label')?.textContent.includes('结果 31–33 / 33')
+        && document.activeElement?.classList.contains('cog-search-result'))
+      document.querySelector('.cog-search-page-button')?.click()
+      check('搜索结果上一组按钮可返回完整首组', document.querySelectorAll('.cog-search-result').length === 30
+        && document.querySelector('.cog-search-page-label')?.textContent.includes('结果 1–30 / 33'))
+      search.value = '核心观点 20'
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+      check('图谱搜索随输入过滤并显示精确节点候选', document.querySelectorAll('.cog-search-result').length === 1
+        && document.querySelector('.cog-search-result-title')?.textContent === '核心观点 20')
+      press(search, 'ArrowUp')
+      check('搜索框 ArrowUp 可聚焦当前组末项', document.activeElement?.classList.contains('cog-search-result'))
+      press(document.activeElement, 'ArrowUp')
+      check('搜索结果 ArrowUp 返回输入框', document.activeElement === search)
+      press(search, 'ArrowDown')
+      check('搜索方向键 ArrowDown 可进入结果列表', document.activeElement?.classList.contains('cog-search-result'))
+      press(document.activeElement, 'ArrowUp')
+      check('搜索结果方向键可返回输入框', document.activeElement === search)
+      press(search, 'ArrowDown')
+      document.activeElement?.click()
+      check('激活搜索结果可翻到对应观点并展开局部读数', document.querySelector('.cog-node.is-selected[data-node-id="claim-20"]') !== null
+        && !document.querySelector('.cog-local-focus')?.hidden)
+      check('选择观点后局部读数展开其独立证据、方向关系和来源事件按钮', document.querySelector('.cog-local-focus [data-node-id="media-20"]') !== null
+        && document.querySelector('.cog-local-focus').textContent.includes('来源事件')
+        && Boolean(document.querySelector('.cog-local-focus .cog-focus-relations')))
+      document.querySelector('.cog-ledger-close')?.click()
+      document.querySelector('.cog-local-focus [data-node-id="media-20"] .cog-focus-event')?.click()
+      await waitFor(() => document.querySelector('.cog-ledger-drawer')?.hidden === false, '从节点来源事件打开账本抽屉')
+      check('节点局部来源事件可反向打开账本并定位单条事件', !document.querySelector('.cog-ledger-drawer')?.hidden)
+      document.querySelector('.cog-search-clear')?.click()
+      check('清空图谱搜索复位查询与结果列表', search.value === '' && document.querySelectorAll('.cog-search-result').length === 0)
+
+      const clickNode = (node) => node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      const claimNode = document.querySelector('.cog-node[data-node-id="claim-20"]')
+      clickNode(claimNode)
+      await waitFor(() => document.querySelector('.chain-drawer-name'), '单击图节点打开详情')
+      check('第一次单击图节点即打开详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
+      await closeDrawer()
+      claimNode?.focus()
+      press(claimNode, 'Enter')
+      await waitFor(() => document.querySelector('.chain-drawer-name'), 'Enter 打开图节点详情')
+      check('Enter 打开节点详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
+      await closeDrawer()
+      claimNode?.focus()
+      press(claimNode, ' ')
+      await waitFor(() => document.querySelector('.chain-drawer-name'), 'Space 打开图节点详情')
+      check('Space 打开节点详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
+      await closeDrawer()
+
+      const slider = document.querySelector('.cog-time-slider')
+      slider.value = '100'
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+      slider.dispatchEvent(new Event('change', { bubbles: true }))
+      await waitFor(() => document.querySelector('[data-replay-status]')?.textContent.includes('历史回放 · v100'), '历史回放投影完成')
+      check('历史回放突出显示一次并禁用新增观点/补证/关系复核', document.querySelectorAll('[data-replay-status]').length === 1
+        && document.querySelector('.cog-graph-actions .btn-primary')?.disabled
+        && document.querySelector('.cog-graph-actions button[aria-describedby$="-evidence-guidance"]:not(.btn-primary)')?.disabled
+        && document.querySelectorAll('.cog-review-controls').length === 0)
+      const historyClaim = document.querySelector('.cog-node[data-node-id="claim-20"]')
+      clickNode(historyClaim)
+      await waitFor(() => document.querySelector('.chain-drawer-name'), '打开回放中的节点详情')
+      check('历史回放节点详情不含证据/关系写入或归档控件且不重复版本标签', !document.querySelector('.cog-evidence-composer')
+        && !document.querySelector('.cog-relation-composer') && !document.querySelector('.chain-archive-actions')
+        && !document.querySelector('.cog-history-banner'))
+      await closeDrawer()
+      document.querySelector('.cog-live-button')?.click()
+      await waitFor(() => document.querySelector('[data-replay-status]')?.hidden === true, '返回 live 模式并隐藏回放标签')
+      check('返回 live 后恢复单一当前顶栏状态', document.querySelectorAll('[data-replay-status]').length === 1
+        && document.querySelector('.cog-graph-actions .btn-primary')?.disabled === false
+        && document.querySelector('[data-replay-status]')?.textContent === ''
+        && document.querySelector('.cog-live-button')?.hidden
+        && getComputedStyle(document.querySelector('.cog-live-button')).display === 'none')
+
+      const emptyTheme = { id: 'empty-theme', name: '空图证据提示' }
+      document.querySelector('#empty-fixture').append(renderChainSection(emptyTheme, {
+        onOpen: (node, more = {}) => openNodeDetail(emptyTheme, node, { ...more, onChanged() {} }), onChanged() {},
+      }))
+      await waitFor(() => document.querySelector('#empty-fixture .cog-graph-actions button[aria-describedby$="-evidence-guidance"]'), '空图工具栏')
+      const emptyAddEvidence = document.querySelector('#empty-fixture .cog-graph-actions button[aria-describedby$="-evidence-guidance"]:not(.btn-primary)')
+      check('无可选观点时补证入口仍可点并提供明确先创建提示', Boolean(emptyAddEvidence && !emptyAddEvidence.disabled
+        && emptyAddEvidence.title.includes('先创建') && document.querySelector('#empty-fixture .cog-write-guidance')?.textContent.includes('还没有可连接的观点')))
+      const invalidTheme = { id: 'invalid-theme', name: '校验失败状态' }
+      document.querySelector('#invalid-fixture').append(renderChainSection(invalidTheme, { onOpen() {}, onChanged() {} }))
+      await waitFor(() => document.querySelector('#invalid-fixture [data-ledger-status]')?.classList.contains('is-error'), '损坏账本常驻 warning 徽标')
+      const invalidBadge = document.querySelector('#invalid-fixture [data-ledger-status]')
+      check('损坏账本不会显示绿勾并在顶栏呈警告态', invalidBadge?.classList.contains('is-error')
+        && invalidBadge?.getAttribute('role') === 'alert' && invalidBadge?.textContent.includes('⚠ 680 / 681')
+        && !invalidBadge?.textContent.includes('校验通过'))
+    } catch (error) {
+      check('fixture 执行无未捕获异常', false, error?.stack || String(error))
+    }
+    window.__chainFixtureResults = results
+    window.__chainFixtureEvents = events
+    report.dataset.finished = 'true'
+    if (results.some((row) => !row.passed)) report.classList.add('fail')
+  </script>
+</body>
+</html>

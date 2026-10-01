@@ -95,6 +95,83 @@ export function countFloating(nodes = []) {
   return { total: nodes.length, byKind, byStatus }
 }
 
+const EVENT_KIND_SUMMARY = {
+  'evidence.appended': '新增证据',
+  'claim.created': '新增主张',
+  'inference.created': '新增推断',
+  'relation.declared': '关系声明',
+  'correction.appended': '追加更正',
+  'settlement.recorded': '结算记录',
+  'node.archived': '归档',
+  'node.restored': '追加恢复',
+  'topic.linked': '主题关联',
+}
+const SOURCE_KIND_SUMMARY = {
+  'primary-data': '一手数据', primary: '一手数据', '一手数据': '一手数据',
+  'independent-media': '独立媒体', independent_media: '独立媒体', '独立媒体': '独立媒体',
+  'broker-report': '券商研报', '券商研报': '券商研报',
+}
+
+function shortSummary(value, limit = 42) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
+}
+
+/** A single-line event disclosure label with a useful discriminator, not duplicated boilerplate. */
+export function compactEventSummary(event) {
+  const row = event && typeof event === 'object' ? event : {}
+  const payload = row.payload && typeof row.payload === 'object' ? row.payload : {}
+  const kind = EVENT_KIND_SUMMARY[row.type] || row.type || '未识别事件'
+  const sourceKind = SOURCE_KIND_SUMMARY[payload.sourceKind]
+    || SOURCE_KIND_SUMMARY[payload.legacySource?.kind]
+    || (payload.legacySource?.kind === '独立媒体' ? '独立媒体' : '')
+  const source = String(payload.sourceLabel || payload.legacySource?.label || '').trim()
+  const reference = Array.isArray(payload.evidenceRefs)
+    ? payload.evidenceRefs.find((ref) => ref?.title)?.title : ''
+  let detail = ''
+  if (row.type === 'evidence.appended') {
+    detail = sourceKind || source || reference || payload.text || payload.reason || payload.title
+  } else if (row.type === 'correction.appended') {
+    detail = payload.newValue || payload.reason || '观点版本更正'
+  } else if (row.type === 'relation.declared') {
+    detail = payload.reviewOf ? `关系${payload.reviewDecision === 'confirmed' ? '确认' : '驳回'}`
+      : payload.rel || '关系待识别'
+  } else {
+    detail = payload.title || payload.coreInfo || payload.text || payload.reason || source || sourceKind
+  }
+  const ordinal = Number.isSafeInteger(row.seq) ? `第 ${row.seq} 条` : '事件记录'
+  return `${ordinal} · ${kind}${detail ? ` · ${shortSummary(detail)}` : ''}`
+}
+
+/** Filter all projected node metadata used by the graph search; never mutates the projection. */
+export function searchGraphNodes(nodes = [], query = '') {
+  const needle = String(query || '').trim().toLocaleLowerCase()
+  if (!needle) return []
+  const rows = Array.isArray(nodes) ? nodes : []
+  return rows.map((node, index) => ({ node, index, title: String(node?.title || '').toLocaleLowerCase() }))
+    .filter(({ node }) => [node?.title, node?.currentText, node?.sourceRef, node?.sourceKind, node?.kind]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(needle)))
+    .sort((a, b) => Number(b.title === needle) - Number(a.title === needle)
+      || Number(b.title.startsWith(needle)) - Number(a.title.startsWith(needle))
+      || a.index - b.index)
+    .map(({ node }) => node)
+}
+
+/** Group only explicitly identified independent-media evidence; each source remains a distinct row/node. */
+export function independentMediaEvidence(nodes = [], events = []) {
+  const byId = new Map((Array.isArray(events) ? events : []).filter(Boolean).map((event) => [event.id, event]))
+  const isIndependent = (value) => /^(?:独立媒体|independent[ _-]?media)$/i.test(String(value || '').trim())
+  return (Array.isArray(nodes) ? nodes : [])
+    .filter((node) => node?.kind === 'evidence')
+    .map((node) => ({ node, event: byId.get(node.id) || null }))
+    .filter(({ node, event }) => {
+      const payload = event?.payload || {}
+      return [node.sourceKind, payload.sourceKind, payload.sourceLabel,
+        payload.legacySource?.kind, payload.legacySource?.label]
+        .some(isIndependent)
+    })
+}
+
 /**
  * Return a deterministic, bounded graph frame. With a focus node, breadth-first
  * traversal keeps the directly affected neighborhood visible; otherwise the
