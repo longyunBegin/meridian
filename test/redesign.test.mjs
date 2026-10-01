@@ -2442,7 +2442,7 @@ ok('S4: 树文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/lattic
 ok('S4: 主题页有独立滚动容器', themeSrcER.includes('theme-body'))
 ok('S4: 滚动容器样式存在', stylesSrcS45.includes('.theme-body'))
 ok('S4: 未选中命题时收起检视栏', appSrcER.includes('dataset.inspect') && stylesSrcS45.includes('.app[data-inspect="off"]'))
-ok('S4: 链列表证据可点击', /renderChainSection\(theme,\s*\{[^}]*onEvidence/.test(themeSrcER))
+ok('S4: 链列表证据可点击', /renderChainSection\(theme,\s*openOpts\)/.test(themeSrcER) && /onEvidence:\s*openEvidenceDetail/.test(themeSrcER))
 ok('S4: 命题证据可点进右栏', /ref\.type === 'lemma'[\s\S]*?selectNode\(ref\.id\)/.test(chainSrcER))
 ok('S4: 链是语义图谱（节点 data-status + 关系边语义色）', chainSrcER.includes('data-status') && chainSrcER.includes("class: 'cog-node'") && chainSrcER.includes('cog-edge-') && chainSrcER.includes('cog-arrow-') && stylesSrcS45.includes('.cog-svg') && stylesSrcS45.includes('.cog-legend'))
 ok('S4: 树图共用软删函数', appSrcER.includes('export async function deleteNodeWithUndo'))
