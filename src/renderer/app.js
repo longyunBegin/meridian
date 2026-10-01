@@ -784,7 +784,7 @@ function renderNewTheme() {
   state.scaffoldFailed = false
   page.append(h('div', { class: 'page-head' },
     h('h1', {}, '新建主题'),
-    h('p', {}, '说一句话，模型搭骨架、提炼标签、建标签库。之后你在脉络页写下判断，账本负责记录证据。'),
+    h('p', {}, '说一句话，模型搭骨架、提炼标签。之后在主题页写下你的判断，账本负责记录证据。'),
   ), creator)
   return page
 }

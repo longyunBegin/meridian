@@ -589,18 +589,6 @@ export async function renderSettings(mid) {
             onclick: async () => { await m.saveSettings({ agentToken: v }); await renderSettings(mid) },
           }, label)))
         })(), '凭据在数据源页一键复制。仅本机模式才能关。'),
-        
-        field('图的缩放', (() => {
-          const value = Number(settings.graphZoom) || 1
-          const out = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', minWidth: '44px' } }, `${value.toFixed(1)}×`)
-          const input = h('input', {
-            type: 'range', min: '0.2', max: '3', step: '0.1', value: String(value),
-            style: { flex: '1' },
-            oninput: (e) => { out.textContent = `${Number(e.target.value).toFixed(1)}×` },
-            onchange: (e) => m.saveSettings({ graphZoom: Number(e.target.value) || 1 }),
-          })
-          return h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, input, out)
-        })(), '产业链图的滚轮灵敏度。触控板一次滚动会连发多个小步进，觉得跳得太快就调小。'),
       ),
     ),
 

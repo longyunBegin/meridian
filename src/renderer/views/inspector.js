@@ -152,6 +152,7 @@ export function renderInspectorLattice(aside) {
   }, node.title)
 
   const head = h('div', { class: 'insp-head' },
+    h('button', { type: 'button', class: 'btn btn-icon insp-close', title: '关闭', onclick: () => selectNode(null) }, '✕'),
     title,
     h('div', { class: 'insp-sub' }, nodePath(state.nodes, node.id)),
     node.status !== 'live' ? h('div', { style: { marginTop: '6px' } },

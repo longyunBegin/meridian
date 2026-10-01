@@ -480,15 +480,8 @@ export function openSegmentDetail(theme, segment, opts = {}) {
             selected: (Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0) === li || undefined,
           }, name))),
       ),
-      // 支撑线索（可收起）→ 关联节点（可跳转），对齐 demo 面板顺序
+      // 支撑线索（可收起）→ 挂载数据 → 关联节点（可跳转），对齐 demo 面板顺序
       renderEvidenceSection(segment, opts),
-      renderRelations(theme, segment, opts),
-      // 子段 / 分叉
-      renderSubsegments(segment),
-      // 变化历史
-      h('section', { class: 'chain-dsect' },
-        h('div', { class: 'chain-detail-h' }, '变化历史'),
-        renderChangeLog(segment.changeLog)),
       // 挂载数据（lemma 只读：含置信度展示，不可改）
       h('section', { class: 'chain-dsect' },
         h('div', { class: 'chain-detail-h' }, '挂载数据'),
@@ -496,6 +489,13 @@ export function openSegmentDetail(theme, segment, opts = {}) {
           ? h('div', { class: 'chain-evidence-list' },
             ...segment.evidenceRefs.filter((r) => r.type === 'lemma').map((r) => renderEvidenceRef(r, opts)))
           : h('p', { class: 'chain-note' }, '暂无关联命题。命题与置信度只读，不在此修改。')),
+      renderRelations(theme, segment, opts),
+      // 子段 / 分叉
+      renderSubsegments(segment),
+      // 变化历史
+      h('section', { class: 'chain-dsect' },
+        h('div', { class: 'chain-detail-h' }, '变化历史'),
+        renderChangeLog(segment.changeLog)),
       // 证伪 / 收敛 / 结算
       (segment.falsifier || segment.convergeCondition || segment.settleAt)
         ? h('section', { class: 'chain-dsect' },

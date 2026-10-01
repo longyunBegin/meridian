@@ -116,9 +116,6 @@ const DEFAULT_SETTINGS = {
   jevBaseUrl: 'https://api.typesafe.ai/v1/systemone', // Jev 只有一个原生端点，直接 POST 本体
   jevModel: 'jev-latest', // 别名，服务端解析成真实版本（如 jev-1.13.0）后在回答里返回
   jevKey: '',
-  // 产业链图的滚轮缩放灵敏度。触控板一次滚动连发多个小 deltaY，
-  // 固定一档 10% 体感过快；给用户自己调。
-  graphZoom: 1,
   // 数据源接入：绑哪、哪个端口、要不要凭据。曾经全写死——127.0.0.1 + 随机端口 +
   // 每次重启换 token，agent 在别的机器上连不到，在本机也没法配固定地址。
   agentHost: '127.0.0.1',

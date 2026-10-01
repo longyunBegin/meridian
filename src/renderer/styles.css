@@ -688,6 +688,7 @@ select { font: inherit; color: inherit; }
 /* ------------- 右栏：检视 ------------- */
 
 .inspect {
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -695,6 +696,9 @@ select { font: inherit; color: inherit; }
   backdrop-filter: saturate(180%) blur(24px);
   box-shadow: -0.5px 0 0 var(--hairline);
 }
+
+/* 检查器关闭按钮：从认知链挂载数据点进命题后可关闭右栏 */
+.insp-close { position: absolute; top: 12px; right: 12px; z-index: 5; }
 
 .insp-head { padding: 46px 20px 14px; }
 .insp-title {
@@ -1915,7 +1919,10 @@ body.tauri-macos .app {
   transition: border-color .2s var(--ease);
 }
 .chain-evidence:hover { border-color: var(--accent); }
-.chain-evidence-type { font-size: var(--t-caption); color: var(--text-2); }
+.chain-evidence-type {
+  font-size: var(--t-caption); color: var(--text-2); white-space: nowrap;
+  background: var(--fill); border-radius: 999px; padding: 2px 8px;
+}
 .chain-evidence-id { font-size: var(--t-caption); font-weight: 600; }
 .chain-evidence-conf { margin-left: auto; font-size: var(--t-caption); color: var(--text-2); }
 .chain-linkbtn {
