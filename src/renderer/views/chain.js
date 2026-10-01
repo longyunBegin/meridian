@@ -5,7 +5,7 @@
  * 无预设模板，段名由挂载自然生长；不创建 ledger node，不碰 lemma/confidence（公理1）。
  */
 import { h, clear, toast } from '../lib/dom.js'
-import { state, setView } from '../app.js'
+import { state, setView, selectNode } from '../app.js'
 
 const m = window.meridian
 
@@ -96,11 +96,14 @@ export function renderChainSection(theme, opts = {}) {
   return wrap
 }
 
-/** 证据引用行：读数 → 读数详情抽屉；lemma → 只读展示；收件箱 → 条目（预留）。 */
+/** 证据引用行：读数 → 读数详情抽屉；lemma → 点击选中，右栏检查器只读查看详情；收件箱 → 条目（预留）。 */
 function renderEvidenceRef(ref, opts) {
   if (ref.type === 'lemma') {
     const node = (state.nodes || []).find((n) => n.id === ref.id)
-    return h('div', { class: 'chain-evidence chain-evidence-ro' },
+    return h('button', {
+      type: 'button', class: 'chain-evidence', title: '在右栏查看命题详情',
+      onclick: () => { closeSegmentDetail(); selectNode(ref.id) },
+    },
       h('span', { class: 'chain-evidence-type' }, '命题'),
       h('span', { class: 'chain-evidence-id' }, node?.title || ref.title || ref.id.slice(0, 8)),
       node ? h('span', { class: 'chain-evidence-conf' }, `置信度 ${Math.round(node.confidence ?? 0)}%`) : null)

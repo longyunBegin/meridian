@@ -1926,8 +1926,6 @@ body.tauri-macos .app {
 .chain-evidence:hover { border-color: var(--accent); }
 .chain-evidence-type { font-size: var(--t-caption); color: var(--text-2); }
 .chain-evidence-id { font-size: var(--t-caption); font-weight: 600; }
-.chain-evidence-ro { cursor: default; }
-.chain-evidence-ro:hover { border-color: var(--line); }
 .chain-evidence-conf { margin-left: auto; font-size: var(--t-caption); color: var(--text-2); }
 .chain-linkbtn {
   color: var(--accent); font-size: var(--t-body); cursor: pointer; background: none; border: none; padding: 0;
