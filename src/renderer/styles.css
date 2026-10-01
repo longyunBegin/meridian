@@ -1824,6 +1824,26 @@ body.tauri-macos .app {
 
 /* ============ 主题认知链 ============ */
 .chain-section { margin-top: 20px; }
+/* 当前认知图（P2）：语义图谱 */
+.cog-stage { margin-top: 12px; }
+.cog-svg { width: 100%; height: auto; display: block; background: var(--bg-1); border: 1px solid var(--hairline); border-radius: 12px; }
+.cog-node { cursor: pointer; }
+.cog-node rect { transition: stroke-width .15s; }
+.cog-node:hover rect { stroke-width: 2.5; }
+.cog-node-title { font-size: var(--t-body); fill: var(--text-1); font-weight: 600; }
+.cog-node-sub { font-size: var(--t-caption); fill: var(--text-3); }
+.cog-edge { fill: none; stroke-width: 1.6; }
+.cog-edge.is-review { stroke-dasharray: 5 4; }
+.cog-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: var(--t-caption); color: var(--text-2); }
+.cog-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cog-legend-line { width: 34px; height: 8px; }
+.cog-legend-sep { width: 1px; height: 14px; background: var(--hairline); }
+.cog-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.cog-float { margin-top: 12px; }
+.cog-float-btn { background: none; border: none; color: var(--text-2); font-size: var(--t-caption); cursor: pointer; padding: 4px 0; }
+.cog-float-btn:hover { color: var(--text-1); }
+.cog-float-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.cog-float-item { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-caption); color: var(--text-2); background: var(--bg-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 4px 10px; }
 .chain-sect-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .chain-sect-title { font-size: var(--t-title); font-weight: 600; }
 .chain-sect-sub { font-size: var(--t-caption); color: var(--text-2); }

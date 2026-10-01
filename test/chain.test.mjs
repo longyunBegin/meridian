@@ -170,91 +170,31 @@ const mergedSeg = chain.getChain(closeTheme.id).segments.find((s) => s.name === 
 chain.mergeChainSegments(closeTheme.id, [mergedSeg.id], targetSeg.id, '测试合并')
 ok('合并关闭也记 closedAt', !!chain.getChain(closeTheme.id).segments.find((s) => s.id === mergedSeg.id).closedAt)
 
-console.log('\n— 视图源码断言（分层渲染） —')
+console.log('\n— 视图源码断言（语义图谱，P2） —')
 const { readFileSync: readFileSyncChain } = await import('node:fs')
+const { existsSync: existsSyncChain } = await import('node:fs')
 const chainViewSrc = readFileSyncChain(join(ROOT, 'src/renderer/views/chain.js'), 'utf8')
-ok('视图定义默认层名（展示分组）', chainViewSrc.includes("DEFAULT_LAYER_NAMES = ['第一层', '第二层', '第三层']"))
-ok('视图渲染 chain-layers', chainViewSrc.includes('chain-layers'))
-ok('视图无因果连接徽标', !chainViewSrc.includes('chain-link-badge') && !chainViewSrc.includes('拆解为'))
-ok('层数可增（+ 加一层）', chainViewSrc.includes('chain-layer-add'))
-ok('层名可重命名', chainViewSrc.includes('chainSetLayers'))
-ok('节点卡保留 data-seg-id（墓碑查看跳转）', chainViewSrc.includes("class: 'cnode', 'data-seg-id'"))
-ok('已关闭段收到底部 strip', chainViewSrc.includes('chain-closed'))
-ok('抽屉可切换层级', chainViewSrc.includes('chain-role-select'))
-const vaultViewSrc = readFileSyncChain(join(ROOT, 'src/renderer/views/vault.js'), 'utf8')
-ok('墓碑复活不再抬 confidence（公理1）', !vaultViewSrc.includes('Math.max(25, n.confidence)'))
-ok('墓碑元数据突出最后更新时间', vaultViewSrc.includes('更新于 ${String(seg.updatedAt)') && vaultViewSrc.includes('证据 ${evCount} 条'))
-ok('墓碑归档原因来自账本字段推导', vaultViewSrc.includes('function deadReason') &&
-  vaultViewSrc.includes("n.settlement?.correct === false") && vaultViewSrc.includes('已证伪') &&
-  vaultViewSrc.includes('低置信度') && vaultViewSrc.includes('已删除'))
-ok('墓碑命题不再用置信度色点表示归档状态', !/deadLemmaRow[\s\S]{0,800}confColor/.test(vaultViewSrc))
-ok('墓碑整棵复活改名恢复整条链', vaultViewSrc.includes('恢复整条链') && !vaultViewSrc.includes('整棵复活'))
-ok('墓碑命题有已证伪/低置信度筛选', vaultViewSrc.includes("['falsified', '已证伪']") && vaultViewSrc.includes("['lowconf', '低置信度']"))
-ok('连线箭头落在卡片外可见间隙', chainViewSrc.includes('f(yB + 4)') && chainViewSrc.includes('箭头必须落在卡片下方的可见间隙里'))
-ok('删命题后回到上一页', readFileSyncChain(join(ROOT, 'src/renderer/app.js'), 'utf8').includes('state.backTo') &&
-  vaultViewSrc.includes("backTo = { view: 'vault', auditKind: 'dead' }"))
-ok('链轨线只走 CSS（纯结构，不表方向）', chainViewSrc.includes('chain-rail'))
-ok('连线只画真实关系（drawChainEdges + computeChainEdges）',
-  chainViewSrc.includes('drawChainEdges') && chainViewSrc.includes('computeChainEdges'))
-ok('链轨居中', readFileSyncChain(join(ROOT, 'src/renderer/styles.css'), 'utf8').includes('.chain-rail') &&
-  readFileSyncChain(join(ROOT, 'src/renderer/styles.css'), 'utf8').includes('left: 50%'))
-ok('连线统一样式：起点圆点 + 终点箭头',
-  chainViewSrc.includes('chain-edge-dot') && chainViewSrc.includes("marker-end', 'url(#chainArrow)"))
-ok('连线 SVG 在卡片下层（不穿过卡片）', chainViewSrc.includes('layers.append(edgeSvg, stack)'))
-ok('连线脚注拆分节点与关系状态',
-  chainViewSrc.includes('节点标签只表示该段事实的确认状态；连线表示的段间关系仍待检验，不表示因果已成立。'))
-ok('节点状态标签只谈事实', chainViewSrc.includes("label: '事实已确认'") && chainViewSrc.includes("label: '事实待验证'"))
-ok('层是分组的提示可见', chainViewSrc.includes('层只是分组，点击层名可重命名'))
-ok('详情抽屉对齐 demo：节点详情标题 + kicker 行',
-  chainViewSrc.includes("class: 'chain-drawer-title' }, '节点详情'") && chainViewSrc.includes('chain-drawer-kicker'))
-ok('详情抽屉：关联节点 chips 可点击跳转',
-  chainViewSrc.includes('关联节点') && chainViewSrc.includes('chain-rel-chip') && chainViewSrc.includes('点击跳转'))
-ok('详情抽屉：支撑线索可收起',
-  chainViewSrc.includes('支撑线索') && chainViewSrc.includes('chain-sect-toggle'))
-ok('详情抽屉不用 demo 的固定因果角色',
-  !chainViewSrc.includes('核心命题') && !chainViewSrc.includes('驱动因素') && !chainViewSrc.includes('观察信号'))
-
-console.log('\n— computeChainEdges 纯函数 —')
-const { computeChainEdges } = await import('../src/renderer/lib/chain-edges.js')
-const eSegs = [
-  { id: 'a', name: '推理负载上移', mergedFrom: [], affects: ['单柜连接更密'] },
-  { id: 'b', name: '单柜连接更密', mergedFrom: ['推理负载上移'], affects: [] },
-  { id: 'c', name: '规格迭代节奏', mergedFrom: [], affects: ['不存在的段'] },
-]
-const edges = computeChainEdges(eSegs)
-ok('同对段多关系只画一条线（曲线重叠）', edges.filter((e) => e.from === 'a' && e.to === 'b').length === 1)
-ok('解析不到的段名不画线', !edges.some((e) => e.to === 'c' || e.from === 'c'))
-const mEdges = computeChainEdges([
-  { id: 'm1', name: '旧段', mergedFrom: [], affects: [] },
-  { id: 'm2', name: '新段', mergedFrom: ['旧段'], affects: [] },
-])
-ok('mergedFrom 解析为边',
-  mEdges.length === 1 && mEdges[0].from === 'm1' && mEdges[0].to === 'm2' && mEdges[0].kind === 'merged')
-const aEdges = computeChainEdges([
-  { id: 'a1', name: '上游', mergedFrom: [], affects: ['下游'] },
-  { id: 'a2', name: '下游', mergedFrom: [], affects: [] },
-])
-ok('affects 解析为边',
-  aEdges.length === 1 && aEdges[0].from === 'a1' && aEdges[0].to === 'a2' && aEdges[0].kind === 'affects')
-ok('自环不画线', !computeChainEdges([{ id: 'x', name: '自指', mergedFrom: ['自指'], affects: [] }]).length)
-ok('空输入返回空数组', Array.isArray(computeChainEdges(null)) && computeChainEdges(null).length === 0)
-ok('重名段取第一个', (() => {
-  const es = computeChainEdges([
-    { id: 'p1', name: '重名', mergedFrom: [], affects: [] },
-    { id: 'p2', name: '重名', mergedFrom: [], affects: [] },
-    { id: 'q', name: '下游', mergedFrom: ['重名'], affects: [] },
-  ])
-  return es.length === 1 && es[0].from === 'p1' && es[0].to === 'q'
-})())
+const stylesSrcChain = readFileSyncChain(join(ROOT, 'src/renderer/styles.css'), 'utf8')
+ok('旧分层渲染已删除', !chainViewSrc.includes('chain-layers') && !chainViewSrc.includes('DEFAULT_LAYER_NAMES'))
+ok('旧连线代码已删除', !chainViewSrc.includes('drawChainEdges') && !chainViewSrc.includes('chainArrow'))
+ok('chain-edges.js 已删除', !existsSyncChain(join(ROOT, 'src/renderer/lib/chain-edges.js')))
+ok('旧段抽屉已删除', !chainViewSrc.includes('openSegmentDetail') && !chainViewSrc.includes('renderSegmentCard'))
+ok('新视图画语义图谱 SVG', chainViewSrc.includes('cog-svg') && chainViewSrc.includes("class: 'cog-node'"))
+ok('三节点类型语义色', chainViewSrc.includes("label: '主张'") && chainViewSrc.includes("label: '推断'") && chainViewSrc.includes("label: '证据'"))
+ok('三种关系语义色', chainViewSrc.includes("label: '支持'") && chainViewSrc.includes("label: '推导'") && chainViewSrc.includes("label: '反驳'"))
+ok('待复核边用虚线', chainViewSrc.includes('is-review') && chainViewSrc.includes('cog-arrow-review'))
+ok('力导向布局', chainViewSrc.includes('layoutGraph') && chainViewSrc.includes('seededRand'))
+ok('节点可拖拽', chainViewSrc.includes('pointerdown') && chainViewSrc.includes('redrawEdges'))
+ok('图例', chainViewSrc.includes('cog-legend'))
+ok('图谱样式存在', stylesSrcChain.includes('.cog-svg') && stylesSrcChain.includes('.cog-edge'))
+ok('节点详情读投影', chainViewSrc.includes('openNodeDetail') && chainViewSrc.includes('chainEvents') && chainViewSrc.includes('chainProjection'))
+ok('详情展示历史版本', chainViewSrc.includes('历史版本') && chainViewSrc.includes('TYPE_LABEL'))
+ok('挂载走事件账本', chainViewSrc.includes('chainMountEvent') && !chainViewSrc.includes('m.chainMount('))
+ok('收件箱挂载函数保留', chainViewSrc.includes('renderProposalDraft'))
+ok('证据详情函数保留', chainViewSrc.includes('openEvidenceDetail'))
+ok('命题证据可点进右栏', /ref\.type === 'lemma'[\s\S]*?selectNode\(ref\.id\)/.test(chainViewSrc))
+ok('节点保留 data-status', chainViewSrc.includes('data-status'))
+ok('未连入图谱收进列表', chainViewSrc.includes('cog-float') && chainViewSrc.includes('floatingCount'))
 
 
-console.log('\n— 视图源码断言（卡片精简 + 方向连线） —')
-ok('卡片只留结论＋关键证据＋状态（cnode-key）', chainViewSrc.includes("class: 'cnode-key'"))
-ok('卡片不再显示依据数量', !chainViewSrc.includes("class: 'cnode-ev'"))
-ok('卡片不再显示分支数/详情箭头', !chainViewSrc.includes("class: 'cnode-foot'"))
-ok('卡片不再直接渲染核心信息（收进抽屉）', !chainViewSrc.includes("class: 'cnode-core'"))
-ok('关键证据取首条引用标题', chainViewSrc.includes('keyEvidenceTitle'))
-ok('连线按关系区分样式（affects 虚线）', chainViewSrc.includes("is-affects"))
-
-console.log(`\nchain: ${pass} 通过, ${fail} 失败`)
 process.exit(fail ? 1 : 0)

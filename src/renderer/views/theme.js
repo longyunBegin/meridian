@@ -1,6 +1,6 @@
 import { h, toast, confirmToast } from '../lib/dom.js'
 import { state, refresh } from '../app.js'
-import { renderChainSection, openSegmentDetail, openEvidenceDetail } from './chain.js'
+import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
 
 const m = window.meridian
 
@@ -113,7 +113,7 @@ export function renderTheme(mid) {
     h('h1', {}, theme ? theme.name : ''),
   )
   const chainSection = () => renderChainSection(theme, {
-    onOpen: (seg) => openSegmentDetail(theme, seg, { onEvidence: openEvidenceDetail }),
+    onOpen: (node) => openNodeDetail(theme, node, { onEvidence: openEvidenceDetail }),
     onEvidence: openEvidenceDetail,
   })
   // 主题头固定，下方内容区独立滚动；右栏检视面板本就独立滚动，不受影响

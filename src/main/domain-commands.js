@@ -34,6 +34,8 @@ import {
   getInboxItem, setInboxChainDraft, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
+import { getChainProjection, mountDraftToEvents } from './chain-projector.js'
+import { getEvents as getChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
@@ -555,6 +557,11 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
    * 可进 outbox 白名单做双向同步。
    */
   commands.register('chain:get', (themeId) => getChain(themeId))
+  // 当前认知图（只读投影）：事件账本 → 语义图谱。本地命令，不进 outbox。
+  commands.register('chain:getProjection', (themeId) => getChainProjection(themeId))
+  commands.register('chain:getEvents', (themeId) => ({ ok: true, events: getChainEvents(themeId) }))
+  // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
+  commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {
     const result = mountToChain(themeId, { ...payload, mountId: payload.mountId || uid() })
     // 草稿状态 → mounted（失败不影响挂载本身）

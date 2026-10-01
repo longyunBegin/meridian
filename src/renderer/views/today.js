@@ -710,10 +710,17 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         editable ? h('div', { class: 'draft-theme-row' },
           h('span', { class: 'draft-label' }, '主题'), themeSelect,
           theme ? null : h('span', { class: 'inbox-detail-note' }, '该条目没有可用主题，无法入库。')) : null,
-        theme && !unextracted ? renderProposalDraft(item,
-          (theme.chain?.segments || []).map((s) => ({ id: s.id, name: s.name })),
+        theme && !unextracted ? renderProposalDraft(item, [],
           {
             themeId: itemThemeId(item), bare: true,
+            loadExisting: async () => {
+              try {
+                const proj = await m.chainProjection(itemThemeId(item))
+                return (proj.nodes || [])
+                  .filter((n) => n.kind === 'claim' || n.kind === 'inference')
+                  .map((n) => ({ id: n.id, name: n.title }))
+              } catch { return [] }
+            },
             onDraft: () => rerender ? rerender() : onRouteChange(),
             onMounted: () => { rerender ? rerender() : onRouteChange(); refresh() },
           }) : null,

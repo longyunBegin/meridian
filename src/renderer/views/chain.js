@@ -1,526 +1,433 @@
 /**
- * 主题认知链 · 视图组件
+ * 认知链 · 当前认知图（P2）
  *
- * 链 = 主题的认知快照：反映"我对这个主题认知的变化"。
- * 无预设模板，段名由挂载自然生长；不创建 ledger node，不碰 lemma/confidence（公理1）。
+ * 只读投影：事件账本 → 语义图谱。
+ * 节点 = 主张 / 推断 / 证据；边 = supports / derives / contradicts（概念 02）。
+ * 替换旧分层链视图；旧分层、旧连线、旧段抽屉代码已删除，不并存。
+ *
+ * 保留：renderProposalDraft（收件箱挂载，现走 chain:mountEvent 只追加事件）、
+ * openEvidenceDetail（读数/收件箱依据详情）。
+ *
+ * 公理1：本视图只读投影，不创建/修改/删除 lemma，不改 confidence，不代审批。
  */
 import { h, clear, toast } from '../lib/dom.js'
-import { computeChainEdges, segmentNameIndex } from '../lib/chain-edges.js'
-import { state, setView, selectNode, refresh } from '../app.js'
+import { state, setView, selectNode } from '../app.js'
 
 const m = window.meridian
-
-/** 段状态 → 文案/语义色。标签只描述该段事实的确认状态，不描述段间关系。 */
-export const SEG_STATUS = {
-  confirmed: { label: '事实已确认', cls: 'st-confirmed' },
-  pending: { label: '事实待验证', cls: 'st-pending' },
-  stale: { label: '数据待更新', cls: 'st-stale' },
-  forking: { label: '分叉待收敛', cls: 'st-forking' },
-  closed: { label: '已关闭', cls: 'st-closed' },
-}
-
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
-/**
- * 在 .chain-layers 上画段间连线：只画 computeChainEdges 给出的真实关系
- *（由谁合并而来 / 影响谁），不推导、不补全。返回画出的边数。
- *
- * 走线统一为正交折线，所有边形状一致：
- *   源卡底边出（起点圆点）→ 下 12px 进层底留白 → 水平进入居中链轨
- *   → 沿链轨到目标卡下方 14px → 水平到目标卡中线 → 向上到卡底 4px 处收箭头
- * 箭头落在卡片之外的可见间隙里，方向可读；SVG 在卡片下层，被卡片遮挡的
- * 线段天然不可见，不会穿过卡片；水平段只走层底留白，不穿过层标题。
- * SVG 用像素坐标（viewBox = 容器像素尺寸）。
- */
-function drawChainEdges(layersEl, segments) {
-  const svg = layersEl.querySelector('.chain-edges')
-  if (!svg) return 0
-  while (svg.firstChild) svg.removeChild(svg.firstChild)
-  const edges = computeChainEdges(segments)
-  if (!edges.length) return 0
-  const elOf = new Map()
-  layersEl.querySelectorAll('[data-seg-id]').forEach((el) => {
-    if (!elOf.has(el.dataset.segId)) elOf.set(el.dataset.segId, el)
-  })
-  const box = layersEl.getBoundingClientRect()
-  if (!box.width || !box.height) return 0
-  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`)
-
-  const defs = document.createElementNS(SVG_NS, 'defs')
-  const marker = document.createElementNS(SVG_NS, 'marker')
-  marker.setAttribute('id', 'chainArrow')
-  marker.setAttribute('viewBox', '0 0 10 10')
-  marker.setAttribute('refX', '9')
-  marker.setAttribute('refY', '5')
-  marker.setAttribute('markerWidth', '6.5')
-  marker.setAttribute('markerHeight', '6.5')
-  marker.setAttribute('orient', 'auto')
-  const arrow = document.createElementNS(SVG_NS, 'path')
-  arrow.setAttribute('d', 'M 1 1 L 9 5 L 1 9 z')
-  marker.appendChild(arrow)
-  defs.appendChild(marker)
-  svg.appendChild(defs)
-
-  const rel = (el) => {
-    const r = el.getBoundingClientRect()
-    return { x: r.left - box.left, y: r.top - box.top, w: r.width, h: r.height }
-  }
-  const f = (n) => Math.round(n * 10) / 10
-  const cx = box.width / 2
-  let drawn = 0
-  for (const e of edges) {
-    const a = elOf.get(e.from)
-    const b = elOf.get(e.to)
-    if (!a || !b) continue
-    const ra = rel(a)
-    const rb = rel(b)
-    const ax = ra.x + ra.w / 2
-    const bx = rb.x + rb.w / 2
-    const yA = ra.y + ra.h
-    const yB = rb.y + rb.h
-    const dot = document.createElementNS(SVG_NS, 'circle')
-    dot.setAttribute('cx', f(ax))
-    dot.setAttribute('cy', f(yA + 4))
-    dot.setAttribute('r', '2.5')
-    dot.setAttribute('class', 'chain-edge-dot')
-    svg.appendChild(dot)
-    const p = document.createElementNS(SVG_NS, 'path')
-    // 箭头必须落在卡片下方的可见间隙里（指向上方目标卡），不能伸进卡片背后——
-    // 否则方向不可读，连线看起来像无方向的分隔线。
-    p.setAttribute('d',
-      `M ${f(ax)} ${f(yA + 7)} L ${f(ax)} ${f(yA + 12)} ` +
-      `L ${f(cx)} ${f(yA + 12)} L ${f(cx)} ${f(yB + 14)} ` +
-      `L ${f(bx)} ${f(yB + 14)} L ${f(bx)} ${f(yB + 4)}`)
-    // 方向即语义：merged（合并而来）实线，affects（影响）虚线，箭头一律指向目标段
-    p.setAttribute('class', 'chain-edge' + (e.kind === 'affects' ? ' is-affects' : ''))
-    p.setAttribute('marker-end', 'url(#chainArrow)')
-    svg.appendChild(p)
-    drawn++
-  }
-  return drawn
+/** 节点语义色（对齐概念图）。 */
+const KIND = {
+  claim: { label: '主张', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  inference: { label: '推断', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+  evidence: { label: '证据', color: '#64748b', bg: '#f8fafc', border: '#e2e8f0' },
 }
+/** 关系语义色（对齐概念图）。 */
+const REL = {
+  supports: { label: '支持', color: '#2563eb' },
+  derives: { label: '推导', color: '#7c3aed' },
+  contradicts: { label: '反驳', color: '#ea580c' },
+}
+/** 节点状态文案：只描述该节点事实的确认状态，不描述关系。 */
+const NODE_STATUS = {
+  confirmed: { label: '事实已确认' },
+  pending: { label: '事实待验证' },
+  stale: { label: '数据待更新' },
+  forking: { label: '分叉待收敛' },
+  closed: { label: '已关闭' },
+}
+const TYPE_LABEL = {
+  'evidence.appended': '证据追加',
+  'claim.created': '主张创建',
+  'inference.created': '推断创建',
+  'relation.declared': '关系声明',
+  'correction.appended': '更正',
+  'settlement.recorded': '结算',
+  'node.archived': '归档',
+  'topic.linked': '主题关联',
+}
+const ACTOR_LABEL = { user: '你', migration: '迁移', 'pipeline:capture': '收件箱捕获' }
 
-/** 展示分层：只做页面分组，不蕴含因果或推演关系。层名/层数用户可改。 */
-export const DEFAULT_LAYER_NAMES = ['第一层', '第二层', '第三层']
-export const MAX_LAYERS = 12
+const NODE_SIZE = {
+  claim: { w: 150, h: 56 },
+  inference: { w: 140, h: 52 },
+  evidence: { w: 108, h: 42 },
+}
+const nodeSize = (n) => NODE_SIZE[n.kind] || NODE_SIZE.claim
 
-export function layerNamesOf(theme) {
-  const names = theme?.chain?.layerNames
-  if (Array.isArray(names) && names.length) return names.map((n) => String(n))
-  return [...DEFAULT_LAYER_NAMES]
-}
-export function layerNameOf(theme, i) {
-  const names = layerNamesOf(theme)
-  return names[Math.min(Math.max(i | 0, 0), names.length - 1)]
-}
-export function segStatusLabel(status) {
-  return (SEG_STATUS[status] || SEG_STATUS.pending).label
-}
-export function segStatusCls(status) {
-  return (SEG_STATUS[status] || SEG_STATUS.pending).cls
-}
-
-function fmtDate(at) {
-  if (!at) return ''
-  return String(at).slice(0, 10)
-}
-
-/** 段卡片：只留「结论＋一条关键证据＋状态」。依据数、分支数、核心信息收进点击后的详情抽屉。 */
-export function renderSegmentCard(theme, segment, opts = {}) {
-  const st = SEG_STATUS[segment.status] || SEG_STATUS.pending
-  const refs = Array.isArray(segment.evidenceRefs) ? segment.evidenceRefs : []
-  const keyTitle = refs.length ? keyEvidenceTitle(refs[0]) : ''
-
-  const attrs = {
-    type: 'button', class: 'cnode', 'data-seg-id': segment.id,
-    'data-status': segment.status || 'pending',
-    onclick: () => opts.onOpen?.(segment),
-  }
-  if (keyTitle) attrs.title = `关键证据：${keyTitle}`
-  const card = h('button', attrs,
-    h('div', { class: 'cnode-top' },
-      h('span', { class: `chain-pill ${st.cls}` }, st.label)),
-    h('div', { class: 'cnode-name' }, segment.name || '未命名段'),
-    keyTitle
-      ? h('div', { class: 'cnode-key' },
-        h('span', { class: 'cnode-key-label' }, '关键证据'),
-        h('span', { class: 'cnode-key-text' }, keyTitle))
-      : null,
-  )
-  return card
-}
-
-/** 首条证据引用的展示标题：lemma 走节点标题，其余用引用自带标题。 */
-function keyEvidenceTitle(ref) {
-  if (!ref) return ''
-  if (ref.type === 'lemma') {
-    const node = (state.nodes || []).find((n) => n.id === ref.id)
-    if (node?.title) return node.title
-  }
-  return ref.title || String(ref.id || '').slice(0, 8)
-}
-
-/** 已关闭段：在链底部收成一条安静的 strip（墓碑区做管理，这里只留定位入口）。 */
-function renderClosedStrip(theme, closedSegs, opts = {}) {
-  if (!closedSegs.length) return null
-  return h('div', { class: 'chain-closed' },
-    h('span', { class: 'chain-closed-label' }, `已关闭 · ${closedSegs.length}`),
-    ...closedSegs.map((s) => h('button', {
-      type: 'button', class: 'chain-closed-chip', 'data-seg-id': s.id, title: s.name || '未命名段',
-      onclick: () => opts.onOpen?.(s),
-    }, s.name || '未命名段')),
-    h('button', {
-      type: 'button', class: 'chain-closed-link',
-      onclick: () => setView('vault'),
-    }, '墓碑区 →'),
-  )
-}
-
-/** 层重命名：点击层名 → 行内输入 → 回车/失焦提交，Esc 取消。 */
-function renameLayer(theme, index, layerEl) {
-  const nameBtn = layerEl.querySelector('.chain-layer-name')
-  if (!nameBtn || layerEl.querySelector('.chain-layer-rename')) return
-  const oldName = layerNamesOf(theme)[index] || ''
-  const input = h('input', { class: 'chain-layer-rename', value: oldName, maxlength: 12 })
-  nameBtn.replaceWith(input)
-  input.focus()
-  input.select()
-  let done = false
-  const commit = async (save) => {
-    if (done) return
-    done = true
-    const v = String(input.value || '').trim()
-    if (save && v && v !== oldName) {
-      const names = layerNamesOf(theme)
-      names[index] = v
-      await m.chainSetLayers(theme.id, names)
-    }
-    await refresh()
-  }
-  input.addEventListener('keydown', (e) => {
-    e.stopPropagation()
-    if (e.key === 'Enter') commit(true)
-    else if (e.key === 'Escape') commit(false)
-  })
-  input.addEventListener('blur', () => commit(true))
-}
+/* ------------------------------------------------------------------ */
+/* 认知链区块：主题页内的语义图谱                                       */
+/* ------------------------------------------------------------------ */
 
 /**
- * 主链视图：展示分层（层只是页面分组，不表示因果已成立）；已关闭段收到底部 strip。
- * 链感来自两处：居中纵贯各层的细线（纯结构，不表方向），以及段间真实关系
- *（由谁合并而来 / 影响谁）的连线——只画账本里存在的关系，不推导。
- * 连线统一样式：起点圆点在源卡底边，沿链轨走，箭头进目标卡底边。
+ * 主题页认知链区块。投影是异步的：先画壳，拿到投影后再画图。
+ * opts: { onOpen(node), onEvidence(ref) }
  */
 export function renderChainSection(theme, opts = {}) {
-  const chain = theme.chain || { segments: [] }
-  const segments = Array.isArray(chain.segments) ? chain.segments : []
-  const live = segments.filter((s) => s.status !== 'closed')
-  const closed = segments.filter((s) => s.status === 'closed')
-  const pendingCount = live.filter((s) => (s.status || 'pending') === 'pending').length
-
   const wrap = h('section', { class: 'chain-section', 'aria-label': '认知链' },
     h('div', { class: 'chain-path-h' },
       h('div', {},
         h('div', { class: 'chain-kicker' }, '认知链'),
-        h('div', { class: 'chain-counts' },
-          `全链路 ${live.length}${pendingCount ? ` · 事实待验证 ${pendingCount}` : ''}`),
-        h('div', { class: 'chain-hint' }, '层只是分组，点击层名可重命名'))),
-  )
-
-  if (!segments.length) {
-    wrap.append(h('div', { class: 'chain-empty' },
-      h('p', {}, '还没有认知维度。'),
-      h('p', { class: 'chain-empty-sub' }, '在收件箱用提案草稿确认挂载后，段会在这里长出来。')))
-    return wrap
-  }
-
-  const layerNames = layerNamesOf(theme)
-  const layers = h('div', { class: 'chain-layers' })
-  const stack = h('div', { class: 'chain-layer-stack' })
-  stack.append(h('div', { class: 'chain-rail', 'aria-hidden': 'true' }))
-  const edgeSvg = h('svg', { class: 'chain-edges', 'aria-hidden': 'true' })
-  // SVG 在卡片下层：被卡片遮挡的线段天然不可见，不会画在卡片上面
-  layers.append(edgeSvg, stack)
-  const byLayer = layerNames.map(() => [])
-  for (const s of live) {
-    const li = Number.isInteger(s.layer) && s.layer >= 0 ? Math.min(s.layer, layerNames.length - 1) : 0
-    byLayer[li].push(s)
-  }
-
-  layerNames.forEach((name, i) => {
-    const nodes = byLayer[i]
-    const layer = h('div', { class: 'chain-layer', 'data-layer': i })
-    const labelRow = h('div', { class: 'chain-layer-label' })
-    const nameBtn = h('button', {
-      type: 'button', class: 'chain-layer-name', title: '点击重命名这一层',
-      onclick: () => renameLayer(theme, i, layer),
-    }, name)
-    labelRow.append(nameBtn)
-    if (nodes.length) labelRow.append(h('span', { class: 'chain-layer-count' }, String(nodes.length)))
-    if (!nodes.length && layerNames.length > 1) {
-      const del = h('button', {
-        type: 'button', class: 'chain-layer-del', title: '删除这个空层',
-        onclick: async (e) => {
-          e.stopPropagation()
-          const names = layerNamesOf(theme).filter((_, j) => j !== i)
-          await m.chainSetLayers(theme.id, names)
-          await refresh()
-        },
-      }, '×')
-      labelRow.append(del)
-    }
-    layer.append(labelRow)
-    if (nodes.length) {
-      const row = h('div', { class: 'chain-layer-nodes' })
-      nodes.forEach((seg) => row.append(renderSegmentCard(theme, seg, opts)))
-      layer.append(row)
-    } else {
-      layer.append(h('div', { class: 'chain-layer-empty' }, '暂无内容'))
-    }
-    stack.append(layer)
+        h('div', { class: 'chain-counts', 'data-cog-counts': '' }, '正在重放事件…'),
+        h('div', { class: 'chain-hint' }, '当前认知图 · 只读投影，由事件账本按版本重放生成'))))
+  const stage = h('div', { class: 'cog-stage' })
+  wrap.append(stage)
+  loadProjection(theme, stage, opts).catch((e) => {
+    clear(stage).append(h('p', { class: 'chain-note' }, '投影加载失败：' + (e.message || e)))
   })
-
-  if (layerNames.length < MAX_LAYERS) {
-    const add = h('button', { type: 'button', class: 'chain-layer-add' }, '+ 加一层')
-    add.onclick = async () => {
-      const names = layerNamesOf(theme)
-      await m.chainSetLayers(theme.id, [...names, `第${names.length + 1}层`])
-      await refresh()
-    }
-    layers.append(add)
-  }
-  const footnote = h('div', { class: 'chain-footnote', hidden: true },
-    '节点标签只表示该段事实的确认状态；连线表示的段间关系仍待检验，不表示因果已成立。')
-  wrap.append(layers, footnote)
-
-  // 挂载后按卡片实际位置画连线；尺寸变化时重画（只读布局，不写数据）
-  const redraw = () => {
-    if (!layers.isConnected) return
-    footnote.hidden = drawChainEdges(layers, live) === 0
-  }
-  requestAnimationFrame(redraw)
-  if (typeof ResizeObserver !== 'undefined') {
-    const ro = new ResizeObserver(() => {
-      if (!layers.isConnected) { ro.disconnect(); return }
-      redraw()
-    })
-    ro.observe(layers)
-  }
-
-  const strip = renderClosedStrip(theme, closed, opts)
-  if (strip) wrap.append(strip)
-
   return wrap
 }
 
-/** 证据引用行：读数 → 读数详情抽屉；lemma → 点击选中，右栏检查器只读查看详情；收件箱 → 条目（预留）。 */
-function renderEvidenceRef(ref, opts) {
-  if (ref.type === 'lemma') {
-    const node = (state.nodes || []).find((n) => n.id === ref.id)
-    return h('button', {
-      type: 'button', class: 'chain-evidence', title: '在右栏查看命题详情',
-      onclick: () => { closeSegmentDetail(); selectNode(ref.id) },
-    },
-      h('span', { class: 'chain-evidence-type' }, '命题'),
-      h('span', { class: 'chain-evidence-id' }, node?.title || ref.title || ref.id.slice(0, 8)),
-      node ? h('span', { class: 'chain-evidence-conf' }, `置信度 ${Math.round(node.confidence ?? 0)}%`) : null)
+async function loadProjection(theme, stage, opts) {
+  const proj = await m.chainProjection(theme.id)
+  const countsEl = stage.parentElement.querySelector('[data-cog-counts]')
+  const kinds = { claim: 0, inference: 0, evidence: 0 }
+  for (const n of proj.nodes) if (kinds[n.kind] !== undefined) kinds[n.kind]++
+  const parts = []
+  if (kinds.claim) parts.push(`主张 ${kinds.claim}`)
+  if (kinds.inference) parts.push(`推断 ${kinds.inference}`)
+  if (kinds.evidence) parts.push(`证据 ${kinds.evidence}`)
+  if (countsEl) countsEl.textContent = `事件 ${proj.eventCount} · ` + (parts.join(' · ') || '暂无节点')
+
+  if (!proj.nodes.length) {
+    stage.append(h('div', { class: 'chain-empty' },
+      h('p', {}, '还没有认知事件。'),
+      h('p', { class: 'chain-empty-sub' }, '在收件箱用提案草稿确认挂载后，主张会在这里长出来。')))
+    return
   }
-  const label = ref.type === 'reading' ? '读数' : '收件箱条目'
-  return h('button', {
-    type: 'button', class: 'chain-evidence',
-    onclick: () => opts.onEvidence?.(ref),
-  }, h('span', { class: 'chain-evidence-type' }, label),
-    h('span', { class: 'chain-evidence-id' }, ref.title || ref.id.slice(0, 8)))
+  drawGraph(stage, proj, theme, opts)
+  if (proj.floatingCount > 0) renderFloating(stage, proj)
 }
 
-/** 变化历史时间线 */
-function renderChangeLog(changeLog) {
-  const logs = Array.isArray(changeLog) ? changeLog : []
-  if (!logs.length) return h('p', { class: 'chain-note' }, '暂无变化记录。')
-  const items = [...logs].reverse().map((e) => h('div', { class: 'chain-log-item' },
-    h('div', { class: 'chain-log-at' }, fmtDate(e.at)),
-    h('div', { class: 'chain-log-body' },
-      e.oldValue || e.newValue
-        ? h('div', { class: 'chain-log-delta' },
-          h('span', { class: 'chain-log-old' }, e.oldValue || '—'),
-          h('span', { class: 'chain-log-arrow' }, '→'),
-          h('span', { class: 'chain-log-new' }, e.newValue || '—'))
-        : null,
-      e.reason ? h('div', { class: 'chain-log-reason' }, e.reason) : null,
-    )))
-  return h('div', { class: 'chain-timeline' }, ...items)
+/** 未连入图谱的节点：收成一条可展开的安静列表，不进图。 */
+function renderFloating(stage, proj) {
+  const list = h('div', { class: 'cog-float-list', hidden: true })
+  for (const n of (proj.floating || []).slice(0, 200)) {
+    list.append(h('span', { class: 'cog-float-item' },
+      h('i', { class: 'cog-dot', style: `background:${(KIND[n.kind] || KIND.claim).color}` }),
+      `${(KIND[n.kind] || KIND.claim).label} · ${n.title}`))
+  }
+  if ((proj.floating || []).length > 200) {
+    list.append(h('span', { class: 'cog-float-item' }, `……等共 ${proj.floating.length} 项`))
+  }
+  const btn = h('button', {
+    type: 'button', class: 'cog-float-btn',
+    onclick: () => { list.hidden = !list.hidden; btn.textContent = `${list.hidden ? '展开' : '收起'}未连入图谱（${proj.floatingCount}）` },
+  }, `展开未连入图谱（${proj.floatingCount}）`)
+  stage.append(h('div', { class: 'cog-float' }, btn, list))
 }
 
-/** 子段（分叉）展示：与段同构 */
-function renderSubsegments(segment) {
-  const subs = (segment.subsegments || []).filter((s) => s.status !== 'closed')
-  const closed = (segment.subsegments || []).filter((s) => s.status === 'closed')
-  if (!subs.length && !closed.length) return null
-  const box = h('div', { class: 'chain-subsegs' },
-    h('div', { class: 'chain-detail-h' }, `分支（${subs.length}）`))
-  for (const s of subs) {
-    const st = SEG_STATUS[s.status] || SEG_STATUS.pending
-    box.append(h('div', { class: 'chain-subseg' },
-      h('div', { class: 'chain-subseg-head' },
-        h('span', { class: 'chain-subseg-name' }, s.name),
-        h('span', { class: `chain-pill ${st.cls}` }, st.label)),
-      s.coreInfo ? h('div', { class: 'chain-subseg-core' }, s.coreInfo) : null,
-      s.kind === 'conditional' && s.convergeCondition
-        ? h('div', { class: 'chain-converge' }, `收敛条件：${s.convergeCondition}`) : null,
-    ))
+/* ------------------------------------------------------------------ */
+/* 力导向布局（同步跑完再画，确定性随机种子保证每次打开位置一致）       */
+/* ------------------------------------------------------------------ */
+
+function seededRand(seed) {
+  let s = seed >>> 0
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
   }
-  if (closed.length) {
-    box.append(h('div', { class: 'chain-detail-h' }, `已关闭分支（${closed.length}）· 留痕可复盘`))
-    for (const s of closed) {
-      box.append(h('div', { class: 'chain-subseg closed' },
-        h('div', { class: 'chain-subseg-head' },
-          h('span', { class: 'chain-subseg-name' }, s.name),
-          h('span', { class: 'chain-pill st-closed' }, '已关闭')),
-        s.closeReason ? h('div', { class: 'chain-subseg-core' }, `关闭原因：${s.closeReason}`) : null,
-      ))
+}
+function hashStr(str) {
+  let hsh = 2166136261
+  for (let i = 0; i < str.length; i++) { hsh ^= str.charCodeAt(i); hsh = Math.imul(hsh, 16777619) }
+  return hsh >>> 0
+}
+
+function layoutGraph(nodes, edges, W, H) {
+  const rand = seededRand(hashStr(nodes.map((n) => n.id).join('|')))
+  const pos = new Map()
+  const size = new Map(nodes.map((n) => [n.id, nodeSize(n)]))
+  for (const n of nodes) {
+    pos.set(n.id, { x: W * 0.15 + rand() * W * 0.7, y: H * 0.15 + rand() * H * 0.7 })
+  }
+  const REST = 230
+  for (let t = 0; t < 200; t++) {
+    const alpha = 1 - t / 200
+    // 斥力
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = pos.get(nodes[i].id)
+        const b = pos.get(nodes[j].id)
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        const d2 = dx * dx + dy * dy
+        if (d2 > 420 * 420 || d2 < 0.01) continue
+        const d = Math.sqrt(d2)
+        const f = Math.min(40000 / d2, 30) * alpha
+        dx /= d; dy /= d
+        a.x += dx * f * 1.6; a.y += dy * f * 0.85
+        b.x -= dx * f * 1.6; b.y -= dy * f * 0.85
+      }
+    }
+    // 弹簧
+    for (const e of edges) {
+      const a = pos.get(e.from)
+      const b = pos.get(e.to)
+      if (!a || !b) continue
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const d = Math.hypot(dx, dy) || 1
+      const f = ((d - REST) / d) * 20 * alpha
+      a.x += dx * f * 0.5; a.y += dy * f * 0.5
+      b.x -= dx * f * 0.5; b.y -= dy * f * 0.5
+    }
+    // 向心 + 边界（留 25px 安全边距，供去重叠遍使用）
+    for (const n of nodes) {
+      const p = pos.get(n.id)
+      const s = size.get(n.id)
+      p.x += (W / 2 - p.x) * 0.01 * alpha
+      p.y += (H / 2 - p.y) * 0.01 * alpha
+      p.x = Math.max(s.w / 2 + 35, Math.min(W - s.w / 2 - 35, p.x))
+      p.y = Math.max(s.h / 2 + 35, Math.min(H - s.h / 2 - 35, p.y))
     }
   }
-  return box
+  // 去重叠专用遍：沿穿透最小轴分开，迭代至收敛（不钳制，靠上面的安全边距）
+  for (let k = 0; k < 200; k++) {
+    let moved = false
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = pos.get(nodes[i].id)
+        const b = pos.get(nodes[j].id)
+        const sa = size.get(nodes[i].id)
+        const sb = size.get(nodes[j].id)
+        const minDx = (sa.w + sb.w) / 2 + 6
+        const minDy = (sa.h + sb.h) / 2 + 6
+        const dx = a.x - b.x
+        const dy = a.y - b.y
+        const ovx = minDx - Math.abs(dx)
+        const ovy = minDy - Math.abs(dy)
+        if (ovx <= 0 || ovy <= 0) continue
+        moved = true
+        if (ovx <= ovy) {
+          const s = (dx >= 0 ? 1 : -1) * (ovx / 2 + 0.5)
+          a.x += s; b.x -= s
+        } else {
+          const s = (dy >= 0 ? 1 : -1) * (ovy / 2 + 0.5)
+          a.y += s; b.y -= s
+        }
+      }
+    }
+    if (!moved) break
+  }
+  // 最终钳制到真实边界
+  for (const n of nodes) {
+    const p = pos.get(n.id)
+    const s = size.get(n.id)
+    p.x = Math.max(s.w / 2 + 10, Math.min(W - s.w / 2 - 10, p.x))
+    p.y = Math.max(s.h / 2 + 10, Math.min(H - s.h / 2 - 10, p.y))
+  }
+  return { pos, size }
 }
 
-/**
- * 关联节点（对齐 demo 的 relation chips）：把 affects / mergedFrom / mergedInto
- * 的段名解析为段，可点击的 chip 跳转到该段详情；解析不到的显示为置灰文本。
- * 只表达账本里真实存在的关系，不引入固定因果角色。
- */
-function renderRelations(theme, segment, opts) {
-  const segments = theme.chain?.segments || []
-  const byName = segmentNameIndex(segments)
-  const byId = new Map(segments.map((s) => [s.id, s]))
-  const items = []
-  const push = (kind, label, names) => {
-    for (const n of Array.isArray(names) ? names : []) {
-      if (typeof n !== 'string') continue
-      const name = n.trim()
-      if (!name || items.some((it) => it.name === name)) continue
-      const id = byName.get(name)
-      items.push({ kind, label, name, seg: id ? byId.get(id) : null })
+/* ------------------------------------------------------------------ */
+/* SVG 绘制                                                            */
+/* ------------------------------------------------------------------ */
+
+function el(name, attrs = {}, children = []) {
+  const node = document.createElementNS(SVG_NS, name)
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v)
+  for (const c of children) node.appendChild(c)
+  return node
+}
+function textEl(str, attrs = {}) {
+  const t = el('text', attrs)
+  t.textContent = str
+  return t
+}
+/** 从矩形中心 p 向 q 方向，矩形边界上的出点。 */
+function rectExit(p, q, hw, hh) {
+  const dx = q.x - p.x
+  const dy = q.y - p.y
+  if (!dx && !dy) return { ...p }
+  const tx = dx ? hw / Math.abs(dx) : Infinity
+  const ty = dy ? hh / Math.abs(dy) : Infinity
+  const t = Math.min(tx, ty)
+  return { x: p.x + dx * t, y: p.y + dy * t }
+}
+function edgeD(a, b, sa, sb) {
+  const s = rectExit(a, b, sa.w / 2 + 2, sa.h / 2 + 2)
+  const e = rectExit(b, a, sb.w / 2 + 9, sb.h / 2 + 9)
+  const mx = (s.x + e.x) / 2
+  const my = (s.y + e.y) / 2
+  const dx = e.x - s.x
+  const dy = e.y - s.y
+  const len = Math.hypot(dx, dy) || 1
+  const bow = Math.min(30, len * 0.14)
+  const cx = mx - (dy / len) * bow
+  const cy = my + (dx / len) * bow
+  return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${e.x.toFixed(1)} ${e.y.toFixed(1)}`
+}
+function splitLines(title, maxLen = 13) {
+  const t = String(title || '未命名').replace(/\s+/g, ' ').trim() || '未命名'
+  if (t.length <= maxLen) return [t]
+  return [t.slice(0, maxLen - 1), t.slice(maxLen - 1, maxLen * 2 - 2) + (t.length > maxLen * 2 - 1 ? '…' : '')]
+}
+
+function drawGraph(stage, proj, theme, opts) {
+  const W = 1120
+  const H = 620
+  const { pos, size } = layoutGraph(proj.nodes, proj.edges, W, H)
+
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'cog-svg', role: 'img', 'aria-label': '当前认知图' })
+  const defs = el('defs')
+  for (const [rel, cfg] of Object.entries(REL)) {
+    const marker = el('marker', {
+      id: `cog-arrow-${rel}`, viewBox: '0 0 10 10', refX: '8.5', refY: '5',
+      markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse',
+    }, [el('path', { d: 'M 1 1 L 9 5 L 1 9 z', fill: cfg.color })])
+    defs.appendChild(marker)
+  }
+  defs.appendChild(el('marker', {
+    id: 'cog-arrow-review', viewBox: '0 0 10 10', refX: '8.5', refY: '5',
+    markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse',
+  }, [el('path', { d: 'M 1 1 L 9 5 L 1 9 z', fill: '#94a3b8' })]))
+  svg.appendChild(defs)
+
+  const edgeLayer = el('g', { class: 'cog-edges' })
+  const nodeLayer = el('g', { class: 'cog-nodes' })
+  svg.append(edgeLayer, nodeLayer)
+
+  // 边
+  const edgeRecs = []
+  for (const e of proj.edges) {
+    const a = pos.get(e.from)
+    const b = pos.get(e.to)
+    if (!a || !b) continue
+    const rel = REL[e.rel] || REL.supports
+    const p = el('path', {
+      d: edgeD(a, b, size.get(e.from), size.get(e.to)),
+      class: `cog-edge cog-edge-${e.rel}${e.pendingReview ? ' is-review' : ''}`,
+      stroke: e.pendingReview ? '#94a3b8' : rel.color,
+      'marker-end': `url(#cog-arrow-${e.pendingReview ? 'review' : e.rel})`,
+    })
+    const title = el('title')
+    title.textContent = `${rel.label}${e.pendingReview ? '（待复核）' : ''}${e.mapping ? ` · ${e.mapping}` : ''}`
+    p.appendChild(title)
+    edgeLayer.appendChild(p)
+    edgeRecs.push({ el: p, from: e.from, to: e.to })
+  }
+
+  const redrawEdges = () => {
+    for (const r of edgeRecs) {
+      r.el.setAttribute('d', edgeD(pos.get(r.from), pos.get(r.to), size.get(r.from), size.get(r.to)))
     }
   }
-  push('affects', '影响', segment.affects)
-  push('mergedFrom', '由其合并而来', segment.mergedFrom)
-  push('mergedInto', '汇入', segment.mergedInto)
-  const chips = items.map((it) => it.seg
-    ? h('button', {
-      type: 'button', class: 'chain-rel-chip',
-      title: `${it.label}：${it.name}，点击查看`,
-      onclick: () => openSegmentDetail(theme, it.seg, opts),
-    }, it.name, ' ↗')
-    : h('span', {
-      class: 'chain-rel-chip is-missing',
-      title: `${it.label}：${it.name}（已不在链中）`,
-    }, it.name))
-  return h('section', { class: 'chain-dsect' },
-    h('div', { class: 'chain-detail-h chain-detail-h-row' }, '关联节点',
-      h('span', { class: 'chain-hint-inline' }, '点击跳转')),
-    items.length
-      ? h('div', { class: 'chain-rel-chips' }, ...chips)
-      : h('p', { class: 'chain-note' }, '暂无关联节点'))
-}
 
-/** 支撑线索（对齐 demo）：证据列表 + 收起/展开。 */
-function renderEvidenceSection(segment, opts) {
-  const refs = segment.evidenceRefs || []
-  const list = h('div', { class: 'chain-evidence-list' },
-    ...refs.map((r) => renderEvidenceRef(r, opts)))
-  const toggle = h('button', { type: 'button', class: 'chain-sect-toggle' }, '收起 −')
-  toggle.onclick = () => {
-    list.hidden = !list.hidden
-    toggle.textContent = list.hidden ? '展开 +' : '收起 −'
+  // 节点
+  for (const n of proj.nodes) {
+    const kind = KIND[n.kind] || KIND.claim
+    const sz = size.get(n.id)
+    const p = pos.get(n.id)
+    const g = el('g', {
+      class: 'cog-node', transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`,
+      'data-kind': n.kind, 'data-status': n.status || 'pending',
+    })
+    const stroke = n.correct === false ? '#ea580c' : kind.border
+    const rect = el('rect', {
+      x: -sz.w / 2, y: -sz.h / 2, width: sz.w, height: sz.h, rx: 10,
+      fill: n.archived ? '#f1f5f9' : kind.bg, stroke, 'stroke-width': n.correct === false ? 2.5 : 1.5,
+      'stroke-dasharray': n.archived ? '5 4' : 'none',
+    })
+    g.appendChild(rect)
+    g.appendChild(el('circle', { cx: -sz.w / 2 + 13, cy: -sz.h / 2 + 12, r: 4, fill: kind.color }))
+    const lines = splitLines(n.title, n.kind === 'evidence' ? 10 : 13)
+    lines.forEach((ln, i) => {
+      g.appendChild(textEl(ln, {
+        x: 5, y: lines.length === 1 ? 4 : -3 + i * 14,
+        'text-anchor': 'middle', class: 'cog-node-title',
+      }))
+    })
+    const sub = []
+    if (n.correct === false) sub.push('已证伪')
+    else if (n.archived) sub.push('已归档')
+    if (n.superseded) sub.push('已更正')
+    if (sub.length && n.kind !== 'evidence') {
+      g.appendChild(textEl(sub.join(' · '), {
+        x: 5, y: sz.h / 2 - 7, 'text-anchor': 'middle', class: 'cog-node-sub',
+      }))
+    }
+    const tip = el('title')
+    tip.textContent = `${kind.label} · ${n.title}`
+    g.appendChild(tip)
+
+    // 拖拽 / 点击
+    let sx = 0
+    let sy = 0
+    let moved = false
+    g.addEventListener('pointerdown', (ev) => {
+      sx = ev.clientX; sy = ev.clientY; moved = false
+      g.setPointerCapture(ev.pointerId)
+      const pt = pos.get(n.id)
+      const onMove = (me) => {
+        if (Math.hypot(me.clientX - sx, me.clientY - sy) > 4) moved = true
+        if (!moved) return
+        const r = svg.getBoundingClientRect()
+        const k = W / (r.width || W)
+        pt.x = Math.max(sz.w / 2 + 10, Math.min(W - sz.w / 2 - 10, pt.x + (me.clientX - sx) * k))
+        pt.y = Math.max(sz.h / 2 + 10, Math.min(H - sz.h / 2 - 10, pt.y + (me.clientY - sy) * k))
+        sx = me.clientX; sy = me.clientY
+        g.setAttribute('transform', `translate(${pt.x.toFixed(1)} ${pt.y.toFixed(1)})`)
+        redrawEdges()
+      }
+      const onUp = () => {
+        g.removeEventListener('pointermove', onMove)
+        g.removeEventListener('pointerup', onUp)
+        if (!moved) opts.onOpen?.(n)
+      }
+      g.addEventListener('pointermove', onMove)
+      g.addEventListener('pointerup', onUp)
+    })
+    nodeLayer.appendChild(g)
   }
-  return h('section', { class: 'chain-dsect' },
-    h('div', { class: 'chain-detail-h chain-detail-h-row' }, '支撑线索', refs.length ? toggle : null),
-    refs.length ? list : h('p', { class: 'chain-note' }, '暂无。'))
+
+  stage.append(svg)
+  stage.append(renderLegend())
 }
 
-/**
- * 段详情抽屉。右侧滑入，200-300ms transform/opacity 过渡。
- * 面板组织对齐 demo（kicker 行、标题、支撑线索、关联节点跳转），
- * 但不用 demo 的固定因果角色与演示评分；只读展示 + 回溯入口。
- */
-export function openSegmentDetail(theme, segment, opts = {}) {
-  closeSegmentDetail()
-  const st = SEG_STATUS[segment.status] || SEG_STATUS.pending
+function renderLegend() {
+  const item = (color, label, dashed) => h('span', { class: 'cog-legend-item' },
+    h('svg', { class: 'cog-legend-line', viewBox: '0 0 34 8', 'aria-hidden': 'true' },
+      (() => {
+        const l = document.createElementNS(SVG_NS, 'line')
+        l.setAttribute('x1', '1'); l.setAttribute('y1', '4')
+        l.setAttribute('x2', '33'); l.setAttribute('y2', '4')
+        l.setAttribute('stroke', color); l.setAttribute('stroke-width', '2')
+        if (dashed) l.setAttribute('stroke-dasharray', '4 3')
+        return l
+      })()),
+    h('span', {}, label))
+  const dot = (color, label) => h('span', { class: 'cog-legend-item' },
+    h('i', { class: 'cog-dot', style: `background:${color}` }), h('span', {}, label))
+  return h('div', { class: 'cog-legend' },
+    dot(KIND.claim.color, '主张'), dot(KIND.inference.color, '推断'), dot(KIND.evidence.color, '证据'),
+    h('span', { class: 'cog-legend-sep' }),
+    item(REL.supports.color, '支持'), item(REL.derives.color, '推导'), item(REL.contradicts.color, '反驳'),
+    item('#94a3b8', '待复核', true))
+}
+
+/* ------------------------------------------------------------------ */
+/* 节点详情抽屉：读投影，不读旧可变链字段                               */
+/* ------------------------------------------------------------------ */
+
+export async function openNodeDetail(theme, node, opts = {}) {
+  closeNodeDetail()
+  const kind = KIND[node.kind] || KIND.claim
+  const st = NODE_STATUS[node.status] || NODE_STATUS.pending
 
   const backdrop = h('div', { class: 'chain-drawer-backdrop' })
-  const drawer = h('aside', { class: 'chain-drawer', role: 'dialog', 'aria-label': `段详情：${segment.name}` })
-
+  const drawer = h('aside', { class: 'chain-drawer', role: 'dialog', 'aria-label': `节点详情：${node.title}` })
+  const body = h('div', { class: 'chain-drawer-body' }, h('p', { class: 'chain-note' }, '正在读取事件历史…'))
   const close = () => {
     backdrop.classList.remove('show')
     drawer.classList.remove('show')
     setTimeout(() => { backdrop.remove(); drawer.remove() }, 280)
   }
-
   drawer.append(
     h('div', { class: 'chain-drawer-head' },
       h('div', { class: 'chain-drawer-title' }, '节点详情'),
       h('button', { type: 'button', class: 'btn btn-icon', title: '关闭', onclick: close }, '✕')),
-    h('div', { class: 'chain-drawer-body' },
-      // kicker：所在层 + 事实状态（对齐 demo 的 kicker 行；不用固定因果角色）
-      h('div', { class: 'chain-drawer-kicker' },
-        h('span', { class: 'chain-role-tag' }, layerNameOf(theme, segment.layer)),
-        h('span', { class: `chain-pill ${st.cls}` }, st.label)),
-      h('div', { class: 'chain-drawer-name' }, segment.name || '未命名段'),
-      segment.metrics?.length ? h('div', { class: 'chain-metrics' },
-        ...segment.metrics.map((mm) => h('span', { class: 'chain-metric' },
-          h('b', {}, String(mm.value ?? '—')), h('i', {}, mm.label || '')))) : null,
-      h('p', { class: 'chain-dcore' }, segment.coreInfo || '—'),
-      h('div', { class: 'chain-role-row' },
-        h('span', { class: 'chain-role-label' }, '所在层'),
-        h('select', {
-          class: 'chain-role-select',
-          onchange: async (e) => {
-            const li = parseInt(e.target.value, 10)
-            const cur = Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0
-            if (li === cur) return
-            try {
-              await m.chainUpdateSegment(theme.id, segment.id, { layer: li })
-              await refresh()
-              const freshTheme = (state.themes || []).find((t) => t.id === theme.id)
-              const freshSeg = freshTheme?.chain?.segments?.find((s) => s.id === segment.id)
-              if (freshTheme && freshSeg) openSegmentDetail(freshTheme, freshSeg, opts)
-              toast(`已移到「${layerNameOf(theme, li)}」`, 'var(--text-2)')
-            } catch (err) {
-              toast('切换层级失败：' + (err.message || err), 'var(--red)')
-            }
-          },
-        }, ...layerNamesOf(theme).map((name, li) =>
-          h('option', {
-            value: li,
-            selected: (Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0) === li || undefined,
-          }, name))),
-      ),
-      // 支撑线索（可收起）→ 挂载数据 → 关联节点（可跳转），对齐 demo 面板顺序
-      renderEvidenceSection(segment, opts),
-      // 挂载数据（lemma 只读：含置信度展示，不可改）
-      h('section', { class: 'chain-dsect' },
-        h('div', { class: 'chain-detail-h' }, '挂载数据'),
-        (segment.evidenceRefs || []).some((r) => r.type === 'lemma')
-          ? h('div', { class: 'chain-evidence-list' },
-            ...segment.evidenceRefs.filter((r) => r.type === 'lemma').map((r) => renderEvidenceRef(r, opts)))
-          : h('p', { class: 'chain-note' }, '暂无关联命题。命题与置信度只读，不在此修改。')),
-      renderRelations(theme, segment, opts),
-      // 子段 / 分叉
-      renderSubsegments(segment),
-      // 变化历史
-      h('section', { class: 'chain-dsect' },
-        h('div', { class: 'chain-detail-h' }, '变化历史'),
-        renderChangeLog(segment.changeLog)),
-      // 证伪 / 收敛 / 结算
-      (segment.falsifier || segment.convergeCondition || segment.settleAt)
-        ? h('section', { class: 'chain-dsect' },
-          h('div', { class: 'chain-detail-h' }, '证伪 · 收敛 · 结算'),
-          segment.falsifier ? h('p', {}, `证伪：${segment.falsifier}`) : null,
-          segment.convergeCondition ? h('p', {}, `收敛条件：${segment.convergeCondition}`) : null,
-          segment.settleAt ? h('p', {}, `结算日：${segment.settleAt}`) : null)
-        : null,
-    ))
-
+    body)
   backdrop.onclick = close
   document.body.append(backdrop, drawer)
   requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -529,13 +436,135 @@ export function openSegmentDetail(theme, segment, opts = {}) {
   }))
   const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey) } }
   document.addEventListener('keydown', onKey)
+
+  // 事件历史 + 语义关系（都来自投影/事件，不读旧链字段）
+  let events = []
+  let proj = null
+  try {
+    const [evRes, p] = await Promise.all([m.chainEvents(theme.id), m.chainProjection(theme.id)])
+    events = evRes?.events || []
+    proj = p
+  } catch (e) {
+    clear(body).append(h('p', { class: 'chain-note' }, '事件读取失败：' + (e.message || e)))
+    return
+  }
+  const byId = new Map(events.map((e) => [e.id, e]))
+  const nodeById = new Map((proj?.nodes || []).map((n) => [n.id, n]))
+  const lineage = (node.eventIds || [node.id]).map((id) => byId.get(id)).filter(Boolean)
+    .sort((a, b) => a.seq - b.seq)
+
+  const badges = []
+  if (node.correct === false) badges.push(h('span', { class: 'chain-pill st-forking' }, '已证伪'))
+  if (node.archived) badges.push(h('span', { class: 'chain-pill st-closed' }, '已归档'))
+  if (node.superseded) badges.push(h('span', { class: 'chain-pill st-stale' }, '已更正'))
+
+  clear(body).append(
+    h('div', { class: 'chain-drawer-kicker' },
+      h('span', { class: 'chain-role-tag', style: `color:${kind.color};border-color:${kind.border}` }, kind.label),
+      h('span', { class: 'chain-pill st-pending' }, st.label),
+      ...badges),
+    h('div', { class: 'chain-drawer-name' }, node.title),
+    node.currentText && node.currentText !== node.title
+      ? h('p', { class: 'chain-dcore' }, node.currentText) : null,
+    node.confidence != null
+      ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
+    node.external ? h('p', { class: 'chain-note' }, '外部引用节点：关系端点指向账本外的对象。') : null,
+    // 语义关系
+    h('section', { class: 'chain-dsect' },
+      h('div', { class: 'chain-detail-h' }, '语义关系'),
+      ...renderNodeRelations(proj, nodeById, node, theme, opts)),
+    // 历史版本（v01/v02…，追加式账本的可追溯性）
+    h('section', { class: 'chain-dsect' },
+      h('div', { class: 'chain-detail-h' }, `历史版本（${lineage.length}）`),
+      ...lineage.map((e) => renderHistoryEvent(e))),
+    // 证据引用（命题可点进右栏）
+    h('section', { class: 'chain-dsect' },
+      h('div', { class: 'chain-detail-h' }, '证据引用'),
+      ...renderNodeEvidence(lineage, opts)),
+  )
 }
 
-export function closeSegmentDetail() {
+function renderNodeRelations(proj, nodeById, node, theme, opts) {
+  const edges = (proj?.edges || []).filter((e) => e.from === node.id || e.to === node.id)
+  if (!edges.length) return [h('p', { class: 'chain-note' }, '暂无语义关系。')]
+  return edges.map((e) => {
+    const otherId = e.from === node.id ? e.to : e.from
+    const other = nodeById.get(otherId)
+    const rel = REL[e.rel] || REL.supports
+    const dir = e.from === node.id ? '→' : '←'
+    return h('button', {
+      type: 'button', class: 'chain-evidence',
+      title: other && !other.external ? '查看该节点' : '',
+      onclick: () => { if (other && !other.external) openNodeDetail(theme, other, opts) },
+    },
+      h('span', { class: 'chain-evidence-type', style: `color:${rel.color}` },
+        `${e.pendingReview ? '待复核·' : ''}${rel.label} ${dir}`),
+      h('span', { class: 'chain-evidence-id' }, other ? other.title : otherId.slice(0, 8)))
+  })
+}
+
+function renderHistoryEvent(e) {
+  const p = e.payload || {}
+  const at = String(e.at || '').slice(0, 10)
+  const actor = ACTOR_LABEL[e.actor] || e.actor || ''
+  let summary = ''
+  if (e.type === 'correction.appended') {
+    summary = `${p.oldValue || '—'} → ${p.newValue || '—'}${p.reason ? `（${p.reason}）` : ''}`
+  } else if (e.type === 'relation.declared') {
+    summary = `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' ? '（待复核）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
+  } else if (e.type === 'settlement.recorded') {
+    summary = p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
+  } else if (e.type === 'evidence.appended') {
+    summary = String(p.text || p.reason || '').slice(0, 80)
+  } else {
+    summary = String(p.title || p.coreInfo || p.text || '').slice(0, 80)
+  }
+  return h('div', { class: 'chain-log-item' },
+    h('div', { class: 'chain-log-at' }, `v${String(e.seq).padStart(2, '0')} · ${at}${actor ? ` · ${actor}` : ''}`),
+    h('div', { class: 'chain-log-body' },
+      h('div', { class: 'chain-log-delta' },
+        h('span', { class: 'chain-log-new' }, TYPE_LABEL[e.type] || e.type)),
+      summary ? h('div', { class: 'chain-log-reason' }, summary) : null))
+}
+
+/** 证据引用：命题走右栏（selectNode），读数/收件箱走 onEvidence。 */
+function renderNodeEvidence(lineage, opts) {
+  const seen = new Set()
+  const refs = []
+  for (const e of lineage) {
+    const arr = e.payload?.evidenceRefs
+    if (!Array.isArray(arr)) continue
+    for (const r of arr) {
+      const key = `${r.type}:${r.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      refs.push(r)
+    }
+  }
+  if (!refs.length) return [h('p', { class: 'chain-note' }, '暂无证据引用。')]
+  return refs.map((ref) => {
+    if (ref.type === 'lemma') {
+      const node = (state.nodes || []).find((n) => n.id === ref.id)
+      return h('button', {
+        type: 'button', class: 'chain-evidence', title: '在右栏查看命题详情',
+        onclick: () => { closeNodeDetail(); selectNode(ref.id) },
+      },
+        h('span', { class: 'chain-evidence-type' }, '命题'),
+        h('span', { class: 'chain-evidence-id' }, node?.title || ref.title || String(ref.id || '').slice(0, 8)),
+        node ? h('span', { class: 'chain-evidence-conf' }, `置信度 ${Math.round(node.confidence ?? 0)}%`) : null)
+    }
+    const label = ref.type === 'reading' ? '读数' : '收件箱条目'
+    return h('button', {
+      type: 'button', class: 'chain-evidence',
+      onclick: () => opts.onEvidence?.(ref),
+    }, h('span', { class: 'chain-evidence-type' }, label),
+      h('span', { class: 'chain-evidence-id' }, ref.title || String(ref.id || '').slice(0, 8)))
+  })
+}
+
+export function closeNodeDetail() {
   document.querySelectorAll('.chain-drawer, .chain-drawer-backdrop').forEach((el) => el.remove())
 }
-
-/** 证据详情：读数走 reading:evidence，来源 URL 外链原文。 */
 export async function openEvidenceDetail(ref) {
   try {
     if (ref.type === 'reading') {
@@ -553,7 +582,7 @@ export async function openEvidenceDetail(ref) {
 }
 
 function openReadingModal(reading) {
-  closeSegmentDetail()
+  closeNodeDetail()
   const backdrop = h('div', { class: 'chain-drawer-backdrop' })
   const drawer = h('aside', { class: 'chain-drawer', role: 'dialog', 'aria-label': '读数详情' })
   const close = () => {
@@ -619,6 +648,7 @@ function segNameSimilarity(a, b) {
  */
 export function renderProposalDraft(item, existingSegments = [], opts = {}) {
   const draft = item.chainDraft
+  let segs = Array.isArray(existingSegments) ? existingSegments : []
   const themeId = opts.themeId
   const box = opts.bare
     ? h('div', { class: 'chain-draft' })
@@ -676,16 +706,22 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
   }
   const refreshChecks = () => {
     clear(checkWrap)
-    for (const s of existingSegments) {
+    for (const s of segs) {
       const on = segNames.includes(s.name)
       checkWrap.append(h('button', {
         type: 'button', class: `draft-chip${on ? ' on' : ''}`, 'aria-pressed': String(on),
         onclick: () => toggleSeg(s.name),
       }, h('span', { class: 'draft-chip-dot' }), h('span', {}, s.name)))
     }
-    if (!existingSegments.length) checkWrap.append(h('span', { class: 'draft-empty-note' }, '该主题还没有段，可在下方新开。'))
+    if (!segs.length) checkWrap.append(h('span', { class: 'draft-empty-note' }, '该主题还没有段，可在下方新开。'))
   }
   refreshChecks()
+  // 已有主张改为从认知投影异步加载（不再读旧 chain.segments）
+  if (typeof opts.loadExisting === 'function') {
+    opts.loadExisting()
+      .then((list) => { if (Array.isArray(list) && list.length) { segs = list; refreshChecks() } })
+      .catch(() => {})
+  }
 
   // 新开段名输入 + 自动补全 + 相似提醒
   const nameInput = h('input', {
@@ -697,7 +733,7 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
     const v = nameInput.value.trim()
     if (!v) { warnBox.hidden = true; suggestBox.hidden = true; return }
     // 自动补全：前缀匹配
-    const cands = existingSegments.filter((s) => s.name.toLowerCase().startsWith(v.toLowerCase()) && s.name !== v).slice(0, 5)
+    const cands = segs.filter((s) => s.name.toLowerCase().startsWith(v.toLowerCase()) && s.name !== v).slice(0, 5)
     clear(suggestBox)
     if (cands.length) {
       suggestBox.hidden = false
@@ -713,7 +749,7 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
       }
     } else suggestBox.hidden = true
     // 相似提醒：不拦截
-    const sims = existingSegments
+    const sims = segs
       .map((s) => ({ name: s.name, sim: segNameSimilarity(v, s.name) }))
       .filter((x) => x.sim >= 0.6)
       .sort((a, b) => b.sim - a.sim)
@@ -758,7 +794,7 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
       const lemmaRefs = (item.lemmas || [])
         .filter((l) => l.id)
         .map((l) => ({ type: 'lemma', id: l.id, title: l.title }))
-      const res = await m.chainMount(themeId, {
+      const res = await m.chainMountEvent(themeId, {
         inboxId: item.id,
         segmentNames: allSegs,
         coreInfo: coreInput.value.trim(),
