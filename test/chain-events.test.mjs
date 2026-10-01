@@ -56,6 +56,7 @@ const deadLemma = store.addNode({
   themeId: theme.id, kind: 'lemma', title: '命题甲', type: 'observation', confidence: 70,
   status: 'dead',
   settlement: { date: '2026-09-01', resolved: true, correct: false },
+  sources: [{ kind: '一手数据', label: '旧命题来源', quality: 0.9, at: '2026-08-31', url: 'https://example.com/lemma-source' }],
 })
 deadLemma.deletedAt = '2026-09-01'
 store.persistLedger()
@@ -69,17 +70,18 @@ ok('affects 映射 1', r1.report.affects === 1)
 ok('evidenceRefs 映射 2', r1.report.evidenceRefs === 2)
 ok('branch 映射 1', r1.report.branches === 1)
 ok('lemma 映射 2', r1.report.lemmas === 2)
+ok('旧节点来源映射 1', r1.report.nodeSources === 1)
 ok('归档 1', r1.report.archived === 1)
 ok('结算 1', r1.report.settlements === 1)
 
 console.log('\n— 事件链完整性 —')
 const events = ev.getEvents(theme.id)
-ok('事件总数 13', events.length === 13, `实际 ${events.length}`)
-ok('seq 连续 1..13', events.every((e, i) => e.seq === i + 1))
+ok('事件总数 15', events.length === 15, `实际 ${events.length}`)
+ok('seq 连续 1..15', events.every((e, i) => e.seq === i + 1))
 ok('首事件 prevHash 为 GENESIS', events[0].prevHash === 'GENESIS')
 ok('prevHash 衔接', events.every((e, i) => i === 0 || e.prevHash === events[i - 1].hash))
 const v1 = ev.verifyChain(theme.id)
-ok('verifyChain 通过', v1.ok && v1.count === 13)
+ok('verifyChain 通过', v1.ok && v1.count === 15)
 
 console.log('\n— 语义正确性 —')
 const corrections = events.filter((e) => e.type === 'correction.appended')
@@ -91,6 +93,10 @@ ok('affects 暂译 derives 待复核', affRel && affRel.payload.rel === 'derives
 const claims = events.filter((e) => e.type === 'claim.created')
 const lemmaClaim = claims.find((e) => e.payload.sourceRef === 'lemma:' + store.load().nodes.find((n) => n.title === '命题甲').id)
 ok('confidence 原样携带', lemmaClaim && lemmaClaim.payload.confidence === 70)
+const migratedSource = events.find((e) => e.type === 'evidence.appended' && e.payload.sourceKind === 'legacy-node-source')
+ok('旧节点来源保留完整元数据并连到原命题', migratedSource?.payload.legacySource?.url === 'https://example.com/lemma-source'
+  && events.some((e) => e.type === 'relation.declared' && e.payload.rel === 'supports'
+    && e.payload.from.eventId === migratedSource.id && e.payload.to.eventId === lemmaClaim.id))
 ok('证伪结算保留', events.some((e) => e.type === 'settlement.recorded' && e.payload.correct === false))
 ok('墓碑事件存在', events.some((e) => e.type === 'node.archived'))
 ok('迁移 actor 标记', events.every((e) => e.actor === 'migration'))
@@ -98,7 +104,7 @@ ok('迁移 actor 标记', events.every((e) => e.actor === 'migration'))
 console.log('\n— 幂等 —')
 const r2 = ev.migrateThemeToEvents(theme.id)
 ok('重跑零新建', r2.created === 0, `新建 ${r2.created}`)
-ok('重跑全部跳过', r2.skipped === 13, `跳过 ${r2.skipped}`)
+ok('重跑全部跳过', r2.skipped === 15, `跳过 ${r2.skipped}`)
 ok('重跑后链仍有效', ev.verifyChain(theme.id).ok)
 
 console.log('\n— 篡改检测 —')

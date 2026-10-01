@@ -13,7 +13,7 @@
  * 端点解析：{eventId} → 对应节点；{ref} → 已有节点或外部证据节点；
  * {name} → 按标题找主张节点，找不到则为外部节点。
  */
-import { getEvents, appendEvent, appendEvents as appendEventBatch, migrateThemeToEvents, verifyChain } from './chain-events.js'
+import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, verifyChain } from './chain-events.js'
 import { digest } from './reading-store.js'
 import { randomUUID } from 'node:crypto'
 
@@ -255,11 +255,12 @@ export function chainScope(projection) {
   return { nodes, edges, floating }
 }
 
-/** 主题投影（含懒迁移：无事件但有旧数据时先迁移再投影；幂等、可重入）。 */
-export function getChainProjection(themeId, { migrateIfEmpty = true } = {}) {
+/** 主题投影（含幂等懒迁移：兼容空账本及旧节点来源尚未事件化的部分升级数据）。 */
+export function getChainProjection(themeId, options = {}) {
+  const migrateLegacy = options.migrateLegacy ?? options.migrateIfEmpty ?? true
   let events = getEvents(themeId)
   let integrity = verifyChain(themeId)
-  if (migrateIfEmpty && integrity.ok && events.length === 0) {
+  if (migrateLegacy && integrity.ok && (events.length === 0 || hasUnmigratedNodeSources(themeId))) {
     const { created } = migrateThemeToEvents(themeId)
     if (created > 0) {
       events = getEvents(themeId)

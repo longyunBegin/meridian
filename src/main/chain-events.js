@@ -38,6 +38,19 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null))
 const textId = (v) => typeof v === 'string' && v.length > 0
 
+function legacySourceIdentity(node, source) {
+  const fingerprint = digest({
+    nodeId: node.id,
+    kind: source.kind || '', label: source.label || '', quality: source.quality ?? null,
+    at: source.at || null, rawId: source.rawId || null, platform: source.platform || null,
+    url: source.url || null, fetchedAt: source.fetchedAt || null, searchPrompt: source.searchPrompt || null,
+  })
+  return {
+    eventId: `evt:legacy-source:${fingerprint}`,
+    sourceRef: `legacy-source:${node.kind}:${node.id}:${fingerprint.slice(0, 24)}`,
+  }
+}
+
 function getThemeOrThrow(themeId) {
   const theme = load().themes.find((t) => t.id === themeId && !t.deletedAt)
   if (!theme) throw new Error('主题不存在')
@@ -86,6 +99,15 @@ export function getEvents(themeId) {
   const theme = getThemeOrThrow(themeId)
   // Keep malformed rows visible to verification/recovery; never silently drop history.
   return rawEvents(theme).map((e) => copy(e))
+}
+
+/** Existing event ledgers may predate migration of per-node source citations. */
+export function hasUnmigratedNodeSources(themeId) {
+  const theme = getThemeOrThrow(themeId)
+  const ids = new Set(rawEvents(theme).map((e) => e?.id).filter(textId))
+  return load().nodes.some((node) => node.themeId === themeId
+    && (Array.isArray(node.sources) ? node.sources : []).some((source) =>
+      isObj(source) && textId(source.kind) && !ids.has(legacySourceIdentity(node, source).eventId)))
 }
 
 /** 按 id 取单个事件。 */
@@ -262,8 +284,8 @@ export function verifyChain(themeId) {
  * - segment.affects → relation.declared derives，标注 affects→derives（待复核）
  * - segment.mergedFrom → relation.declared derives
  * - segment.evidenceRefs → relation.declared supports（证据→主张）
- * - branch 节点 → claim.created（evt:node:<nodeId>）
- * - lemma 节点 → claim.created；dead → 追加 node.archived；settlement → settlement.recorded
+ * - branch / lemma 节点 → claim.created；旧 sources → evidence.appended + supports；
+ *   dead → 追加 node.archived；settlement → settlement.recorded
  * - parentId 旧树层级：丢弃（payload 记录 parentIdDiscarded 备查，不建关系）
  * - confidence 原样携带，永不改动
  */
@@ -280,21 +302,19 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
   const existingCheck = verifyEvents(existingEvents, themeId)
   if (!existingCheck.ok) throw new Error(`事件账本校验失败（第 ${existingCheck.index + 1} 条）：${existingCheck.reason}`)
   const workEvents = existingEvents.map((e) => copy(e))
-  const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0 }
+  const workById = new Map(workEvents.map((event) => [event?.id, event]))
+  const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, nodeSources: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0 }
   let created = 0
   let skipped = 0
 
   const put = (fields) => {
-    if (persist && textId(fields.id) && workEvents.some((e) => e.id === fields.id)) {
+    if (textId(fields.id) && workById.has(fields.id)) {
       skipped++
-      return workEvents.find((e) => e.id === fields.id)
-    }
-    if (!persist && textId(fields.id) && workEvents.some((e) => e.id === fields.id)) {
-      skipped++
-      return workEvents.find((e) => e.id === fields.id)
+      return workById.get(fields.id)
     }
     const event = buildNextEvent(workEvents, themeId, { actor: 'migration', ...fields })
     workEvents.push(event)
+    workById.set(event.id, event)
     created++
     return event
   }
@@ -464,6 +484,43 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     })
     if (isBranch) report.branches++
     else report.lemmas++
+
+    // Old per-node sources are facts about evidence, not claims. Preserve each source
+    // as its own event and explicitly connect it to the migrated claim.
+    const sourceRows = Array.isArray(node.sources) ? node.sources : []
+    const seenSources = new Set()
+    for (const source of sourceRows) {
+      if (!isObj(source) || !textId(source.kind)) continue
+      const identity = legacySourceIdentity(node, source)
+      if (seenSources.has(identity.eventId)) continue
+      seenSources.add(identity.eventId)
+      report.nodeSources++
+      const title = String(source.label || source.kind || '历史来源')
+      const evidence = put({
+        id: identity.eventId,
+        at: source.at || node.createdAt || node.updatedAt || null,
+        type: 'evidence.appended',
+        payload: {
+          text: title,
+          reason: '旧节点来源迁移',
+          legacySource: copy(source),
+          sourceKind: 'legacy-node-source',
+          sourceRef: identity.sourceRef,
+        },
+      })
+      put({
+        id: `${identity.eventId}:supports`,
+        at: source.at || node.createdAt || node.updatedAt || null,
+        type: 'relation.declared',
+        payload: {
+          rel: 'supports',
+          from: { eventId: evidence.id },
+          to: { eventId: `evt:node:${node.id}` },
+          sourceKind: 'legacy-node-source',
+          sourceRef: identity.sourceRef,
+        },
+      })
+    }
 
     if (node.settlement && isObj(node.settlement)) {
       put({

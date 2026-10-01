@@ -76,17 +76,35 @@ const theme2 = store.addTheme('懒迁移主题')
   // 造旧结构：一段 + 一条 lemma，不跑迁移
   const t = store.load().themes.find((x) => x.id === theme2.id)
   t.chain = { segments: [{ id: 's1', name: '旧段', coreInfo: '旧结论', status: 'pending', layer: 0, changeLog: [], evidenceRefs: [], affects: [], mergedFrom: [] }] }
-  store.addNode({ themeId: theme2.id, kind: 'lemma', title: '旧命题', type: 'observation', confidence: 55 })
+  store.addNode({ themeId: theme2.id, kind: 'lemma', title: '旧命题', type: 'observation', confidence: 55,
+    sources: [{ kind: '一手数据', label: '旧来源标签', quality: 0.9, at: '2025-01-02', url: 'https://example.com/legacy-source' }] })
   store.persistLedger()
 }
 const archiveReadBeforeMigration = pj.getArchivedProjectionNodes(theme2.id)
 ok('事件墓碑只读查询不触发旧数据迁移', archiveReadBeforeMigration.nodes.length === 0
   && !Object.hasOwn(store.allThemes().find((t) => t.id === theme2.id), 'eventChain'))
 const gp = pj.getChainProjection(theme2.id)
-ok('懒迁移后有事件', gp.eventCount === 2, `实际 ${gp.eventCount}`)
+ok('懒迁移包含旧来源证据与支持边', gp.eventCount === 4, `实际 ${gp.eventCount}`)
 ok('旧段成为骨干节点', gp.nodes.some((n) => n.title === '旧段'))
-ok('旧命题在 floating', gp.floatingCount === 1 && gp.floating[0].title === '旧命题')
-ok('二次调用不重复迁移', pj.getChainProjection(theme2.id).eventCount === 2)
+const legacyClaim = gp.nodes.find((n) => n.title === '旧命题')
+const legacyEvidence = gp.nodes.find((n) => n.kind === 'evidence' && n.title === '旧来源标签')
+ok('旧命题和来源证据进入当前图并互相连通', !!legacyClaim && !!legacyEvidence
+  && gp.edges.some((edge) => edge.rel === 'supports' && edge.from === legacyEvidence.id && edge.to === legacyClaim.id))
+ok('旧来源元数据保留在证据事件', ev.getEvents(theme2.id).some((e) => e.type === 'evidence.appended'
+  && e.payload.legacySource?.url === 'https://example.com/legacy-source'))
+ok('二次调用不重复迁移', pj.getChainProjection(theme2.id).eventCount === 4)
+
+const partialTheme = store.addTheme('部分升级来源主题')
+const partialNode = store.addNode({ themeId: partialTheme.id, kind: 'lemma', title: '部分升级命题',
+  sources: [{ kind: '独立媒体', label: '部分升级来源', quality: 0.65, url: 'https://example.com/partial-source' }] })
+ev.appendEvent(partialTheme.id, {
+  id: `evt:node:${partialNode.id}`, type: 'claim.created',
+  payload: { title: partialNode.title, nodeKind: 'claim', sourceKind: 'lemma', sourceRef: `lemma:${partialNode.id}` },
+})
+const partialProjection = pj.getChainProjection(partialTheme.id)
+ok('已有事件的部分升级会补入缺失的旧来源事件', partialProjection.eventCount === 3
+  && partialProjection.edges.some((edge) => edge.rel === 'supports')
+  && partialProjection.nodes.some((n) => n.kind === 'evidence' && n.title === '部分升级来源'))
 
 console.log('\n— mountDraftToEvents —')
 const theme3 = store.addTheme('挂载测试主题')
