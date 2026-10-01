@@ -196,6 +196,14 @@ ok('连线脚注拆分节点与关系状态',
   chainViewSrc.includes('节点标签只表示该段事实的确认状态；连线表示的段间关系仍待检验，不表示因果已成立。'))
 ok('节点状态标签只谈事实', chainViewSrc.includes("label: '事实已确认'") && chainViewSrc.includes("label: '事实待验证'"))
 ok('层是分组的提示可见', chainViewSrc.includes('层只是分组，点击层名可重命名'))
+ok('详情抽屉对齐 demo：节点详情标题 + kicker 行',
+  chainViewSrc.includes("class: 'chain-drawer-title' }, '节点详情'") && chainViewSrc.includes('chain-drawer-kicker'))
+ok('详情抽屉：关联节点 chips 可点击跳转',
+  chainViewSrc.includes('关联节点') && chainViewSrc.includes('chain-rel-chip') && chainViewSrc.includes('点击跳转'))
+ok('详情抽屉：支撑线索可收起',
+  chainViewSrc.includes('支撑线索') && chainViewSrc.includes('chain-sect-toggle'))
+ok('详情抽屉不用 demo 的固定因果角色',
+  !chainViewSrc.includes('核心命题') && !chainViewSrc.includes('驱动因素') && !chainViewSrc.includes('观察信号'))
 
 console.log('\n— computeChainEdges 纯函数 —')
 const { computeChainEdges } = await import('../src/renderer/lib/chain-edges.js')

@@ -2123,5 +2123,32 @@ body.tauri-macos .app {
   border: 1px solid var(--hairline); border-radius: 8px; padding: 5px 10px; cursor: pointer;
 }
 
+/* 抽屉：对齐 demo 面板（kicker 行、标题、关联节点 chips、支撑线索收起） */
+.chain-drawer-kicker {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 8px;
+}
+.chain-drawer-name {
+  font-size: var(--t-title); font-weight: 700; line-height: 1.45; letter-spacing: -.01em;
+  color: var(--text-1); margin: 0 0 10px;
+}
+.chain-detail-h-row {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.chain-hint-inline { font-size: var(--t-caption); color: var(--text-3); font-weight: 400; }
+.chain-rel-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chain-rel-chip {
+  border: 1px solid var(--hairline); background: var(--surface); color: #4f7fb9;
+  border-radius: 8px; padding: 5px 10px; font-size: var(--t-caption); cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.chain-rel-chip:hover { border-color: #b7cce4; background: #f0f5fb; }
+.chain-rel-chip.is-missing { color: var(--text-3); cursor: default; background: none; }
+.chain-rel-chip.is-missing:hover { border-color: var(--hairline); background: none; }
+.chain-sect-toggle {
+  border: 0; background: none; color: #4f7fb9; font-size: var(--t-caption);
+  cursor: pointer; padding: 2px;
+}
+
 /* 定位高亮同时作用于新节点卡与已关闭 chips */
 .cnode.flash, .chain-closed-chip.flash { animation: chain-flash 2.2s ease; }

@@ -5,7 +5,7 @@
  * 无预设模板，段名由挂载自然生长；不创建 ledger node，不碰 lemma/confidence（公理1）。
  */
 import { h, clear, toast } from '../lib/dom.js'
-import { computeChainEdges } from '../lib/chain-edges.js'
+import { computeChainEdges, segmentNameIndex } from '../lib/chain-edges.js'
 import { state, setView, selectNode, refresh } from '../app.js'
 
 const m = window.meridian
@@ -369,8 +369,64 @@ function renderSubsegments(segment) {
 }
 
 /**
+ * 关联节点（对齐 demo 的 relation chips）：把 affects / mergedFrom / mergedInto
+ * 的段名解析为段，可点击的 chip 跳转到该段详情；解析不到的显示为置灰文本。
+ * 只表达账本里真实存在的关系，不引入固定因果角色。
+ */
+function renderRelations(theme, segment, opts) {
+  const segments = theme.chain?.segments || []
+  const byName = segmentNameIndex(segments)
+  const byId = new Map(segments.map((s) => [s.id, s]))
+  const items = []
+  const push = (kind, label, names) => {
+    for (const n of Array.isArray(names) ? names : []) {
+      if (typeof n !== 'string') continue
+      const name = n.trim()
+      if (!name || items.some((it) => it.name === name)) continue
+      const id = byName.get(name)
+      items.push({ kind, label, name, seg: id ? byId.get(id) : null })
+    }
+  }
+  push('affects', '影响', segment.affects)
+  push('mergedFrom', '由其合并而来', segment.mergedFrom)
+  push('mergedInto', '汇入', segment.mergedInto)
+  const chips = items.map((it) => it.seg
+    ? h('button', {
+      type: 'button', class: 'chain-rel-chip',
+      title: `${it.label}：${it.name}，点击查看`,
+      onclick: () => openSegmentDetail(theme, it.seg, opts),
+    }, it.name, ' ↗')
+    : h('span', {
+      class: 'chain-rel-chip is-missing',
+      title: `${it.label}：${it.name}（已不在链中）`,
+    }, it.name))
+  return h('section', { class: 'chain-dsect' },
+    h('div', { class: 'chain-detail-h chain-detail-h-row' }, '关联节点',
+      h('span', { class: 'chain-hint-inline' }, '点击跳转')),
+    items.length
+      ? h('div', { class: 'chain-rel-chips' }, ...chips)
+      : h('p', { class: 'chain-note' }, '暂无关联节点'))
+}
+
+/** 支撑线索（对齐 demo）：证据列表 + 收起/展开。 */
+function renderEvidenceSection(segment, opts) {
+  const refs = segment.evidenceRefs || []
+  const list = h('div', { class: 'chain-evidence-list' },
+    ...refs.map((r) => renderEvidenceRef(r, opts)))
+  const toggle = h('button', { type: 'button', class: 'chain-sect-toggle' }, '收起 −')
+  toggle.onclick = () => {
+    list.hidden = !list.hidden
+    toggle.textContent = list.hidden ? '展开 +' : '收起 −'
+  }
+  return h('section', { class: 'chain-dsect' },
+    h('div', { class: 'chain-detail-h chain-detail-h-row' }, '支撑线索', refs.length ? toggle : null),
+    refs.length ? list : h('p', { class: 'chain-note' }, '暂无。'))
+}
+
+/**
  * 段详情抽屉。右侧滑入，200-300ms transform/opacity 过渡。
- * 只读展示 + 回溯入口；写操作（合并段、关闭分支）走确认。
+ * 面板组织对齐 demo（kicker 行、标题、支撑线索、关联节点跳转），
+ * 但不用 demo 的固定因果角色与演示评分；只读展示 + 回溯入口。
  */
 export function openSegmentDetail(theme, segment, opts = {}) {
   closeSegmentDetail()
@@ -387,66 +443,52 @@ export function openSegmentDetail(theme, segment, opts = {}) {
 
   drawer.append(
     h('div', { class: 'chain-drawer-head' },
-      h('div', {},
-        h('div', { class: 'chain-drawer-title' }, segment.name || '未命名段'),
-        h('div', { class: 'chain-drawer-tags' },
-          h('span', { class: `chain-pill ${st.cls}` }, st.label),
-          h('span', { class: 'chain-role-tag' }, layerNameOf(theme, segment.layer)))),
+      h('div', { class: 'chain-drawer-title' }, '节点详情'),
       h('button', { type: 'button', class: 'btn btn-icon', title: '关闭', onclick: close }, '✕')),
     h('div', { class: 'chain-drawer-body' },
-      // 核心信息
-      h('section', { class: 'chain-dsect' },
-        h('div', { class: 'chain-detail-h' }, '核心信息'),
-        h('p', { class: 'chain-dcore' }, segment.coreInfo || '—'),
-        h('div', { class: 'chain-role-row' },
-          h('span', { class: 'chain-role-label' }, '所在层'),
-          h('select', {
-            class: 'chain-role-select',
-            onchange: async (e) => {
-              const li = parseInt(e.target.value, 10)
-              const cur = Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0
-              if (li === cur) return
-              try {
-                await m.chainUpdateSegment(theme.id, segment.id, { layer: li })
-                await refresh()
-                const freshTheme = (state.themes || []).find((t) => t.id === theme.id)
-                const freshSeg = freshTheme?.chain?.segments?.find((s) => s.id === segment.id)
-                if (freshTheme && freshSeg) openSegmentDetail(freshTheme, freshSeg, opts)
-                toast(`已移到「${layerNameOf(theme, li)}」`, 'var(--text-2)')
-              } catch (err) {
-                toast('切换层级失败：' + (err.message || err), 'var(--red)')
-              }
-            },
-          }, ...layerNamesOf(theme).map((name, li) =>
-            h('option', {
-              value: li,
-              selected: (Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0) === li || undefined,
-            }, name))),
-        ),
-        segment.metrics?.length ? h('div', { class: 'chain-metrics' },
-          ...segment.metrics.map((mm) => h('span', { class: 'chain-metric' },
-            h('b', {}, String(mm.value ?? '—')), h('i', {}, mm.label || '')))) : null),
-      // 关系
-      (segment.affects?.length || segment.mergedInto?.length)
-        ? h('section', { class: 'chain-dsect' },
-          h('div', { class: 'chain-detail-h' }, '关系'),
-          segment.affects?.length ? h('p', {}, `→ 影响：${segment.affects.join('、')}`) : null,
-          segment.mergedInto?.length ? h('p', {}, `汇入：${segment.mergedInto.join(' · ')}`) : null,
-          segment.mergedFrom?.length ? h('p', { class: 'chain-note' }, `由 ${segment.mergedFrom.join('、')} 合并而来`) : null)
-        : null,
+      // kicker：所在层 + 事实状态（对齐 demo 的 kicker 行；不用固定因果角色）
+      h('div', { class: 'chain-drawer-kicker' },
+        h('span', { class: 'chain-role-tag' }, layerNameOf(theme, segment.layer)),
+        h('span', { class: `chain-pill ${st.cls}` }, st.label)),
+      h('div', { class: 'chain-drawer-name' }, segment.name || '未命名段'),
+      segment.metrics?.length ? h('div', { class: 'chain-metrics' },
+        ...segment.metrics.map((mm) => h('span', { class: 'chain-metric' },
+          h('b', {}, String(mm.value ?? '—')), h('i', {}, mm.label || '')))) : null,
+      h('p', { class: 'chain-dcore' }, segment.coreInfo || '—'),
+      h('div', { class: 'chain-role-row' },
+        h('span', { class: 'chain-role-label' }, '所在层'),
+        h('select', {
+          class: 'chain-role-select',
+          onchange: async (e) => {
+            const li = parseInt(e.target.value, 10)
+            const cur = Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0
+            if (li === cur) return
+            try {
+              await m.chainUpdateSegment(theme.id, segment.id, { layer: li })
+              await refresh()
+              const freshTheme = (state.themes || []).find((t) => t.id === theme.id)
+              const freshSeg = freshTheme?.chain?.segments?.find((s) => s.id === segment.id)
+              if (freshTheme && freshSeg) openSegmentDetail(freshTheme, freshSeg, opts)
+              toast(`已移到「${layerNameOf(theme, li)}」`, 'var(--text-2)')
+            } catch (err) {
+              toast('切换层级失败：' + (err.message || err), 'var(--red)')
+            }
+          },
+        }, ...layerNamesOf(theme).map((name, li) =>
+          h('option', {
+            value: li,
+            selected: (Number.isInteger(segment.layer) && segment.layer >= 0 ? segment.layer : 0) === li || undefined,
+          }, name))),
+      ),
+      // 支撑线索（可收起）→ 关联节点（可跳转），对齐 demo 面板顺序
+      renderEvidenceSection(segment, opts),
+      renderRelations(theme, segment, opts),
       // 子段 / 分叉
       renderSubsegments(segment),
       // 变化历史
       h('section', { class: 'chain-dsect' },
         h('div', { class: 'chain-detail-h' }, '变化历史'),
         renderChangeLog(segment.changeLog)),
-      // 依据文章
-      h('section', { class: 'chain-dsect' },
-        h('div', { class: 'chain-detail-h' }, '依据文章'),
-        (segment.evidenceRefs?.length
-          ? h('div', { class: 'chain-evidence-list' },
-            ...segment.evidenceRefs.map((r) => renderEvidenceRef(r, opts)))
-          : h('p', { class: 'chain-note' }, '暂无。'))),
       // 挂载数据（lemma 只读：含置信度展示，不可改）
       h('section', { class: 'chain-dsect' },
         h('div', { class: 'chain-detail-h' }, '挂载数据'),
