@@ -34,7 +34,10 @@ import {
   getInboxItem, setInboxChainDraft, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
-import { getChainProjection, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes, archiveProjectedNode } from './chain-projector.js'
+import {
+  getChainProjection, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
+  archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation,
+} from './chain-projector.js'
 import { getEvents as getChainEvents, verifyChain as verifyThemeChain } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
@@ -621,6 +624,8 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
+  commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))
+  commands.register('chain:declareRelation', (themeId, fromNodeId, toNodeId, rel) => ({ ok: true, event: declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) }))
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {

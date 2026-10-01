@@ -226,14 +226,18 @@ function eventArchiveRow(item, refreshView) {
     .map((e) => e.from === node.id ? e.to : e.from)).size
   const date = String(node.archivedAt || '').slice(0, 10) || '未记录'
   const typeLabel = { claim: '主张', inference: '推断', evidence: '证据' }[node.kind] || node.kind
+  const sourceRef = String(node.sourceRef || '')
+  const lemmaId = sourceRef.match(/^lemma:(.+)$/)?.[1]
+  const legacySource = lemmaId ? (state.nodes || []).find((candidate) => candidate.id === lemmaId) : null
+  const sourceLabel = legacySource?.title || ({ segment: '主题观点', branch: '主题分支', mount: '收件箱挂载', lemma: '旧命题', 'legacy-node-source': '旧节点来源' }[node.sourceKind]) || (sourceRef ? '来源未解析' : '未记录来源')
   const row = h('div', { class: 'tomb-row event-archive-row' },
     h('div', { class: 'tomb-body' },
       h('div', { class: 'tomb-title' }, h('span', { class: 'tomb-pill' }, `${typeLabel} · 已归档`), h('span', {}, node.title || '未命名节点')),
       node.archiveReason ? h('div', { class: 'tomb-core' }, `归档原因：${node.archiveReason}`)
         : h('div', { class: 'tomb-core' }, '归档原因：未记录'),
-      h('div', { class: 'tomb-meta' }, `${theme.name || '未命名主题'} · 证据 ${node.evidenceCount ?? connectedEvidence} 条 · 归档于 ${date}`),
+      h('div', { class: 'tomb-meta' }, `${theme.name || '未命名主题'} · 来源：${sourceLabel} · 证据 ${node.evidenceCount ?? connectedEvidence} 条 · 归档于 ${date}`),
       h('details', { class: 'event-archive-details' },
-        h('summary', {}, '来源与历史事件'),
+        h('summary', {}, '技术详情 · 原始引用与事件 ID'),
         h('p', {}, `来源引用：${node.sourceRef || '未记录'}`),
         h('p', {}, `节点事件：${(node.provenanceEventIds || node.eventIds || []).join(' · ') || '无'}`),
         h('p', {}, `归档事件：${(node.archiveEventIds || []).join(' · ') || '未记录'}`),

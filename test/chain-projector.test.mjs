@@ -38,6 +38,7 @@ ev.appendEvent(theme.id, { id: 'e-r1', type: 'relation.declared', payload: { rel
 ev.appendEvent(theme.id, { id: 'e-r2', type: 'relation.declared', payload: { rel: 'contradicts', from: { eventId: 'e-e2' }, to: { eventId: 'e-b' } } })
 // 外部证据引用 → 外部节点
 ev.appendEvent(theme.id, { id: 'e-r3', type: 'relation.declared', payload: { rel: 'supports', from: { ref: { type: 'inbox', id: 'inbox-1', title: '收件箱线索' } }, to: { eventId: 'e-a' } } })
+ev.appendEvent(theme.id, { id: 'e-r4', type: 'relation.declared', payload: { rel: 'contradicts', from: { ref: { type: 'lemma', id: 'unresolved-claim' } }, to: { eventId: 'e-a' } } })
 // 更正链：A v1 → v2 → v3
 ev.appendEvent(theme.id, { id: 'e-a2', type: 'correction.appended', supersedes: 'e-a', payload: { oldValue: '初版结论', newValue: '修正结论', reason: '口径更新' } })
 ev.appendEvent(theme.id, { id: 'e-a3', type: 'correction.appended', supersedes: 'e-a2', payload: { oldValue: '修正结论', newValue: '终版结论', reason: '再次核实' } })
@@ -49,8 +50,8 @@ const proj = pj.projectEvents(ev.getEvents(theme.id))
 const nodeA = proj.nodes.find((n) => n.id === 'e-a')
 const nodeB = proj.nodes.find((n) => n.id === 'e-b')
 const nodeC = proj.nodes.find((n) => n.id === 'e-c')
-ok('节点数 6（3主张+2证据+1外部）', proj.nodes.length === 6, `实际 ${proj.nodes.length}`)
-ok('边数 3', proj.edges.length === 3, `实际 ${proj.edges.length}`)
+ok('节点数 7（3主张+2证据+2外部）', proj.nodes.length === 7, `实际 ${proj.nodes.length}`)
+ok('边数 4', proj.edges.length === 4, `实际 ${proj.edges.length}`)
 ok('更正不建新节点', !proj.nodes.some((n) => n.id === 'e-a2' || n.id === 'e-a3'))
 ok('A 标记已更正', nodeA.superseded === true)
 ok('A 当前值为终版', nodeA.currentText === '终版结论', nodeA.currentText)
@@ -58,6 +59,7 @@ ok('A 谱系 3 个事件', nodeA.eventIds.length === 3)
 ok('B 标记已证伪', nodeB.correct === false)
 ok('C 标记已归档', nodeC.archived === true)
 ok('外部证据节点', proj.nodes.some((n) => n.external && n.title.includes('收件箱线索')))
+ok('缺少可读名称的外部引用显示来源未解析', proj.nodes.some((n) => n.external && n.sourceRef.includes('unresolved-claim') && n.title === '来源未解析'))
 ok('节点带来源事件 provenance', nodeA.provenanceEventIds.includes('e-a') && nodeA.sourceRef === 'segment:sa')
 ok('关系边带来源事件 provenance', proj.edges.every((edge) => edge.provenanceEventIds.includes(edge.eventId)))
 ok('支持关系汇总唯一证据数', nodeA.evidenceCount === 2, `实际 ${nodeA.evidenceCount}`)
@@ -153,6 +155,31 @@ const citedEvents = ev.getEvents(citedTheme.id)
 ok('明确来源引用可生成带来源的证据节点与支持边', citedEvents.some((e) => e.type === 'evidence.appended'
   && e.payload.evidenceRefs.some((r) => r.id === 'source-1'))
   && citedEvents.some((e) => e.type === 'relation.declared' && e.payload.rel === 'supports'))
+
+console.log('\n— 明确添加证据与语义关系 —')
+const manualTheme = store.addTheme('手动建模主题')
+const manualClaimEvent = ev.appendEvent(manualTheme.id, {
+  id: 'evt:manual-claim', type: 'claim.created',
+  payload: { title: '待验证观点', coreInfo: '观点说明不是证据', sourceRef: 'manual:claim' },
+})
+const addedEvidence = pj.appendEvidenceToProjectedNode(manualTheme.id, manualClaimEvent.id, {
+  text: '年报中披露的实际数值', sourceLabel: '公司年报', url: 'https://example.com/report',
+})
+const manualRows = ev.getEvents(manualTheme.id)
+ok('补充证据追加证据与支持关系两条事件', addedEvidence.length === 2
+  && addedEvidence[0].type === 'evidence.appended' && addedEvidence[1].type === 'relation.declared')
+ok('观点说明不会被复制成证据', addedEvidence[0].payload.text === '年报中披露的实际数值'
+  && addedEvidence[0].payload.text !== '观点说明不是证据')
+ok('来源名称作为可读元数据保存在证据事件中', addedEvidence[0].payload.sourceLabel === '公司年报')
+ok('手动证据保留来源 URL 并明确连到目标观点', addedEvidence[0].payload.evidenceRefs[0]?.id === 'https://example.com/report'
+  && addedEvidence[1].payload.from.eventId === addedEvidence[0].id
+  && addedEvidence[1].payload.to.eventId === manualClaimEvent.id)
+const contradiction = pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts')
+ok('反驳关系显式追加且完整性继续通过', contradiction.type === 'relation.declared'
+  && contradiction.payload.rel === 'contradicts' && ev.verifyChain(manualTheme.id).ok)
+let duplicateRelationRejected = false
+try { pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts') } catch { duplicateRelationRejected = true }
+ok('重复关系不会静默膨胀图谱', duplicateRelationRejected)
 
 console.log('\n— 投影归档 / 恢复 —')
 const eventNode = pj.getChainProjection(theme3.id).nodes.find((n) => n.title === '新主张')

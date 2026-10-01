@@ -19,6 +19,20 @@ const ok = (name, cond, extra = '') => {
   cond ? pass++ : fail++
   console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${extra ? '  ' + extra : ''}`)
 }
+const luminance = (hex) => {
+  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+  const linear = channels.map((c) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+}
+const contrastRatio = (a, b) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
+const composite = (fg, bg, alpha) => {
+  const f = [1, 3, 5].map((i) => parseInt(fg.slice(i, i + 2), 16))
+  const b = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16))
+  return '#' + f.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)).toString(16).padStart(2, '0')).join('')
+}
 
 // 提取顶层 function 声明（这些函数不依赖 DOM）
 const fns = {}
@@ -110,10 +124,18 @@ console.log('\n— UI 完整性、provenance 与可访问性 —')
 ok('校验状态和手动复核入口', src.includes('m.chainVerify(theme.id)') && src.includes('role: integrity?.ok ? \'status\' : \'alert\''))
 ok('明确不提供绝对不可篡改保证', src.includes('本地可控攻击者仍可重写整链') && src.includes('未提供签名或远端锚定'))
 ok('图节点可键盘打开且声明来源', src.includes("ev.key !== 'Enter'") && src.includes('data-provenance') && src.includes('provenanceEventIds'))
+ok('节点详情不渲染空字段 null 占位', src.includes('mount(clear(body),'))
+const entryDialogBlock = src.slice(src.indexOf('function openEntryDialog('), src.indexOf('\nfunction ', src.indexOf('function openEntryDialog(') + 1))
+ok('建模对话框关闭后可返回原焦点', entryDialogBlock.indexOf('const previousFocus = document.activeElement') >= 0
+  && entryDialogBlock.indexOf('const previousFocus = document.activeElement') < entryDialogBlock.indexOf('closeNodeDetail()'))
 ok('恢复是新事件而非旧记录删除', src.includes('node.restored') && src.includes('追加恢复事件'))
 ok('墓碑区有归档原因、证据数和日期', vaultSrc.includes('归档原因：') && vaultSrc.includes('证据 ${node.evidenceCount') && vaultSrc.includes('归档于 ${date}'))
-ok('墓碑区具备筛选、详情与恢复入口', vaultSrc.includes("type: 'search'") && vaultSrc.includes('来源与历史事件') && vaultSrc.includes('m.chainRestoreNode'))
+ok('墓碑区具备筛选、技术详情与恢复入口', vaultSrc.includes("type: 'search'") && vaultSrc.includes('技术详情 · 原始引用与事件 ID') && vaultSrc.includes('m.chainRestoreNode'))
 ok('校验、键盘焦点和墓碑布局有可见样式', cssSrc.includes('.cog-integrity.is-error') && cssSrc.includes('.cog-node:focus-visible rect') && cssSrc.includes('.event-archive-section'))
+ok('链区辅助文字使用可读对比度 token', cssSrc.includes('.chain-section, .chain-drawer { --text-3:var(--text-2); }') && src.includes("color: '#b54708'"))
+ok('新增链区文字和状态颜色满足 WCAG AA 对比度', contrastRatio(composite('#1d1f21', '#ffffff', 0.62), '#ffffff') >= 4.5
+  && contrastRatio(composite('#f5f5f7', '#2a2a2c', 0.66), '#2a2a2c') >= 4.5
+  && contrastRatio('#166534', '#ecfdf5') >= 4.5 && contrastRatio('#b54708', '#ffffff') >= 4.5)
 // 重叠检查（按各自尺寸）
 let overlap = 0
 const pts = nodes.map((n) => ({ ...pos.get(n.id), sz: size.get(n.id) }))

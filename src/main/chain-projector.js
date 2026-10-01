@@ -134,7 +134,7 @@ export function projectEvents(events) {
     const node = addNode({
       id: key,
       kind: 'evidence',
-      title: shortTitle(title || key),
+      title: shortTitle(title || '来源未解析'),
       status: 'pending',
       confidence: null,
       correct: null,
@@ -298,6 +298,70 @@ export function getArchivedProjectionNodes(themeId) {
 /** Restore is a new event; the archived event remains in the verified history. */
 export function restoreProjectedNode(themeId, sourceRef, reason = '') {
   return restoreProjectedNodes(themeId, [sourceRef], reason)[0]
+}
+
+/** Append user-authored evidence and an explicit supports relation to a live claim. */
+export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {}) {
+  const text = String(input.text || '').trim()
+  if (!text) throw new Error('请填写证据摘要或原文摘录')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const target = projectEvents(getEvents(themeId)).nodes.find((node) => node.id === targetNodeId
+    && !node.external && !node.archived && ['claim', 'inference'].includes(node.kind))
+  if (!target) throw new Error('请选择一个未归档的观点或问题')
+
+  const evidenceId = `evt:evidence:${randomUUID()}`
+  const sourceRef = `manual-evidence:${evidenceId}`
+  const sourceUrl = String(input.url || '').trim()
+  const evidenceRefs = sourceUrl
+    ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
+    : []
+  return appendEventBatch(themeId, [
+    {
+      id: evidenceId,
+      actor: 'user',
+      type: 'evidence.appended',
+      payload: { text, sourceLabel: String(input.sourceLabel || '').trim(), sourceKind: 'manual-evidence', sourceRef, evidenceRefs },
+    },
+    {
+      actor: 'user',
+      type: 'relation.declared',
+      payload: {
+        rel: 'supports',
+        from: { eventId: evidenceId },
+        to: { eventId: target.id },
+        sourceKind: 'manual-evidence',
+        sourceRef,
+      },
+    },
+  ])
+}
+
+/** Declare a user-authored semantic edge; this records a relationship, not verified causality. */
+export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
+  if (!['supports', 'derives', 'contradicts'].includes(rel)) throw new Error('请选择有效的关系类型')
+  if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) throw new Error('请选择两个不同的节点')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const nodes = projectEvents(getEvents(themeId)).nodes
+  const from = nodes.find((node) => node.id === fromNodeId && !node.external && !node.archived)
+  const to = nodes.find((node) => node.id === toNodeId && !node.external && !node.archived)
+  if (!from || !to) throw new Error('关系端点必须是当前未归档的图谱节点')
+  const projection = projectEvents(getEvents(themeId))
+  if (projection.edges.some((edge) => edge.rel === rel && edge.from === fromNodeId && edge.to === toNodeId)) {
+    throw new Error('这条关系已经存在')
+  }
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'relation.declared',
+    payload: {
+      rel,
+      from: { eventId: fromNodeId },
+      to: { eventId: toNodeId },
+      sourceKind: 'user-declared-relation',
+      sourceRef: `relation:${fromNodeId}:${toNodeId}`,
+    },
+  })
 }
 
 /** Restore a node and any archived descendants in one atomic append batch. */

@@ -54,6 +54,8 @@ export function createMeridianBridge() {
     chainVerify: (themeId) => call('chain:verify', themeId),
     chainArchiveNode: (themeId, sourceRef, reason) => call('chain:archiveNode', themeId, sourceRef, reason),
     chainRestoreNode: (themeId, sourceRef, reason) => call('chain:restoreNode', themeId, sourceRef, reason),
+    chainAddEvidence: (themeId, nodeId, input) => call('chain:addEvidence', themeId, nodeId, input),
+    chainDeclareRelation: (themeId, fromNodeId, toNodeId, rel) => call('chain:declareRelation', themeId, fromNodeId, toNodeId, rel),
     chainMountEvent: (themeId, payload) => call('chain:mountEvent', themeId, payload),
     chainMount: (themeId, payload) => call('chain:mount', themeId, payload),
     chainUpdateSegment: (themeId, segmentId, patch, changeNote) => call('chain:updateSegment', themeId, segmentId, patch, changeNote),
