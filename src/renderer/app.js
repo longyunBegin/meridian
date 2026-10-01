@@ -423,6 +423,8 @@ async function captureText(text) {
 function renderNav() {
   const nav = $('#nav')
   clear(nav)
+  // 分组小标题：主导航 / 主题 / 审计各自成组，不再是一条长列表
+  nav.append(h('div', { class: 'side-label fk-navgroup' }, '导航'))
   nav.append(h('button', {
     class: 'nav-item',
     title: '捕获剪贴板内容（⌘⇧V / Ctrl+Shift+V）',

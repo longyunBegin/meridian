@@ -2166,3 +2166,51 @@ body.tauri-macos .app {
 
 /* 定位高亮同时作用于新节点卡与已关闭 chips */
 .cnode.flash, .chain-closed-chip.flash { animation: chain-flash 2.2s ease; }
+
+/* ===== 误杀审计页重构 2026-10-01 =====
+ * 首屏三数回答"哪些规则值得担心"；闸门收成可展开列表行；
+ * 橙色只留给需处理的状态；正文用 text-1/2，不再整页浅灰。
+ * 侧栏分组与选中态的微调也收在这里（审计页重构统一视觉）。
+ */
+.fk-hero { display: flex; gap: 32px; margin: 20px 0 10px; flex-wrap: wrap; }
+.fk-stat { min-width: 0; }
+.fk-num {
+  font-size: var(--t-hero); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+  color: var(--text-1); font-variant-numeric: tabular-nums;
+}
+.fk-num.is-warn { color: var(--orange); }
+.fk-stat-label { font-size: var(--t-body); font-weight: 600; color: var(--text-1); margin-top: 5px; }
+.fk-stat-sub { font-size: var(--t-caption); color: var(--text-2); margin-top: 2px; }
+.fk-caliber { font-size: var(--t-caption); color: var(--text-2); line-height: 1.65; margin: 0 0 4px; max-width: 600px; }
+.fk-verdict { font-size: var(--t-body); color: var(--text-2); margin: 12px 0 0; }
+.fk-gates { margin-top: 16px; border-top: 1px solid var(--hairline); }
+.fk-gate { border-bottom: 1px solid var(--hairline); }
+.fk-gate-head { display: flex; align-items: center; gap: 9px; padding: 12px 4px; cursor: pointer; list-style: none; }
+.fk-gate-head::-webkit-details-marker { display: none; }
+.fk-gate-name { font-size: var(--t-body); font-weight: 600; color: var(--text-1); }
+.fk-gate-nums { font-size: var(--t-caption); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.fk-chev { margin-left: auto; color: var(--text-3); transition: transform 0.15s ease; font-size: var(--t-body); }
+.fk-gate[open] > .fk-gate-head .fk-chev { transform: rotate(90deg); }
+.fk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); flex: none; }
+.fk-recs { padding: 2px 0 10px; }
+.fk-rec { border-top: 1px dashed var(--hairline); }
+.fk-rec:first-child { border-top: 0; }
+.fk-rec-head { display: flex; align-items: baseline; gap: 9px; padding: 9px 4px 9px 18px; cursor: pointer; list-style: none; }
+.fk-rec-head::-webkit-details-marker { display: none; }
+.fk-rec-head .fk-dot { align-self: center; }
+.fk-rec-title {
+  font-size: var(--t-body); color: var(--text-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.fk-rec-meta { font-size: var(--t-caption); color: var(--text-2); flex: none; }
+.fk-rec-body { padding: 0 4px 12px 18px; display: flex; flex-direction: column; gap: 5px; }
+.fk-kv { display: flex; gap: 10px; font-size: var(--t-caption); line-height: 1.55; }
+.fk-k { color: var(--text-2); min-width: 52px; flex: none; }
+.fk-v { color: var(--text-1); }
+.fk-empty { padding: 10px 4px; font-size: var(--t-body); color: var(--text-2); }
+.fk-foot { margin-top: 18px; font-size: var(--t-caption); color: var(--text-2); line-height: 1.6; }
+/* 侧栏：首个分组补小标题；选中项加 accent 左线，更突出 */
+.fk-navgroup { margin-top: 8px; }
+.nav-item[aria-selected="true"],
+.theme-item[aria-selected="true"],
+.vault-item[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--accent); }
