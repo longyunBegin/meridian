@@ -1875,11 +1875,11 @@ body.tauri-macos .app {
 .chain-card:hover { background: var(--hover); }
 .chain-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
 .chain-seg-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.chain-seq { font-size: var(--t-caption); font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.chain-seq { font-size: var(--t-caption); font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
 .chain-seg-name { font-size: var(--t-title); font-weight: 600; }
 .chain-pill {
   font-size: var(--t-caption); line-height: 1.6; white-space: nowrap;
-  background: none; padding: 0; color: var(--text-3); font-weight: 500;
+  background: none; padding: 0; color: var(--text-3); font-weight: 400;
 }
 .chain-pill.st-confirmed { color: #1f9d4d; }
 .chain-pill.st-pending { color: #b26a00; }
