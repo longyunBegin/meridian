@@ -1,0 +1,8 @@
+# 包体积优化（原见 .github/workflows/release.yml，b363c69；因当前 GitHub 凭证
+# 无 Workflows 权限，改由构建脚本/配置执行，workflow 版保留在历史中不动）。
+#
+# 等效于 CI 曾用的 CARGO_PROFILE_RELEASE_STRIP=true：release 构建在 link 时
+# strip Rust 二进制，发生在 tauri 打包/签名 .app 之前，因此无需重签。
+# 只影响 release profile；dev 构建不受影响。
+[profile.release]
+strip = true

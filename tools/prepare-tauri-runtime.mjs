@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -140,6 +140,54 @@ function copyWindowsRuntimeDlls(execPath, outputDir) {
   return dlls
 }
 
+// 包体积优化（原见 .github/workflows/release.yml，b363c69；因当前 GitHub 凭证
+// 无 Workflows 权限，改由构建脚本执行，workflow 版保留在历史中不动）。
+//
+// staged 的 src-tauri/runtime/node.exe 是 Windows PE 二进制；用 PE-capable 的
+// strip（LLVM / Git-for-Windows / MSYS2 自带，或 PATH 中的 llvm-strip/strip）
+// 给它瘦身。只 strip node.exe 本体，绝不碰 macOS 的 Mach-O 二进制。
+// nodejs.org 自带的 Authenticode 签名会被 strip 掉（已接受）；CI 本来就不做
+// Authenticode 签名。strip 发生在 tauri build 打包之前，因此 updater .sig
+// 计算在 stripped bytes 之上。找不到可用工具时报错退出（fail-closed）。
+const WINDOWS_STRIP_TOOL_CANDIDATES = [
+  'C:\\Program Files\\LLVM\\bin\\llvm-strip.exe',
+  'C:\\Program Files\\Git\\usr\\bin\\strip.exe',
+  'C:\\msys64\\usr\\bin\\strip.exe',
+]
+const WINDOWS_STRIP_PATH_FALLBACKS = ['llvm-strip', 'strip']
+
+function findWindowsStripTool(runCommand) {
+  for (const candidate of WINDOWS_STRIP_TOOL_CANDIDATES) {
+    if (existsSync(candidate)) return candidate
+  }
+  for (const name of WINDOWS_STRIP_PATH_FALLBACKS) {
+    try {
+      runCommand(name, ['--version'])
+      return name
+    } catch {
+      // 该工具不在 PATH 中，继续试下一个
+    }
+  }
+  return null
+}
+
+export function stripWindowsNodeBinary({ nodeExe, runCommand = run } = {}) {
+  if (!nodeExe || !existsSync(nodeExe) || !statSync(nodeExe).isFile()) {
+    throw new Error(`Expected staged Windows Node sidecar at ${nodeExe}`)
+  }
+  const stripBin = findWindowsStripTool(runCommand)
+  if (!stripBin) {
+    throw new Error(
+      'No PE-capable strip tool found (checked LLVM / Git-for-Windows / MSYS2 install paths and PATH llvm-strip/strip); refusing to package an unstripped Windows Node sidecar'
+    )
+  }
+  const before = statSync(nodeExe).size
+  runCommand(stripBin, [nodeExe])
+  const after = statSync(nodeExe).size
+  console.log(`Stripped ${nodeExe} with ${stripBin}: ${before} -> ${after} bytes`)
+  return { stripBin, before, after }
+}
+
 export function prepareRuntime({
   platform = process.platform,
   execPath = process.execPath,
@@ -169,5 +217,11 @@ export function prepareRuntime({
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const { output, extras } = prepareRuntime()
+  if (process.platform === 'win32') {
+    // 与原 workflow 语义一致：staging 落盘之后、tauri build 打包之前 strip。
+    // 放在 CLI 入口而非 prepareRuntime() 内：保持导出的 prepareRuntime 纯粹、
+    // 可被测试直接调用；npm run tauri:prepare 走的正是这条路径。
+    stripWindowsNodeBinary({ nodeExe: output })
+  }
   console.log(`Prepared Node ${process.versions.node} (${process.platform}/${process.arch}) at ${output}; bundled ${extras.length} platform runtime library file(s)`)
 }

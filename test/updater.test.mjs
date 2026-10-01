@@ -79,6 +79,11 @@ try {
     'Meridian_0.1.3_aarch64.dmg',
   ])
   for (const asset of macAssets) assert.ok(readFileSync(join(outputDir, asset)).length > 0, `${asset} should be copied and non-empty`)
+  assert.equal(
+    readFileSync(join(outputDir, 'Meridian_0.1.3_aarch64.dmg'), 'utf8'),
+    'dmg-installer',
+    'DMG must pass through byte-identical when hdiutil is unavailable (ULFO recompression is skipped, not failed)'
+  )
 
   rmSync(join(macosDir, 'Meridian.app.tar.gz'))
   assert.throws(() => packageUpdaterAssets({

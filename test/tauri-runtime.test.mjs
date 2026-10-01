@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { prepareRuntime } from '../tools/prepare-tauri-runtime.mjs'
+import { prepareRuntime, stripWindowsNodeBinary } from '../tools/prepare-tauri-runtime.mjs'
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'meridian-tauri-runtime-'))
 try {
@@ -160,6 +160,33 @@ try {
   }), /Could not resolve @rpath\/libnode\.147\.dylib/)
 
   console.log('Tauri runtime packaging: idempotent staging, macOS libnode/rpath then ad-hoc signing (including failure), missing-library failure, and Windows DLL copying passed')
+
+  // stripWindowsNodeBinary（原 workflow b363c69 的 Windows 瘦身步骤搬迁版）：
+  // 只 strip Windows PE 的 node.exe；找不到可用工具时 fail-closed。
+  const stripDir = join(tempRoot, 'strip-test')
+  mkdirSync(stripDir, { recursive: true })
+  const fakeExe = join(stripDir, 'node.exe')
+  writeFileSync(fakeExe, 'fake-pe-binary-bytes')
+  assert.throws(() => stripWindowsNodeBinary({
+    nodeExe: join(stripDir, 'missing.exe'),
+    runCommand: () => { throw new Error('no tool') },
+  }), /Expected staged Windows Node sidecar/, 'missing staged binary must fail closed')
+  assert.throws(() => stripWindowsNodeBinary({
+    nodeExe: fakeExe,
+    runCommand: () => { throw new Error('no tool') },
+  }), /No PE-capable strip tool found/, 'missing strip tool must fail closed')
+  const stripCalls = []
+  const stripResult = stripWindowsNodeBinary({
+    nodeExe: fakeExe,
+    runCommand: (command, args) => { stripCalls.push([command, args]); return '' },
+  })
+  assert.equal(stripResult.stripBin, 'llvm-strip', 'PATH fallback should prefer llvm-strip over strip')
+  assert.deepEqual(stripCalls, [
+    ['llvm-strip', ['--version']],
+    ['llvm-strip', [fakeExe]],
+  ], 'strip must probe PATH then run against the staged node.exe')
+  assert.equal(stripResult.before, stripResult.after, 'fixture is not a real PE; size must be reported unchanged')
+  console.log('Windows Node sidecar stripping: fail-closed paths and PATH probing passed')
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })
 }

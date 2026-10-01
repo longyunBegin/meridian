@@ -1,5 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const defaultProjectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -31,6 +32,37 @@ function copyRequired(source, destination) {
   copyFileSync(source, destination)
 }
 
+function hdiutilAvailable() {
+  try {
+    execFileSync('hdiutil', ['help'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// 包体积优化（原见 .github/workflows/release.yml，b363c69；因当前 GitHub 凭证
+// 无 Workflows 权限，改由构建脚本执行，workflow 版保留在历史中不动）。
+//
+// tauri 打出的 DMG 用 lzfse 压缩；用 hdiutil convert -format ULFO 重压缩为
+// lzma，可再省约 0.9 MiB（v0.1.3 CI DMG 实测 44,599,336 -> 43,726,444 bytes）。
+// 原地同名替换，下游打包沿用同一资产名；DMG 本身无 updater .sig，不影响签名。
+// 挂载 ULFO 镜像需 macOS 10.15+，低于 bundle.macOS.minimumSystemVersion（11.0）。
+function recompressDmgUlfo(dmg) {
+  if (!hdiutilAvailable()) {
+    console.log('hdiutil not available; skipping DMG ULFO recompression')
+    return { skipped: true }
+  }
+  const before = statSync(dmg).size
+  const tmp = dmg.replace(/\.dmg$/i, '.ulfo.dmg')
+  if (existsSync(tmp)) unlinkSync(tmp)
+  execFileSync('hdiutil', ['convert', dmg, '-format', 'ULFO', '-o', tmp], { stdio: 'inherit' })
+  const after = statSync(tmp).size
+  renameSync(tmp, dmg)
+  console.log(`DMG recompressed (ULFO): ${before} -> ${after} bytes`)
+  return { skipped: false, before, after }
+}
+
 export function packageUpdaterAssets({ projectRoot = defaultProjectRoot, platform, target, outputDir, version = projectVersion(projectRoot) }) {
   if (!['darwin', 'windows'].includes(platform)) throw new Error(`Unsupported platform: ${platform}`)
   if (platform === 'darwin' && target !== 'aarch64-apple-darwin') throw new Error('macOS updater builds must target Apple Silicon (aarch64-apple-darwin)')
@@ -48,6 +80,9 @@ export function packageUpdaterAssets({ projectRoot = defaultProjectRoot, platfor
     const dmgDir = join(bundleRoot, 'dmg')
     const archive = exactlyOne(listFiles(macosDir).filter((path) => basename(path).endsWith('.app.tar.gz')), 'macOS .app.tar.gz updater archive')
     const dmg = exactlyOne(listFiles(dmgDir).filter((path) => path.endsWith('.dmg')), 'Apple Silicon DMG installer')
+    // 与原 workflow 语义一致：package-updater-assets 处理 DMG 之前先做 ULFO
+    // 重压缩（原 workflow 在调本脚本之前做）。仅 darwin 路径、hdiutil 可用时执行。
+    recompressDmgUlfo(dmg)
     const archiveName = `Meridian_${version}_aarch64.app.tar.gz`
     copyRequired(archive, join(output, archiveName))
     copyRequired(`${archive}.sig`, join(output, `${archiveName}.sig`))
