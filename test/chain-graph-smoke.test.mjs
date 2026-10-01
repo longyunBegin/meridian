@@ -68,6 +68,24 @@ ${fns.layoutGraph || ''}
 const api = new Function(`${sandbox}; return { layoutGraph, rectExit, edgeD, edgeGeom, splitLines, nodeSize }`)()
 const { layoutGraph, rectExit, edgeD, edgeGeom, splitLines, nodeSize } = api
 
+const projectionApi = new Function(`${grab('projectedNodes')}
+${grab('primaryGraphNodes')}
+${grab('graphPageRows')}
+return { projectedNodes, primaryGraphNodes, graphPageRows }`)()
+const syntheticAllNodes = [
+  ...Array.from({ length: 92 }, (_, index) => ({ id: `claim-${index + 1}`, kind: 'claim', createdSeq: index + 1 })),
+  ...Array.from({ length: 20 }, (_, index) => ({ id: `evidence-${index + 1}`, kind: 'evidence', createdSeq: 93 + index })),
+  ...Array.from({ length: 7 }, (_, index) => ({ id: `external-${index + 1}`, kind: 'evidence', external: true, createdSeq: 113 + index })),
+]
+const allNodesOnly = { nodes: [], allNodes: syntheticAllNodes }
+const allNodesPage = projectionApi.graphPageRows(allNodesOnly)
+ok('空关联子图仍以完整 allNodes 显示 92 个观点并形成 20 项首屏分页', projectionApi.projectedNodes(allNodesOnly).length === 119
+  && projectionApi.primaryGraphNodes(allNodesOnly).length === 92 && allNodesPage.nodes.slice(0, 20).length === 20
+  && allNodesPage.nodes[0].id === 'claim-1')
+ok('allNodes 为空时兼容已有 nodes；仅有证据时图页仍有可见节点', projectionApi.projectedNodes({ nodes: [syntheticAllNodes[0]], allNodes: [] }).length === 1
+  && projectionApi.graphPageRows({ nodes: [], allNodes: syntheticAllNodes.slice(92) }).label === '证据'
+  && projectionApi.graphPageRows({ nodes: [], allNodes: syntheticAllNodes.slice(92) }).nodes.length === 27)
+
 console.log('\n— splitLines —')
 ok('短标题一行', JSON.stringify(splitLines('市场规模')) === '["市场规模"]')
 ok('长标题两行', splitLines('这是一个很长的主张标题文本内容').length === 2)
@@ -197,8 +215,9 @@ ok('超过 30 项的图谱搜索结果可分页并由末项键盘导航到下一
 ok('原生 hidden 状态不被通用按钮 display 规则覆盖', cssSrc.includes('[hidden] { display:none !important; }'))
 ok('主视图编号使用 01/02', src.includes("'01'") && src.includes("'02'"))
 ok('校验、键盘焦点和墓碑布局有可见样式', cssSrc.includes('.cog-integrity.is-error') && cssSrc.includes('.cog-node:focus-visible rect') && cssSrc.includes('.event-archive-section'))
-ok('主题统计、Chain/Overview 标签与真实投影/事件计数', src.includes("['points', '观点与推断']")
-  && src.includes("['evidence', '证据条目']") && src.includes("['events', '账本事件']")
+ok('主题统计、Chain/Overview 标签与真实投影/事件计数明确标注全主题范围', src.includes("['points', '全主题观点与推断']")
+  && src.includes("['evidence', '全主题证据条目']") && src.includes('全主题本地记录 · 不含外部引用')
+  && src.includes('关系子图（含外部引用）') && src.includes("['events', '账本事件']")
   && src.includes("['integrity', '账本完整性']") && src.includes('updateThemeStats(opts.themeStats, proj, events)')
   && src.includes("role: 'tablist'"))
 ok('默认图谱与右侧内嵌检视器共用工作区；账本仍为隐藏式抽屉', src.includes("class: 'chain-path-h cog-global-toolbar'")
@@ -211,8 +230,17 @@ ok('观点骨架每页不超过 20 项；所选节点在内嵌面板显示证据
   && src.includes('renderFocusRegion(node.id)') && src.includes('renderNodeHistoryTimeline(history, detailOptions)')
   && src.includes('renderNodeEvidence(history, detailOptions)')
   && src.includes('上一组观点') && src.includes('下一组观点') && src.includes('searchGraphNodes('))
+ok('主图分页及搜索以完整主题 allNodes 为准，证据-only 主题也分页显示记录', src.includes('const primaryNodes = primaryGraphNodes(projection)')
+  && src.includes('const { nodes: pageSource, label: pageKind } = graphPageRows(projection)')
+  && src.includes('searchGraphNodes(projectedNodes(currentView.projection), query)')
+  && src.includes('const total = graphPageRows(currentView.projection).nodes.length'))
+ok('短视口优先绘图区，统计口径仍可读且常显图例排在画布之后', cssSrc.includes('@media (max-height:720px)')
+  && cssSrc.includes('.cog-theme-stat { grid-template-columns:minmax(0,1fr) auto;')
+  && src.includes('const graphLegend = renderLegend()') && src.includes('graphCanvas, graphLegend, help')
+  && cssSrc.includes('.cog-graph-main > .cog-graph-legend-corner'))
 ok('新主题空态以添加第一个观点为起点，主题根不重复写入观点', src.includes('添加第一个观点')
-  && src.includes('主题本身就是图根') && src.includes('主题根 · 元数据'))
+  && src.includes('主题本身就是图根') && src.includes('主题根 · 元数据')
+  && src.includes('if (!currentNodes.length)') && src.includes('if (!hasDrawableNodes)'))
 ok('关系连接簇和未连接观点均有淡色背景分组且常态不画主题扇线', src.includes('class: \'cog-clusters\'')
   && src.includes('尚无显式关系的观点') && src.includes('updateTopicEdge(focusedNodeId || hoveredNodeId)')
   && cssSrc.includes('.cog-cluster-bg.is-related') && cssSrc.includes('.cog-cluster-bg.is-unlinked'))

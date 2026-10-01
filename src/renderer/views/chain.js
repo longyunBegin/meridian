@@ -69,6 +69,29 @@ const NODE_SIZE = {
 }
 const nodeSize = (n) => NODE_SIZE[n.kind] || NODE_SIZE.claim
 
+function projectedNodes(projection) {
+  const allNodes = Array.isArray(projection?.allNodes) ? projection.allNodes : []
+  if (allNodes.length) return allNodes
+  return Array.isArray(projection?.nodes) ? projection.nodes : []
+}
+
+function primaryGraphNodes(projection) {
+  return projectedNodes(projection)
+    .filter((node) => ['claim', 'inference'].includes(node.kind))
+    .slice()
+    .sort((a, b) => (Number(a.createdSeq) || 0) - (Number(b.createdSeq) || 0) || String(a.id).localeCompare(String(b.id)))
+}
+
+function graphPageRows(projection) {
+  const points = primaryGraphNodes(projection)
+  if (points.length) return { nodes: points, label: '观点' }
+  const evidence = projectedNodes(projection)
+    .filter((node) => node.kind === 'evidence')
+    .slice()
+    .sort((a, b) => (Number(a.createdSeq) || 0) - (Number(b.createdSeq) || 0) || String(a.id).localeCompare(String(b.id)))
+  return { nodes: evidence, label: evidence.length ? '证据' : '观点' }
+}
+
 /* ------------------------------------------------------------------ */
 /* 认知链区块：主题页内的语义图谱                                       */
 /* ------------------------------------------------------------------ */
@@ -95,12 +118,13 @@ export function renderChainSection(theme, opts = {}) {
   graphPane.append(stage)
   const themeStats = h('section', { class: 'cog-theme-stats', role: 'group', 'aria-label': '主题动态统计' },
     ...[
-      ['points', '观点与推断'],
-      ['evidence', '证据条目'],
+      ['points', '全主题观点与推断'],
+      ['evidence', '全主题证据条目'],
       ['events', '账本事件'],
       ['integrity', '账本完整性'],
     ].map(([key, label]) => h('div', { class: `cog-theme-stat${key === 'integrity' ? ' is-integrity' : ''}`, 'data-theme-stat': key },
       h('span', { class: 'cog-theme-stat-label' }, label),
+      ['points', 'evidence'].includes(key) ? h('span', { class: 'cog-theme-stat-range' }, '全主题本地记录 · 不含外部引用') : null,
       h('strong', { class: 'cog-theme-stat-value', 'data-theme-stat-value': key, 'aria-live': key === 'integrity' ? 'polite' : 'off' }, '—'))))
   const chainPanelId = `${drawerId}-chain-panel`
   const overviewPanelId = `${drawerId}-overview-panel`
@@ -193,7 +217,7 @@ export function renderChainSection(theme, opts = {}) {
 
 function updateThemeStats(stats, projection, events) {
   if (!stats) return
-  const nodes = projection?.allNodes || projection?.nodes || []
+  const nodes = projectedNodes(projection)
   const points = nodes.filter((node) => !node.external && ['claim', 'inference'].includes(node.kind)).length
   const evidence = nodes.filter((node) => !node.external && node.kind === 'evidence').length
   const eventCount = Number.isSafeInteger(projection?.eventCount) ? projection.eventCount : events.length
@@ -212,11 +236,11 @@ function renderOverviewContent(container, projection, verifiedEvents, onOpenEven
   if (!container) return
   clear(container)
   const counts = { claim: 0, inference: 0, evidence: 0 }
-  for (const node of (projection?.allNodes || projection?.nodes || [])) {
+  for (const node of projectedNodes(projection)) {
     if (!node.external && counts[node.kind] !== undefined) counts[node.kind]++
   }
   container.append(
-    h('div', { class: 'cog-overview-count-line' }, `观点 ${counts.claim} · 推断 ${counts.inference} · 证据 ${counts.evidence}`),
+    h('div', { class: 'cog-overview-count-line' }, `全主题本地记录（不含外部引用）：观点 ${counts.claim} · 推断 ${counts.inference} · 证据 ${counts.evidence}`),
     h('h3', { class: 'cog-overview-title', style: { marginTop: '18px' } }, '最近记录'),
   )
   const recent = verifiedEvents.slice(-8).reverse()
@@ -252,13 +276,16 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   let replayGeneration = 0
   const countsEl = stage.closest('.chain-section')?.querySelector('[data-cog-counts]')
   const kinds = { claim: 0, inference: 0, evidence: 0 }
-  for (const n of proj.nodes) if (kinds[n.kind] !== undefined) kinds[n.kind]++
+  const scopedNodes = Array.isArray(proj.nodes) ? proj.nodes : projectedNodes(proj)
+  for (const n of scopedNodes) if (kinds[n.kind] !== undefined) kinds[n.kind]++
   const parts = []
   if (kinds.claim) parts.push(`观点 ${kinds.claim}`)
   if (kinds.inference) parts.push(`推断 ${kinds.inference}`)
   if (kinds.evidence) parts.push(`证据 ${kinds.evidence}`)
   if (countsEl) {
-    countsEl.textContent = parts.join(' · ') || '暂无观点'
+    countsEl.textContent = parts.length
+      ? `关系子图（含外部引用）：${parts.join(' · ')}`
+      : '关系子图（含外部引用）：暂无节点'
   }
   const replayStatusEl = stage.closest('.chain-section')?.querySelector('[data-replay-status]')
   const integrityBadge = stage.closest('.chain-section')?.querySelector('[data-ledger-status]')
@@ -356,7 +383,9 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
   }
 
-  if (!(proj.allNodes || proj.nodes || []).some((node) => !node.external && ['claim', 'inference'].includes(node.kind))) {
+  const currentNodes = projectedNodes(proj)
+  const hasDrawableNodes = graphPageRows(proj).nodes.length > 0
+  if (!currentNodes.length) {
     stage.querySelector('.cog-graph-main')?.insertBefore(h('div', { class: 'chain-empty cog-theme-empty' },
       h('div', { class: 'empty-title' }, '从一个可检验的问题开始'),
       h('p', { class: 'chain-empty-sub' }, '主题本身就是图根，无需再创建主题节点。先写下你的观点或问题；证据和支持、反驳关系由你明确补充。观点不会自动变成证据。'),
@@ -365,6 +394,11 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
       h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '添加第一个观点')),
       stage.querySelector('.cog-graph-canvas'))
     return
+  }
+  if (!hasDrawableNodes) {
+    stage.querySelector('.cog-graph-main')?.insertBefore(h('p', { class: 'cog-frame-note', role: 'status' },
+      `主题中已有 ${currentNodes.length} 个投影节点，但其类型不包含可绘制的观点、推断或证据；完整记录仍可通过搜索和账本查看。`),
+    stage.querySelector('.cog-graph-canvas'))
   }
 }
 
@@ -771,21 +805,20 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   const help = h('details', { class: 'cog-graph-help' },
     h('summary', {}, '阅读方式与完整数据范围'),
     h('div', { class: 'cog-graph-help-body' },
-      h('p', {}, '默认每页最多显示 20 个观点或推断，优先呈现主题下的观点骨架；证据与关系详情收起。选择一个观点后，下方只展开它直接关联的证据、来源事件和关系，主骨架仍保留。'),
-      h('p', {}, '用“上一组观点 / 下一组观点”逐页阅读其余观点；搜索覆盖全部观点、推断、证据和外部引用。图下的完整节点与独立媒体清单保留逐条查看路径，不删节点、不合并来源。'),
+      h('p', {}, '主图和分页覆盖本主题全量观点与推断，包括尚未挂接关系的节点；每页最多显示 20 项。仅当主题没有观点或推断时，才以证据节点填充图面；关系详情按需展开。'),
+      h('p', {}, '用“上一组 / 下一组”逐页阅读图谱节点；搜索覆盖全主题观点、推断、证据和外部引用。顶部统计显示全主题本地记录，关系子图摘要只统计当前关联范围；图下清单保留逐条查看路径，不删节点、不合并来源。'),
       h('p', {}, '箭头和颜色含义见图谱常驻图例；关系是账本中的声明，不代表自动核实。历史回放仅重建通过校验的前缀并保持只读。'), derivesToggle))
+  const graphLegend = renderLegend()
   const graphToolbar = h('div', { class: 'cog-graph-toolbar' },
     h('div', { class: 'cog-graph-intro' },
       h('div', { class: 'cog-graph-title-line' }, h('span', { class: 'cog-ledger-num cog-graph-num' }, '02'), h('div', { class: 'cog-graph-title' }, '认知图谱')),
-      h('p', { class: 'cog-graph-caption' }, '先看主题下的观点分布；证据与关系按需展开。')),
-    h('div', { class: 'cog-graph-actions' }, addClaim, addEvidence, evidenceGuidance),
-    renderLegend())
+      h('p', { class: 'cog-graph-caption' }, '显示全主题观点与推断（每页最多 20 项）；证据与关系按需展开。')),
+    h('div', { class: 'cog-graph-actions' }, addClaim, addEvidence, evidenceGuidance))
   const graphMain = h('div', { class: 'cog-graph-main' },
     h('div', { class: 'cog-focus-bar' }, focusLabel,
       h('div', { class: 'cog-focus-actions' }, nodeSearch, searchButton, clearSearch, focusDetails, clearFocus)),
     searchResults, searchPager, searchError, claimPager,
-    help,
-    graphCanvas)
+    graphCanvas, graphLegend, help)
   stage.append(graphToolbar, h('div', { class: 'cog-workspace-grid' }, graphMain, pointInspector))
   let currentView = { projection: proj, selectedSeq: null, events: [] }
   let currentFocus = null
@@ -794,7 +827,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   let searchPage = 1
   let previousSearchQuery = ''
   function changeClaimPage(delta) {
-    const total = (currentView.projection?.nodes || []).filter((node) => ['claim', 'inference'].includes(node.kind)).length
+    const total = graphPageRows(currentView.projection).nodes.length
     const pageCount = Math.max(1, Math.ceil(total / CLAIM_PAGE_SIZE))
     claimPage = Math.max(1, Math.min(pageCount, claimPage + delta))
     render(currentView, null)
@@ -828,7 +861,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       previousSearchQuery = query
     }
     clear(searchResults)
-    searchMatches = searchGraphNodes(currentView.projection?.allNodes || currentView.projection?.nodes || [], query)
+    searchMatches = searchGraphNodes(projectedNodes(currentView.projection), query)
     clearSearch.disabled = !query
     if (!query) { searchResults.hidden = true; searchPager.hidden = true; searchError.textContent = ''; return }
     searchResults.hidden = false
@@ -892,7 +925,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   function focusBySearch() {
     const query = nodeSearch.value.trim()
     if (!query) { searchError.textContent = '请输入节点名称。'; nodeSearch.focus(); return }
-    const match = searchMatches[0] || searchGraphNodes(currentView.projection?.allNodes || currentView.projection?.nodes || [], query)[0]
+    const match = searchMatches[0] || searchGraphNodes(projectedNodes(currentView.projection), query)[0]
     if (!match) { searchError.textContent = '没有找到匹配节点。'; return }
     searchResults.hidden = true
     searchPager.hidden = true
@@ -903,7 +936,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     clear(focusRegion)
     if (!nodeId) { focusRegion.hidden = true; return }
     const projection = currentView.projection || {}
-    const allNodes = projection.allNodes || projection.nodes || []
+    const allNodes = projectedNodes(projection)
     const byId = new Map(allNodes.map((node) => [node.id, node]))
     const focused = byId.get(nodeId)
     if (!focused) { focusRegion.hidden = true; return }
@@ -970,7 +1003,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     clear(historyBody)
     clear(referencesBody)
     const projection = currentView.projection || {}
-    const allNodes = projection.allNodes || projection.nodes || []
+    const allNodes = projectedNodes(projection)
     const node = nodeId ? allNodes.find((candidate) => candidate.id === nodeId) : null
     focusRegion.hidden = !node
     historyDisclosure.hidden = !node
@@ -1041,9 +1074,9 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     currentView = viewState
     currentFocus = focusNodeId
     const projection = viewState.projection
-    const allNodes = projection.allNodes || projection.nodes || []
-    const primaryNodes = (projection.nodes || allNodes).filter((node) => ['claim', 'inference'].includes(node.kind))
-      .slice().sort((a, b) => (Number(a.createdSeq) || 0) - (Number(b.createdSeq) || 0) || String(a.id).localeCompare(String(b.id)))
+    const allNodes = projectedNodes(projection)
+    const primaryNodes = primaryGraphNodes(projection)
+    const { nodes: pageSource, label: pageKind } = graphPageRows(projection)
     const allEdges = projection.allEdges || projection.edges || []
     const focusedNode = focusNodeId ? allNodes.find((node) => node.id === focusNodeId) : null
     let pageTarget = focusedNode && ['claim', 'inference'].includes(focusedNode.kind) ? focusedNode.id : null
@@ -1052,20 +1085,24 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
         || (edge.to === focusedNode.id && primaryNodes.some((node) => node.id === edge.from)))
       pageTarget = parentEdge ? (parentEdge.from === focusedNode.id ? parentEdge.to : parentEdge.from) : null
     }
-    const targetIndex = pageTarget ? primaryNodes.findIndex((node) => node.id === pageTarget) : -1
+    if (!pageTarget && focusedNode?.kind === 'evidence' && !primaryNodes.length) pageTarget = focusedNode.id
+    const targetIndex = pageTarget ? pageSource.findIndex((node) => node.id === pageTarget) : -1
     if (targetIndex >= 0) claimPage = Math.floor(targetIndex / CLAIM_PAGE_SIZE) + 1
-    const pageCount = Math.max(1, Math.ceil(primaryNodes.length / CLAIM_PAGE_SIZE))
+    const pageCount = Math.max(1, Math.ceil(pageSource.length / CLAIM_PAGE_SIZE))
     claimPage = Math.max(1, Math.min(pageCount, claimPage))
     const pageStart = (claimPage - 1) * CLAIM_PAGE_SIZE
-    const pageNodes = primaryNodes.slice(pageStart, pageStart + CLAIM_PAGE_SIZE)
+    const pageNodes = pageSource.slice(pageStart, pageStart + CLAIM_PAGE_SIZE)
     const pageIds = new Set(pageNodes.map((node) => node.id))
     const visualFocusId = pageTarget && pageIds.has(pageTarget) ? pageTarget : null
     const visibleEdges = visualFocusId
       ? allEdges.filter((edge) => (edge.from === visualFocusId || edge.to === visualFocusId) && pageIds.has(edge.from) && pageIds.has(edge.to))
       : []
-    pageLabel.textContent = primaryNodes.length
-      ? `观点 ${pageStart + 1}–${Math.min(pageStart + pageNodes.length, primaryNodes.length)} / ${primaryNodes.length} · 默认每页最多 ${CLAIM_PAGE_SIZE}`
-      : '观点 0 / 0'
+    claimPager.setAttribute('aria-label', `${pageKind}分页`)
+    previousPage.textContent = `上一组${pageKind}`
+    nextPage.textContent = `下一组${pageKind}`
+    pageLabel.textContent = pageSource.length
+      ? `${pageKind} ${pageStart + 1}–${Math.min(pageStart + pageNodes.length, pageSource.length)} / ${pageSource.length} · 默认每页最多 ${CLAIM_PAGE_SIZE}`
+      : `${pageKind} 0 / 0`
     previousPage.disabled = claimPage <= 1
     nextPage.disabled = claimPage >= pageCount
     const frame = selectGraphWindow({ ...projection, nodes: pageNodes, edges: visibleEdges }, {
@@ -1076,7 +1113,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     clear(graphCanvas)
     if (frame.truncated) {
       graphCanvas.append(h('p', { class: 'cog-frame-note', role: 'status' },
-        `本页仅显示 ${frame.nodes.length} 个观点骨架；使用分页、搜索或账本定位可查看完整节点范围。`))
+        `本页仅显示 ${frame.nodes.length} 个${pageKind}节点骨架；使用分页、搜索或账本定位可查看完整主题范围。`))
     }
     const frameProjection = { ...projection, nodes: frame.nodes, edges: frame.edges }
     if (viewChanged && nodeSearch.value) renderSearchResults()
@@ -1113,7 +1150,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     liveButton.hidden = !replaying
     addClaim.disabled = replaying
     addClaim.title = replaying ? '历史回放为只读；返回当前投影后才能追加观点' : ''
-    const choices = (projection.allNodes || projection.nodes || []).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
+    const choices = projectedNodes(projection).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
     addEvidence.disabled = replaying
     addEvidence.title = replaying ? '历史回放为只读；返回当前投影后才能补充证据'
       : choices.length ? '' : '请先创建一个观点或问题，再补充证据'
@@ -1128,7 +1165,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
 
   focusDetails.onclick = () => {
     const id = currentFocus || graphCanvas.querySelector('.cog-node.is-selected')?.getAttribute('data-node-id')
-    const node = (currentView.projection.allNodes || currentView.projection.nodes || []).find((candidate) => candidate.id === id)
+    const node = projectedNodes(currentView.projection).find((candidate) => candidate.id === id)
     if (node) opts.onOpen?.(node, { onChanged: opts.onChanged, historyContext: { events: currentView.events || [], projection: currentView.projection, selectedSeq: currentView.selectedSeq }, onJumpToEvent: opts.onJumpToEvent })
   }
   clearFocus.onclick = () => render(currentView, null)
@@ -1136,7 +1173,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
 }
 
 function renderIndependentMediaGroups(canvas, projection, theme, opts, onFocusNode) {
-  const items = independentMediaEvidence(projection.allNodes || projection.nodes || [], opts.historyContext?.events || [])
+  const items = independentMediaEvidence(projectedNodes(projection), opts.historyContext?.events || [])
   if (!items.length) return
   const details = h('details', { class: 'cog-media-group' },
     h('summary', {}, `独立媒体 ×${items.length}`),
@@ -1171,7 +1208,7 @@ function renderIndependentMediaGroups(canvas, projection, theme, opts, onFocusNo
 }
 
 function openEntryDialog(theme, proj, mode, opts) {
-  const choices = (proj.nodes || []).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
+  const choices = projectedNodes(proj).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
   if (mode === 'evidence' && !choices.length) { toast('请先创建一个观点或问题', 'var(--text-2)'); return }
   const previousFocus = document.activeElement
   closeNodeDetail()

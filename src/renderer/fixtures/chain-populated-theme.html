@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Populated theme graph regression</title>
+  <style>
+    html,body{height:100%;min-height:100%;margin:0;overflow:hidden;background:#f5f5f7;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    #fixture-app{display:grid;grid-template-columns:206px minmax(0,1fr);width:100vw;height:100vh;min-height:0}
+    #fixture-sidebar{min-width:0;border-right:1px solid #ddd;background:#ececf0;padding:24px 12px;color:#555}
+    #fixture-mid{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+    #fixture-mid>.mid-head{flex:none}
+    #fixture-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px 18px 24px}
+    #fixture-body>h2{margin:0 0 10px;font-size:16px}
+    #fixture-body>.chain-section{margin:0 0 20px}
+    #fixture-status{position:fixed;left:-10000px;top:0}
+    @media(max-width:720px){#fixture-app{grid-template-columns:52px minmax(0,1fr)}#fixture-sidebar{padding:12px 4px}}
+  </style>
+</head>
+<body>
+  <div id="fixture-app" class="app" data-view="theme">
+    <aside id="fixture-sidebar" aria-label="合成应用侧栏">主题测试<br>合成主题</aside>
+    <main id="fixture-mid" class="mid">
+      <header class="mid-head hairline-b"><h1>合成主题：Sivers 订单与产能</h1></header>
+      <div id="fixture-body" class="theme-body">
+        <h2>全量投影有节点但关联子图为空（复现主图只剩主题根的条件）</h2>
+        <div id="allnodes-only"></div>
+        <h2>范围对照：全部 92/20，关联子图 24/27（其中含外部引用）</h2>
+        <div id="scope-comparison"></div>
+        <pre id="fixture-status">fixture starting</pre>
+      </div>
+    </main>
+  </div>
+  <script type="module">
+    import '../styles.css'
+
+    const events = []
+    const allNodes = []
+    const allEdges = []
+    const addEvent = (type, payload, id) => {
+      const seq = events.length + 1
+      const event = {
+        id: id || `synthetic-event-${seq}`, seq, type,
+        at: `2026-09-${String(((seq - 1) % 28) + 1).padStart(2, '0')}T12:00:00.000Z`,
+        actor: 'synthetic-fixture', prevHash: seq === 1 ? null : `sha256:synthetic-${seq - 1}`,
+        hash: `sha256:synthetic-${seq}`, payload,
+      }
+      events.push(event)
+      return event
+    }
+
+    for (let i = 1; i <= 92; i++) {
+      const id = `synthetic-claim-${String(i).padStart(2, '0')}`
+      const title = `合成观点 ${String(i).padStart(2, '0')}：Sivers 订单/产能观察`
+      const event = addEvent('claim.created', { title, coreInfo: `仅用于首屏渲染回归 ${i}`, sourceRef: `fixture:claim:${i}` }, id)
+      allNodes.push({
+        id, kind: 'claim', title, currentText: `合成数据，不对应任何真实账本 ${i}`,
+        status: 'pending', archived: false, superseded: false, createdSeq: event.seq,
+        sourceRef: event.payload.sourceRef, eventIds: [id], provenanceEventIds: [id], external: false,
+      })
+    }
+
+    const localEvidence = []
+    for (let i = 1; i <= 20; i++) {
+      const id = `synthetic-evidence-${String(i).padStart(2, '0')}`
+      const title = `合成证据 ${String(i).padStart(2, '0')}：订单/产能记录`
+      const event = addEvent('evidence.appended', { title, text: title, sourceLabel: '合成来源', sourceRef: `fixture:evidence:${i}` }, id)
+      const node = {
+        id, kind: 'evidence', title, currentText: `仅用于回归 ${i}`,
+        status: 'pending', archived: false, superseded: false, createdSeq: event.seq,
+        sourceKind: 'synthetic', sourceRef: event.payload.sourceRef, eventIds: [id], provenanceEventIds: [id], external: false,
+      }
+      allNodes.push(node)
+      localEvidence.push(node)
+    }
+
+    const externalEvidence = []
+    for (let i = 1; i <= 7; i++) {
+      const id = `synthetic-external-evidence-${String(i).padStart(2, '0')}`
+      const title = `合成外部引用 ${String(i).padStart(2, '0')}`
+      const event = addEvent('evidence.appended', { title, text: title, sourceLabel: '合成外部引用', sourceRef: `fixture:external-evidence:${i}` }, id)
+      const node = {
+        id, kind: 'evidence', title, currentText: `仅用于回归 ${i}`,
+        status: 'pending', archived: false, superseded: false, createdSeq: event.seq,
+        sourceKind: 'synthetic', sourceRef: event.payload.sourceRef, eventIds: [id], provenanceEventIds: [id], external: true,
+      }
+      allNodes.push(node)
+      externalEvidence.push(node)
+    }
+
+    const allClaims = allNodes.filter((node) => node.kind === 'claim')
+    for (let i = 0; i < 27; i++) {
+      const evidence = [...localEvidence, ...externalEvidence][i]
+      const claim = allClaims[i % 24]
+      const event = addEvent('relation.declared', {
+        rel: 'supports', from: { eventId: evidence.id }, to: { eventId: claim.id }, sourceRef: `fixture:relation:${i + 1}`,
+      }, `synthetic-relation-${i + 1}`)
+      allEdges.push({
+        id: event.id, eventId: event.id, seq: event.seq, rel: 'supports', from: evidence.id, to: claim.id,
+        pendingReview: false, reviewDecision: 'confirmed', provenanceEventIds: [event.id], sourceRef: event.payload.sourceRef,
+      })
+    }
+
+    while (events.length < 168) addEvent('settlement.recorded', {
+      sourceRef: 'fixture:claim:1', date: '2026-09-30', resolved: false, correct: null,
+      reason: `合成事件 ${events.length + 1}`,
+    })
+    const integrity = { ok: true, count: events.length, lastValidSeq: events.length, verified: true }
+    const scopeNodes = [...allClaims.slice(0, 24), ...localEvidence, ...externalEvidence]
+    const scopeIds = new Set(scopeNodes.map((node) => node.id))
+    const scopeEdges = allEdges.filter((edge) => scopeIds.has(edge.from) && scopeIds.has(edge.to))
+    const allNodesProjection = {
+      nodes: [], allNodes, edges: [], allEdges, floating: allNodes,
+      integrity, eventCount: events.length, selectedAt: events.at(-1)?.at || null,
+    }
+    const scopedProjection = {
+      nodes: scopeNodes, allNodes, edges: scopeEdges, allEdges, floating: allNodes.filter((node) => !scopeIds.has(node.id)),
+      integrity, eventCount: events.length, selectedAt: events.at(-1)?.at || null,
+    }
+    const emptyProjection = { nodes: [], allNodes: [], edges: [], allEdges: [], floating: [], integrity: { ok: true, count: 0, lastValidSeq: 0 }, eventCount: 0 }
+
+    window.__MERIDIAN_TEST_SKIP_BOOT__ = true
+    window.meridian = {
+      async themes() { return [] },
+      async settings() { return {} },
+      onChanged() {}, onThemeScaffolded() {}, onInboxPaste() {}, onInboxPruned() {}, onDueNotify() {},
+      async chainEvents(themeId) { return { events: themeId === 'empty-theme' ? [] : events, integrity } },
+      async chainProjection(themeId) {
+        if (themeId === 'empty-theme') return emptyProjection
+        return themeId === 'scope-theme' ? scopedProjection : allNodesProjection
+      },
+      async chainProjectionAt(themeId, requestedSeq) {
+        const seq = Math.max(0, Math.min(events.length, Number(requestedSeq) || 0))
+        const visible = allNodes.filter((node) => node.createdSeq <= seq)
+        const visibleEdges = allEdges.filter((edge) => edge.seq <= seq)
+        return {
+          nodes: themeId === 'scope-theme' ? scopedProjection.nodes.filter((node) => node.createdSeq <= seq) : [],
+          allNodes: visible, edges: themeId === 'scope-theme' ? visibleEdges : [], allEdges: visibleEdges,
+          floating: [], integrity: { ok: true, count: seq, lastValidSeq: seq }, eventCount: seq,
+          selectedSeq: seq, selectedAt: events.filter((event) => event.seq <= seq).at(-1)?.at || null,
+        }
+      },
+      async chainVerify() { return { ok: true, lastValidSeq: events.length, count: events.length } },
+      async chainAddEvidence() { return { ok: true } },
+      async chainMountEvent() { return { ok: true } },
+      async chainReviewRelation() { return { ok: true } },
+      async chainArchiveNode() { return { ok: true } },
+      async chainRestoreNode() { return { ok: true } },
+    }
+
+    const { renderChainSection } = await import('../views/chain.js')
+    document.querySelector('#allnodes-only').append(renderChainSection({ id: 'allnodes-theme', name: 'Sivers · 合成 allNodes 回归' }))
+    document.querySelector('#scope-comparison').append(renderChainSection({ id: 'scope-theme', name: 'Sivers · 合成范围对照' }))
+
+    const status = document.querySelector('#fixture-status')
+    const check = (label, condition, detail = '') => {
+      const row = document.createElement('div')
+      row.textContent = `${condition ? 'PASS' : 'FAIL'} ${label}${detail ? ` — ${detail}` : ''}`
+      row.dataset.result = condition ? 'pass' : 'fail'
+      status.append(row)
+    }
+    const waitFor = async (predicate, timeout = 5000) => {
+      const stop = Date.now() + timeout
+      while (Date.now() < stop) {
+        if (predicate()) return true
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      return false
+    }
+    await waitFor(() => document.querySelectorAll('#allnodes-only .cog-svg').length === 1
+      && document.querySelectorAll('#scope-comparison .cog-svg').length === 1)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    const primary = document.querySelector('#allnodes-only')
+    const pointNodes = [...primary.querySelectorAll('.cog-node:not(.is-theme)')]
+    const stat = (root, key) => root.querySelector(`[data-theme-stat-value="${key}"]`)?.textContent
+    const pageLabel = primary.querySelector('.cog-claim-page-label')?.textContent || ''
+    const firstPointBounds = pointNodes[0]?.getBoundingClientRect()
+    const graphBounds = primary.querySelector('.cog-graph-canvas .cog-svg')?.getBoundingClientRect()
+    check('已有全量节点、关联子图为空时不显示新主题空态', pointNodes.length === 20
+      && primary.querySelector('.cog-theme-empty') === null,
+      `首屏观点节点=${pointNodes.length}；${pageLabel}`)
+    check('20 项首屏实际属于全量 92 个观点范围', pageLabel.includes('观点 1–20 / 92')
+      && pointNodes.some((node) => node.getAttribute('data-node-id') === 'synthetic-claim-01'))
+    check('短视口首屏实际可见观点节点而非仅见主题根', firstPointBounds?.top >= 0
+      && firstPointBounds?.bottom <= window.innerHeight && graphBounds?.top < window.innerHeight,
+      `观点首节点 y=${Math.round(firstPointBounds?.top || -1)}–${Math.round(firstPointBounds?.bottom || -1)}；viewport=${window.innerHeight}`)
+    check('合成投影统计精确为 92 观点、20 本地证据、168 事件', stat(primary, 'points') === '92'
+      && stat(primary, 'evidence') === '20' && stat(primary, 'events') === '168')
+    const comparison = document.querySelector('#scope-comparison')
+    check('范围差异标明全主题 vs 关系子图及外部引用', stat(comparison, 'points') === '92'
+      && stat(comparison, 'evidence') === '20'
+      && comparison.querySelector('[data-cog-counts]')?.textContent.includes('关系子图（含外部引用）：观点 24 · 证据 27'))
+
+    window.__GRAPH_REGRESSION__ = { events, allNodes, allEdges, allNodesProjection, scopedProjection, emptyProjection }
+  </script>
+</body>
+</html>

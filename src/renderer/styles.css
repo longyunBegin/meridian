@@ -2571,7 +2571,7 @@ body.tauri-macos .app {
 /* Event ledger and graph interaction refinements */
 .cog-replay-banner { display:inline-flex; align-items:center; width:fit-content; max-width:100%; margin:9px 0 0; padding:7px 10px; border:1px solid var(--hairline); border-radius:9px; background:var(--surface-solid); color:var(--text-2); font-size:var(--t-caption); line-height:1.45; font-weight:600; font-variant-numeric:tabular-nums; }
 .cog-replay-banner.is-replay { color:#17365a; background:#eaf2ff; border-color:#91afd5; box-shadow:0 0 0 2px rgba(49,94,138,.10); }
-.cog-graph-toolbar { grid-template-columns:minmax(0,1fr) minmax(170px,auto) minmax(260px,320px); }
+.cog-graph-toolbar { grid-template-columns:minmax(0,1fr) auto; }
 .cog-graph-actions { align-content:flex-start; }
 .cog-write-guidance { flex:1 0 100%; max-width:250px; color:var(--text-2); font-size:var(--t-caption); line-height:1.45; }
 .cog-graph-legend-corner { min-width:0; padding:9px 10px; border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--bg); color:var(--text-2); }
@@ -2718,19 +2718,18 @@ body.tauri-macos .app {
   .cog-graph-canvas > .cog-graph-legend-corner { position:relative; top:auto; width:auto; margin:0 0 8px; }
 }
 
-/* Keep the legend in the reading header without floating over controls or nodes. */
-.cog-graph-toolbar { position:relative; top:auto; z-index:1; display:grid; grid-template-columns:minmax(170px,1fr) auto minmax(290px,340px); align-items:start; gap:12px; padding:11px 12px; border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface-solid); box-shadow:0 4px 16px rgba(0,0,0,.07); }
+/* Let the graph reach the first viewport; its full legend follows the drawing without covering nodes. */
+.cog-graph-toolbar { position:relative; top:auto; z-index:1; display:grid; grid-template-columns:minmax(170px,1fr) auto; align-items:start; gap:12px; padding:11px 12px; border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface-solid); box-shadow:0 4px 16px rgba(0,0,0,.07); }
 .cog-graph-intro { min-width:0; }
 .cog-graph-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px; }
-.cog-graph-toolbar .cog-graph-legend-corner { position:static; top:auto; z-index:auto; width:auto; margin:0; box-shadow:none; }
+.cog-graph-main > .cog-graph-legend-corner { position:static; top:auto; z-index:auto; width:auto; margin:10px 0 0; box-shadow:none; }
 @media (max-width:1080px) {
-  .cog-graph-toolbar { grid-template-columns:minmax(160px,1fr) minmax(280px,360px); align-items:start; }
-  .cog-graph-actions { grid-column:1; grid-row:2; justify-content:flex-start; }
-  .cog-graph-toolbar .cog-graph-legend-corner { grid-column:2; grid-row:1 / span 2; }
+  .cog-graph-toolbar { grid-template-columns:minmax(160px,1fr) auto; align-items:center; }
+  .cog-graph-actions { grid-column:2; grid-row:1; justify-content:flex-end; }
 }
 @media (max-width:720px) {
   .cog-graph-toolbar { position:relative; top:auto; grid-template-columns:1fr; align-items:start; }
-  .cog-graph-intro,.cog-graph-actions,.cog-graph-toolbar .cog-graph-legend-corner { grid-column:1; grid-row:auto; }
+  .cog-graph-intro,.cog-graph-actions { grid-column:1; grid-row:auto; }
   .cog-graph-actions { justify-content:flex-start; }
 }
 .cog-search-pager { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:8px; margin:2px 0 8px; }
@@ -2751,6 +2750,7 @@ body.tauri-macos .app {
 .cog-theme-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin:2px 0 12px; }
 .cog-theme-stat { display:grid; gap:4px; min-width:0; padding:11px 13px; border:1px solid var(--hairline-soft); border-radius:var(--r); background:var(--surface-solid); }
 .cog-theme-stat-label { color:var(--text-2); font-size:var(--t-caption); }
+.cog-theme-stat-range { color:var(--text-2); font-size:var(--t-caption); line-height:1.35; }
 .cog-theme-stat-value { min-width:0; color:var(--text); font-size:var(--t-head); font-weight:600; line-height:1.2; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .cog-theme-stat.is-integrity .cog-theme-stat-value { font-size:var(--t-body); }
 .cog-theme-stat.is-integrity[data-state="error"] .cog-theme-stat-value { color:#991b1b; }
@@ -2806,4 +2806,14 @@ body.tauri-macos .app {
   .cog-overview-panel { padding:12px; }
   .cog-overview-event { grid-template-columns:minmax(0,1fr); }
   .cog-overview-event-time { white-space:normal; }
+}
+@media (max-height:720px) {
+  .cog-theme-stats { gap:6px; margin-bottom:8px; }
+  .cog-theme-stat { grid-template-columns:minmax(0,1fr) auto; grid-template-rows:auto auto; align-items:center; column-gap:8px; row-gap:1px; padding:6px 10px; }
+  .cog-theme-stat-label { grid-column:1; grid-row:1; }
+  .cog-theme-stat-range { grid-column:1; grid-row:2; }
+  .cog-theme-stat-value { grid-column:2; grid-row:1 / span 2; align-self:center; }
+  .cog-graph-toolbar { gap:8px; padding:7px 10px; }
+  .cog-graph-caption { margin-top:4px; }
+  .cog-theme-tabs { margin-bottom:7px; }
 }
