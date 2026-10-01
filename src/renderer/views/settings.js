@@ -99,6 +99,13 @@ export async function renderSettings(mid) {
   }
 
   const canCheckForUpdates = updaterAvailable()
+  const updateVersion = h('span', { class: 'update-settings-version' }, '')
+  if (canCheckForUpdates) {
+    // 展示层：版本号只读显示，失败就留空，不影响检查逻辑。
+    import('@tauri-apps/api/app').then(({ getVersion }) => getVersion())
+      .then((v) => { if (v) updateVersion.textContent = `版本 ${v}` })
+      .catch(() => {})
+  }
   const updateStatus = h('p', {
     class: 'update-settings-status', role: 'status', 'aria-live': 'polite',
   }, canCheckForUpdates ? '启动时每 24 小时最多静默检查一次。' : '应用内更新仅适用于桌面版。')
@@ -123,7 +130,13 @@ export async function renderSettings(mid) {
   const updateSection = h('section', { class: 'sect' },
     h('div', { class: 'sect-h' }, h('h2', {}, '关于与更新')),
     h('div', { class: 'sect-b' },
-      h('div', { class: 'update-settings-row' }, updateButton, updateStatus),
+      h('div', { class: 'update-settings-card' },
+        h('div', { class: 'update-settings-app' },
+          h('span', { class: 'update-settings-name' }, 'Meridian'),
+          updateVersion,
+        ),
+        h('div', { class: 'update-settings-row' }, updateButton, updateStatus),
+      ),
       h('p', { class: 'update-settings-note' }, '发现更新后会显示版本说明和下载进度；下载完成后需由你确认安装并重启。'),
     ),
   )

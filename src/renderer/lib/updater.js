@@ -39,15 +39,74 @@ function storageSet(key, value) {
   try { localStorage.setItem(key, String(value)) } catch { /* Storage may be unavailable; keep the app usable. */ }
 }
 
-/** 把 GitHub 自动生成的 markdown 更新说明转成纯文本，去掉 **、链接等格式符号。 */
-function stripMarkdown(text) {
+/** 把 GitHub 自动生成的 markdown 更新说明转成结构化 DOM（纯展示：只建文本节点，不注入 HTML）。 */
+function renderInline(text, parent) {
+  const tokenRe = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\([^)]+\))/g
+  let last = 0
+  let m
+  for (; (m = tokenRe.exec(text));) {
+    if (m.index > last) parent.append(document.createTextNode(text.slice(last, m.index)))
+    if (m[2] != null) parent.append(h('strong', {}, m[2]))
+    else if (m[3] != null) parent.append(h('code', {}, m[3]))
+    else parent.append(document.createTextNode(m[4]))
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parent.append(document.createTextNode(text.slice(last)))
+}
+
+/** 自动生成的说明里常带裸 URL（… in https://github.com/…/pull/1），正文里只留文字。 */
+function dropBareUrls(text) {
   return String(text || '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')  // **加粗** -> 加粗
-    .replace(/__([^_]+)__/g, '$1')      // __加粗__ -> 加粗
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // [文字](链接) -> 文字
-    .replace(/^#{1,6}\s+/gm, '')        // 标题 # -> 去掉
-    .replace(/`([^`]+)`/g, '$1')        // `代码` -> 代码
-    .trim()
+    .replace(/(\s+in)?\s*https?:\/\/\S+/g, '')  // "by @dev in <url>" -> "by @dev"
+    .replace(/\s{2,}/g, ' ').trim()
+}
+
+function renderNotes(text) {
+  const root = h('div', { class: 'update-notes' })
+  let list = null
+  const closeList = () => { list = null }
+  const ensureList = (ordered) => {
+    const tag = ordered ? 'ol' : 'ul'
+    if (!list || list.tagName.toLowerCase() !== tag) {
+      list = h(tag, {})
+      root.append(list)
+    }
+    return list
+  }
+  for (const raw of String(text || '').split('\n')) {
+    const line = dropBareUrls(raw.trim())
+    if (!line || /^(-{3,}|\*{3,})$/.test(line)) { closeList(); continue }
+    let m
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+      closeList()
+      const hd = h('h3', { class: 'update-notes-h' })
+      renderInline(m[2].trim(), hd)
+      if (hd.hasChildNodes()) root.append(hd)
+    } else if ((m = /^([*\-+])\s+(.*)$/.exec(line))) {
+      const li = h('li', {})
+      renderInline(m[2].trim(), li)
+      if (li.hasChildNodes()) ensureList(false).append(li)
+    } else if ((m = /^(\d+)[.)]\s+(.*)$/.exec(line))) {
+      const li = h('li', {})
+      renderInline(m[2].trim(), li)
+      if (li.hasChildNodes()) ensureList(true).append(li)
+    } else {
+      closeList()
+      const p = h('p', {})
+      renderInline(line, p)
+      root.append(p)
+    }
+  }
+  if (!root.hasChildNodes()) root.append(h('p', {}, '此版本没有附带更新说明。'))
+  return root
+}
+
+/** 发布日期展示：只取年月日，解析失败就省略。 */
+function formatPubDate(date) {
+  if (!date) return ''
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function formatBytes(bytes) {
@@ -71,8 +130,23 @@ function presentUpdate(update) {
   let totalBytes = null
 
   const status = h('p', { class: 'update-status-line', role: 'status', 'aria-live': 'polite' }, '')
-  const progress = h('progress', { class: 'update-progress', max: '100', hidden: true })
-  const notes = stripMarkdown(update.body) || '此版本没有附带更新说明。'
+  const fill = h('span', { class: 'update-progress-fill' })
+  const progress = h('div', {
+    class: 'update-progress-track', hidden: true,
+    role: 'progressbar', 'aria-label': '下载进度',
+  }, fill)
+  /** percent 为 null 时走不确定态（滑动条），否则按百分比填充。 */
+  const setProgress = (percent) => {
+    progress.hidden = false
+    if (percent == null) {
+      progress.classList.add('is-indeterminate')
+      fill.style.width = ''
+    } else {
+      progress.classList.remove('is-indeterminate')
+      fill.style.width = `${Math.max(0, Math.min(100, percent))}%`
+    }
+  }
+  const notes = renderNotes(update.body)
   const mainButton = h('button', {
     class: 'btn btn-primary',
     onclick: async () => {
@@ -81,7 +155,7 @@ function presentUpdate(update) {
         mainButton.disabled = true
         cancelButton.disabled = true
         mainButton.textContent = '下载中…'
-        progress.hidden = false
+        setProgress(null)
         status.textContent = '正在下载更新…'
         try {
           await update.download((event) => {
@@ -94,16 +168,15 @@ function presentUpdate(update) {
               receivedBytes = totalBytes
             }
             const snapshot = updateProgress(receivedBytes, totalBytes)
+            setProgress(snapshot.percent)
             if (snapshot.percent == null) {
-              progress.removeAttribute('value')
               status.textContent = `正在下载更新 · ${formatBytes(snapshot.downloaded)}`
             } else {
-              progress.value = snapshot.percent
               status.textContent = `正在下载更新 · ${snapshot.percent}% (${formatBytes(snapshot.downloaded)} / ${formatBytes(snapshot.total)})`
             }
           })
           downloaded = true
-          progress.value = 100
+          setProgress(100)
           status.textContent = '下载完成。请确认后安装并重启。'
           mainButton.textContent = '安装并重启'
           mainButton.disabled = false
@@ -150,27 +223,36 @@ function presentUpdate(update) {
   }, '下载更新')
   const cancelButton = h('button', {
     class: 'btn',
-    onclick: () => updateDialog?.close(),
+    onclick: () => requestClose(),
   }, '稍后')
 
+  const pubDate = formatPubDate(update.date)
   const dialog = h('dialog', { class: 'update-dialog', 'aria-labelledby': 'update-dialog-title' },
     h('div', { class: 'update-dialog-head' },
-      h('div', {},
-        h('p', { class: 'update-eyebrow' }, 'MERIDIAN UPDATE'),
-        h('h2', { id: 'update-dialog-title' }, `发现新版本 v${update.version}`),
+      h('div', { class: 'update-dialog-titles' },
+        h('p', { class: 'update-eyebrow' }, '软件更新'),
+        h('h2', { id: 'update-dialog-title' }, `Meridian v${update.version}`),
+        h('p', { class: 'update-dialog-sub' },
+          `当前版本 v${update.currentVersion}` + (pubDate ? ` · 发布于 ${pubDate}` : '')),
       ),
-      h('span', { class: 'update-version-current' }, `当前 v${update.currentVersion}`),
     ),
     h('div', { class: 'update-dialog-body' },
-      h('p', { class: 'update-notes' }, notes),
-      progress,
-      status,
+      h('h3', { class: 'update-notes-title' }, '更新内容'),
+      notes,
+      h('div', { class: 'update-download-zone' }, progress, status),
     ),
     h('div', { class: 'update-dialog-actions' }, cancelButton, mainButton),
   )
+  /** 关窗走 180ms 淡出，保持原生感；下载/安装中不响应关闭（与之前一致）。 */
+  const requestClose = () => {
+    if (!dialog.isConnected || !dialog.open || dialog.classList.contains('is-closing')) return
+    dialog.classList.add('is-closing')
+    setTimeout(() => dialog.close(), 180)
+  }
   updateDialog = dialog
   dialog.addEventListener('cancel', (event) => {
-    if (downloading || installing) event.preventDefault()
+    event.preventDefault()
+    if (!downloading && !installing) requestClose()
   })
   dialog.addEventListener('close', () => {
     if (updateDialog === dialog) updateDialog = null
@@ -178,6 +260,7 @@ function presentUpdate(update) {
   }, { once: true })
   document.body.append(dialog)
   dialog.showModal()
+  dialog.focus()
 }
 
 /** Check once at launch at most every 24 hours, or bypass that throttle when called manually. */
