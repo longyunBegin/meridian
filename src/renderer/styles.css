@@ -37,6 +37,9 @@
   --active: rgba(0, 0, 0, 0.06);
   --hairline: rgba(0, 0, 0, 0.09);
   --hairline-soft: rgba(0, 0, 0, 0.05);
+  /* 别名：历史代码用 --line / --bg-2 指代发丝线与次级底，统一收敛到上面。 */
+  --line: var(--hairline);
+  --bg-2: var(--surface);
 
   --text: #1d1d1f;
   --text-2: rgba(29, 31, 33, 0.62);
@@ -1534,44 +1537,22 @@ ol.inbox-proposals { margin: 0; padding-left: 20px; }
 .inbox-proposals li::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .inbox-proposals li > strong { font-weight: 600; }
 .inbox-proposal-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin-top: 5px; font-size: var(--t-caption); font-weight: 400; color: var(--text-2); }
-.inbox-routing { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 12px; margin-top: 12px; }
-.inbox-routing label { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-size: var(--t-caption); color: var(--text-2); }
-select.inbox-parent-select {
-  width: 100%; min-width: 0; height: 32px; padding: 0 8px;
+select.inbox-theme-select {
+  height: 30px; padding: 0 10px; max-width: 340px;
   border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
   background: var(--surface-solid); font-size: var(--t-body); color: var(--text);
-}
-.inbox-route-theme { margin: 6px 0 0; font-size: var(--t-caption); color: var(--text-2); overflow-wrap: anywhere; display: flex; align-items: center; gap: 8px; }
-select.inbox-theme-select {
-  height: 28px; padding: 0 8px; max-width: 340px;
-  border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
-  background: var(--surface-solid); font-size: var(--t-caption); color: var(--text);
 }
 select.inbox-extract-theme {
   height: 32px; padding: 0 8px; max-width: 210px;
   border: 0.5px solid var(--hairline); border-radius: var(--r-sm);
   background: var(--surface-solid); font-size: var(--t-caption); color: var(--text-2);
 }
-.inbox-confidence { display: flex; align-items: center; gap: 10px; min-width: 0; margin: 12px 0; font-size: var(--t-caption); color: var(--text-2); }
-.inbox-confidence > label, .inbox-confidence > span { flex: none; }
+.inbox-confidence { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 18px 0 4px; }
+.inbox-confidence > label { flex: none; font-size: var(--t-caption); color: var(--text-2); }
 .inbox-conf-slider { flex: 1; width: 100%; min-width: 0; height: 20px; margin: 0; accent-color: var(--accent); }
 /* prop-slider 的通用 outline: 0 不应吞掉阅读区的键盘焦点。 */
 .inbox-workspace .inbox-conf-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inbox-conf-val { flex: none; min-width: 30px; font-size: var(--t-caption); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; color: var(--text); }
-.inbox-map { margin: 0 0 20px; border-top: 0.5px solid var(--hairline-soft); }
-.inbox-map > summary { padding: 12px 2px; font-size: var(--t-caption); color: var(--text-2); cursor: pointer; }
-.inbox-map > summary::marker { color: var(--text-3); }
-.inbox-map > summary .icon { display: inline-block; margin-right: 5px; vertical-align: middle; }
-.inbox-map > summary:hover { color: var(--text); }
-.inbox-graph {
-  display: flex; flex-direction: column; width: 100%; min-width: 0; height: 200px;
-  padding: 8px; overflow: auto; background: var(--hover); border-radius: var(--r-sm);
-}
-.inbox-graph-empty {
-  flex: 1; display: flex; flex-direction: column; gap: 4px;
-  align-items: center; justify-content: center;
-  font-size: var(--t-body); color: var(--text-3); text-align: center;
-}
 .inbox-detail-actions {
   display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: 8px; min-height: 56px; padding: 12px 24px;
   border-top: 0.5px solid var(--hairline); background: var(--surface);
@@ -1646,14 +1627,6 @@ select.inbox-extract-theme {
 /* 重新生成骨架按钮 */
 .regenerate-btn { font-size: var(--t-caption); color: var(--text-3); }
 .regenerate-btn:hover { color: var(--accent); }
-
-/* ------------- 收件箱迷你图 ------------- */
-
-.mini-graph-wrap { flex: none; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.mini-graph { flex: none; cursor: pointer; }
-.mini-node { cursor: pointer; transition: opacity 150ms var(--ease); }
-.mini-node:hover rect:first-child { stroke: var(--accent); stroke-width: 1; }
-.mini-graph-hint { font-size: var(--t-caption); color: var(--text-2); padding: 2px 0; display: flex; gap: 4px; align-items: center; }
 
 /* ------------- 边拖权重 ------------- */
 
@@ -1956,28 +1929,69 @@ body.tauri-macos .app {
 .chain-subseg-name { font-size: var(--t-body); font-weight: 600; }
 .chain-subseg-core { font-size: var(--t-caption); color: var(--text-1); line-height: 1.5; }
 .chain-converge { font-size: var(--t-caption); color: #8e44ad; margin-top: 4px; }
+/* 链卡片定位高亮（墓碑区「查看」跳过来时） */
+.chain-card.flash { animation: chain-flash 2.2s ease; }
+@keyframes chain-flash { 0%, 55% { box-shadow: 0 0 0 2px var(--accent); } 100% { box-shadow: none; } }
+
+/* ------------- 墓碑区（链化） ------------- */
+/* 安静的行列表；已关闭只用灰色 pill，不做"死亡" heavy 的颜色。 */
+.tomb-theme { font-size: var(--t-caption); color: var(--text-3); letter-spacing: .1em; margin: 20px 0 4px; }
+.tomb-theme:first-of-type { margin-top: 8px; }
+.tomb-row { display: flex; gap: 16px; align-items: flex-start; padding: 16px 2px; border-bottom: 0.5px solid var(--hairline); }
+.tomb-row:last-child { border-bottom: none; }
+.tomb-body { flex: 1; min-width: 0; }
+.tomb-title { display: flex; align-items: center; gap: 10px; font-size: var(--t-title); font-weight: 400; color: var(--text); }
+.tomb-pill-closed { font-size: var(--t-caption); color: var(--text-3); border: 0.5px solid var(--hairline); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.tomb-core { margin-top: 6px; font-size: var(--t-body); color: var(--text-2); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tomb-meta { margin-top: 6px; font-size: var(--t-caption); color: var(--text-3); }
+.tomb-cites { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tomb-cites-label { font-size: var(--t-caption); color: var(--text-3); }
+.tomb-cite { font-size: var(--t-caption); color: var(--text-2); background: var(--surface-solid); border: 0.5px solid var(--hairline); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.tomb-cite:hover { border-color: var(--text-3); color: var(--text); }
+.tomb-acts { display: flex; gap: 8px; align-items: center; padding-top: 2px; white-space: nowrap; }
 
 /* 提案草稿 */
-.chain-draft-sect { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
-.chain-field { display: grid; gap: 4px; margin-bottom: 10px; font-size: var(--t-caption); color: var(--text-2); }
-.chain-field .txt { font-size: var(--t-body); }
-.chain-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.chain-segcheck { display: flex; flex-wrap: wrap; gap: 6px; }
-.chain-check {
-  display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-caption); cursor: pointer;
-  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--text-1);
-  transition: border-color .2s var(--ease), background .2s var(--ease);
+/* ------------- 确认归位 · 认知链挂载（高级表单） ------------- */
+/* 标签上置、发丝边框输入、宽松留白；状态色只做点缀。 */
+.chain-draft { margin-top: 2px; }
+.draft-head { display: flex; align-items: baseline; gap: 10px; margin: 16px 0 14px; }
+.draft-head:first-child { margin-top: 2px; }
+.draft-title { font-size: var(--t-body); font-weight: 600; color: var(--text); }
+.draft-sub { font-size: var(--t-caption); color: var(--text-3); }
+.draft-theme-row { display: flex; align-items: center; gap: 12px; margin: 2px 0 4px; }
+.draft-theme-row .draft-label { margin-bottom: 0; }
+.draft-group { margin-bottom: 16px; }
+.draft-label { font-size: var(--t-caption); color: var(--text-2); margin-bottom: 8px; }
+.txt.draft-input {
+  width: 100%; height: 34px; padding: 0 12px;
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  background: transparent; font-size: var(--t-body); color: var(--text);
 }
-.chain-check.on { border-color: var(--accent); background: rgba(0,113,227,.08); }
-.chain-check input { accent-color: var(--accent); }
-.chain-suggest { display: grid; gap: 2px; margin-top: 4px; }
-.chain-suggest-item {
-  text-align: left; font-size: var(--t-caption); padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer;
-  background: var(--fill); border: none; color: var(--text-1);
+.txt.draft-input::placeholder { color: var(--text-3); }
+.txt.draft-input:focus { outline: none; border-color: var(--accent); background: var(--surface-solid); }
+.draft-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.draft-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.draft-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: var(--t-body); color: var(--text-2);
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 7px 14px;
+  background: transparent; cursor: pointer;
+  transition: border-color 180ms var(--ease), background 180ms var(--ease), color 180ms var(--ease);
 }
-.chain-suggest-item:hover { background: var(--line); }
-.chain-simwarn { font-size: var(--t-caption); color: #b26a00; margin: 4px 0 8px; }
-.chain-draft-actions { display: flex; gap: 8px; margin-top: 6px; }
+.draft-chip:hover { border-color: var(--text-3); color: var(--text); }
+.draft-chip .draft-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); transition: background 180ms var(--ease); }
+.draft-chip.on { border-color: transparent; background: rgba(0, 113, 227, 0.1); color: var(--accent); }
+.draft-chip.on .draft-chip-dot { background: var(--accent); }
+.draft-empty-note { font-size: var(--t-caption); color: var(--text-3); }
+.draft-suggest { display: grid; gap: 2px; margin-top: 6px; }
+.draft-suggest-item {
+  text-align: left; font-size: var(--t-caption); padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--hover); border: none; cursor: pointer; color: var(--text-1);
+}
+.draft-suggest-item:hover { background: var(--active); }
+.draft-warn { font-size: var(--t-caption); color: #b26a00; margin: 10px 0 0; }
+.draft-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+.draft-actions-start { justify-content: flex-start; margin-top: 12px; }
 
 /* 链跳转来的读数高亮 */
 .feed-row-highlight {
@@ -1996,3 +2010,118 @@ body.tauri-macos .app {
   .chain-converge, .chain-forknote { color: #bf5af2; }
   .chain-src-ok { color: #30d158; }
 }
+
+/* ------------- 认知链 · 因果路径（三层） ------------- */
+.chain-path-h { margin: 4px 0 18px; }
+.chain-kicker { font-size: var(--t-title); font-weight: 600; color: var(--text-1); }
+.chain-counts { margin-top: 4px; font-size: var(--t-body); color: var(--text-3); }
+.chain-hint { margin-top: 6px; font-size: var(--t-caption); color: var(--text-3); }
+
+/* 展示分层：层只是页面分组，层间用发丝线分隔，不表示因果 */
+.chain-layers { position: relative; display: flex; flex-direction: column; gap: 0; }
+.chain-layer-stack { position: relative; display: flex; flex-direction: column; }
+/* 链轨：居中纵贯各层的细线，只表达"这是一条链"的整体感，不表示方向或因果 */
+.chain-rail {
+  position: absolute; left: 50%; top: 20px; bottom: 20px; width: 1px;
+  background: var(--hairline);
+}
+/* 段间连线：SVG 覆盖层，只画账本里真实存在的关系；SVG 在卡片下层，不拦截点击 */
+.chain-edges {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; overflow: visible;
+}
+.chain-edge { fill: none; stroke: #a8b2bd; stroke-width: 1.4; }
+.chain-edge-dot { fill: #a8b2bd; }
+.chain-edges marker path { fill: #a8b2bd; }
+.chain-footnote { margin-top: 10px; font-size: var(--t-caption); color: var(--text-3); }
+.chain-footnote[hidden] { display: none; }
+@media (prefers-color-scheme: dark) {
+  .chain-edge { stroke: #6b7480; }
+  .chain-edge-dot { fill: #6b7480; }
+  .chain-edges marker path { fill: #6b7480; }
+}
+.chain-layer { padding: 14px 0; }
+.chain-layer + .chain-layer { border-top: 1px solid var(--hairline); }
+.chain-layer-label { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.chain-layer-name {
+  font-size: var(--t-caption); color: var(--text-3); letter-spacing: .08em;
+  background: none; border: 0; padding: 3px 6px; margin-left: -6px;
+  border-radius: 6px; cursor: pointer;
+}
+.chain-layer-name:hover { color: var(--text-1); background: var(--bg-2); }
+.chain-layer-count { font-size: var(--t-caption); color: var(--text-3); }
+.chain-layer-del {
+  display: none; border: 0; background: none; color: var(--text-3);
+  font-size: var(--t-body); line-height: 1; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+}
+.chain-layer-label:hover .chain-layer-del { display: inline-block; }
+.chain-layer-del:hover { color: var(--red); background: var(--bg-2); }
+.chain-layer-rename {
+  font-size: var(--t-caption); color: var(--text-1); letter-spacing: .08em;
+  border: 1px solid var(--hairline); border-radius: 6px; padding: 4px 8px;
+  background: var(--surface); width: 150px;
+}
+.chain-layer-nodes { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.chain-layer-empty {
+  border: 1px dashed var(--hairline); border-radius: 12px; padding: 14px 16px;
+  font-size: var(--t-body); color: var(--text-3);
+}
+.chain-layer-add {
+  align-self: flex-start; margin-top: 4px; padding: 8px 18px;
+  font-size: var(--t-body); color: var(--text-3); background: none;
+  border: 1px dashed var(--hairline); border-radius: 10px; cursor: pointer;
+}
+.chain-layer-add:hover { color: var(--text-1); border-color: var(--text-3); }
+
+/* 节点卡（position 让卡片画在连线 SVG 之上，被遮挡的线段不可见） */
+.cnode {
+  position: relative;
+  flex: 1 1 230px; max-width: 340px; text-align: left; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px;
+  padding: 14px 16px 12px; color: var(--text-1);
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.cnode:hover { border-color: var(--text-3); box-shadow: 0 2px 12px rgba(0,0,0,.05); }
+.cnode-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.cnode-ev { font-size: var(--t-caption); color: var(--text-3); }
+.cnode-name { font-size: var(--t-title); font-weight: 600; line-height: 1.4; margin-bottom: 6px; }
+.cnode-core {
+  font-size: var(--t-body); color: var(--text-2); line-height: 1.6;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cnode-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.cnode-fork { font-size: var(--t-caption); color: var(--text-3); }
+.cnode-more { font-size: var(--t-caption); color: var(--text-3); }
+.cnode:hover .cnode-more { color: var(--accent); }
+
+/* 已关闭 strip */
+.chain-closed {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+.chain-closed-label { font-size: var(--t-caption); color: var(--text-3); margin-right: 4px; }
+.chain-closed-chip {
+  font-size: var(--t-caption); color: var(--text-2); background: none; cursor: pointer;
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 4px 12px;
+}
+.chain-closed-chip:hover { color: var(--text-1); border-color: var(--text-3); }
+.chain-closed-link {
+  font-size: var(--t-caption); color: var(--text-3); background: none; border: none; cursor: pointer; padding: 4px 6px;
+}
+.chain-closed-link:hover { color: var(--accent); }
+
+/* 抽屉：层级 */
+.chain-drawer-tags { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.chain-role-tag {
+  font-size: var(--t-caption); color: var(--text-2); border: 1px solid var(--hairline);
+  border-radius: 999px; padding: 2px 10px;
+}
+.chain-role-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.chain-role-label { font-size: var(--t-body); color: var(--text-3); }
+.chain-role-select {
+  font-size: var(--t-body); color: var(--text-1); background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 5px 10px; cursor: pointer;
+}
+
+/* 定位高亮同时作用于新节点卡与已关闭 chips */
+.cnode.flash, .chain-closed-chip.flash { animation: chain-flash 2.2s ease; }

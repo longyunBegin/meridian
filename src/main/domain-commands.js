@@ -30,8 +30,8 @@ import { genericFallback, instantiate } from './templates.js'
 import { discoverTags } from './discover.js'
 import {
   getChain, mountToChain, updateChainSegment, mergeChainSegments,
-  addChainSubsegment, closeChainBranch, getReadingMap, setReadingMap,
-  getInboxItem, setInboxChainDraft,
+  addChainSubsegment, closeChainBranch, reviveChainSegment, getReadingMap, setReadingMap,
+  getInboxItem, setInboxChainDraft, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -576,6 +576,10 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     ({ ok: true, subsegment: addChainSubsegment(themeId, segmentId, sub) }))
   commands.register('chain:closeBranch', (themeId, segmentId, subId, reason) =>
     ({ ok: true, subsegment: closeChainBranch(themeId, segmentId, subId, reason) }))
+  commands.register('chain:reviveSegment', (themeId, segmentId, reason) =>
+    ({ ok: true, ...reviveChainSegment(themeId, segmentId, reason) }))
+  commands.register('chain:setLayers', (themeId, names) =>
+    ({ ok: true, ...setChainLayers(themeId, names) }))
   commands.register('chain:setDraft', (inboxId, draft) =>
     ({ ok: true, draft: setInboxChainDraft(inboxId, draft) }))
   commands.register('chain:generateDraft', async (inboxId) => {

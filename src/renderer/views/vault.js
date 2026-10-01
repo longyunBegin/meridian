@@ -1,5 +1,5 @@
 import { h, clear, toast } from '../lib/dom.js'
-import { state, selectNode, setView } from '../app.js'
+import { state, selectNode, setView, refresh } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { SCENARIO_LABELS } from '../../main/llmlog.js'
 
@@ -33,6 +33,7 @@ export async function renderVault(mid, kind) {
 
   if (kind === 'review') return renderReview(mid)
   if (kind === 'conflicts') return renderConflicts(mid, meta)
+  if (kind === 'dead') return renderDead(mid, meta)
 
 
   const nodes = (await m.allNodes()).filter((n) =>
@@ -66,7 +67,8 @@ export async function renderVault(mid, kind) {
                     if (n.deletedAt) {
                       await m.restoreNode(n.id)
                     } else {
-                      await m.updateNode(n.id, { status: 'live', confidence: kind === 'dead' ? Math.max(25, n.confidence) : n.confidence })
+                      // 公理1：复活只改状态，不碰 confidence（kind==='dead' 走 renderDead，不到这里）
+                      await m.updateNode(n.id, { status: 'live' })
                     }
                     await renderVault(mid, kind)
                   },
@@ -78,6 +80,170 @@ export async function renderVault(mid, kind) {
         )
       : empty(meta),
   ))
+}
+
+// ============================================================
+// 墓碑区：链化重构
+// 第一组：已关闭的认知段（按主题收）——整段复活 / 在链中查看
+// 第二组：已证伪的命题——引用它的段就是它在链中的位置
+// ============================================================
+
+/** 跳到主题页认知链，滚动到段卡片并柔光高亮。 */
+async function jumpToSegment(themeId, segmentId) {
+  state.themeId = themeId
+  state.selectedId = null
+  setView('theme')
+  const esc = (window.CSS && typeof CSS.escape === 'function')
+    ? (s) => CSS.escape(s)
+    : (s) => String(s).replace(/["\\]/g, '\\$&')
+  for (let i = 0; i < 50; i++) {
+    const card = document.querySelector(`[data-seg-id="${esc(segmentId)}"]`)
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      card.classList.add('flash')
+      setTimeout(() => card.classList.remove('flash'), 2400)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
+function closedSegRow(theme, seg) {
+  const closedSubs = (seg.subsegments || []).filter((s) => s.status === 'closed')
+  const metaBits = []
+  if (seg.mergedInto?.length) metaBits.push(`汇入 → ${seg.mergedInto.join('、')}`)
+  if (closedSubs.length) metaBits.push(`含 ${closedSubs.length} 个已关闭分支`)
+  const closedDate = seg.closedAt || seg.updatedAt
+  if (closedDate) metaBits.push(`关闭于 ${closedDate}`)
+  return h('div', { class: 'tomb-row' },
+    h('div', { class: 'tomb-body' },
+      h('div', { class: 'tomb-title' },
+        h('span', { class: 'tomb-pill-closed' }, '已关闭'),
+        h('span', {}, seg.name || '未命名段')),
+      seg.coreInfo ? h('div', { class: 'tomb-core' }, seg.coreInfo) : null,
+      metaBits.length ? h('div', { class: 'tomb-meta' }, metaBits.join(' · ')) : null,
+    ),
+    h('div', { class: 'tomb-acts' },
+      h('button', { class: 'btn', onclick: () => jumpToSegment(theme.id, seg.id) }, '查看'),
+      h('button', {
+        class: 'btn btn-primary',
+        onclick: async (e) => {
+          const btn = e.currentTarget
+          btn.disabled = true
+          try {
+            const res = await m.chainReviveSegment(theme.id, seg.id)
+            toast(res?.reopened?.length
+              ? `已复活为待确认：${res.reopened.join('、')}`
+              : '已经是开放状态，无需复活', 'var(--text-2)')
+            await refresh()
+          } catch { toast('复活失败，请重试', 'var(--red)') }
+          finally { btn.disabled = false }
+        },
+      }, '整段复活'),
+    ))
+}
+
+function deadLemmaRow(n, cites) {
+  return h('div', { class: 'tomb-row' },
+    h('div', { class: 'tomb-body' },
+      h('div', { class: 'tomb-title' },
+        h('span', { class: 'dot', style: { background: confColor(n.confidence) } }),
+        h('span', {}, n.title)),
+      h('div', { class: 'tomb-meta' },
+        h('span', {}, TYPE_LABEL[n.type]),
+        h('span', {}, ` · 置信度 ${Math.round(n.confidence)}`),
+        h('span', {}, ` · ${state.themes.find((t) => t.id === n.themeId)?.name || '已删主题'}`),
+        n.deletedAt ? h('span', {}, ` · 删于 ${n.deletedAt}`) : null,
+      ),
+      h('div', { class: 'tomb-cites' },
+        h('span', { class: 'tomb-cites-label' }, '认知链引用'),
+        cites.length
+          ? cites.map((c) => h('button', {
+              class: 'tomb-cite',
+              title: `跳到「${c.themeName}」的「${c.segName}」`,
+              onclick: () => jumpToSegment(c.themeId, c.segId),
+            }, c.segName || '未命名段'))
+          : h('span', { style: { color: 'var(--text-3)' } }, '未被引用'),
+      ),
+    ),
+    h('div', { class: 'tomb-acts' },
+      h('button', {
+        class: 'btn',
+        onclick: () => {
+          if (cites.length) return jumpToSegment(cites[0].themeId, cites[0].segId)
+          state.themeId = n.themeId
+          selectNode(n.id)
+          setView('theme')
+        },
+      }, '查看'),
+      h('button', {
+        class: 'btn',
+        onclick: async () => {
+          if (n.deletedAt) {
+            await m.restoreNode(n.id)
+          } else {
+            // 公理1：复活只改状态，不碰 confidence
+            await m.updateNode(n.id, { status: 'live' })
+          }
+          await refresh()
+        },
+      }, n.deletedAt ? '整棵复活' : '复活'),
+    ))
+}
+
+async function renderDead(mid, meta) {
+  clear(mid)
+  const themes = state.themes || []
+  // lemmaId → [{ themeId, themeName, segId, segName }]：命题在链中的位置
+  const citeIndex = new Map()
+  const closedGroups = []
+  for (const t of themes) {
+    const segs = t.chain && Array.isArray(t.chain.segments) ? t.chain.segments : []
+    const closed = segs.filter((s) => s.status === 'closed')
+    if (closed.length) closedGroups.push({ theme: t, segs: closed })
+    for (const s of segs) {
+      for (const r of s.evidenceRefs || []) {
+        if (r && r.type === 'lemma' && r.id) {
+          if (!citeIndex.has(r.id)) citeIndex.set(r.id, [])
+          citeIndex.get(r.id).push({ themeId: t.id, themeName: t.name, segId: s.id, segName: s.name })
+        }
+      }
+    }
+  }
+  const nodes = (await m.allNodes()).filter((n) => n.status === 'dead')
+
+  const page = h('div', { class: 'page' },
+    h('div', { class: 'page-head' },
+      h('h1', {}, meta.title),
+      h('p', {}, '已关闭的认知段、被证伪或置信度跌破 20 的命题。不删除——负资产的价值是避免重复犯错。'),
+    ))
+  mid.append(page)
+
+  if (closedGroups.length) {
+    const total = closedGroups.reduce((a, g) => a + g.segs.length, 0)
+    const sect = h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '已关闭的认知段'), h('em', {}, String(total))))
+    for (const g of closedGroups) {
+      sect.append(h('div', { class: 'tomb-theme' }, g.theme.name || '未命名主题'))
+      for (const s of g.segs) sect.append(closedSegRow(g.theme, s))
+    }
+    page.append(sect)
+  }
+
+  if (nodes.length) {
+    const sect = h('section', { class: 'sect' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '已证伪的命题'), h('em', {}, String(nodes.length))))
+    for (const n of nodes) sect.append(deadLemmaRow(n, citeIndex.get(n.id) || []))
+    page.append(sect)
+  }
+
+  if (!closedGroups.length && !nodes.length) {
+    page.append(h('section', { class: 'sect' },
+      h('div', { class: 'sect-b' },
+        h('div', { class: 'q' }, h('div', { class: 'q-body' },
+          h('div', { class: 'q-text', style: { color: 'var(--text-2)' } }, '墓碑区是空的，挺好，说明还没什么认知死掉。'),
+        )))))
+  }
 }
 
 async function renderConflicts(mid, meta) {

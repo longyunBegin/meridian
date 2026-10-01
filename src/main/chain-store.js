@@ -14,6 +14,17 @@ import { digest } from './reading-store.js'
 
 export const CHAIN_VERSION = 1
 export const SEG_STATUSES = ['confirmed', 'pending', 'stale', 'forking', 'closed']
+/**
+ * 展示分层：层只是页面的视觉分组，不蕴含因果或推演关系。
+ * 层名与层数由用户自定（默认三层）；段用 layer 下标归属某层。
+ */
+export const DEFAULT_LAYER_NAMES = ['第一层', '第二层', '第三层']
+export const MAX_LAYERS = 12
+export function sanitizeLayerNames(names) {
+  if (!Array.isArray(names) || !names.length) return [...DEFAULT_LAYER_NAMES]
+  const clean = names.map((n) => String(n ?? '').trim()).filter(Boolean).slice(0, MAX_LAYERS)
+  return clean.length ? clean : [...DEFAULT_LAYER_NAMES]
+}
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
@@ -57,6 +68,7 @@ function normSegment(s) {
     name: String(s.name || '未命名段'),
     coreInfo: String(s.coreInfo || ''),
     status: SEG_STATUSES.includes(s.status) ? s.status : 'pending',
+    layer: Number.isInteger(s.layer) && s.layer >= 0 ? s.layer : 0,
     metrics: (Array.isArray(s.metrics) ? s.metrics : []).filter(isObj).map((m) => ({
       label: String(m.label || ''), value: m.value ?? '',
     })),
@@ -77,15 +89,19 @@ function normSegment(s) {
     evidenceRefs: Array.isArray(s.evidenceRefs) ? s.evidenceRefs.filter(isObj) : [],
     createdAt: s.createdAt || today(),
     updatedAt: s.updatedAt || today(),
+    closedAt: s.closedAt || null,
   }
 }
 
 /** 归一化：老账本/空值进来也能安全读。 */
 export function normalizeChain(chain) {
   const c = isObj(chain) ? chain : {}
+  const layerNames = sanitizeLayerNames(c.layerNames)
   return {
     version: CHAIN_VERSION,
-    segments: (Array.isArray(c.segments) ? c.segments : []).map(normSegment).filter(Boolean),
+    layerNames,
+    segments: (Array.isArray(c.segments) ? c.segments : []).map(normSegment).filter(Boolean)
+      .map((s) => ({ ...s, layer: Math.min(s.layer, layerNames.length - 1) })),
     readingMap: isObj(c.readingMap) ? c.readingMap : {},
   }
 }
@@ -141,7 +157,7 @@ function appendLog(segment, { oldValue = '', newValue = '', reason = '', evidenc
  */
 export function mountToChain(themeId, {
   mountId = null, segmentNames = [], coreInfo = '', oldValue = '', newValue = '',
-  evidence = '', falsifier = '', evidenceRefs = [], source = null,
+  evidence = '', falsifier = '', evidenceRefs = [], source = null, layer = null,
 } = {}) {
   const theme = getThemeOrThrow(themeId)
   const chain = themeChain(theme)
@@ -156,6 +172,7 @@ export function mountToChain(themeId, {
     if (!seg) {
       seg = normSegment({
         name, coreInfo, status: 'pending',
+        layer: Math.min(Number.isInteger(layer) && layer >= 0 ? layer : 0, chain.layerNames.length - 1),
         falsifier, source,
         evidenceRefs, createdAt: today(), updatedAt: today(),
       })
@@ -186,7 +203,12 @@ export function updateChainSegment(themeId, segmentId, patch = {}, changeNote = 
   const p = isObj(patch) ? patch : {}
   if (p.name !== undefined && String(p.name).trim()) seg.name = String(p.name).trim()
   if (p.coreInfo !== undefined) seg.coreInfo = String(p.coreInfo)
-  if (p.status !== undefined && SEG_STATUSES.includes(p.status)) seg.status = p.status
+  if (p.status !== undefined && SEG_STATUSES.includes(p.status)) {
+    if (p.status === 'closed' && seg.status !== 'closed') seg.closedAt = today()
+    seg.status = p.status
+  }
+  if (p.role !== undefined) { /* 历史字段：因果 role 已废弃，忽略 */ }
+  if (Number.isInteger(p.layer) && p.layer >= 0) seg.layer = Math.min(p.layer, chain.layerNames.length - 1)
   if (p.falsifier !== undefined) seg.falsifier = String(p.falsifier)
   if (p.convergeCondition !== undefined) seg.convergeCondition = String(p.convergeCondition)
   if (p.settleAt !== undefined) seg.settleAt = String(p.settleAt)
@@ -202,6 +224,21 @@ export function updateChainSegment(themeId, segmentId, patch = {}, changeNote = 
   seg.updatedAt = today()
   persistLedger()
   return seg
+}
+
+/**
+ * 设置展示分层（改名/增减层）：整体覆写，幂等。
+ * - 空数组/全空 → 回到默认三层；最多 MAX_LAYERS 层。
+ * - 层数减少时，超出范围的段自动收敛到最后一层。
+ */
+export function setChainLayers(themeId, names) {
+  const theme = getThemeOrThrow(themeId)
+  const chain = themeChain(theme)
+  chain.layerNames = sanitizeLayerNames(names)
+  const max = chain.layerNames.length - 1
+  for (const seg of chain.segments) seg.layer = Math.min(seg.layer, max)
+  persistLedger()
+  return { layerNames: chain.layerNames }
 }
 
 /** 合并段：fromIds 并入 intoId。from 段标 mergedInto 并关闭，证据与历史迁入目标。幂等。 */
@@ -225,6 +262,7 @@ export function mergeChainSegments(themeId, fromIds = [], intoId, reason = '') {
     if (!into.mergedFrom.includes(from.name)) into.mergedFrom.push(from.name)
     from.mergedInto = [...new Set([...from.mergedInto, into.name])]
     from.status = 'closed'
+    from.closedAt = today()
     from.updatedAt = today()
     merged.push(from.name)
   }
@@ -270,6 +308,36 @@ export function closeChainBranch(themeId, segmentId, subId, reason = '') {
   seg.updatedAt = today()
   persistLedger()
   return sub
+}
+
+/**
+ * 整段复活：已关闭的段回到「待确认」，其下所有已关闭分支一并复活。
+ * 复活不恢复关闭前的状态（不追踪），统一落到 pending，由用户重新核验后确认。
+ * 记一条变化日志，可审计、可同步。幂等：已是开放状态时无操作。
+ */
+export function reviveChainSegment(themeId, segmentId, reason = '') {
+  const theme = getThemeOrThrow(themeId)
+  const chain = themeChain(theme)
+  const seg = chain.segments.find((s) => s.id === segmentId)
+  if (!seg) throw new Error('段不存在')
+  const reopened = []
+  if (seg.status === 'closed') {
+    seg.status = 'pending'
+    reopened.push(`段「${seg.name || '未命名段'}」`)
+  }
+  for (const sub of seg.subsegments || []) {
+    if (sub.status === 'closed') {
+      sub.status = 'pending'
+      reopened.push(`分支「${sub.name || '未命名分支'}」`)
+    }
+  }
+  if (!reopened.length) return { seg, reopened: [] }
+  appendLog(seg, {
+    reason: `墓碑区整段复活：${reopened.join('、')}回到待确认${reason ? `。${reason}` : ''}，请重新核验后再确认。`,
+  })
+  seg.updatedAt = today()
+  persistLedger()
+  return { seg, reopened }
 }
 
 /** 读数自动映射表：metric/indicator → 段名。用户批一次，只读不写。 */

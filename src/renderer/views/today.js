@@ -634,30 +634,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
     class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
     onclick: () => onResolve([item], 'accept'),
   }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
-  const routeNote = h('p', { class: 'inbox-detail-note inbox-route-warning', hidden: hasValidInboxRoute(item, themeNodes) },
-    '建议挂点不在该条目主题下，请重新选择目标环节。')
   const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
-  const parentSelect = h('select', {
-    class: 'inbox-parent-select', id: 'inbox-parent', disabled: busy || !theme,
-    onchange: () => {
-      overrides.set(ovKey(item), { ...overrides.get(ovKey(item)), parentId: parentSelect.value })
-      clear(graph)
-      graph.append(renderMiniGraph(themeNodes, item, changeParent))
-      confirm.disabled = busy || !theme
-      routeNote.hidden = true
-      onRouteChange()
-    },
-  }, h('option', { value: '__unavailable__', disabled: true }, '请选择该主题的环节'),
-  h('option', { value: '' }, '主题根级'),
-  ...themeNodes.filter((node) => node.status !== 'dead').map((node) =>
-    h('option', { value: node.id }, nodePath(themeNodes, node.id) || node.title)))
-  parentSelect.value = hasValidInboxRoute(item, themeNodes) ? (ov.parentId ?? lemmas.find((lemma) => lemma.action !== 'merge')?.parentId ?? '') : '__unavailable__'
-  const changeParent = (id) => {
-    if (busy) return
-    parentSelect.value = id
-    parentSelect.dispatchEvent(new Event('change'))
-  }
-  const graph = h('div', { class: 'inbox-graph' }, renderMiniGraph(themeNodes, item, changeParent))
   panel.append(
     h('header', { class: 'inbox-detail-head' },
       h('div', { class: 'inbox-detail-kicker' }, item.provenance?.platform || label.kind || '待审阅信息', ' · ', item.createdAt || ''),
@@ -727,22 +704,20 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
           )),
         ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的命题。你可以忽略，或补充原文后重新捕获。'),
       ),
-      // 认知链提案草稿：只起草不拍板，用户点"确认挂载"才写入主题链。
-      theme && !unextracted ? renderProposalDraft(item,
-        (theme.chain?.segments || []).map((s) => ({ id: s.id, name: s.name })),
-        {
-          themeId: itemThemeId(item),
-          onDraft: () => rerender ? rerender() : onRouteChange(),
-          onMounted: () => { rerender ? rerender() : onRouteChange(); refresh() },
-        }) : null,
-      editable ? h('section', { class: 'inbox-detail-section' },
+      // 确认归位：图已删，归位 = 挂到认知链。提案草稿搬进这里，一处确认。
+      (editable || (theme && !unextracted)) ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '确认归位'),
-        h('div', { class: 'inbox-route-theme' },
-          h('label', { for: 'inbox-theme' }, '主题'), themeSelect,
-          theme ? null : h('span', { class: 'inbox-detail-note' }, '该条目没有可用主题，无法入库。')),
-        routeNote,
-        h('div', { class: 'inbox-routing' }, h('label', { for: 'inbox-parent' }, '目标环节'), parentSelect),
-        h('div', { class: 'inbox-confidence' },
+        editable ? h('div', { class: 'draft-theme-row' },
+          h('span', { class: 'draft-label' }, '主题'), themeSelect,
+          theme ? null : h('span', { class: 'inbox-detail-note' }, '该条目没有可用主题，无法入库。')) : null,
+        theme && !unextracted ? renderProposalDraft(item,
+          (theme.chain?.segments || []).map((s) => ({ id: s.id, name: s.name })),
+          {
+            themeId: itemThemeId(item), bare: true,
+            onDraft: () => rerender ? rerender() : onRouteChange(),
+            onMounted: () => { rerender ? rerender() : onRouteChange(); refresh() },
+          }) : null,
+        editable ? h('div', { class: 'inbox-confidence' },
           h('label', { for: 'inbox-confidence' }, '置信度'),
           h('input', {
             id: 'inbox-confidence', class: 'prop-slider inbox-conf-slider', type: 'range',
@@ -753,9 +728,8 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
               confValue.value = String(value)
             },
           }), confValue,
-        ),
-        lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增命题；未调整时保留各自建议。') : null,
-        h('details', { class: 'inbox-map' }, h('summary', {}, '查看归位图'), graph),
+        ) : null,
+        editable && lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增命题；未调整时保留各自建议。') : null,
       ) : null,
     ),
     h('footer', { class: 'inbox-detail-actions' },
@@ -766,156 +740,6 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
   )
 }
 
-// -------------------------------------------------- 收件箱右栏迷你图
-
-const NS = 'http://www.w3.org/2000/svg'
-
-function svgEl(tag, attrs = {}, ...kids) {
-  const el = document.createElementNS(NS, tag)
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v == null || v === false) continue
-    if (k === 'text') el.textContent = v
-    else if (k === 'dataset') for (const [dk, dv] of Object.entries(v)) el.setAttribute(`data-${dk}`, String(dv))
-    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v)
-    else el.setAttribute(k, v === true ? '' : String(v))
-  }
-  for (const c of kids.flat(4)) if (c != null && c !== false) el.append(c)
-  return el
-}
-
-function miniLayout(nodes) {
-  const kids = new Map()
-  const roots = []
-  for (const n of nodes) {
-    if (!n.parentId) { roots.push(n); continue }
-    if (!kids.has(n.parentId)) kids.set(n.parentId, [])
-    kids.get(n.parentId).push(n)
-  }
-  const byTime = (a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')
-  for (const list of kids.values()) list.sort(byTime)
-  roots.sort(byTime)
-  const pos = new Map()
-  let leaf = 0
-  const place = (node, depth) => {
-    const cs = kids.get(node.id) || []
-    if (!cs.length) { const y = leaf++; pos.set(node.id, { y, depth }); return y }
-    let sum = 0
-    for (const c of cs) sum += place(c, depth + 1)
-    const y = sum / cs.length
-    pos.set(node.id, { y, depth })
-    return y
-  }
-  for (const r of roots) place(r, 0)
-  return { pos, kids, roots }
-}
-
-function renderMiniGraph(themeNodes, item, onParentChange) {
-  themeNodes = themeNodes.filter((node) => node.status !== 'dead')
-  if (!themeNodes.length) return h('div', { class: 'inbox-graph-empty' }, h('span', {}, '主题还没有环节'))
-
-  const ov = overrides.get(ovKey(item)) || {}
-  const suggestedParent = ov.parentId ?? item.lemmas?.find((lemma) => lemma.action !== 'merge')?.parentId ?? null
-
-  const downstream = new Set()
-  if (suggestedParent) {
-    const stack = [suggestedParent]
-    while (stack.length) {
-      const pid = stack.pop()
-      for (const c of themeNodes) {
-        if (c.parentId === pid && !downstream.has(c.id)) {
-          downstream.add(c.id)
-          stack.push(c.id)
-        }
-      }
-    }
-  }
-  const highlight = new Set([suggestedParent, ...downstream].filter(Boolean))
-
-  const { pos, kids, roots } = miniLayout(themeNodes)
-  const ROW = 28
-  const COLW = 130
-  const NODE_W = 100
-  const NODE_H = 20
-
-  let maxDepth = 0, maxRow = 0
-  for (const [id, p] of pos) { maxDepth = Math.max(maxDepth, p.depth); maxRow = Math.max(maxRow, p.y) }
-  const svgW = (maxDepth + 1) * COLW + 20
-  const svgH = (maxRow + 1) * ROW + 20
-
-  const X = (id) => (pos.get(id)?.depth ?? 0) * COLW + 10
-  const Y = (id) => (pos.get(id)?.y ?? 0) * ROW + 10
-
-  const svg = svgEl('svg', { class: 'mini-graph', width: '100%', height: svgH, style: `min-width: ${svgW}px`, viewBox: `0 0 ${svgW} ${svgH}` })
-
-  // 边
-  for (const n of themeNodes) {
-    if (!n.parentId) continue
-    const x1 = X(n.parentId) + NODE_W
-    const y1 = Y(n.parentId) + NODE_H / 2
-    const x2 = X(n.id)
-    const y2 = Y(n.id) + NODE_H / 2
-    const k = Math.max(12, (x2 - x1) / 2)
-    const onEdge = highlight.has(n.parentId) && highlight.has(n.id)
-    svg.append(svgEl('path', {
-      d: `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`,
-      fill: 'none',
-      stroke: onEdge ? 'var(--accent)' : 'var(--hairline)',
-      'stroke-width': onEdge ? '1.5' : '0.5',
-      opacity: highlight.size && !onEdge ? '0.3' : '1',
-    }))
-  }
-
-  // 节点
-  for (const n of themeNodes) {
-    const x = X(n.id), y = Y(n.id)
-    const isParent = n.id === suggestedParent
-    const isDown = downstream.has(n.id)
-    const isOn = highlight.has(n.id)
-    const g = svgEl('g', {
-      class: 'mini-node',
-      dataset: { id: n.id, parent: String(isParent), down: String(isDown) },
-      opacity: highlight.size && !isOn ? '0.35' : '1',
-      role: 'button', tabindex: '0', 'aria-label': `归位到 ${n.title}`,
-      onclick: () => onParentChange(n.id),
-      onkeydown: (e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        e.preventDefault()
-        onParentChange(n.id)
-      },
-    })
-    g.append(svgEl('rect', {
-      x, y, width: NODE_W, height: NODE_H, rx: 5,
-      fill: isParent ? 'var(--accent)' : isDown ? 'var(--accent-soft)' : 'var(--surface-solid)',
-      stroke: isParent ? 'none' : isOn ? 'var(--accent)' : 'var(--hairline)',
-      'stroke-width': isParent ? '0' : isOn ? '1' : '0.5',
-    }))
-    const title = n.title.length > 12 ? n.title.slice(0, 11) + '…' : n.title
-    g.append(svgEl('text', {
-      x: x + 6, y: y + 13, text: title,
-      fill: isParent ? '#fff' : 'var(--text-2)',
-      style: 'font-size: var(--t-caption)', 'font-weight': '400',
-    }))
-    if (isParent) {
-      g.append(svgEl('rect', {
-        x: x - 2, y: y - 2, width: NODE_W + 4, height: NODE_H + 4, rx: 7,
-        fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5, 'stroke-dasharray': '3 2',
-      }))
-    }
-    svg.append(g)
-  }
-
-  const wrap = h('div', { class: 'mini-graph-wrap' }, svg)
-  if (suggestedParent) {
-    const parentName = themeNodes.find((n) => n.id === suggestedParent)?.title || '?'
-    wrap.append(h('div', { class: 'mini-graph-hint' },
-      h('span', {}, `挂点：${parentName.length > 16 ? parentName.slice(0, 15) + '…' : parentName}`),
-      h('span', { style: { color: 'var(--text-3)' } }, ' · 点节点改挂点'),
-    ))
-  } else {
-    wrap.append(h('div', { class: 'mini-graph-hint' }, h('span', { style: { color: 'var(--text-3)' } }, '点一个节点设为挂点')))
-  }
-  return wrap
-}
 
 function scrollTo(mid, id) {
   const el = document.getElementById(id)

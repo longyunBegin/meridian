@@ -52,6 +52,8 @@ export function createMeridianBridge() {
     chainUpdateSegment: (themeId, segmentId, patch, changeNote) => call('chain:updateSegment', themeId, segmentId, patch, changeNote),
     chainMergeSegments: (themeId, fromIds, intoId, reason) => call('chain:mergeSegments', themeId, fromIds, intoId, reason),
     chainCloseBranch: (themeId, segmentId, subId, reason) => call('chain:closeBranch', themeId, segmentId, subId, reason),
+    chainReviveSegment: (themeId, segmentId, reason) => call('chain:reviveSegment', themeId, segmentId, reason),
+    chainSetLayers: (themeId, names) => call('chain:setLayers', themeId, names),
     chainAddSubsegment: (themeId, segmentId, sub) => call('chain:addSubsegment', themeId, segmentId, sub),
     chainSetDraft: (inboxId, draft) => call('chain:setDraft', inboxId, draft),
     chainGenerateDraft: (inboxId) => call('chain:generateDraft', inboxId),

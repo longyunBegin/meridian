@@ -51,6 +51,8 @@ export const OUTBOX_CHANNELS = new Set([
   'chain:mergeSegments', // 段合并：已关闭/已汇入跳过，幂等
   'chain:addSubsegment', // 新增分支：按 id 幂等
   'chain:closeBranch', // 关闭分支：已关闭跳过，幂等
+  'chain:reviveSegment', // 整段复活：已开放/无关闭分支时无操作，幂等
+  'chain:setLayers', // 展示分层改名/增减：整体覆写，幂等（越界段收敛到最后一层）
   'chain:setDraft', // 提案草稿：按条目 id 覆写，幂等
   'chain:setReadingMap', // 读数映射表：整体覆写，幂等
 ])

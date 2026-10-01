@@ -100,9 +100,135 @@ ok('分支已关闭', closed.status === 'closed')
 ok('关闭留痕', closed.closeReason.includes('证伪'))
 ok('关闭幂等', chain.closeChainBranch(theme.id, intoSeg.id, sub.id, 'x').status === 'closed')
 
+console.log('\n— reviveChainSegment（整段复活） —')
+const reviveRes = chain.reviveChainSegment(theme.id, fromSeg.id, '测试复活')
+const revivedSeg = chain.getChain(theme.id).segments.find((s) => s.id === fromSeg.id)
+ok('关闭段回到 pending', revivedSeg.status === 'pending')
+ok('返回 reopened', reviveRes.reopened.length === 1)
+ok('复活记日志', revivedSeg.changeLog.some((e) => String(e.reason || '').includes('整段复活')))
+// 整段复活含分支：再关一个分支后一起复活
+const sub2 = chain.addChainSubsegment(theme.id, revivedSeg.id, { name: '测试分支', kind: 'structural' })
+chain.closeChainBranch(theme.id, revivedSeg.id, sub2.id, '测试关闭')
+// 先把段重新关闭，模拟"整段带已关闭分支"
+chain.updateChainSegment(theme.id, revivedSeg.id, { status: 'closed' })
+const reviveAll = chain.reviveChainSegment(theme.id, revivedSeg.id)
+const segAfter = chain.getChain(theme.id).segments.find((s) => s.id === fromSeg.id)
+ok('段与分支一起复活', segAfter.status === 'pending' && segAfter.subsegments.find((x) => x.id === sub2.id).status === 'pending')
+ok('reopened 含段与分支', reviveAll.reopened.length === 2)
+ok('复活幂等（已开放无操作）', chain.reviveChainSegment(theme.id, revivedSeg.id).reopened.length === 0)
+
 console.log('\n— readingMap —')
 chain.setReadingMap(theme.id, { '激光器良率': '激光器良率（修正）' })
 ok('映射表可读写', chain.getReadingMap(theme.id)['激光器良率'] === '激光器良率（修正）')
+
+console.log('\n— 段展示分层 layer（纯页面分组，不限三层） —')
+const layerTheme = store.addTheme('分层测试主题')
+chain.mountToChain(layerTheme.id, { mountId: 'layer-1', segmentNames: ['默认段'] })
+const defaultSeg = chain.getChain(layerTheme.id).segments.find((s) => s.name === '默认段')
+ok('缺省 layer 为 0', defaultSeg.layer === 0)
+ok('缺省三层', JSON.stringify(chain.getChain(layerTheme.id).layerNames) === JSON.stringify(['第一层', '第二层', '第三层']))
+chain.mountToChain(layerTheme.id, { mountId: 'layer-2', segmentNames: ['底层段'], layer: 2 })
+ok('建段可指定 layer', chain.getChain(layerTheme.id).segments.find((s) => s.name === '底层段').layer === 2)
+chain.mountToChain(layerTheme.id, { mountId: 'layer-3', segmentNames: ['坏层段'], layer: -1 })
+ok('非法 layer 回退 0', chain.getChain(layerTheme.id).segments.find((s) => s.name === '坏层段').layer === 0)
+chain.updateChainSegment(layerTheme.id, defaultSeg.id, { layer: 2 })
+ok('update 可改 layer', chain.getChain(layerTheme.id).segments.find((s) => s.id === defaultSeg.id).layer === 2)
+chain.updateChainSegment(layerTheme.id, defaultSeg.id, { layer: 'x' })
+ok('非法 layer 更新被忽略', chain.getChain(layerTheme.id).segments.find((s) => s.id === defaultSeg.id).layer === 2)
+// 老账本：无 layer 字段的段归一化为 0
+const legacy = chain.getChain(layerTheme.id)
+legacy.segments.push({ id: 'legacy-seg', name: '老段' })
+ok('归一化老段 layer=0', chain.normalizeChain(legacy).segments.find((s) => s.id === 'legacy-seg').layer === 0)
+// setChainLayers：增层
+const r1 = chain.setChainLayers(layerTheme.id, ['供给侧', '需求侧', '估值', '情绪面', '政策面'])
+ok('可增至 5 层', r1.layerNames.length === 5 && r1.layerNames[0] === '供给侧')
+chain.mountToChain(layerTheme.id, { mountId: 'layer-4', segmentNames: ['新层段'], layer: 4 })
+ok('新层可建段', chain.getChain(layerTheme.id).segments.find((s) => s.name === '新层段').layer === 4)
+// 减层：越界段收敛到最后一层
+chain.setChainLayers(layerTheme.id, ['甲', '乙'])
+ok('减层后越界段收敛', chain.getChain(layerTheme.id).segments.find((s) => s.name === '新层段').layer === 1)
+ok('减层后已有段同步收敛', chain.getChain(layerTheme.id).segments.find((s) => s.name === '底层段').layer === 1)
+// 空数组回到默认三层
+ok('空数组回默认三层', chain.setChainLayers(layerTheme.id, []).layerNames.length === 3)
+// 整段复活不碰 layer（此时默认段已被收敛到 1）
+chain.updateChainSegment(layerTheme.id, defaultSeg.id, { status: 'closed' })
+chain.reviveChainSegment(layerTheme.id, defaultSeg.id)
+ok('复活不改 layer', chain.getChain(layerTheme.id).segments.find((s) => s.id === defaultSeg.id).layer === 1)
+
+console.log('\n— 段关闭记 closedAt（墓碑关闭日期） —')
+const closeTheme = store.addTheme('关闭日期主题')
+chain.mountToChain(closeTheme.id, { mountId: 'close-1', segmentNames: ['待关段'] })
+const closeSeg = chain.getChain(closeTheme.id).segments.find((s) => s.name === '待关段')
+ok('关闭前无 closedAt', closeSeg.closedAt == null)
+chain.updateChainSegment(closeTheme.id, closeSeg.id, { status: 'closed' })
+const closedSeg = chain.getChain(closeTheme.id).segments.find((s) => s.id === closeSeg.id)
+ok('关闭记 closedAt', typeof closedSeg.closedAt === 'string' && closedSeg.closedAt.length > 0)
+chain.mountToChain(closeTheme.id, { mountId: 'close-2', segmentNames: ['目标段'] })
+chain.mountToChain(closeTheme.id, { mountId: 'close-3', segmentNames: ['被并段'] })
+const targetSeg = chain.getChain(closeTheme.id).segments.find((s) => s.name === '目标段')
+const mergedSeg = chain.getChain(closeTheme.id).segments.find((s) => s.name === '被并段')
+chain.mergeChainSegments(closeTheme.id, [mergedSeg.id], targetSeg.id, '测试合并')
+ok('合并关闭也记 closedAt', !!chain.getChain(closeTheme.id).segments.find((s) => s.id === mergedSeg.id).closedAt)
+
+console.log('\n— 视图源码断言（分层渲染） —')
+const { readFileSync: readFileSyncChain } = await import('node:fs')
+const chainViewSrc = readFileSyncChain(join(ROOT, 'src/renderer/views/chain.js'), 'utf8')
+ok('视图定义默认层名（展示分组）', chainViewSrc.includes("DEFAULT_LAYER_NAMES = ['第一层', '第二层', '第三层']"))
+ok('视图渲染 chain-layers', chainViewSrc.includes('chain-layers'))
+ok('视图无因果连接徽标', !chainViewSrc.includes('chain-link-badge') && !chainViewSrc.includes('拆解为'))
+ok('层数可增（+ 加一层）', chainViewSrc.includes('chain-layer-add'))
+ok('层名可重命名', chainViewSrc.includes('chainSetLayers'))
+ok('节点卡保留 data-seg-id（墓碑查看跳转）', chainViewSrc.includes("class: 'cnode', 'data-seg-id'"))
+ok('已关闭段收到底部 strip', chainViewSrc.includes('chain-closed'))
+ok('抽屉可切换层级', chainViewSrc.includes('chain-role-select'))
+const vaultViewSrc = readFileSyncChain(join(ROOT, 'src/renderer/views/vault.js'), 'utf8')
+ok('墓碑复活不再抬 confidence（公理1）', !vaultViewSrc.includes('Math.max(25, n.confidence)'))
+ok('墓碑关闭日期优先用 closedAt', vaultViewSrc.includes('seg.closedAt || seg.updatedAt'))
+ok('链轨线只走 CSS（纯结构，不表方向）', chainViewSrc.includes('chain-rail'))
+ok('连线只画真实关系（drawChainEdges + computeChainEdges）',
+  chainViewSrc.includes('drawChainEdges') && chainViewSrc.includes('computeChainEdges'))
+ok('链轨居中', readFileSyncChain(join(ROOT, 'src/renderer/styles.css'), 'utf8').includes('.chain-rail') &&
+  readFileSyncChain(join(ROOT, 'src/renderer/styles.css'), 'utf8').includes('left: 50%'))
+ok('连线统一样式：起点圆点 + 终点箭头',
+  chainViewSrc.includes('chain-edge-dot') && chainViewSrc.includes("marker-end', 'url(#chainArrow)"))
+ok('连线 SVG 在卡片下层（不穿过卡片）', chainViewSrc.includes('layers.append(edgeSvg, stack)'))
+ok('连线脚注拆分节点与关系状态',
+  chainViewSrc.includes('节点标签只表示该段事实的确认状态；连线表示的段间关系仍待检验，不表示因果已成立。'))
+ok('节点状态标签只谈事实', chainViewSrc.includes("label: '事实已确认'") && chainViewSrc.includes("label: '事实待验证'"))
+ok('层是分组的提示可见', chainViewSrc.includes('层只是分组，点击层名可重命名'))
+
+console.log('\n— computeChainEdges 纯函数 —')
+const { computeChainEdges } = await import('../src/renderer/lib/chain-edges.js')
+const eSegs = [
+  { id: 'a', name: '推理负载上移', mergedFrom: [], affects: ['单柜连接更密'] },
+  { id: 'b', name: '单柜连接更密', mergedFrom: ['推理负载上移'], affects: [] },
+  { id: 'c', name: '规格迭代节奏', mergedFrom: [], affects: ['不存在的段'] },
+]
+const edges = computeChainEdges(eSegs)
+ok('同对段多关系只画一条线（曲线重叠）', edges.filter((e) => e.from === 'a' && e.to === 'b').length === 1)
+ok('解析不到的段名不画线', !edges.some((e) => e.to === 'c' || e.from === 'c'))
+const mEdges = computeChainEdges([
+  { id: 'm1', name: '旧段', mergedFrom: [], affects: [] },
+  { id: 'm2', name: '新段', mergedFrom: ['旧段'], affects: [] },
+])
+ok('mergedFrom 解析为边',
+  mEdges.length === 1 && mEdges[0].from === 'm1' && mEdges[0].to === 'm2' && mEdges[0].kind === 'merged')
+const aEdges = computeChainEdges([
+  { id: 'a1', name: '上游', mergedFrom: [], affects: ['下游'] },
+  { id: 'a2', name: '下游', mergedFrom: [], affects: [] },
+])
+ok('affects 解析为边',
+  aEdges.length === 1 && aEdges[0].from === 'a1' && aEdges[0].to === 'a2' && aEdges[0].kind === 'affects')
+ok('自环不画线', !computeChainEdges([{ id: 'x', name: '自指', mergedFrom: ['自指'], affects: [] }]).length)
+ok('空输入返回空数组', Array.isArray(computeChainEdges(null)) && computeChainEdges(null).length === 0)
+ok('重名段取第一个', (() => {
+  const es = computeChainEdges([
+    { id: 'p1', name: '重名', mergedFrom: [], affects: [] },
+    { id: 'p2', name: '重名', mergedFrom: [], affects: [] },
+    { id: 'q', name: '下游', mergedFrom: ['重名'], affects: [] },
+  ])
+  return es.length === 1 && es[0].from === 'p1' && es[0].to === 'q'
+})())
 
 console.log(`\nchain: ${pass} 通过, ${fail} 失败`)
 process.exit(fail ? 1 : 0)
