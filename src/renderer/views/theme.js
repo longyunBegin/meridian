@@ -115,5 +115,8 @@ export function renderTheme(mid) {
   const chainSection = () => renderChainSection(theme, {
     onOpen: (seg) => openSegmentDetail(theme, seg, { onEvidence: openEvidenceDetail }),
   })
-  for (const el of [head, renderSkeletonPrompt(theme), chainSection(), renderThemeOpsSection(theme)]) if (el) mid.append(el)
+  // 主题头固定，下方内容区独立滚动；右栏检视面板本就独立滚动，不受影响
+  const body = h('div', { class: 'theme-body' })
+  for (const el of [renderSkeletonPrompt(theme), chainSection(), renderThemeOpsSection(theme)]) if (el) body.append(el)
+  mid.append(head, body)
 }

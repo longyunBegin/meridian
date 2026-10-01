@@ -348,6 +348,9 @@ select { font: inherit; color: inherit; }
 
 .mid { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); position: relative; }
 
+/* 主题页：头部固定，下方链内容独立滚动（右栏检视面板独立滚动，不动） */
+.theme-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
 .mid-head {
   display: flex;
   align-items: center;
