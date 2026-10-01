@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meridian graveyard and update UI fixture</title>
+  <style>
+    html,body{min-height:100%;margin:0;background:#f5f5f7;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202124}
+    body{padding:20px;box-sizing:border-box}
+    #fixture-root{max-width:1100px;margin:0 auto 22px}
+    #fixture-report{max-width:1100px;margin:20px auto;padding:12px;background:#111;color:#d7f8df;border:1px solid #3a6;border-radius:10px;font:12px/1.55 ui-monospace,monospace;white-space:pre-wrap}
+    #fixture-report.fail{color:#ffd4d4;border-color:#d44}
+  </style>
+</head>
+<body>
+  <main id="fixture-root">
+    <div id="empty-fixture"></div>
+    <div id="populated-fixture"></div>
+    <div id="corrupt-fixture"></div>
+    <div id="unparsed-fixture"></div>
+  </main>
+  <pre id="fixture-report">Fixture starting…</pre>
+  <script type="module">
+    import '../styles.css'
+
+    const goodArchive = {
+      themeId: 'good-theme',
+      integrity: { ok: true, count: 2, lastValidSeq: 2 },
+      nodes: [{ id: 'archive-claim-1', kind: 'claim', title: '合成归档观点：港口需求已变化', archiveReason: '两份合成来源互相矛盾', archivedAt: '2026-09-30T00:00:00.000Z', sourceRef: 'lemma:legacy-1', sourceKind: 'lemma', evidenceCount: 1, archiveEventIds: ['archive-event-1'] }],
+      edges: [{ id: 'edge-1', eventId: 'edge-1', rel: 'supports', from: 'archive-claim-1', to: 'archive-evidence-1' }],
+    }
+    const corruptArchive = {
+      themeId: 'corrupt-theme',
+      integrity: { ok: false, count: 2, lastValidSeq: 1, reason: 'synthetic hash mismatch' },
+      nodes: [{ id: 'archive-claim-corrupt', kind: 'claim', title: '合成损坏账本：有效前缀归档', archiveReason: '仅为浏览器 fixture', archivedAt: '2026-09-29T00:00:00.000Z', sourceRef: 'fixture:corrupt', archiveEventIds: ['valid-archive-event'] }],
+      edges: [],
+    }
+    const fixtures = {
+      'empty-theme': { archive: { integrity: { ok: true, count: 0, lastValidSeq: 0 }, nodes: [], edges: [] }, events: { events: [], integrity: { ok: true, count: 0, lastValidSeq: 0 } } },
+      'good-theme': { archive: goodArchive, events: { events: [{ id: 'cite-event-2', seq: 2, type: 'evidence.appended', payload: { evidenceRefs: [{ type: 'lemma', id: 'legacy-1' }] } }], integrity: goodArchive.integrity } },
+      'corrupt-theme': { archive: corruptArchive, events: { events: [{ id: 'valid-archive-event', seq: 1, type: 'node.archived', payload: { sourceRef: 'fixture:corrupt' } }, { id: 'invalid-event', seq: 2, type: 'evidence.appended', payload: { sourceRef: 'fixture:must-not-be-trusted', evidenceRefs: [{ type: 'lemma', id: 'corrupt-legacy-1' }] } }], integrity: corruptArchive.integrity } },
+      'unparsed-theme': { archive: { nodes: 'malformed nodes', edges: null, integrity: null }, events: { events: { unexpected: true } } },
+    }
+    const legacyNode = { id: 'legacy-1', themeId: 'good-theme', status: 'dead', kind: 'lemma', type: 'claim', title: '合成已证伪旧命题', confidence: 42, settlement: { correct: false }, updatedAt: '2026-09-28T00:00:00.000Z' }
+    const corruptLegacyNode = { id: 'corrupt-legacy-1', themeId: 'corrupt-theme', status: 'dead', kind: 'lemma', type: 'claim', title: '损坏尾部不得引用的合成命题', confidence: 42, settlement: { correct: false } }
+    let activeFixtureNodes = []
+    let restoreCalls = 0
+    let restoreRef = ''
+    window.meridian = {
+      // Keep app boot suspended so the fixture never invokes host APIs or loads local data.
+      themes: () => new Promise(() => {}),
+      settings: async () => ({}),
+      async allNodes() { return activeFixtureNodes },
+      async chainArchives(themeId) { return fixtures[themeId]?.archive },
+      async chainEvents(themeId) { return fixtures[themeId]?.events },
+      async chainRestoreNode(_themeId, sourceRef) { restoreCalls++; restoreRef = sourceRef; return { ok: true } },
+      async updateNode() { return { ok: true } },
+      async restoreNode() { return { ok: true } },
+    }
+
+    const { state } = await import('../app.js')
+    const { renderVault } = await import('../views/vault.js')
+    const { presentUpdate } = await import('../lib/updater.js')
+    const report = document.querySelector('#fixture-report')
+    const results = []
+    const check = (label, condition, detail = '') => {
+      results.push({ label, passed: Boolean(condition), detail })
+      if (!condition) report.classList.add('fail')
+      report.textContent = results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.label}${r.detail ? ` — ${r.detail}` : ''}`).join('\n')
+    }
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 40))
+    const themes = {
+      empty: { id: 'empty-theme', name: '空主题（合成）' },
+      good: { id: 'good-theme', name: '合成：城市港口需求' },
+      corrupt: { id: 'corrupt-theme', name: '合成：损坏尾部' },
+      unparsed: { id: 'unparsed-theme', name: '合成：未解析返回' },
+    }
+    activeFixtureNodes = []
+    state.themes = [themes.empty]
+    await renderVault(document.querySelector('#empty-fixture'), 'dead')
+    check('空墓碑仅显示一个清晰空态，不出现空事件归档控件', !document.querySelector('#empty-fixture .event-archive-section')
+      && document.querySelector('#empty-fixture').textContent.includes('墓碑区是空的'))
+
+    activeFixtureNodes = [legacyNode]
+    state.themes = [themes.good]
+    await renderVault(document.querySelector('#populated-fixture'), 'dead')
+    const populated = document.querySelector('#populated-fixture')
+    check('合成墓碑命题、已归档事件、原因、日期及引用均可读', populated.textContent.includes('合成已证伪旧命题')
+      && populated.textContent.includes('合成归档观点：港口需求已变化')
+      && populated.textContent.includes('两份合成来源互相矛盾')
+      && populated.textContent.includes('2026-09-30') && populated.querySelector('.tomb-cite'))
+    check('事件归档详情与恢复入口保留', Boolean(populated.querySelector('.event-archive-details summary'))
+      && Boolean(populated.querySelector('button.btn-primary')))
+    const archiveSearch = populated.querySelector('.event-archive-search')
+    archiveSearch.value = '港口需求'
+    archiveSearch.dispatchEvent(new Event('input', { bubbles: true }))
+    check('事件归档可按文字搜索且不截断标题', populated.querySelectorAll('.event-archive-row').length === 1
+      && populated.querySelector('.event-archive-row').textContent.includes('港口需求已变化'))
+    const archiveClaimFilter = [...populated.querySelectorAll('.event-archive-section .tomb-filter')].find((button) => button.textContent === '主张')
+    archiveClaimFilter?.click()
+    check('事件归档类型筛选仍可用并同步 aria-pressed', archiveClaimFilter?.getAttribute('aria-pressed') === 'true'
+      && populated.querySelector('.event-archive-row'))
+    const deadSection = [...populated.querySelectorAll('.sect')].find((section) => section.querySelector('h2')?.textContent === '归档的命题')
+    deadSection?.querySelector('.tomb-filter:last-child')?.click()
+    await settled()
+    const filteredDeadSection = [...populated.querySelectorAll('.sect')].find((section) => section.querySelector('h2')?.textContent === '归档的命题')
+    check('墓碑低置信度筛选可隐藏不匹配项并说明结果为空', !filteredDeadSection?.querySelector('.tomb-row')
+      && filteredDeadSection?.textContent.includes('这个筛选下没有命题'))
+    filteredDeadSection?.querySelector('.tomb-filter')?.click()
+    await settled()
+    populated.querySelector('button.btn-primary')?.click()
+    await settled()
+    check('恢复仍追加到合成 sourceRef，不改写旧归档', restoreCalls === 1 && restoreRef === 'lemma:legacy-1')
+
+    const goodSearchAfterRestore = populated.querySelector('.event-archive-search')
+    if (goodSearchAfterRestore) {
+      goodSearchAfterRestore.value = ''
+      goodSearchAfterRestore.dispatchEvent(new Event('input', { bubbles: true }))
+      populated.querySelector('.event-archive-section .tomb-filter')?.click()
+    }
+
+    activeFixtureNodes = [corruptLegacyNode]
+    state.themes = [themes.corrupt]
+    await renderVault(document.querySelector('#corrupt-fixture'), 'dead')
+    const corrupt = document.querySelector('#corrupt-fixture')
+    check('损坏账本显示有效前缀归档和完整性警告，且恢复禁用', corrupt.textContent.includes('校验失败')
+      && corrupt.textContent.includes('合成损坏账本：有效前缀归档')
+      && corrupt.querySelector('.event-archive-row .btn-primary')?.disabled === true
+      && corrupt.textContent.includes('损坏尾部不得引用的合成命题')
+      && !corrupt.querySelector('.tomb-cite'))
+
+    activeFixtureNodes = [null, { id: 7, status: 'dead', title: { unexpected: true } }]
+    state.themes = [themes.unparsed]
+    let unparsedThrew = false
+    try { await renderVault(document.querySelector('#unparsed-fixture'), 'dead') } catch { unparsedThrew = true }
+    const unparsed = document.querySelector('#unparsed-fixture')
+    check('未解析或形状损坏的数据不会令墓碑页崩溃，并明确报告无法读取', !unparsedThrew
+      && unparsed.textContent.includes('归档返回不完整或无法解析')
+      && unparsed.textContent.includes('账本事件引用无法解析')
+      && unparsed.textContent.includes('节点数据格式异常'))
+
+    let downloadCalls = 0
+    let installCalls = 0
+    let closeCalls = 0
+    let releaseDownload
+    const syntheticUpdate = {
+      version: '0.2.0-fixture', currentVersion: '0.1.9-fixture', date: '2026-10-01T00:00:00Z',
+      body: '### 合成更新说明\n- 保留现有确认步骤\n- 不连接更新服务器',
+      async download(onEvent) {
+        downloadCalls++
+        onEvent({ event: 'Started', data: { contentLength: 100 } })
+        onEvent({ event: 'Progress', data: { chunkLength: 50 } })
+        await new Promise((resolve) => { releaseDownload = resolve })
+        onEvent({ event: 'Finished' })
+      },
+      async install() { installCalls++; throw new Error('synthetic install failure') },
+      async close() { closeCalls++ },
+    }
+    const updateDialog = presentUpdate(syntheticUpdate)
+    check('发现更新显示非模态卡片、关闭 X 和下载 CTA，不显示重启 CTA', updateDialog.getAttribute('aria-modal') === 'false'
+      && updateDialog.dataset.updateState === 'available'
+      && updateDialog.querySelector('.update-close[aria-label="关闭更新提示"]')
+      && updateDialog.querySelector('.update-primary').textContent === '下载更新'
+      && !updateDialog.textContent.includes('重新启动以更新'))
+    check('更新卡片具有键盘可达主操作与发布说明', updateDialog.querySelector('.update-primary')?.type === 'button'
+      && updateDialog.querySelector('.update-notes').textContent.includes('保留现有确认步骤'))
+    updateDialog.querySelector('.update-primary').click()
+    await settled()
+    check('下载中只显示进度并锁住关闭/安装入口', updateDialog.dataset.updateState === 'downloading'
+      && downloadCalls === 1 && installCalls === 0
+      && updateDialog.querySelector('.update-close').disabled
+      && updateDialog.querySelector('.update-progress-track').getAttribute('aria-valuenow') === '50')
+    releaseDownload?.()
+    await settled()
+    check('下载完成仅进入 ready，尚未安装或重启；此时才出现重启 CTA', updateDialog.dataset.updateState === 'ready'
+      && installCalls === 0 && updateDialog.querySelector('.update-primary').textContent === '重新启动以更新'
+      && !updateDialog.querySelector('.update-close').disabled)
+    updateDialog.querySelector('.update-primary').click()
+    await settled()
+    check('只有用户点击 ready CTA 才调用安装；安装错误可重试安装', updateDialog.dataset.updateState === 'error'
+      && installCalls === 1 && updateDialog.querySelector('.update-primary').textContent === '重试安装')
+    updateDialog.querySelector('.update-later').click()
+    check('稍后操作进入 cancelled，并明确未安装、未重启', updateDialog.dataset.updateState === 'cancelled'
+      && updateDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
+    await new Promise((resolve) => setTimeout(resolve, 230))
+    check('取消只释放合成 updater 资源，不重复调用安装', closeCalls === 1 && installCalls === 1 && !updateDialog.isConnected)
+
+    const makeDismissOnlyUpdate = (onClose) => ({
+      version: '0.2.0-fixture', currentVersion: '0.1.9-fixture', body: '本地合成关闭测试。',
+      async download() { throw new Error('dismiss must not download') },
+      async install() { throw new Error('dismiss must not install') },
+      async close() { onClose() },
+    })
+    let xCloseCalls = 0
+    const xDialog = presentUpdate(makeDismissOnlyUpdate(() => xCloseCalls++))
+    xDialog.querySelector('.update-close').click()
+    check('右上角 X 将更新提示标为稍后处理，不触发下载或安装', xDialog.dataset.updateState === 'cancelled'
+      && xDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
+    await new Promise((resolve) => setTimeout(resolve, 230))
+    check('X 仅释放提示资源并关闭卡片', xCloseCalls === 1 && !xDialog.isConnected)
+
+    let escapeCloseCalls = 0
+    const escapeDialog = presentUpdate(makeDismissOnlyUpdate(() => escapeCloseCalls++))
+    escapeDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    check('Escape 执行与稍后相同的可访问关闭操作', escapeDialog.dataset.updateState === 'cancelled'
+      && escapeDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
+    await new Promise((resolve) => setTimeout(resolve, 230))
+    check('Escape 仅释放提示资源，不触发更新动作', escapeCloseCalls === 1 && !escapeDialog.isConnected)
+
+    const refreshedSearch = populated.querySelector('.event-archive-search')
+    if (refreshedSearch) {
+      refreshedSearch.value = ''
+      refreshedSearch.dispatchEvent(new Event('input', { bubbles: true }))
+      populated.querySelector('.event-archive-section .tomb-filter')?.click()
+    }
+
+    // Leave an inert, network-free preview visible for visual inspection.
+    presentUpdate({ version: '0.2.0-fixture', currentVersion: '0.1.9-fixture', body: '### 版本说明\n- 这只是本地合成预览，不会访问更新服务器。' })
+
+    window.__vaultFixtureResults = results
+    report.dataset.finished = 'true'
+    if (results.some((r) => !r.passed)) report.classList.add('fail')
+  </script>
+</body>
+</html>

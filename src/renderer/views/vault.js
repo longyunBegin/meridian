@@ -28,6 +28,31 @@ const META = {
   },
 }
 
+let deadFilter = 'all'
+const DEAD_FILTERS = [['all', '全部'], ['falsified', '已证伪'], ['lowconf', '低置信度']]
+let eventArchiveFilter = 'all'
+let eventArchiveQuery = ''
+const EVENT_ARCHIVE_FILTERS = [['all', '全部类型'], ['claim', '主张'], ['inference', '推断'], ['evidence', '证据']]
+
+function passDeadFilter(node) {
+  if (deadFilter === 'falsified') return node?.settlement?.correct === false
+  if (deadFilter === 'lowconf') return !node?.deletedAt && (node?.confidence ?? 100) < 20
+  return true
+}
+
+function isRenderableDeadNode(node) {
+  return Boolean(node && typeof node === 'object' && node.status === 'dead'
+    && typeof node.id === 'string' && node.id.length > 0 && typeof node.title === 'string')
+}
+
+function verifiedEventRows(events, integrity) {
+  if (!Array.isArray(events) || !integrity || typeof integrity.ok !== 'boolean') return []
+  if (integrity.ok) return events.filter((event) => event && typeof event === 'object')
+  const lastValidSeq = Number.isSafeInteger(integrity.lastValidSeq) && integrity.lastValidSeq >= 0
+    ? integrity.lastValidSeq : 0
+  return events.slice(0, lastValidSeq).filter((event) => event && typeof event === 'object')
+}
+
 export async function renderVault(mid, kind) {
   clear(mid)
   const meta = META[kind] || META.cold
@@ -207,8 +232,29 @@ function eventArchiveRow(item, refreshView) {
 
 async function renderDead(mid, meta) {
   clear(mid)
-  const themes = state.themes || []
-  const nodes = (await m.allNodes()).filter((node) => node.status === 'dead')
+  const themes = Array.isArray(state.themes) ? state.themes.filter((theme) => theme && typeof theme.id === 'string') : []
+  const page = h('div', { class: 'page' },
+    h('div', { class: 'page-head' },
+      h('h1', {}, meta.title),
+      h('p', {}, '事件归档来自只读账本投影；恢复会追加新事件，不删除或改写旧记录。未解析来源会保留为未核实引用。')))
+  const loading = h('p', { class: 'chain-note', role: 'status', 'aria-live': 'polite' }, '正在读取墓碑记录…')
+  page.append(loading)
+  mid.append(page)
+  let allNodes
+  try {
+    allNodes = await m.allNodes()
+    if (!Array.isArray(allNodes)) throw new TypeError('node-list-unparsed')
+  } catch {
+    if (!page.isConnected) return
+    loading.className = 'cog-integrity is-error tomb-data-warning'
+    loading.setAttribute('role', 'alert')
+    loading.textContent = '墓碑记录暂时无法读取；没有改写或迁移任何数据。'
+    page.append(h('button', { type: 'button', class: 'btn', onclick: () => renderDead(mid, meta) }, '重试'))
+    return
+  }
+  const malformedNodes = allNodes.filter((node) => !node || typeof node !== 'object'
+    || (node.status === 'dead' && !isRenderableDeadNode(node))).length
+  const nodes = allNodes.filter(isRenderableDeadNode)
   const shown = nodes.filter(passDeadFilter)
   const [archiveResults, ledgerResults] = await Promise.all([
     Promise.all(themes.map(async (theme) => {
@@ -220,23 +266,33 @@ async function renderDead(mid, meta) {
       catch (error) { return { theme, error } }
     })),
   ])
-  const eventArchives = archiveResults.flatMap(({ theme, result }) => !result?.integrity ? []
-    : (result.nodes || []).map((node) => ({ theme, node, edges: result.edges || [], integrity: result.integrity })))
+  if (!page.isConnected) return
+  loading.remove()
+  const isValidIntegrity = (integrity) => integrity && typeof integrity.ok === 'boolean'
+  const unreadableArchiveThemes = archiveResults.filter(({ result, error }) => error || !result
+    || !isValidIntegrity(result.integrity) || !Array.isArray(result.nodes) || !Array.isArray(result.edges)
+    || result.nodes.some((node) => !node || typeof node !== 'object')
+    || result.edges.some((edge) => !edge || typeof edge !== 'object')).length
+  const eventArchives = archiveResults.flatMap(({ theme, result }) => !isValidIntegrity(result?.integrity) || !Array.isArray(result?.nodes) ? []
+    : result.nodes.filter((node) => node && typeof node === 'object').map((node) => ({
+      theme, node, edges: Array.isArray(result.edges) ? result.edges.filter((edge) => edge && typeof edge === 'object') : [], integrity: result.integrity,
+    })))
   const eventBackedSourceRefs = new Set()
   for (const { theme, result } of ledgerResults) {
     const integrity = archiveResults.find((entry) => entry.theme.id === theme.id)?.result?.integrity
-    if (!result?.events || !integrity) continue
-    const verified = integrity.ok ? result.events : result.events.slice(0, integrity.lastValidSeq || 0)
+    if (!Array.isArray(result?.events) || !isValidIntegrity(integrity)) continue
+    const verified = verifiedEventRows(result.events, integrity)
     for (const event of verified) if (typeof event?.payload?.sourceRef === 'string') eventBackedSourceRefs.add(event.payload.sourceRef)
   }
   const damagedArchiveThemes = archiveResults.filter(({ result }) => result?.integrity?.ok === false).length
-  const failedArchiveThemes = archiveResults.filter(({ result, error }) => error || !result?.integrity).length
+  const failedLedgerThemes = ledgerResults.filter(({ result, error }) => error || !Array.isArray(result?.events)
+    || result.events.some((event) => !event || typeof event !== 'object')).length
 
   // Legacy segments are only an explicit read-only fallback when no event-backed archive exists.
   const legacyClosedSegs = []
   for (const theme of themes) {
     const archive = archiveResults.find((entry) => entry.theme.id === theme.id)?.result
-    if (!archive?.integrity) continue
+    if (!isValidIntegrity(archive?.integrity)) continue
     const segments = Array.isArray(theme.chain?.segments) ? theme.chain.segments : []
     for (const segment of segments) {
       if (segment.status === 'closed' && !eventBackedSourceRefs.has(`segment:${segment.id}`)) legacyClosedSegs.push({ theme, seg: segment })
@@ -246,11 +302,11 @@ async function renderDead(mid, meta) {
   // Index only references in the verified chronological prefix. A display title is never treated as verification.
   const citeIndex = new Map()
   for (const { theme, result } of ledgerResults) {
-    if (!result) continue
+    if (!Array.isArray(result?.events)) continue
     const archive = archiveResults.find((entry) => entry.theme.id === theme.id)?.result
-    if (!archive?.integrity) continue
-    const rows = result.events || []
-    const safeRows = archive?.integrity?.ok === false ? rows.slice(0, archive.integrity.lastValidSeq || 0) : rows
+    if (!isValidIntegrity(archive?.integrity)) continue
+    const rows = result.events
+    const safeRows = verifiedEventRows(rows, archive.integrity)
     for (const event of safeRows) {
       const payload = event?.payload || {}
       const refs = [...(Array.isArray(payload.evidenceRefs) ? payload.evidenceRefs : [])]
@@ -269,11 +325,18 @@ async function renderDead(mid, meta) {
     }
   }
 
-  const page = h('div', { class: 'page' },
-    h('div', { class: 'page-head' },
-      h('h1', {}, meta.title),
-      h('p', {}, '事件归档来自只读账本投影；恢复会追加新事件，不删除或改写旧记录。未解析来源会保留为未核实引用。')))
-  mid.append(page)
+  const hasRecords = legacyClosedSegs.length > 0 || eventArchives.length > 0 || nodes.length > 0
+  const hasWarnings = malformedNodes > 0 || damagedArchiveThemes > 0 || unreadableArchiveThemes > 0 || failedLedgerThemes > 0
+  if (malformedNodes) page.append(h('p', { class: 'cog-integrity is-error tomb-data-warning', role: 'alert' }, `${malformedNodes} 条节点数据格式异常，未作为墓碑显示；原始记录未修改。`))
+  if (damagedArchiveThemes) page.append(h('p', { class: 'cog-integrity is-error tomb-data-warning', role: 'alert' }, `${damagedArchiveThemes} 个主题的事件链校验失败；归档仅展示校验后的有效前缀，恢复操作已禁用。`))
+  if (unreadableArchiveThemes) page.append(h('p', { class: 'cog-integrity is-error tomb-data-warning', role: 'alert' }, `${unreadableArchiveThemes} 个主题的归档返回不完整或无法解析；可安全展示的部分仍保留，其余内容已标记为不可验证。`))
+  if (failedLedgerThemes) page.append(h('p', { class: 'cog-integrity is-error tomb-data-warning', role: 'alert' }, `${failedLedgerThemes} 个主题的账本事件引用无法解析；来源链接未被推断或隐藏为已确认引用。`))
+  if (!hasRecords && !hasWarnings) {
+    page.append(h('section', { class: 'tomb-empty-state', 'aria-labelledby': 'tomb-empty-title' },
+      h('h2', { id: 'tomb-empty-title' }, '墓碑区是空的'),
+      h('p', {}, '还没有需要归档的命题或事件。旧记录会保留在账本中；恢复也只会追加新事件。')))
+    return
+  }
 
   if (legacyClosedSegs.length) {
     const sect = h('section', { class: 'sect legacy-tomb-section' },
@@ -283,7 +346,7 @@ async function renderDead(mid, meta) {
     page.append(sect)
   }
 
-  if (eventArchives.length || archiveResults.length) {
+  if (eventArchives.length || unreadableArchiveThemes || failedLedgerThemes || damagedArchiveThemes) {
     const archiveList = h('div', { class: 'event-archive-list' })
     const search = h('input', {
       class: 'txt event-archive-search', type: 'search', value: eventArchiveQuery,
@@ -315,19 +378,22 @@ async function renderDead(mid, meta) {
         if (!query) return true
         return [node.title, node.archiveReason, theme.name, node.sourceRef].some((text) => String(text || '').toLocaleLowerCase().includes(query))
       })
-      if (!rows.length) archiveList.append(h('p', { class: 'chain-note' }, eventArchives.length ? '当前筛选没有匹配的归档。' : '没有事件归档；只读查看不会触发旧数据迁移。'))
+      if (!rows.length) archiveList.append(h('p', { class: 'chain-note' }, eventArchives.length
+        ? '当前筛选没有匹配的归档。'
+        : unreadableArchiveThemes || failedLedgerThemes
+          ? '没有可解析的事件归档；相关内容可能未能解析，请先查看上方提示。'
+          : '没有事件归档；只读查看不会触发旧数据迁移。'))
       else for (const item of rows) archiveList.append(eventArchiveRow(item, refreshView))
     }
     search.addEventListener('input', () => { eventArchiveQuery = search.value; renderEventArchiveRows() })
     renderEventArchiveRows()
     page.append(h('section', { class: 'sect event-archive-section' },
       h('div', { class: 'sect-h sect-h-row' }, h('h2', {}, '事件归档'), h('em', {}, String(eventArchives.length))),
-      damagedArchiveThemes ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `${damagedArchiveThemes} 个主题的事件链校验失败；展示的归档仅来自已验证前缀。`) : null,
-      failedArchiveThemes ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `${failedArchiveThemes} 个主题无法取得完整性结果；隐藏其历史引用与旧段预览，避免把未校验内容当作已确认数据。`) : null,
       controls, archiveList))
   }
 
-  const sect = h('section', { class: 'sect' },
+  if (nodes.length) {
+    const sect = h('section', { class: 'sect' },
     h('div', { class: 'sect-h sect-h-row' },
       h('h2', {}, '归档的命题'), h('em', {}, String(shown.length)),
       h('div', { class: 'tomb-filters' },
@@ -337,14 +403,9 @@ async function renderDead(mid, meta) {
           onclick: () => { deadFilter = key; renderDead(mid, meta) },
         }, label)))),
     ...shown.map((node) => deadLemmaRow(node, citeIndex.get(node.id) || [])),
-  )
-  if (!shown.length) sect.append(h('p', { class: 'chain-note' }, nodes.length ? '这个筛选下没有命题。' : '还没有归档的命题。'))
-  page.append(sect)
-
-  if (!legacyClosedSegs.length && !nodes.length && !eventArchives.length) {
-    page.append(h('section', { class: 'sect' }, h('div', { class: 'sect-b' },
-      h('div', { class: 'q' }, h('div', { class: 'q-body' },
-        h('div', { class: 'q-text', style: { color: 'var(--text-2)' } }, '墓碑区是空的，挺好，说明还没什么认知死掉。'))))))
+    )
+    if (!shown.length) sect.append(h('p', { class: 'chain-note' }, '这个筛选下没有命题。'))
+    page.append(sect)
   }
 }
 

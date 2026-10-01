@@ -9,6 +9,9 @@ import {
   AUTO_UPDATE_CHECK_INTERVAL_MS,
   shouldAutoCheck,
   updateProgress,
+  updatePresentation,
+  canPerformUpdateAction,
+  canCloseUpdate,
 } from '../src/renderer/lib/update-policy.js'
 
 const now = 1_800_000_000_000
@@ -20,6 +23,41 @@ assert.equal(shouldAutoCheck(String(now + 60_000), now), false, 'a future timest
 assert.deepEqual(updateProgress(25, 100), { downloaded: 25, total: 100, percent: 25 })
 assert.deepEqual(updateProgress(150, 100), { downloaded: 150, total: 100, percent: 100 })
 assert.deepEqual(updateProgress(1536, 0), { downloaded: 1536, total: null, percent: null })
+
+const available = updatePresentation('available')
+assert.equal(available.title, '有新版本')
+assert.equal(available.primaryLabel, '下载更新')
+assert.equal(available.primaryAction, 'download')
+assert.equal(canPerformUpdateAction('available', 'download'), true)
+assert.equal(canPerformUpdateAction('available', 'install'), false, 'an available update cannot skip download and go straight to install')
+assert.equal(canCloseUpdate('available'), true, 'the user can dismiss an update offer')
+
+const downloading = updatePresentation('downloading')
+assert.equal(downloading.primaryDisabled, true)
+assert.equal(downloading.canClose, false)
+assert.equal(canPerformUpdateAction('downloading', 'install'), false, 'download completion is not install confirmation')
+assert.equal(canCloseUpdate('downloading'), false, 'do not release an updater resource while its non-cancellable download is active')
+
+const ready = updatePresentation('ready')
+assert.equal(ready.title, '更新已准备好')
+assert.equal(ready.primaryLabel, '重新启动以更新')
+assert.equal(ready.primaryAction, 'install')
+assert.equal(canPerformUpdateAction('ready', 'install'), true, 'only the explicit ready-state CTA may install')
+assert.equal(canPerformUpdateAction('ready', 'download'), false)
+assert.equal(canCloseUpdate('ready'), true, 'a ready update can be postponed without installation')
+
+assert.equal(updatePresentation('error').primaryLabel, '重试下载')
+assert.equal(canPerformUpdateAction('error', 'download'), true)
+assert.equal(updatePresentation('error', { retryInstall: true }).primaryLabel, '重试安装')
+assert.equal(canPerformUpdateAction('error', 'install', { retryInstall: true }), true)
+assert.equal(canPerformUpdateAction('error', 'download', { retryInstall: true }), false)
+assert.equal(canCloseUpdate('error'), true)
+
+const cancelled = updatePresentation('cancelled')
+assert.equal(cancelled.primaryAction, null)
+assert.match(cancelled.description, /没有安装或重启/)
+assert.equal(canPerformUpdateAction('cancelled', 'install'), false)
+assert.equal(canCloseUpdate('cancelled'), true)
 
 const temp = mkdtempSync(join(tmpdir(), 'meridian-updater-'))
 try {

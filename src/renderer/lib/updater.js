@@ -1,6 +1,6 @@
 import { isTauri } from '@tauri-apps/api/core'
 import { h } from './dom.js'
-import { shouldAutoCheck, updateProgress } from './update-policy.js'
+import { shouldAutoCheck, updateProgress, updatePresentation, canPerformUpdateAction, canCloseUpdate } from './update-policy.js'
 
 const LAST_ATTEMPT_KEY = 'meridian.updater.lastAttemptAt'
 const LAST_SUCCESS_KEY = 'meridian.updater.lastSuccessfulCheckAt'
@@ -115,152 +115,204 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function presentUpdate(update) {
+export function presentUpdate(update, { focus = false } = {}) {
   if (updateDialog?.isConnected) {
-    if (!updateDialog.open) updateDialog.showModal()
-    updateDialog.focus()
-    return
+    if (!updateDialog.open) updateDialog.show()
+    if (focus) updateDialog.focus()
+    return updateDialog
   }
 
+  let phase = 'available'
   let downloaded = false
-  let downloading = false
-  let installing = false
   let installed = false
+  let retryInstall = false
   let receivedBytes = 0
   let totalBytes = null
-
+  let dialog
+  let mainButton
+  let laterButton
+  let closeButton
   const status = h('p', { class: 'update-status-line', role: 'status', 'aria-live': 'polite' }, '')
   const fill = h('span', { class: 'update-progress-fill' })
   const progress = h('div', {
     class: 'update-progress-track', hidden: true,
-    role: 'progressbar', 'aria-label': '下载进度',
+    role: 'progressbar', 'aria-label': '下载进度', 'aria-valuemin': '0', 'aria-valuemax': '100',
   }, fill)
-  /** percent 为 null 时走不确定态（滑动条），否则按百分比填充。 */
+  /** percent 为 null 时走不确定态（滑动条），否则同步视觉进度与读屏数值。 */
   const setProgress = (percent) => {
     progress.hidden = false
     if (percent == null) {
       progress.classList.add('is-indeterminate')
+      progress.removeAttribute('aria-valuenow')
+      progress.setAttribute('aria-valuetext', '正在下载')
       fill.style.width = ''
     } else {
+      const safePercent = Math.max(0, Math.min(100, percent))
       progress.classList.remove('is-indeterminate')
-      fill.style.width = `${Math.max(0, Math.min(100, percent))}%`
+      progress.setAttribute('aria-valuenow', String(safePercent))
+      progress.setAttribute('aria-valuetext', `${safePercent}%`)
+      fill.style.width = `${safePercent}%`
     }
   }
   const notes = renderNotes(update.body)
-  const mainButton = h('button', {
-    class: 'btn btn-primary',
-    onclick: async () => {
-      if (!downloaded) {
-        downloading = true
-        mainButton.disabled = true
-        cancelButton.disabled = true
-        mainButton.textContent = '下载中…'
-        setProgress(null)
-        status.textContent = '正在下载更新…'
-        try {
-          await update.download((event) => {
-            if (event.event === 'Started') {
-              totalBytes = Number(event.data.contentLength) || null
-              receivedBytes = 0
-            } else if (event.event === 'Progress') {
-              receivedBytes += Number(event.data.chunkLength) || 0
-            } else if (event.event === 'Finished' && totalBytes) {
-              receivedBytes = totalBytes
-            }
-            const snapshot = updateProgress(receivedBytes, totalBytes)
-            setProgress(snapshot.percent)
-            if (snapshot.percent == null) {
-              status.textContent = `正在下载更新 · ${formatBytes(snapshot.downloaded)}`
-            } else {
-              status.textContent = `正在下载更新 · ${snapshot.percent}% (${formatBytes(snapshot.downloaded)} / ${formatBytes(snapshot.total)})`
-            }
-          })
-          downloaded = true
-          setProgress(100)
-          status.textContent = '下载完成。请确认后安装并重启。'
-          mainButton.textContent = '安装并重启'
-          mainButton.disabled = false
-          cancelButton.disabled = false
-        } catch {
-          status.textContent = '下载失败。请检查网络后关闭窗口，再手动重试。'
-          mainButton.textContent = '下载失败'
-          mainButton.disabled = true
-          cancelButton.disabled = false
-        } finally {
-          downloading = false
-        }
-        return
-      }
+  const heading = h('h2', { id: 'update-dialog-title', 'aria-live': 'polite' }, '')
+  const description = h('p', { class: 'update-dialog-sub', id: 'update-dialog-description' }, '')
+  const versionMeta = h('p', { class: 'update-version-meta' }, '')
 
-      if (installing || installed) return
-      installing = true
-      mainButton.disabled = true
-      cancelButton.disabled = true
-      mainButton.textContent = '正在安装…'
-      status.textContent = '正在安装更新，请不要退出应用…'
-      try {
-        await update.install({ restartAfterInstall: true })
-        installed = true
-        status.textContent = '更新已安装，正在重新启动…'
-        // Windows NSIS handles restart from the installer; macOS requires an explicit relaunch.
-        if (!/Windows/i.test(navigator.userAgent)) {
-          const plugins = await loadPlugins()
-          if (plugins) await plugins.relaunch()
-        }
-      } catch {
-        if (installed) {
-          status.textContent = '更新已安装，但应用未能自动重启。请手动重新打开 Meridian。'
-          mainButton.textContent = '已安装'
-        } else {
-          status.textContent = '安装未完成。请关闭窗口后重试，或手动安装更新包。'
-          mainButton.textContent = '重试安装'
-          mainButton.disabled = false
-          cancelButton.disabled = false
-          installing = false
-        }
-      }
-    },
-  }, '下载更新')
-  const cancelButton = h('button', {
-    class: 'btn',
+  const setPhase = (next) => {
+    phase = next
+    const presentation = updatePresentation(phase, { retryInstall })
+    dialog.dataset.updateState = phase
+    heading.textContent = presentation.title
+    description.textContent = presentation.description
+    mainButton.textContent = presentation.primaryLabel
+    mainButton.hidden = !presentation.primaryLabel
+    mainButton.disabled = presentation.primaryDisabled
+    mainButton.dataset.action = presentation.primaryAction || ''
+    closeButton.disabled = !presentation.canClose
+    closeButton.setAttribute('aria-disabled', String(!presentation.canClose))
+    closeButton.title = presentation.canClose ? '关闭更新提示' : '当前操作完成前无法关闭'
+    laterButton.disabled = !presentation.canClose
+    laterButton.title = presentation.canClose ? '稍后处理' : '当前操作完成前无法稍后处理'
+    if (phase === 'available' || phase === 'cancelled') progress.hidden = true
+    else if (phase === 'downloading') progress.hidden = false
+    else if (phase === 'ready') setProgress(100)
+    else if (phase === 'error' && !retryInstall) progress.hidden = false
+    else if (phase === 'installing' || phase === 'installed') progress.hidden = true
+  }
+
+  mainButton = h('button', {
+    type: 'button', class: 'btn btn-primary update-primary',
+    onclick: () => { void runPrimaryAction() },
+  }, '')
+  laterButton = h('button', {
+    type: 'button', class: 'btn update-later',
     onclick: () => requestClose(),
   }, '稍后')
+  closeButton = h('button', {
+    type: 'button', class: 'update-close', 'aria-label': '关闭更新提示', title: '关闭更新提示',
+    onclick: () => requestClose(),
+  }, '×')
 
   const pubDate = formatPubDate(update.date)
-  const dialog = h('dialog', { class: 'update-dialog', 'aria-labelledby': 'update-dialog-title' },
+  versionMeta.textContent = `Meridian v${update.version} · 当前版本 v${update.currentVersion}` + (pubDate ? ` · 发布于 ${pubDate}` : '')
+  dialog = h('dialog', {
+    class: 'update-dialog', tabindex: '-1', role: 'dialog', 'aria-modal': 'false',
+    'aria-labelledby': 'update-dialog-title', 'aria-describedby': 'update-dialog-description',
+  },
     h('div', { class: 'update-dialog-head' },
       h('div', { class: 'update-dialog-titles' },
         h('p', { class: 'update-eyebrow' }, '软件更新'),
-        h('h2', { id: 'update-dialog-title' }, `Meridian v${update.version}`),
-        h('p', { class: 'update-dialog-sub' },
-          `当前版本 v${update.currentVersion}` + (pubDate ? ` · 发布于 ${pubDate}` : '')),
+        heading,
+        versionMeta,
       ),
+      closeButton,
     ),
     h('div', { class: 'update-dialog-body' },
+      description,
       h('h3', { class: 'update-notes-title' }, '更新内容'),
       notes,
       h('div', { class: 'update-download-zone' }, progress, status),
     ),
-    h('div', { class: 'update-dialog-actions' }, cancelButton, mainButton),
+    h('div', { class: 'update-dialog-actions' }, mainButton, laterButton),
   )
-  /** 关窗走 180ms 淡出，保持原生感；下载/安装中不响应关闭（与之前一致）。 */
-  const requestClose = () => {
-    if (!dialog.isConnected || !dialog.open || dialog.classList.contains('is-closing')) return
+
+  async function runPrimaryAction() {
+    const action = mainButton.dataset.action
+    if (!canPerformUpdateAction(phase, action, { retryInstall })) return
+    if (action === 'download') {
+      retryInstall = false
+      setPhase('downloading')
+      setProgress(null)
+      status.textContent = '正在下载更新…'
+      try {
+        await update.download((event) => {
+          if (event.event === 'Started') {
+            totalBytes = Number(event.data.contentLength) || null
+            receivedBytes = 0
+          } else if (event.event === 'Progress') {
+            receivedBytes += Number(event.data.chunkLength) || 0
+          } else if (event.event === 'Finished' && totalBytes) {
+            receivedBytes = totalBytes
+          }
+          const snapshot = updateProgress(receivedBytes, totalBytes)
+          setProgress(snapshot.percent)
+          status.textContent = snapshot.percent == null
+            ? `正在下载更新 · ${formatBytes(snapshot.downloaded)}`
+            : `正在下载更新 · ${snapshot.percent}% (${formatBytes(snapshot.downloaded)} / ${formatBytes(snapshot.total)})`
+        })
+        downloaded = true
+        status.textContent = '下载完成。只有选择下方按钮后才会安装并重新启动。'
+        setPhase('ready')
+      } catch {
+        status.textContent = '下载失败。可以重试下载，或稍后从设置中重新检查。'
+        setPhase('error')
+      }
+      return
+    }
+
+    if (action !== 'install' || !downloaded) return
+    retryInstall = false
+    setPhase('installing')
+    status.textContent = '正在安装更新，请不要退出应用…'
+    try {
+      await update.install({ restartAfterInstall: true })
+      installed = true
+      status.textContent = '更新已安装，正在重新启动…'
+      setPhase('installed')
+      // Windows NSIS handles restart from the installer; macOS requires an explicit relaunch.
+      if (!/Windows/i.test(navigator.userAgent)) {
+        const plugins = await loadPlugins()
+        if (plugins) await plugins.relaunch()
+        else throw new Error('relaunch-unavailable')
+      }
+    } catch {
+      if (installed) {
+        status.textContent = '更新已安装，但应用未能自动重启。请手动重新打开 Meridian。'
+        setPhase('restart-error')
+      } else {
+        retryInstall = true
+        status.textContent = '安装未完成。可以重试安装；关闭提示不会自动安装或重启。'
+        setPhase('error')
+      }
+    }
+  }
+
+  /** The explicit Later/X/Escape path only dismisses; installation remains behind the ready-state CTA. */
+  function requestClose() {
+    if (!dialog.isConnected || !dialog.open || dialog.classList.contains('is-closing') || !canCloseUpdate(phase)) return
+    if (!installed) {
+      setPhase('cancelled')
+      status.textContent = '已稍后处理；更新未安装，也未重新启动。'
+    }
     dialog.classList.add('is-closing')
+    closeButton.disabled = true
+    laterButton.disabled = true
+    mainButton.disabled = true
     setTimeout(() => dialog.close(), 180)
   }
+
   updateDialog = dialog
   dialog.addEventListener('cancel', (event) => {
     event.preventDefault()
-    if (!downloading && !installing) requestClose()
+    requestClose()
+  })
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      requestClose()
+    }
   })
   dialog.addEventListener('close', () => {
     if (updateDialog === dialog) updateDialog = null
+    dialog.remove()
     if (!installed) void update.close().catch(() => {})
   }, { once: true })
   document.body.append(dialog)
-  dialog.showModal()
-  dialog.focus()
+  setPhase('available')
+  dialog.show()
+  if (focus) dialog.focus()
+  return dialog
 }
 
 /** Check once at launch at most every 24 hours, or bypass that throttle when called manually. */
@@ -280,7 +332,7 @@ export async function checkForUpdates({ automatic = false } = {}) {
       const update = await plugins.check({ timeout: CHECK_TIMEOUT_MS })
       storageSet(LAST_SUCCESS_KEY, Date.now())
       if (!update) return { status: 'current' }
-      presentUpdate(update)
+      presentUpdate(update, { focus: !automatic })
       return { status: 'update', version: update.version }
     } catch {
       // Startup checks intentionally fail silently; the manual button returns a status for the UI.
