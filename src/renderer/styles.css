@@ -1775,7 +1775,7 @@ select.inbox-extract-theme {
   letter-spacing: .06em; font-weight: 700;
 }
 .update-dialog-head h2 {
-  margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  margin: 0; font-size: var(--t-head); font-weight: 700; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 .update-dialog-sub { margin: 4px 0 0; font-size: var(--t-body); color: var(--text-2); }
@@ -1795,7 +1795,7 @@ select.inbox-extract-theme {
 .update-notes li::marker { color: var(--text-3); }
 .update-notes strong { color: var(--text); }
 .update-notes code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--t-caption);
   background: var(--hover); padding: 1px 5px; border-radius: 4px;
 }
 .update-download-zone { padding: 12px 0 2px; }
