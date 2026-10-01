@@ -1850,14 +1850,33 @@ body.tauri-macos .app {
 .chain-sect-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .chain-sect-title { font-size: var(--t-title); font-weight: 600; }
 .chain-sect-sub { font-size: var(--t-caption); color: var(--text-2); }
-.chain-list { display: grid; gap: 10px; }
+/* 链：时间轴式 —— 一条轴线串起各段，轴上节点圆点颜色=段状态 */
+.chain-list { position: relative; display: grid; gap: 14px; padding-left: 30px; }
+.chain-list::before {
+  content: ''; position: absolute; left: 8px; top: 18px; bottom: 18px; width: 2px;
+  background: linear-gradient(to bottom, transparent, var(--line) 10%, var(--line) 90%, transparent);
+  border-radius: 1px;
+}
 .chain-card {
+  position: relative;
   text-align: left; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r); padding: 12px 14px; cursor: pointer; width: 100%;
   transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
 }
+.chain-card::before {
+  content: ''; position: absolute; left: -28px; top: 20px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--bg); border: 3px solid var(--text-3);
+}
+.chain-card[data-status="confirmed"]::before { border-color: #1f9d4d; }
+.chain-card[data-status="pending"]::before { border-color: #e8930c; }
+.chain-card[data-status="forking"]::before { border-color: #8e44ad; }
+.chain-card[data-status="stale"]::before { border-color: var(--text-3); background: var(--fill); }
+.chain-card[data-status="closed"]::before { border-color: var(--text-3); background: var(--text-3); }
 .chain-card:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.08); border-color: var(--accent); }
 .chain-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.chain-seg-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.chain-seq { font-size: var(--t-caption); font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .chain-seg-name { font-size: var(--t-title); font-weight: 600; }
 .chain-pill {
   font-size: var(--t-caption); line-height: 1.6; padding: 1px 9px; border-radius: 999px; white-space: nowrap;

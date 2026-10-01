@@ -2428,6 +2428,7 @@ ok('S4: 滚动容器样式存在', stylesSrcS45.includes('.theme-body'))
 ok('S4: 未选中命题时收起检视栏', appSrcER.includes('dataset.inspect') && stylesSrcS45.includes('.app[data-inspect="off"]'))
 ok('S4: 链列表证据可点击', /renderChainSection\(theme,\s*\{[^}]*onEvidence/.test(themeSrcER))
 ok('S4: 命题证据可点进右栏', /ref\.type === 'lemma'[\s\S]*?selectNode\(ref\.id\)/.test(chainSrcER))
+ok('S4: 链是时间轴式（轴线+状态节点+序号）', stylesSrcS45.includes('.chain-list::before') && stylesSrcS45.includes('.chain-card[data-status=') && stylesSrcS45.includes('.chain-seq') && chainSrcER.includes('data-status'))
 ok('S4: 树图共用软删函数', appSrcER.includes('export async function deleteNodeWithUndo'))
 ok('S4: 软删 toast 可撤销', appSrcER.includes('m.restoreNode(id)') && appSrcER.includes("label: '撤销'"))
 

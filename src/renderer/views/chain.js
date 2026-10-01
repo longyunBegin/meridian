@@ -38,7 +38,9 @@ export function renderSegmentCard(theme, segment, opts = {}) {
   const isFork = subs.length > 0
 
   const head = h('div', { class: 'chain-card-head' },
-    h('span', { class: 'chain-seg-name' }, segment.name || '未命名段'),
+    h('span', { class: 'chain-seg-title' },
+      opts.index != null ? h('span', { class: 'chain-seq' }, String(opts.index + 1).padStart(2, '0')) : null,
+      h('span', { class: 'chain-seg-name' }, segment.name || '未命名段')),
     h('span', { class: `chain-pill ${st.cls}` }, st.label),
   )
   const core = h('div', { class: 'chain-core' }, segment.coreInfo || '—')
@@ -66,6 +68,7 @@ export function renderSegmentCard(theme, segment, opts = {}) {
 
   const card = h('button', {
     type: 'button', class: 'chain-card', 'data-seg-id': segment.id,
+    'data-status': segment.status || 'pending',
     onclick: () => opts.onOpen?.(segment),
   }, head, core, meta, forkNote)
   return card
@@ -89,9 +92,9 @@ export function renderChainSection(theme, opts = {}) {
   }
 
   const list = h('div', { class: 'chain-list' })
-  for (const seg of segments) {
-    list.append(renderSegmentCard(theme, seg, opts))
-  }
+  segments.forEach((seg, i) => {
+    list.append(renderSegmentCard(theme, seg, { ...opts, index: i }))
+  })
   wrap.append(list)
   return wrap
 }
