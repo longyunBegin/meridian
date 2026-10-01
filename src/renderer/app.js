@@ -794,7 +794,10 @@ function renderInspector() {
   clear(aside)
   // 打上本次渲染的节点 id：若复现"检查器与选中节点不一致"，可直接从 DOM 取证
   aside.dataset.nodeId = state.selectedId || ''
-  if (state.view === 'theme' && state.themeId) renderInspectorLattice(aside)
+  // 树删除后主题页左侧已无命题列表：未选中时右栏直接收起，不再显示空态占位
+  const show = state.view === 'theme' && state.themeId && state.selectedId
+  document.querySelector('.app').dataset.inspect = show ? 'on' : 'off'
+  if (show) renderInspectorLattice(aside)
   else aside.append(h('div', { class: 'insp-empty' }, h('span', {}, '')))
 }
 

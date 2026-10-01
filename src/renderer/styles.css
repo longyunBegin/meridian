@@ -1030,6 +1030,9 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 /* ------------- 非脉络视图收起检视栏 ------------- */
 
 .insp-empty { display: grid; place-content: center; height: 100%; font-size: var(--t-caption); color: var(--text-3); }
+/* 主题页未选中命题时也收起（树删除后空态无意义，链占满宽） */
+.app[data-inspect="off"] { grid-template-columns: 206px minmax(280px, 1fr); }
+.app[data-inspect="off"] .inspect { display: none; }
 .app[data-view="settle"] .inspect,
 .app[data-view="audit"] .inspect,
 .app[data-view="premise"] .inspect,

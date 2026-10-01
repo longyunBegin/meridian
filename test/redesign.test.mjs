@@ -2424,6 +2424,7 @@ ok('S4: 图文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/graph.
 ok('S4: 树文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/lattice.js')))
 ok('S4: 主题页有独立滚动容器', themeSrcER.includes('theme-body'))
 ok('S4: 滚动容器样式存在', stylesSrcS45.includes('.theme-body'))
+ok('S4: 未选中命题时收起检视栏', appSrcER.includes('dataset.inspect') && stylesSrcS45.includes('.app[data-inspect="off"]'))
 ok('S4: 树图共用软删函数', appSrcER.includes('export async function deleteNodeWithUndo'))
 ok('S4: 软删 toast 可撤销', appSrcER.includes('m.restoreNode(id)') && appSrcER.includes("label: '撤销'"))
 

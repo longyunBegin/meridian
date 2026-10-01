@@ -137,7 +137,7 @@ export function renderInspectorLattice(aside) {
     aside.append(h('div', { class: 'empty' },
       h('div', { class: 'empty-ic' }, icon('lattice', 36)),
       h('h2', {}, '还没有选中命题'),
-      h('p', {}, '在左侧选择一条命题，这里会显示它的论证结构、来源和判断依据。'),
+      h('p', {}, '在命题库或读数页点"查看"，这里会显示它的论证结构、来源和判断依据。'),
     ))
     return
   }
