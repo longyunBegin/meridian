@@ -70,7 +70,6 @@ export const SCENARIO_LABELS = {
   extract: '抽取',
   skeleton: '建主题',
   themeTags: '主题标签',
-  tagLibrary: '标签库',
   pickChannels: '通道挑选',
   propose: '提议指针',
   label: '打标',

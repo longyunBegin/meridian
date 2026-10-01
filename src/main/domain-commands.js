@@ -20,15 +20,20 @@ import {
   updateTheme, kindToTags, sicToTags,
   upsertNodeSnapshot,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
-  matchTagLibrary, crossThemeMatch, recordTagHits, updateTagLibraryTag, deleteTagLibraryTags,
   uid, readingSnapshot,
 } from './store.js'
-import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags, generateTagLibrary } from './extract.js'
+import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags } from './extract.js'
 import { labelSource, jevLabel } from './labeler.js'
 import { tracked } from './llmlog.js'
 import { genericFallback, instantiate } from './templates.js'
 
 import { discoverTags } from './discover.js'
+import {
+  getChain, mountToChain, updateChainSegment, mergeChainSegments,
+  addChainSubsegment, closeChainBranch, getReadingMap, setReadingMap,
+  getInboxItem, setInboxChainDraft,
+} from './chain-store.js'
+import { generateChainDraft } from './chain-draft.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
@@ -75,16 +80,6 @@ const LOW_QUALITY_GATE = 0.35 // 与现有闸门同值，不引入新阈值
 const SIMILAR_DUPLICATE = 0.85 // 比抽完再合并的 0.6 严：宁可漏合，不可错合
 const MERGE_SIMILAR = 0.6 // 抽取后分流时判"合并"的相似度下限：低于此值的新命题必须独立成项，
 // 不能并成已有节点的来源——否则一次误合并就等于丢了一条新命题。
-
-/** 本主题标签库的最高匹配分。没命中返回 0；主题没词库返回 hasLibrary: false */
-function targetTagScore(themeId, text) {
-  const theme = allThemes().find((t) => t.id === themeId)
-  if (!theme?.tagLibrary?.length) return { score: 0, hasLibrary: false, threshold: 0.6 }
-  const top = matchTagLibrary(text, theme.tagLibrary)[0]
-  if (!top) return { score: 0, hasLibrary: true, threshold: 0.6 }
-  const tag = theme.tagLibrary.find((t) => t.id === top.tagId)
-  return { score: top.score, hasLibrary: true, threshold: tag?.threshold ?? 0.6 }
-}
 
 /**
  * 命中过的内容查留痕：抽取成功的复用当次结果，被拦下的原样回到收件箱。
@@ -145,15 +140,9 @@ function captureGate({ text, h, themeId, label }) {
     return { action: 'dup', dup }
   }
 
-  // B4 · 标签库分级：只有 score >= threshold 才为它花钱
-  const { score, hasLibrary, threshold } = targetTagScore(themeId, text)
-  if (hasLibrary) {
-    if (score <= 0) return { action: 'skip', skip: 'no-tags', matchScore: 0 }
-    if (score < threshold) return { action: 'skip', skip: 'weak-tags', matchScore: score }
-  }
-  // 词库为空的主题全部放行：没有声明过关心什么，就不该替用户过滤
+  // B4 已移除（标签库删除）：所有主题都按"无词库"处理，全部放行抽取
 
-  return { action: 'extract', matchScore: score }
+  return { action: 'extract', matchScore: 0 }
 }
 
 /**
@@ -273,7 +262,7 @@ async function processCapture(text, themeId, channelMeta, { forceExtract = false
   const gate = forceExtract
     ? (seen?.kind === 'lemmas'
         ? { action: 'reuse', seen }
-        : { action: 'extract', matchScore: targetTagScore(themeId, actualText).score })
+        : { action: 'extract', matchScore: 0 })
     : captureGate({ text: actualText, h, themeId, label })
 
   if (gate.action === 'skip') {
@@ -318,25 +307,8 @@ async function processCapture(text, themeId, channelMeta, { forceExtract = false
     }
   }
 
-  // 标签库跨主题匹配
-  const tagMatches = crossThemeMatch(actualText)
+  // 标签库跨主题匹配已移除：routeProposals 永远为空
   const routeProposals = []
-  for (const m of tagMatches) {
-    const tag = allThemes().find((t) => t.id === m.themeId)?.tagLibrary?.find((t) => t.id === m.tagId)
-    const threshold = tag?.threshold ?? 0.6
-    if (m.score >= threshold && m.themeId !== themeId) {
-      routeProposals.push({
-        type: 'route-proposal',
-        text: actualText,
-        matchedTheme: { id: m.themeId, name: m.themeName },
-        matchedTags: [{ name: m.name, score: m.score, tagId: m.tagId }],
-        bestScore: m.score,
-        originChannel: actualChannel || null,
-        at: today(),
-      })
-      recordTagHits(m.themeId, [m.tagId])
-    }
-  }
 
   // 留痕：打标阶段。只被 labelerDivergence 消费（按 kind 的条数和分差均值），
   // 所以按天聚合成计数，不逐条存——逐条存时 3175 条里 1556 条 label 占了 2MB。
@@ -576,8 +548,49 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('theme:restore', (id) => restoreTheme(id))
   commands.register('theme:rename', (id, name) => renameTheme(id, name))
   commands.register('theme:update', (id, patch) => updateTheme(id, patch))
-  commands.register('theme:tagLibrary:updateTag', (themeId, tagId, patch) => updateTagLibraryTag(themeId, tagId, patch))
-  commands.register('theme:tagLibrary:deleteTags', (themeId, tagIds) => deleteTagLibraryTags(themeId, tagIds))
+
+  /**
+   * 主题认知链。链 = 主题的认知快照，只反映"我对这个主题认知的变化"。
+   * 不创建 ledger node，不碰 lemma/confidence（公理1）。所有变更按 id 幂等，
+   * 可进 outbox 白名单做双向同步。
+   */
+  commands.register('chain:get', (themeId) => getChain(themeId))
+  commands.register('chain:mount', (themeId, payload = {}) => {
+    const result = mountToChain(themeId, { ...payload, mountId: payload.mountId || uid() })
+    // 草稿状态 → mounted（失败不影响挂载本身）
+    if (payload.inboxId) {
+      try {
+        const item = getInboxItem(payload.inboxId)
+        if (item?.chainDraft) {
+          setInboxChainDraft(payload.inboxId, { ...item.chainDraft, status: 'mounted', mountedAt: today() })
+        }
+      } catch { /* ignore */ }
+    }
+    return { ok: true, ...result }
+  })
+  commands.register('chain:updateSegment', (themeId, segmentId, patch, changeNote) =>
+    ({ ok: true, segment: updateChainSegment(themeId, segmentId, patch, changeNote) }))
+  commands.register('chain:mergeSegments', (themeId, fromIds, intoId, reason) =>
+    ({ ok: true, ...mergeChainSegments(themeId, fromIds, intoId, reason) }))
+  commands.register('chain:addSubsegment', (themeId, segmentId, sub) =>
+    ({ ok: true, subsegment: addChainSubsegment(themeId, segmentId, sub) }))
+  commands.register('chain:closeBranch', (themeId, segmentId, subId, reason) =>
+    ({ ok: true, subsegment: closeChainBranch(themeId, segmentId, subId, reason) }))
+  commands.register('chain:setDraft', (inboxId, draft) =>
+    ({ ok: true, draft: setInboxChainDraft(inboxId, draft) }))
+  commands.register('chain:generateDraft', async (inboxId) => {
+    const item = getInboxItem(inboxId)
+    if (!item) return { ok: false, error: '收件箱条目不存在' }
+    const themeId = item.extractedThemeId || item.themeId || null
+    let segmentNames = []
+    try { segmentNames = themeId ? getChain(themeId).segments.map((s) => s.name) : [] } catch { /* ignore */ }
+    const res = await tracked('chainDraft', () => generateChainDraft(settings(), item, segmentNames), { themeId })
+    if (!res?.ok) return { ok: false, error: res?.reason || '生成失败', reason: res?.reason }
+    setInboxChainDraft(inboxId, res.draft)
+    return { ok: true, draft: res.draft }
+  })
+  commands.register('chain:readingMap', (themeId) => ({ ok: true, map: getReadingMap(themeId) }))
+  commands.register('chain:setReadingMap', (themeId, map) => ({ ok: true, map: setReadingMap(themeId, map) }))
 
   /** 正在铺骨架的 themeId。渲染层据此显示「生成中」而不是再给一个生成按钮——
    *  曾经建主题后立刻切到脉络页，那一刻节点还没落，界面照常给出「这个主题还没有骨架」
@@ -608,18 +621,13 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       // 幂等：骨架铺过就不再重铺。兜底模板没有去重，连点几次「生成」
       // 就会 instantiate 好几遍——实测同一个主题下摞了三套上中下游。
       // theme:regenerate 是先删后建，走到底下时已经是空树，不受这里挡。
-      // 但标签库缺了仍然要补：它是归位的依据，缺了读数匹配不上指标节点。
-      // 曾经这里只要看到环节就整体返回，结果「环节已有、标签库为空」的主题
-      // 永远补不上标签库——用户点多少次生成都没用。
       const hasBranches = allNodes().some((n) => n.themeId === themeId && n.kind === 'branch')
-      const hasTagLibrary = (allThemes().find((t) => t.id === themeId)?.tagLibrary || []).length > 0
-      if (hasBranches && hasTagLibrary) {
+      if (hasBranches) {
         return {
           degraded: false, skipped: 'complete',
           hasKey: !!s.apiKey,
           skeletonOk: true, skeletonReason: null, skeletonFallback: false,
           themeTagsOk: true, themeTagsReason: null,
-          tagLibraryOk: true, tagLibraryReason: null, tagLibraryCount: 1,
         }
       }
 
@@ -639,9 +647,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       emitStage('skeleton', skeletonResult.ok ? 'ok' : 'fail', { reason: skeletonResult.reason })
       emitStage('tags', tagResult.ok ? 'ok' : 'fail', { reason: tagResult.reason })
 
-      if (hasBranches) {
-        // 这一轮只补标签库，骨架、指标节点都不重铺
-      } else if (skeletonResult.ok) {
+      if (skeletonResult.ok) {
         const walk = (node, parentId) => {
           const n = addNode({
             themeId, parentId, kind: 'branch', title: node.title,
@@ -659,9 +665,9 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         if (fallback) instantiate(fallback, (spec) => addNode({ ...spec, themeId }))
       }
       // 兜底模板不是模型生成的——UI 上要诚实标注，不能显示成「模型搭好了」
-      const skeletonFallback = !hasBranches && !skeletonResult.ok && !s.apiKey
+      const skeletonFallback = !skeletonResult.ok && !s.apiKey
 
-      if (!hasBranches) for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
+      for (const branch of allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch' && n.status !== 'dead')) {
         for (const spec of branch.scaffold?.indicators || []) {
           const name = typeof spec === 'string' ? spec : spec.name
           if (!name || allNodes().some((n) => n.themeId === themeId && n.parentId === branch.id && n.title === name && n.status !== 'dead')) continue
@@ -673,13 +679,6 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       }
 
       if (tagResult.ok && tagResult.tags.length) updateTheme(themeId, { tags: tagResult.tags })
-      const titles = allNodes().filter((n) => n.themeId === themeId && n.kind === 'branch').map((n) => n.title)
-      emitStage('library', 'start')
-      const tagLibraryResult = await tracked('tagLibrary', () => generateTagLibrary(s, description, titles), { themeId })
-      emitStage('library', tagLibraryResult.ok ? 'ok' : 'fail', { reason: tagLibraryResult.reason })
-      const tagLibraryCount = tagLibraryResult.ok
-        ? (updateTheme(themeId, { tagLibrary: tagLibraryResult.tagLibrary }), tagLibraryResult.tagLibrary.length)
-        : 0
 
       // degraded 必须按「结束时树上到底有没有环节」判，不能按进入时的 hasBranches 快照。
       // 并发的另一次铺设可能已经把树铺好了，此时报「骨架没生成」是在说谎——
@@ -698,11 +697,6 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         // 部分失败（骨架成了、标签没成）要能分别展示、分别重试。
         themeTagsOk: !!tagResult.ok,
         themeTagsReason: tagResult.ok ? null : (tagResult.reason || 'unknown'),
-        // 标签库失败以前是静默的——骨架成功就报「已生成」，用户只看到标签库是 0，无从判断
-        tagLibraryOk: !!tagLibraryResult.ok,
-        tagLibraryReason: tagLibraryResult.ok ? null : (tagLibraryResult.reason || 'unknown'),
-        tagLibraryCount,
-        skipped: treeExists && hasBranches ? 'tag-library-only' : null,
       }
   }
 
@@ -729,9 +723,9 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('theme:regenerate', async (themeId) => {
     const theme = allThemes().find((t) => t.id === themeId)
     if (!theme) return { ok: false, error: 'not-found' }
-    // 删旧：整棵环节树 + 标签库
+    // 删旧：整棵环节树
     for (const n of allNodes().filter((n) => n.themeId === themeId)) removeNode(n.id)
-    updateTheme(themeId, { tags: [], tagLibrary: [] })
+    updateTheme(themeId, { tags: [] })
     scaffoldTheme(themeId, theme.name, settings())
       .then((result) => {
         emit('theme:scaffolded', { themeId, ...result })
@@ -889,29 +883,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     const channel = result.resolvedChannel || channelMeta || null
     const degraded = result.degraded || false
 
-    // 标签库匹配 → 提议归位（进收件箱，不静默建节点）
-    if (result.routeProposals?.length) {
-      const items = []
-      for (const rp of result.routeProposals) {
-        const item = addInboxItem({
-          text: rp.text,
-          title: firstSentence(rp.text),
-          label: result.label,
-          lemmas: result.lemmas,
-          kind: 'route-proposal',
-          matchedTheme: rp.matchedTheme,
-          matchedTags: rp.matchedTags,
-          originChannel: rp.originChannel,
-          bestScore: rp.bestScore,
-          provenance: result.resolvedChannel || channel,
-          extracted: true,
-          matchScore: rp.bestScore || 0,
-          extractedThemeId: defaultThemeId,
-        })
-        items.push(item)
-      }
-      return { ok: true, autoImported: false, routeProposals: items, gateReasons: ['route-proposal'] }
-    }
+    // routeProposals 永远为空（标签库已移除），不再创建 route-proposal 收件箱条目
 
     if (gate.pass && defaultThemeId && result.lemmas.length > 0) {
       const batchId = uid()

@@ -46,6 +46,13 @@ export const OUTBOX_CHANNELS = new Set([
   'db:settle', // 命题结算：settlement 覆写，不碰 confidence
   'theme:rename', // 主题改名：覆写，幂等
   'theme:update', // 主题更新：patch 覆写
+  'chain:mount', // 认知链挂载：mountId 幂等（同 id 重放跳过）
+  'chain:updateSegment', // 段更新：按 id 覆写字段，幂等
+  'chain:mergeSegments', // 段合并：已关闭/已汇入跳过，幂等
+  'chain:addSubsegment', // 新增分支：按 id 幂等
+  'chain:closeBranch', // 关闭分支：已关闭跳过，幂等
+  'chain:setDraft', // 提案草稿：按条目 id 覆写，幂等
+  'chain:setReadingMap', // 读数映射表：整体覆写，幂等
 ])
 
 /**

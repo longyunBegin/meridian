@@ -248,12 +248,20 @@ export function openObservation(r, { proof = false } = {}) {
 }
 
 function observationRow(r) {
-  return h('button', { class: 'feed-row', dataset: { id: r.id, status: r.status || '', pending: String(!!r.pending || !r.indicatorId) },
+  const highlight = state.readingHighlight && state.readingHighlight === r.id
+  const row = h('button', {
+    class: `feed-row${highlight ? ' feed-row-highlight' : ''}`, dataset: { id: r.id, status: r.status || '', pending: String(!!r.pending || !r.indicatorId) },
     'aria-haspopup': 'dialog', onclick: () => openObservation(r) },
     h('span', { class: 'feed-name' }, r.title || '未归位读数'),
     h('span', { class: 'feed-value' }, isConflicted(r) ? '待裁决' : `${fmtValue(r.value)} ${r.unit || ''}`),
     h('span', { class: 'feed-period' }, `${periodLabel(r)} · ${basisLabel(r)}${r.pending || !r.indicatorId ? ' · 待归位' : ''}${r.status === 'superseded' ? ' · 已被修正' : r.status === 'rejected' ? ' · 无有效当前值' : ''}`),
     trustMark(r), r.chainKey ? h('span', { class: 'reading-seal', title: '已存证', 'aria-label': '已存证' }, '▪') : null)
+  if (highlight) {
+    // 从链跳转过来：滚动到该读数并一次性清除高亮标记
+    queueMicrotask(() => { if (row.isConnected) row.scrollIntoView({ block: 'center', behavior: 'smooth' }) })
+    setTimeout(() => { state.readingHighlight = null }, 2000)
+  }
+  return row
 }
 
 /** 固定组高度让窗口定位无需测量全量行；展开的大组再用独立行窗口。 */

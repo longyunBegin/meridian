@@ -268,7 +268,6 @@ for (let i = 0; i < 100 && !partialResult; i++) { await sleepMs(100); partialRes
 ok('部分失败：有结果', !!partialResult)
 ok('部分失败：骨架 ok', partialResult?.skeletonOk === true)
 ok('部分失败：主题标签失败且有原因', partialResult?.themeTagsOk === false && partialResult?.themeTagsReason === 'timeout', `实际 ${partialResult?.themeTagsReason}`)
-ok('部分失败：标签库失败', partialResult?.tagLibraryOk === false)
 ok('部分失败：整体不算 degraded（树已生成）', partialResult?.degraded === false)
 ok('部分失败：节点已铺上', store.allNodes().some((n) => n.themeId === partialTheme.id && n.kind === 'branch'))
 ok('生成完 scaffoldStatus 为空', !(await fire('theme:scaffoldStatus')).includes(partialTheme.id), `实际 ${JSON.stringify(await fire('theme:scaffoldStatus'))}`)
@@ -2235,120 +2234,15 @@ if (i5Match2) {
 
 console.log('\n— 标签库与语义归位 —')
 
-const extractSrcTL = readFileSync2(join(ROOT2, 'src/main/extract.js'), 'utf8')
-const storeSrcTL = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 const domainCommandsSrcTL = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
 const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
-const pjTL = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
 
-// --- T1: tagLibrary schema ---
+// --- T2: （已移除：标签库功能删除，对应测试一并删除） ---
 
-ok('T1: store.js 有 tagLibrary', storeSrcTL.includes('tagLibrary'))
-ok('T1: migrate 补 tagLibrary', storeSrcTL.includes('t.tagLibrary = normalizeTagLibrary(t.tagLibrary)'))
-ok('T1: addTheme 给 tagLibrary: []', storeSrcTL.includes('tagLibrary: [], createdAt'))
-ok('T1: updateTheme 白名单 tagLibrary', storeSrcTL.includes('patch.tagLibrary !== undefined'))
-ok('T1: extract.js 有 generateTagLibrary', extractSrcTL.includes('export async function generateTagLibrary'))
-ok('T1: extract.js 有 TAG_LIBRARY_SYSTEM', extractSrcTL.includes('TAG_LIBRARY_SYSTEM'))
-ok('T1: extract.js threshold clamp', extractSrcTL.includes('Math.max(0.4, Math.min(0.85'))
+// --- T3: processCapture ---
 
-// T1: 迁移 — 旧数据导入后 tagLibrary 为空数组
-const tlTheme = store.addTheme('标签库测试主题')
-ok('T1: addTheme 有 tagLibrary', Array.isArray(tlTheme.tagLibrary) && tlTheme.tagLibrary.length === 0)
-
-// T1: updateTheme tagLibrary
-store.updateTheme(tlTheme.id, { tagLibrary: [{ id: 'tl_1', name: '测试标签', synonyms: ['test'], threshold: 0.6, hits: 0, lastHitAt: null }] })
-const tlThemeAfter = store.allThemes().find((t) => t.id === tlTheme.id)
-ok('T1: updateTheme tagLibrary 生效', tlThemeAfter.tagLibrary.length === 1)
-ok('T1: tagLibrary 有 id', tlThemeAfter.tagLibrary[0].id === 'tl_1')
-
-// T1: 导出导入不丢
-const tlExport = JSON.parse(store.exportAll())
-ok('T1: 导出含 tagLibrary', Array.isArray(tlExport.themes.find((t) => t.id === tlTheme.id)?.tagLibrary))
-store.importAll(JSON.stringify({ ...tlExport, themes: tlExport.themes.map((t) => ({ ...t, tagLibrary: undefined })) }))
-const tlAfterImport = store.allThemes().find((t) => t.id === tlTheme.id)
-ok('T1: 旧数据导入 tagLibrary 为空数组', Array.isArray(tlAfterImport.tagLibrary) && tlAfterImport.tagLibrary.length === 0)
-
-// --- T2: matchTagLibrary 纯函数 ---
-
-ok('T2: store.js 有 matchTagLibrary', storeSrcTL.includes('export function matchTagLibrary'))
-ok('T2: store.js 有 crossThemeMatch', storeSrcTL.includes('export function crossThemeMatch'))
-ok('T2: store.js 有 recordTagHits', storeSrcTL.includes('export function recordTagHits'))
-
-// T2: 空词库 → []
-ok('T2: 空词库返回 []', store.matchTagLibrary('text', []).length === 0)
-ok('T2: null 词库返回 []', store.matchTagLibrary('text', null).length === 0)
-
-// T2: 命中 3/5 词 → score = 0.6
-const tlLib = [
-  { id: 'tl_a', name: '稳定币', synonyms: ['stablecoin', 'USDT', 'USDC', 'pegged'], threshold: 0.6, hits: 0, lastHitAt: null },
-  { id: 'tl_b', name: '算力', synonyms: ['hash rate', 'mining'], threshold: 0.6, hits: 0, lastHitAt: null },
-]
-const tlMatch1 = store.matchTagLibrary('稳定币 stablecoin USDT', tlLib)
-ok('T2: 命中 3/5 词有结果', tlMatch1.length > 0)
-ok('T2: 命中 3/5 score=0.6', tlMatch1[0].score === 0.6, `实际 ${tlMatch1[0].score}`)
-
-// T2: 命中 0 词 → 不出现
-const tlMatch2 = store.matchTagLibrary('完全无关的内容xyz', tlLib)
-ok('T2: 命中 0 词不出现', tlMatch2.length === 0)
-
-// T2: 中英双语分别命中
-const tlMatch3 = store.matchTagLibrary('stablecoin market cap', tlLib)
-ok('T2: 英文命中', tlMatch3.some((m) => m.name === '稳定币'))
-const tlMatch4 = store.matchTagLibrary('稳定币发行量', tlLib)
-ok('T2: 中文命中', tlMatch4.some((m) => m.name === '稳定币'))
-
-// T2: 按分数降序
-const tlMatch5 = store.matchTagLibrary('稳定币 stablecoin USDT USDC pegged 算力 hash rate', tlLib)
-ok('T2: 按分数降序', tlMatch5[0].score >= tlMatch5[tlMatch5.length - 1].score)
-
-// --- T2: 跨主题匹配 ---
-
-// 恢复 tagLibrary
-store.updateTheme(tlTheme.id, { tagLibrary: tlLib })
-const tlTheme2 = store.addTheme('标签库测试主题2')
-store.updateTheme(tlTheme2.id, { tagLibrary: [{ id: 'tl_c', name: '轨道', synonyms: ['rail', 'metro'], threshold: 0.6, hits: 0, lastHitAt: null }] })
-const crossMatches = store.crossThemeMatch('稳定币 stablecoin USDT')
-ok('T2: 跨主题匹配返回数组', Array.isArray(crossMatches))
-ok('T2: 跨主题匹配命中主题1', crossMatches.some((m) => m.themeId === tlTheme.id))
-ok('T2: 跨主题匹配不命中主题2', !crossMatches.some((m) => m.themeId === tlTheme2.id))
-
-// --- T2: hits 回写 ---
-
-store.recordTagHits(tlTheme.id, ['tl_a'])
-const tlAfterHit = store.allThemes().find((t) => t.id === tlTheme.id)
-const tlTagA = tlAfterHit.tagLibrary.find((t) => t.id === 'tl_a')
-ok('T2: hits 回写递增', tlTagA.hits === 1)
-ok('T2: lastHitAt 有值', tlTagA.lastHitAt != null)
-
-// --- T2: updateTagLibraryTag / deleteTagLibraryTags ---
-
-const tlUpdatedTag = store.updateTagLibraryTag(tlTheme.id, 'tl_a', { name: '稳定币改', threshold: 0.8 })
-ok('T2: updateTagLibraryTag 改名', tlUpdatedTag.name === '稳定币改')
-ok('T2: updateTagLibraryTag threshold clamp', tlUpdatedTag.threshold === 0.8)
-
-const tlDeleted = store.deleteTagLibraryTags(tlTheme.id, ['tl_b'])
-ok('T2: deleteTagLibraryTags 删了 1 个', tlDeleted === 1)
-const tlAfterDelete = store.allThemes().find((t) => t.id === tlTheme.id)
-ok('T2: deleteTagLibraryTags 后剩 1 个', tlAfterDelete.tagLibrary.length === 1)
-
-// --- T3: processCapture 接入匹配 + 提议归位 ---
-
-ok('T3: domain-commands.js 有 crossThemeMatch', domainCommandsSrcTL.includes('crossThemeMatch'))
-ok('T3: domain-commands.js 有 routeProposals', domainCommandsSrcTL.includes('routeProposals'))
-ok('T3: domain-commands.js 有 route-proposal', domainCommandsSrcTL.includes("'route-proposal'"))
-ok('T3: domain-commands.js 有 recordTagHits', domainCommandsSrcTL.includes('recordTagHits'))
-ok('T3: domain-commands.js theme:setupNew 调 generateTagLibrary', domainCommandsSrcTL.includes('generateTagLibrary'))
 ok('T3: domain-commands.js 无 theme:fromTemplate', !domainCommandsSrcTL.includes('theme:fromTemplate'))
-
-// --- T4: 标签库可视化 ---
-
-ok('T4: lattice.js 有 renderTagLibraryBand', latticeSrcTL.includes('function renderTagLibraryBand'))
-ok('T4: lattice.js 有 标签库', latticeSrcTL.includes('标签库'))
-ok('T4: lattice.js 有 整理', latticeSrcTL.includes('整理'))
-ok('T4: lattice.js 有 全选命中 0', latticeSrcTL.includes('全选命中 0'))
-ok('T4: lattice.js 有 删除所选', latticeSrcTL.includes('删除所选'))
-ok('T4: lattice.js 无 prompt(', !latticeSrcTL.includes('prompt('))
 
 // --- T4b: 树形 全部展开 / 一键合起 ---
 
@@ -2378,24 +2272,9 @@ ok('T5: lattice.js 有 removeTheme', latticeSrcTL.includes('removeTheme'))
 
 ok('T6: domain-commands.js 无 生成新环节', !domainCommandsSrcTL.includes('生成新环节'))
 
-// --- 领域中立（只检查新增的标签库代码，不查存量 SIC 映射/prompt 示例）---
+// --- 领域中立（不查存量 SIC 映射/prompt 示例）---
 
-const tagLibPrompt = extractSrcTL.match(/TAG_LIBRARY_SYSTEM = `[\s\S]*?`/)?.[0] || ''
-ok('领域中立: TAG_LIBRARY_SYSTEM 无硬编码行业词', !tagLibPrompt.match(/光模块|半导体|hyperscaler|AI 产业/))
-ok('领域中立: matchTagLibrary 无硬编码行业词', !storeSrcTL.match(/function matchTagLibrary[\s\S]*?^}/m)?.[0]?.match(/光模块|半导体|hyperscaler/))
 ok('领域中立: lattice.js 无硬编码行业词', !latticeSrcTL.match(/光模块|半导体|hyperscaler/))
-
-// --- command bridge ---
-
-ok('TL: domain-commands.js 有 tagLibrary:updateTag', domainCommandsSrcTL.includes('tagLibrary:updateTag'))
-ok('TL: domain-commands.js 有 tagLibrary:deleteTags', domainCommandsSrcTL.includes('tagLibrary:deleteTags'))
-ok('TL: bridge.js 有 updateTagLibraryTag', pjTL.includes('updateTagLibraryTag'))
-ok('TL: bridge.js 有 deleteTagLibraryTags', pjTL.includes('deleteTagLibraryTags'))
-
-// --- 命令 可调 ---
-
-ok('TL: 命令 tagLibrary:updateTag 可调', await fire('theme:tagLibrary:updateTag', tlTheme.id, 'tl_a', { name: '改过' }) != null)
-ok('TL: 命令 tagLibrary:deleteTags 可调', typeof await fire('theme:tagLibrary:deleteTags', tlTheme.id, []) === 'number')
 
 // ============================================================
 // 主题入口与读数拆分（E + R）
@@ -2455,8 +2334,6 @@ for (let i = 0; i < 30 && e3AfterNodes === 0; i++) {
   e3AfterNodes = store.allNodes().filter((n) => n.themeId === e3Theme.id).length
 }
 ok('E3: 补生成后有节点', e3AfterNodes > 0, `实际 ${e3AfterNodes}`)
-const e3ThemeAfter = store.allThemes().find((t) => t.id === e3Theme.id)
-ok('E3: 补生成后有标签库', Array.isArray(e3ThemeAfter?.tagLibrary))
 
 // 幂等：已经有环节的主题再触发一次，不能把兜底模板再铺一遍。
 // 实测用户连点几次「生成」后，同一个主题下摞了三套上中下游。
@@ -2576,13 +2453,7 @@ const c2Snapshot = store.exportAll({ withRaw: false })
 store.importAll(JSON.stringify({ nodes: [], themes: [], inbox: [], verdicts: [] }))
 const c2Theme = store.addTheme('C2 suggested theme')
 const c2OtherTheme = store.addTheme('C2 unrelated theme')
-store.updateTheme(c2Theme.id, { tagLibrary: [{ id: 'c2-tag', name: 'zirconium', synonyms: [], threshold: 0.6 }] })
-store.addNode({ themeId: c2OtherTheme.id, kind: 'lemma', title: 'default capture context' })
-const c2Capture = await fire('inbox:capture', 'zirconium refinery output rises', { kind: '一手数据', platform: 'offline-test' })
-const c2Captured = c2Capture.routeProposals?.[0]
-ok('C2: capture 保留路由类型和主题', c2Captured?.kind === 'route-proposal' && c2Captured.matchedTheme.id === c2Theme.id)
-ok('C2: capture 保留标签、通道和 bestScore', c2Captured?.matchedTags[0].tagId === 'c2-tag' && c2Captured.originChannel.platform === 'offline-test' && c2Captured.bestScore === 1)
-// 以下用明确的 proposal 文本验证三条匹配路径。
+// 标签库已移除：capture 不再产生 route-proposal，以下用明确的 proposal 文本验证三条匹配路径。
 store.importAll(JSON.stringify({ nodes: [], themes: [c2Theme, c2OtherTheme], inbox: [], verdicts: [] }))
 const c2Propose = (fields = {}) => store.addInboxItem({
   kind: 'route-proposal', title: 'unrelated headline', text: 'unrelated body',
@@ -2943,37 +2814,13 @@ ok('B2: matchScore 为 0 → 未匹配态', b2?.item?.matchScore === 0)
 ok('B2: 不加价（via channel）', b2?.item?.label?.via === 'channel')
 ok('B2: 拦截留痕可回查', store.allTraces().some((t) => t.stage === 'gate' && t.decision?.skipped === 'low-quality'))
 
-// ---- B4：标签库分级闸门 ----
-
-store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.5, hits: 0, lastHitAt: null }] })
-const b4aCalls = extractCalls
-const b4a = await fire('inbox:capture', '光模块行业月度跟踪：出货量环比回升。')
-ok('B4: score === threshold 放行（不是 >）', extractCalls === b4aCalls + 1 && !b4a?.skipped)
-
-store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.6, hits: 0, lastHitAt: null }] })
-const b4bCalls = extractCalls
-const b4bText = '光模块渠道调研：价格企稳，库存正常。'
-const b4b = await fire('inbox:capture', b4bText)
-ok('B4: 未达阈值不抽取', b4b?.skipped === 'weak-tags' && b4b?.item?.extracted === false)
-ok('B4: 未达阈值记下命中分', b4b?.item?.matchScore === 0.5, `实际 ${b4b?.item?.matchScore}`)
-ok('B4: 未达阈值零调用', extractCalls === b4bCalls)
-ok('B4: 弱匹配原文留着', b4b?.item?.text === b4bText)
-
-const b4cCalls = extractCalls
-const b4c = await fire('inbox:capture', '完全无关的话题：周末去爬山，天气不错。')
-ok('B4: 未命中标签库不抽取', b4c?.skipped === 'no-tags' && b4c?.item?.matchScore === 0)
-ok('B4: 未命中零调用', extractCalls === b4cCalls)
-
-store.updateTheme(aGeo.id, { tagLibrary: [] })
-const b4dCalls = extractCalls
-const b4d = await fire('inbox:capture', '完全无关的话题二：周末在家煮咖啡。')
-ok('B4: 空词库全部放行（没声明过关心什么就不筛）', extractCalls === b4dCalls + 1 && !b4d?.skipped)
+// ---- B4 已移除：标签库分级闸门删除，所有主题全部放行抽取 ----
 
 // ---- D：收件箱三态 + 主动抽取 + 清空未匹配 ----
 
-store.updateTheme(aGeo.id, { tagLibrary: [{ id: 'gov_tag_1', name: '光模块', synonyms: ['optical'], threshold: 0.6, hits: 0, lastHitAt: null }] })
+// 标签库移除后不再有 no-tags 跳过：未抽取条目直接建
 const dText = '未匹配三态测试：本地咖啡馆换了新豆子。'
-const d1 = await fire('inbox:capture', dText)
+const d1 = { item: store.addInboxItem({ text: dText, title: dText, lemmas: [], extracted: false, matchScore: 0 }) }
 ok('D: 未匹配条目进箱且标注未抽取', d1?.item?.extracted === false && d1?.item?.matchScore === 0 && d1?.item?.text === dText)
 const dCallsBefore = extractCalls
 const dExtract = await fire('inbox:extract', [d1.item.id])
@@ -2984,7 +2831,7 @@ ok('D: 抽取后转为已抽取并带上命题', dAfter?.extracted === true && d
 const dExtractAgain = await fire('inbox:extract', [d1.item.id])
 ok('D: 抽过的不会被重复抽取（不重复花钱）', dExtractAgain?.extracted === 0 && extractCalls === dCallsBefore + 1)
 
-const d2 = await fire('inbox:capture', '未匹配三态测试二：社区团购又涨价了。')
+const d2 = { item: store.addInboxItem({ text: '未匹配三态测试二：社区团购又涨价了。', title: '未匹配三态测试二', lemmas: [], extracted: false, matchScore: 0 }) }
 const dKept = store.allInbox().filter((i) => i.extracted !== false).length
 const dPending = store.allInbox().filter((i) => i.extracted === false).length
 const dCleared = await fire('inbox:clearUnextracted')
@@ -3535,9 +3382,9 @@ await v8Test('证据分页游标完整且不串观测；来源分页有界', asy
   v8Assert.equal(sourceIds.size, store.allSources().length)
 })
 
-await v8Test('意图导出含树、标签库和未结算判断；零配置也有到期指标', async () => {
+await v8Test('意图导出含树和未结算判断；零配置也有到期指标', async () => {
   const { theme, branch, indicator } = v8Reset()
-  store.updateTheme(theme.id, { tags: ['经营'], tagLibrary: [{ id: 'v8-tag', name: '收入', synonyms: ['营收'], threshold: 0.6 }] })
+  store.updateTheme(theme.id, { tags: ['经营'] })
   const judgment = store.addNode({ themeId: theme.id, parentId: branch.id, kind: 'lemma', type: 'hypothesis', title: '收入将超过 90', confidence: 85, settlement: { date: '2026-12-31', resolved: null } })
   store.updateNode(indicator.id, { parentId: judgment.id })
   const closed = store.addNode({ themeId: theme.id, parentId: branch.id, kind: 'lemma', type: 'hypothesis', title: '已经结算的判断', settlement: { date: '2026-01-01', resolved: true } })
@@ -3545,7 +3392,6 @@ await v8Test('意图导出含树、标签库和未结算判断；零配置也有
   const exported = intent.themes.find((item) => item.id === theme.id)
   v8Assert.equal(exported.name, theme.name)
   v8Assert.ok(exported.tags.includes('经营'))
-  v8Assert.ok(exported.tagLibrary.some((tag) => tag.name === '收入' && tag.synonyms.includes('营收')))
   v8Assert.ok(JSON.stringify(exported.tree).includes(indicator.title))
   const open = intent.openJudgments.find((item) => item.claim === judgment.title)
   v8Assert.equal(open.confidence, 85)

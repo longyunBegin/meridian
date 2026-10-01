@@ -2,6 +2,7 @@ import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndPulse } from '../app.js'
 import { confColor, nodePath, inferInboxThemeId, inboxRouteValid, splitInboxPicked } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
+import { renderProposalDraft } from './chain.js'
 
 const m = window.meridian
 
@@ -726,6 +727,14 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
           )),
         ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的命题。你可以忽略，或补充原文后重新捕获。'),
       ),
+      // 认知链提案草稿：只起草不拍板，用户点"确认挂载"才写入主题链。
+      theme && !unextracted ? renderProposalDraft(item,
+        (theme.chain?.segments || []).map((s) => ({ id: s.id, name: s.name })),
+        {
+          themeId: itemThemeId(item),
+          onDraft: () => rerender ? rerender() : onRouteChange(),
+          onMounted: () => { rerender ? rerender() : onRouteChange(); refresh() },
+        }) : null,
       editable ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '确认归位'),
         h('div', { class: 'inbox-route-theme' },

@@ -72,13 +72,12 @@ export function trackScaffold(themeId) {
   pollScaffold(themeId)
 }
 
-/** 三个阶段的展示名 */
-const STAGE_LABEL = { skeleton: '搭骨架', tags: '主题标签', library: '标签库' }
-const STAGE_ORDER = ['skeleton', 'tags', 'library']
+/** 两个阶段的展示名 */
+const STAGE_LABEL = { skeleton: '搭骨架', tags: '主题标签' }
+const STAGE_ORDER = ['skeleton', 'tags']
 const STAGE_HINT = {
   skeleton: '模型正在搭产业链骨架…',
   tags: '正在提炼主题标签…',
-  library: '正在建标签库…',
 }
 const STEP_SVG = {
   done: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>',
@@ -92,7 +91,7 @@ function stepIconEl(st) {
 
 /** 阶段失败的人话原因。事件里的 reason 和结果里的 reason 都认。 */
 function stageWhy(stage, info) {
-  const reason = info?.[stage === 'skeleton' ? 'skeletonReason' : stage === 'tags' ? 'themeTagsReason' : 'tagLibraryReason']
+  const reason = info?.[stage === 'skeleton' ? 'skeletonReason' : 'themeTagsReason']
     || state.scaffoldStageReasons[stage]
   if (reason === 'no-key') return '未配置 API key'
   return { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回无法解析' }[reason]
@@ -103,14 +102,13 @@ function stepSub(stage, st, info) {
   if (st === 'active') return STAGE_HINT[stage]
   if (st === 'fail') return stageWhy(stage, info)
   if (st === 'done' && stage === 'skeleton' && info?.skeletonFallback) return '通用模板（未配 key，配好后可重生成）'
-  if (st === 'done' && stage === 'library' && info?.tagLibraryCount != null) return `${info.tagLibraryCount} 个标签`
   return ''
 }
 
 /** 阶段进度事件 → 更新 state + 直接刷当前视图的步骤行（不等整页重画）。 */
 function updateScaffoldSteps(info) {
   if (!info || state.pendingScaffoldId !== info.themeId) return
-  if (!state.scaffoldStages) state.scaffoldStages = { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  if (!state.scaffoldStages) state.scaffoldStages = { skeleton: 'pending', tags: 'pending' }
   const st = { start: 'active', ok: 'done', fail: 'fail' }[info.state]
   if (!st || !STAGE_LABEL[info.stage]) return
   state.scaffoldStages[info.stage] = st
@@ -136,15 +134,14 @@ function paintScaffoldSteps() {
 /** 用最终结果校准各步骤状态——进度事件丢了也以此为准。 */
 function calibrateStages(info) {
   if (info?.skipped === 'complete') {
-    state.scaffoldStages = { skeleton: 'done', tags: 'done', library: 'done' }
+    state.scaffoldStages = { skeleton: 'done', tags: 'done' }
     return
   }
-  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending' }
   stages.skeleton = info.degraded ? 'fail' : 'done'
   stages.tags = info.themeTagsOk === false ? 'fail' : 'done'
-  stages.library = info.tagLibraryOk === false ? 'fail' : 'done'
   state.scaffoldStages = stages
-  for (const [stage, key] of [['skeleton', 'skeletonReason'], ['tags', 'themeTagsReason'], ['library', 'tagLibraryReason']]) {
+  for (const [stage, key] of [['skeleton', 'skeletonReason'], ['tags', 'themeTagsReason']]) {
     if (info[key]) state.scaffoldStageReasons[stage] = info[key]
   }
 }
@@ -154,14 +151,14 @@ function pollScaffold(themeId) {
   let ticks = 0
   scaffoldPoll = setInterval(async () => {
     if (state.pendingScaffoldId !== themeId) { clearInterval(scaffoldPoll); return }
-    // 熔断：三阶段最长 90+60+60 秒。超过 5 分钟还没回来，主进程大概率已经没了——
+    // 熔断：两阶段最长 90+60 秒。超过 5 分钟还没回来，主进程大概率已经没了——
     // 不能让用户永远卡在「生成中」，给一个可重试的失败态。
     if (++ticks > 260) {
       clearInterval(scaffoldPoll)
       if (state.pendingScaffoldId !== themeId) return
       state.pendingScaffoldId = null
       state.scaffoldFailed = true
-      state.scaffoldOutcome = { themeId, degraded: true, reason: 'timeout', hasKey: true, themeTagsOk: false, themeTagsReason: 'timeout', tagLibraryOk: false, tagLibraryReason: 'timeout' }
+      state.scaffoldOutcome = { themeId, degraded: true, reason: 'timeout', hasKey: true, themeTagsOk: false, themeTagsReason: 'timeout' }
       refresh()
       toast('骨架生成超时了，可以重新生成。', 'var(--red)')
       return
@@ -183,7 +180,7 @@ function settleScaffold(themeId, info) {
   state.pendingScaffoldId = null
   calibrateStages(info)
   const themeName = state.themes.find((t) => t.id === themeId)?.name || ''
-  const partial = !info.degraded && (info.themeTagsOk === false || info.tagLibraryOk === false)
+  const partial = !info.degraded && info.themeTagsOk === false
   if (!info.degraded && !partial) {
     state.scaffoldOutcome = null
     state.scaffoldStages = null
@@ -207,7 +204,6 @@ function settleScaffold(themeId, info) {
     const bits = []
     if (info.degraded) bits.push(`骨架没生成：${scaffoldWhy(info)}`)
     if (info.themeTagsOk === false) bits.push(`主题标签没生成：${stageWhy('tags', info)}`)
-    if (info.tagLibraryOk === false) bits.push(`标签库没生成：${stageWhy('library', info)}`)
     toast(`「${themeName}」${bits.join('；')}。`, 'var(--red)',
       { label: '去重试', onClick: async () => { setView('new-theme') } })
   }
@@ -217,8 +213,6 @@ function settleScaffold(themeId, info) {
 const scaffoldWhy = (info) => (!info.hasKey ? '未配置 API key'
   : { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.reason]
     || `调用失败（${info.reason}）`)
-const tagLibraryWhy = (info) => ({ timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.tagLibraryReason]
-  || `调用失败（${info.tagLibraryReason}）`)
 
 async function boot() {
   state.themes = await m.themes()
@@ -267,11 +261,6 @@ async function boot() {
       toast(`骨架没生成：${scaffoldWhy(info)}。可在脉络页点「重新生成」重试。`, 'var(--red)')
     }
     else if (info?.themeId) toast('骨架已生成')
-    // 标签库是归位的依据，缺了读数匹配不上指标。它的失败以前是静默的——
-    // 骨架成功就报「已生成」，用户只看到标签库是 0，根本不知道去哪补。
-    if (info && !info.degraded && info.tagLibraryOk === false) {
-      toast(`标签库没生成：${tagLibraryWhy(info)}。归位会受影响，可再点一次「重新生成」只补标签库。`, 'var(--red)')
-    }
   })
   // 分阶段进度：创建页据此点亮步骤。事件丢了也不怕，settle 时按结果校准。
   m.onThemeScaffoldProgress?.((info) => updateScaffoldSteps(info))
@@ -617,9 +606,9 @@ async function paintVaultCounts() {
 }
 
 /** 主题创建器：用户只描述要跟踪什么，其余由系统完成。 */
-/** 生成中的分步卡：三个阶段各一行，进度事件来了就地刷，不整页重画。 */
+/** 生成中的分步卡：两个阶段各一行，进度事件来了就地刷，不整页重画。 */
 function renderScaffoldSteps() {
-  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  const stages = state.scaffoldStages || { skeleton: 'pending', tags: 'pending' }
   return h('div', { class: 'scaffold-steps' },
     STAGE_ORDER.map((stage) => {
       const st = stages[stage] || 'pending'
@@ -645,9 +634,6 @@ function renderOutcomeCard(outcome) {
     h('div', { class: 'scaffold-result-title' }, failed ? '骨架没能生成' : '骨架已生成，但有一步没完成'),
     row('skeleton', !failed, failed ? stageWhy('skeleton', outcome) : (outcome.skeletonFallback ? '通用模板（未配 key）' : '')),
     row('tags', outcome.themeTagsOk !== false, outcome.themeTagsOk === false ? stageWhy('tags', outcome) : ''),
-    row('library', outcome.tagLibraryOk !== false,
-      outcome.tagLibraryOk === false ? stageWhy('library', outcome)
-        : (outcome.tagLibraryCount != null ? `${outcome.tagLibraryCount} 个标签` : '')),
   )
   if (!outcome.hasKey) {
     card.append(h('div', { class: 'scaffold-hint' }, '未配置 API key——去设置里配好后，重新生成可走模型。'))
@@ -676,7 +662,7 @@ async function retryScaffold() {
   const themeId = outcome.themeId
   state.scaffoldOutcome = null
   state.scaffoldFailed = false
-  state.scaffoldStages = { skeleton: 'pending', tags: 'pending', library: 'pending' }
+  state.scaffoldStages = { skeleton: 'pending', tags: 'pending' }
   state.scaffoldStageReasons = {}
   trackScaffold(themeId)
   refresh()
@@ -719,10 +705,10 @@ export function renderThemeCreator(opts = {}) {
       state.scaffoldFailed = false
       // setupNew 返回时主进程已经同步起跑（start 事件甚至可能比这个 await 先到，
       // 那时 pendingScaffoldId 还没设、事件会被丢弃）——所以这里直接标 active，
-      // 不靠事件点亮前两步。library 的 start 事件晚到，由事件驱动。
-      state.scaffoldStages = { skeleton: 'active', tags: 'active', library: 'pending' }
+      // 不靠事件点亮前两步。
+      state.scaffoldStages = { skeleton: 'active', tags: 'active' }
       state.scaffoldStageReasons = {}
-      if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架和标签库。')
+      if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架。')
       // 轮询兜底：theme:scaffolded 是推送，窗口没起来或渲染层还没订阅时就丢了。
       // 丢了的后果是用户永远卡在这一页、按钮锁死——所以结果必须可查。
       trackScaffold(theme.id)

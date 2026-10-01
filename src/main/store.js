@@ -252,10 +252,6 @@ function normalizeScaffold(scaffold) {
   }
 }
 
-function normalizeTagLibrary(tagLibrary) {
-  return Array.isArray(tagLibrary) ? tagLibrary : []
-}
-
 /** LLM 账本：schema 只加不改，老数据没有就补空账本 */
 function normalizeLlmUsage(llmUsage) {
   const u = llmUsage && typeof llmUsage === 'object' ? llmUsage : {}
@@ -380,7 +376,6 @@ function migrate(d) {
   d.traceAggregates = normalizeTraceAggregates(d.traceAggregates)
   for (const t of d.themes || []) {
     t.tags = Array.isArray(t.tags) ? t.tags : []
-    t.tagLibrary = normalizeTagLibrary(t.tagLibrary)
   }
   for (const c of d.channels || []) {
     c.tags = Array.isArray(c.tags) ? c.tags : []
@@ -438,6 +433,9 @@ function persist() {
     }
   }, 120)
 }
+
+/** 供 chain-store 等外部模块在直接变更 db 后触发落盘（与 updateTheme 同一防抖通道）。 */
+export function persistLedger() { persist() }
 
 /** 防抖到期后的实际落盘。meridian.sqlite 存在 → 单事务写 SQLite；
  *  否则走 legacy JSON 整文件重写（向后兼容）。raw.jsonl / readings.jsonl /
@@ -726,18 +724,17 @@ export function bestThemeContext() {
   return best
 }
 export function addTheme(name) {
-  const theme = { id: uid(), name: String(name || '').trim(), tags: [], tagLibrary: [], createdAt: today() }
+  const theme = { id: uid(), name: String(name || '').trim(), tags: [], createdAt: today() }
   db.themes.push(theme)
   persist()
   return theme
 }
-/** 更新主题字段（支持 name / tags / tagLibrary） */
+/** 更新主题字段（支持 name / tags） */
 export function updateTheme(id, patch) {
   const theme = db.themes.find((t) => t.id === id)
   if (!theme) return null
   if (patch.name !== undefined) theme.name = String(patch.name).trim()
   if (patch.tags !== undefined) theme.tags = [...new Set((Array.isArray(patch.tags) ? patch.tags : []).filter((t) => typeof t === 'string'))]
-  if (patch.tagLibrary !== undefined) theme.tagLibrary = normalizeTagLibrary(patch.tagLibrary)
   persist()
   return theme
 }
@@ -765,78 +762,6 @@ export function renameTheme(id, name) {
   const theme = db.themes.find((t) => t.id === id)
   if (theme) theme.name = String(name || '').trim()
   persist()
-}
-
-// ------------------------------------------------------------------ 标签库
-
-
-/** 标签库匹配纯函数：子串覆盖比例打分 */
-export function matchTagLibrary(text, tagLibrary) {
-  if (!tagLibrary?.length) return []
-  const haystack = String(text || '').toLowerCase()
-  return tagLibrary
-    .map((tag) => {
-      const terms = [tag.name, ...(tag.synonyms || [])]
-      let hit = 0
-      let total = 0
-      for (const t of terms) {
-        total++
-        if (haystack.includes(String(t).toLowerCase())) hit++
-      }
-      const score = total ? hit / total : 0
-      return { tagId: tag.id, name: tag.name, score: round1(score), terms: hit, total }
-    })
-    .filter((r) => r.score > 0 && r.terms >= 1)
-    .sort((a, b) => b.score - a.score)
-}
-
-/** 跨主题匹配：返回所有主题的匹配结果 */
-export function crossThemeMatch(text) {
-  const db = load()
-  const results = []
-  for (const t of db.themes.filter((t) => !t.deletedAt)) {
-    for (const m of matchTagLibrary(text, t.tagLibrary || [])) {
-      results.push({ themeId: t.id, themeName: t.name, ...m })
-    }
-  }
-  return results.sort((a, b) => b.score - a.score)
-}
-
-/** 命中回写：hits++ / lastHitAt = today() */
-export function recordTagHits(themeId, tagIds) {
-  const theme = db.themes.find((t) => t.id === themeId)
-  if (!theme) return
-  const now = today()
-  for (const tag of theme.tagLibrary || []) {
-    if (tagIds.includes(tag.id)) {
-      tag.hits = (tag.hits || 0) + 1
-      tag.lastHitAt = now
-    }
-  }
-  persist()
-}
-
-/** 更新标签库中单个标签 */
-export function updateTagLibraryTag(themeId, tagId, patch) {
-  const theme = db.themes.find((t) => t.id === themeId)
-  if (!theme) return null
-  const tag = (theme.tagLibrary || []).find((t) => t.id === tagId)
-  if (!tag) return null
-  if (patch.name !== undefined) tag.name = String(patch.name).trim().slice(0, 30)
-  if (patch.synonyms !== undefined) tag.synonyms = patch.synonyms.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 10)
-  if (patch.threshold !== undefined) tag.threshold = Math.max(0.4, Math.min(0.85, Number(patch.threshold) || 0.6))
-  persist()
-  return tag
-}
-
-/** 批量删除标签库中的标签 */
-export function deleteTagLibraryTags(themeId, tagIds) {
-  const theme = db.themes.find((t) => t.id === themeId)
-  if (!theme) return 0
-  const before = theme.tagLibrary.length
-  theme.tagLibrary = theme.tagLibrary.filter((t) => !tagIds.includes(t.id))
-  persist()
-  return before - theme.tagLibrary.length
 }
 
 // ------------------------------------------------------------------ verdicts
@@ -1982,7 +1907,7 @@ export function addReading(input) {
   return ingestReadingCore(input)
 }
 
-/** 人话优先；精确、规范化、标签库各级都只接受唯一匹配。 */
+/** 人话优先；精确、规范化两级都只接受唯一匹配。 */
 export function matchReadingIndicator(input, { trusted = false, channelId = null, migration = false } = {}) {
   const d = load()
   const nodes = d.nodes.filter((n) => n.type === 'observation' && n.status !== 'dead')
@@ -1994,11 +1919,6 @@ export function matchReadingIndicator(input, { trusted = false, channelId = null
     const name = normalizeName(input.indicator)
     const normalized = scoped.filter((n) => normalizeName(n.title) === name)
     if (normalized.length) return normalized.length === 1 ? normalized[0].id : null
-    const matches = scoped.filter((n) => {
-      const theme = d.themes.find((t) => t.id === n.themeId)
-      return (theme?.tagLibrary || []).some((tag) => [tag.name, ...(tag.synonyms || [])].some((s) => normalizeName(s) === name) && ((n.tags || []).includes(tag.name) || (n.tags || []).includes(tag.id) || normalizeName(n.title) === normalizeName(tag.name)))
-    })
-    if (matches.length) return matches.length === 1 ? matches[0].id : null
     if (!trusted) return null
   }
   // 此同步接口也被 IPC 使用，channelId/tier 本身绝不是可信证明。
@@ -2351,7 +2271,7 @@ export function exportIntent() {
   const d = load()
   const tree = (themeId, parentId = null, visited = new Set()) => d.nodes.filter((n) => n.themeId === themeId && (n.parentId || null) === parentId && n.status !== 'dead' && !visited.has(n.id)).map((n) => ({ id: n.id, title: n.title, type: n.type, cadence: n.cadence || null, indicatorIds: n.indicatorIds || [], children: tree(themeId, n.id, new Set([...visited, n.id])) }))
   return {
-    themes: d.themes.filter((t) => !t.deletedAt).map((t) => ({ id: t.id, name: t.name, tags: t.tags || [], tree: tree(t.id), tagLibrary: t.tagLibrary || [] })),
+    themes: d.themes.filter((t) => !t.deletedAt).map((t) => ({ id: t.id, name: t.name, tags: t.tags || [], tree: tree(t.id) })),
     openJudgments: d.nodes.filter((n) => n.kind === 'lemma' && n.type !== 'observation' && n.status !== 'dead' && n.settlement?.resolved == null).map((n) => ({ id: n.id, claim: n.title, confidence: n.confidence, settlesOn: n.settlement?.date || null, indicators: d.nodes.filter((i) => i.type === 'observation' && i.status !== 'dead' && ((n.indicatorIds || []).includes(i.id) || i.parentId === n.id || (n.channelIds || []).some((id) => (i.channelIds || []).includes(id)))).map((i) => i.title) })),
   }
 }

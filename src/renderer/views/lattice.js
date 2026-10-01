@@ -3,6 +3,7 @@ import { state, refresh, selectNode, setShape, setView, deleteNodeWithUndo, trac
 import { confColor, confColorContinuous, TYPE_LABEL, todayStr } from './shared.js'
 import { renderGraph } from './graph.js'
 import { isConflicted, trustMark, periodLabel } from './readings.js'
+import { renderChainSection, openSegmentDetail, openEvidenceDetail } from './chain.js'
 
 const m = window.meridian
 
@@ -22,179 +23,50 @@ const INDENT = 22
 const PAD = 20
 /** 导轨落在父行箭号的圆心上：内容起点 - 8（号宽 16 的一半） */
 const railX = (depth) => PAD + (depth - 1) * INDENT - 8
-const expandedTagLibraries = new Set()
 
-function renderTagLibraryBand(theme) {
-  if (!theme) return h('div')
-  const lib = Array.isArray(theme.tagLibrary) ? theme.tagLibrary : []
-  const total = lib.length
-  const unmatched = lib.filter((t) => !t.hits).length
-  const recentCutoff = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
-  const recentHits = lib.filter((t) => t.lastHitAt && t.lastHitAt >= recentCutoff).length
-  let expanded = expandedTagLibraries.has(theme.id)
-  let organizeMode = false
-
-  const body = h('div', {
-    class: 'sect-b tag-library-body', id: `tag-library-${theme.id}`,
-    role: 'region', 'aria-label': '标签库内容', tabindex: '0',
-  })
-  const toggleLabel = h('span')
-  const header = h('button', {
-    type: 'button', class: 'sect-h tag-library-toggle',
-    'aria-controls': body.id,
+/** 主题操作区：主题名 / 主题标签 / 删除主题（原嵌在标签库段内，标签库删除后独立成段）。 */
+function renderThemeOpsSection(theme) {
+  if (!theme) return null
+  const nameInput = h('input', { class: 'txt', value: theme.name, style: { flex: '1', minWidth: '120px' } })
+  const tagsInput = h('input', { class: 'txt', value: (theme.tags || []).join(', '), style: { flex: '1', minWidth: '120px' } })
+  const body = h('div', { class: 'sect-b', id: `theme-ops-${theme.id}`, role: 'region', 'aria-label': '主题设置', hidden: true })
+  let expanded = false
+  const toggle = h('button', {
+    type: 'button', class: 'sect-h', 'aria-controls': body.id, 'aria-expanded': 'false',
     onclick: () => {
       expanded = !expanded
-      if (expanded) expandedTagLibraries.add(theme.id)
-      else expandedTagLibraries.delete(theme.id)
-      render()
+      body.hidden = !expanded
+      toggle.setAttribute('aria-expanded', String(expanded))
     },
-  },
-    h('span', { class: 'tag-library-title' }, '标签库'),
-    h('em', {}, `${total} 个 · ${unmatched} 个未命中 · 近 7 天命中 ${recentHits}`),
-    h('span', { class: 'tag-library-action' }, toggleLabel, icon('chevron', 12)),
-  )
-  const band = h('div', { class: 'sect tag-library' }, header, body)
-
-  function render() {
-    header.setAttribute('aria-expanded', String(expanded))
-    toggleLabel.textContent = expanded ? '收起' : '展开'
-    body.hidden = !expanded
-    clear(body)
-    if (!expanded) return
-    if (!total) {
-      body.append(h('p', { style: { fontSize: 'var(--t-body)', color: 'var(--text-3)', padding: '6px 0' } }, '暂无标签库'))
-    } else if (organizeMode) {
-      renderOrganize(body)
-    } else {
-      renderList(body)
-    }
-    renderThemeOps(body)
-  }
-
-  function renderList(body) {
-    body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = true; render() } }, '整理'),
-    ))
-    for (const tag of lib) {
-      const row = h('div', { class: 'q', style: { cursor: 'pointer' },
-        onclick: () => renderTagDetail(body, tag),
-      },
-        h('span', { class: 'dot', style: { background: tag.hits ? 'var(--accent)' : 'var(--orange)', marginTop: '6px' } }),
-        h('div', { class: 'q-body' },
-          h('div', { class: 'q-text' }, tag.name),
-          h('div', { class: 'q-meta' },
-            h('span', {}, `${tag.synonyms?.length || 0} 个同义词`),
-            h('span', {}, `· 命中 ${tag.hits || 0} 次`),
-            h('span', {}, `· 匹配阈值 ${tag.threshold}`),
-          ),
-        ),
-        h('span', { style: { color: 'var(--text-3)', marginLeft: '4px' } }, '▸'),
-      )
-      body.append(row)
-    }
-  }
-
-  function renderTagDetail(body, tag) {
-    clear(body)
-    body.append(h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', marginBottom: '6px' }, onclick: () => render() }, '返回'))
-    const nameInput = h('input', { class: 'txt', value: tag.name, style: { width: '100%', marginBottom: '6px' } })
-    const synInput = h('input', { class: 'txt', value: (tag.synonyms || []).join(', '), style: { width: '100%', marginBottom: '6px' } })
-    const thrInput = h('input', { class: 'txt', type: 'number', value: tag.threshold, min: '0.4', max: '0.85', step: '0.05', style: { width: '80px', marginBottom: '6px' } })
-    body.append(
-      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '名称'),
+  }, h('span', {}, '主题设置'))
+  body.append(h('div', { class: 'q', style: { marginTop: '8px', flexDirection: 'column', alignItems: 'stretch', gap: '6px' } },
+    h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题名'),
+    h('div', { style: { display: 'flex', gap: '4px' } },
       nameInput,
-      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '同义词（逗号分隔）'),
-      synInput,
-      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '阈值'),
-      thrInput,
-      h('button', { class: 'btn btn-primary', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', marginTop: '4px' }, onclick: async () => {
-        await m.updateTagLibraryTag(theme.id, tag.id, {
-          name: nameInput.value.trim(),
-          synonyms: synInput.value.split(',').map((s) => s.trim()).filter(Boolean),
-          threshold: Number(thrInput.value) || 0.6,
-        })
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
+        const name = nameInput.value.trim()
+        if (!name) return
+        await m.renameTheme(theme.id, name)
         await refresh()
       } }, '保存'),
-    )
-  }
-
-  function renderOrganize(body) {
-    const checked = new Set()
-    body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = false; render() } }, '完成'),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => {
-        for (const t of lib) if (!t.hits) checked.add(t.id)
-        renderOrganizeBody(body, checked)
-      } }, '全选命中 0'),
-    ))
-    renderOrganizeBody(body, checked)
-  }
-
-  function renderOrganizeBody(body, checked) {
-    const listEl = h('div')
-    for (const tag of lib) {
-      const cb = h('input', { type: 'checkbox', checked: checked.has(tag.id),
-        onchange: (e) => { if (e.target.checked) checked.add(tag.id); else checked.delete(tag.id) },
-      })
-      listEl.append(h('div', { class: 'q', style: { cursor: 'default' } },
-        cb,
-        h('div', { class: 'q-body' },
-          h('div', { class: 'q-text' }, tag.name),
-          h('div', { class: 'q-meta' },
-            h('span', {}, `${tag.synonyms?.length || 0} 个同义词`),
-            h('span', {}, `· 命中 ${tag.hits || 0} 次`),
-            h('span', {}, `· 匹配阈值 ${tag.threshold}`),
-          ),
-        ),
-      ))
-    }
-    const deleteBtn = h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)', marginTop: '6px' }, onclick: async () => {
-      if (!checked.size) return
-      await m.deleteTagLibraryTags(theme.id, [...checked])
-      await refresh()
-    } }, `删除所选 ${checked.size}`)
-    clear(body)
-    body.append(h('div', { style: { display: 'flex', gap: '6px', marginBottom: '8px' } },
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => { organizeMode = false; render() } }, '完成'),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: () => {
-        for (const t of lib) if (!t.hits) checked.add(t.id)
-        renderOrganizeBody(body, checked)
-      } }, '全选命中 0'),
-    ), listEl, deleteBtn)
-  }
-
-  function renderThemeOps(body) {
-    const nameInput = h('input', { class: 'txt', value: theme.name, style: { flex: '1', minWidth: '120px' } })
-    const tagsInput = h('input', { class: 'txt', value: (theme.tags || []).join(', '), style: { flex: '1', minWidth: '120px' } })
-    body.append(h('div', { class: 'q', style: { marginTop: '8px', flexDirection: 'column', alignItems: 'stretch', gap: '6px' } },
-      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题名'),
-      h('div', { style: { display: 'flex', gap: '4px' } },
-        nameInput,
-        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
-          const name = nameInput.value.trim()
-          if (!name) return
-          await m.renameTheme(theme.id, name)
-          await refresh()
-        } }, '保存'),
-      ),
-      h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题标签（逗号分隔）'),
-      h('div', { style: { display: 'flex', gap: '4px' } },
-        tagsInput,
-        h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
-          await m.themeUpdate(theme.id, { tags: tagsInput.value.split(',').map((s) => s.trim()).filter(Boolean) })
-          await refresh()
-        } }, '保存'),
-      ),
-      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)' }, onclick: async () => {
-        await m.removeTheme(theme.id)
+    ),
+    h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '主题标签（逗号分隔）'),
+    h('div', { style: { display: 'flex', gap: '4px' } },
+      tagsInput,
+      h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: async () => {
+        await m.themeUpdate(theme.id, { tags: tagsInput.value.split(',').map((s) => s.trim()).filter(Boolean) })
         await refresh()
-        toast(`已删除主题「${theme.name}」`, 'var(--text-2)')
-      } }, '删除主题…'),
-    ))
-  }
-
-  render()
-  return band
+      } }, '保存'),
+    ),
+    h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)' }, onclick: async () => {
+      const ok = await confirmToast(`删除主题「${theme.name}」？\n\n将删除该主题下所有内容，此操作不可撤销。`, '删除主题')
+      if (!ok) return
+      await m.removeTheme(theme.id)
+      await refresh()
+      toast(`已删除主题「${theme.name}」`, 'var(--text-2)')
+    } }, '删除主题…'),
+  ))
+  return h('div', { class: 'sect' }, toggle, body)
 }
 
 /** 空白主题补生成骨架入口（E3） */
@@ -332,9 +204,14 @@ export function renderLattice(mid) {
     }, icon('plus', 14)),
   )
 
+  const chainSection = () => renderChainSection(theme, {
+    onOpen: (seg) => openSegmentDetail(theme, seg, { onEvidence: openEvidenceDetail }),
+  })
+  const themeOps = () => renderThemeOpsSection(theme)
+
   if (isGraph) {
     const wrap = h('div', { class: 'graph-wrap' })
-    for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), h('div', { class: 'graph-debug' }, wrap)]) if (el) mid.append(el)
+    for (const el of [head, renderSkeletonPrompt(theme), h('div', { class: 'graph-debug' }, wrap), chainSection(), themeOps()]) if (el) mid.append(el)
     try {
       renderGraph(wrap)
     } catch (e) {
@@ -348,7 +225,7 @@ export function renderLattice(mid) {
 
   const tree = h('div', { class: 'tree' })
   treeEl = tree
-  for (const el of [head, renderSkeletonPrompt(theme), renderTagLibraryBand(theme), h('div', { class: 'tree-wrap' }, tree)]) if (el) mid.append(el)
+  for (const el of [head, renderSkeletonPrompt(theme), h('div', { class: 'tree-wrap' }, tree), chainSection(), themeOps()]) if (el) mid.append(el)
   paint(tree)
   wireKeys(tree)
 }
