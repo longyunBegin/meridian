@@ -183,7 +183,16 @@ ok('已关闭段收到底部 strip', chainViewSrc.includes('chain-closed'))
 ok('抽屉可切换层级', chainViewSrc.includes('chain-role-select'))
 const vaultViewSrc = readFileSyncChain(join(ROOT, 'src/renderer/views/vault.js'), 'utf8')
 ok('墓碑复活不再抬 confidence（公理1）', !vaultViewSrc.includes('Math.max(25, n.confidence)'))
-ok('墓碑关闭日期优先用 closedAt', vaultViewSrc.includes('seg.closedAt || seg.updatedAt'))
+ok('墓碑元数据突出最后更新时间', vaultViewSrc.includes('更新于 ${String(seg.updatedAt)') && vaultViewSrc.includes('证据 ${evCount} 条'))
+ok('墓碑归档原因来自账本字段推导', vaultViewSrc.includes('function deadReason') &&
+  vaultViewSrc.includes("n.settlement?.correct === false") && vaultViewSrc.includes('已证伪') &&
+  vaultViewSrc.includes('低置信度') && vaultViewSrc.includes('已删除'))
+ok('墓碑命题不再用置信度色点表示归档状态', !/deadLemmaRow[\s\S]{0,800}confColor/.test(vaultViewSrc))
+ok('墓碑整棵复活改名恢复整条链', vaultViewSrc.includes('恢复整条链') && !vaultViewSrc.includes('整棵复活'))
+ok('墓碑命题有已证伪/低置信度筛选', vaultViewSrc.includes("['falsified', '已证伪']") && vaultViewSrc.includes("['lowconf', '低置信度']"))
+ok('连线箭头落在卡片外可见间隙', chainViewSrc.includes('f(yB + 4)') && chainViewSrc.includes('箭头必须落在卡片下方的可见间隙里'))
+ok('删命题后回到上一页', readFileSyncChain(join(ROOT, 'src/renderer/app.js'), 'utf8').includes('state.backTo') &&
+  vaultViewSrc.includes("backTo = { view: 'vault', auditKind: 'dead' }"))
 ok('链轨线只走 CSS（纯结构，不表方向）', chainViewSrc.includes('chain-rail'))
 ok('连线只画真实关系（drawChainEdges + computeChainEdges）',
   chainViewSrc.includes('drawChainEdges') && chainViewSrc.includes('computeChainEdges'))

@@ -1942,17 +1942,32 @@ body.tauri-macos .app {
 
 /* ------------- 墓碑区（链化） ------------- */
 /* 安静的行列表；已关闭只用灰色 pill，不做"死亡" heavy 的颜色。 */
-.tomb-theme { font-size: var(--t-caption); color: var(--text-3); letter-spacing: .1em; margin: 20px 0 4px; }
-.tomb-theme:first-of-type { margin-top: 8px; }
-.tomb-row { display: flex; gap: 16px; align-items: flex-start; padding: 16px 2px; border-bottom: 0.5px solid var(--hairline); }
+.sect-h-row { align-items: center; }
+.sect-h-row em { margin-left: 0; }
+.tomb-filters { margin-left: auto; display: flex; gap: 6px; }
+.tomb-filter {
+  font-size: var(--t-caption); color: var(--text-2);
+  background: transparent; border: 0.5px solid var(--hairline); border-radius: 999px;
+  padding: 3px 12px; cursor: pointer; white-space: nowrap;
+}
+.tomb-filter:hover { color: var(--text); border-color: var(--text-3); }
+.tomb-filter.is-on { color: var(--text); background: var(--bg-2); border-color: var(--text-3); font-weight: 600; }
+.tomb-row { display: flex; gap: 16px; align-items: flex-start; padding: 14px 2px; border-bottom: 0.5px solid var(--hairline); }
 .tomb-row:last-child { border-bottom: none; }
 .tomb-body { flex: 1; min-width: 0; }
 .tomb-title { display: flex; align-items: center; gap: 10px; font-size: var(--t-title); font-weight: 400; color: var(--text); }
-.tomb-pill-closed { font-size: var(--t-caption); color: var(--text-3); border: 0.5px solid var(--hairline); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+/* 归档原因 pill：中性底色 + 清晰文字；已证伪用红色文字提示 */
+.tomb-pill {
+  font-size: var(--t-caption); white-space: nowrap;
+  color: var(--text-2); background: var(--bg-2);
+  border: 0.5px solid var(--hairline); border-radius: 999px; padding: 2px 10px;
+}
+.tomb-pill-falsified { color: var(--red); }
 .tomb-core { margin-top: 6px; font-size: var(--t-body); color: var(--text-2); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tomb-meta { margin-top: 6px; font-size: var(--t-caption); color: var(--text-3); }
+/* 元数据行是有效信息，用 text-2 而不是 text-3，避免整页像被禁用 */
+.tomb-meta { margin-top: 6px; font-size: var(--t-caption); color: var(--text-2); }
 .tomb-cites { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tomb-cites-label { font-size: var(--t-caption); color: var(--text-3); }
+.tomb-cites-label { font-size: var(--t-caption); color: var(--text-2); }
 .tomb-cite { font-size: var(--t-caption); color: var(--text-2); background: var(--surface-solid); border: 0.5px solid var(--hairline); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
 .tomb-cite:hover { border-color: var(--text-3); color: var(--text); }
 .tomb-acts { display: flex; gap: 8px; align-items: center; padding-top: 2px; white-space: nowrap; }

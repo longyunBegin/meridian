@@ -11,6 +11,9 @@ const m = window.meridian
 export const state = {
   view: 'today',
   auditKind: 'cold',
+  /** 删除命题后要回到的页面（如从墓碑区跳进主题页检查器再删除，应回到墓碑区）。
+   *  vault 跳转时设置，deleteNodeWithUndo 消费一次；切主题时清空。 */
+  backTo: null,
   /** 正在铺骨架的主题 id。放 state 而不是闭包——addTheme 会触发 db:changed →
    *  refresh() 重画整个创建页，闭包里的变量被清零，骨架铺完就找不到该去哪个主题了。 */
   pendingScaffoldId: null,
@@ -352,8 +355,15 @@ export async function deleteNodeWithUndo(id) {
   const node = state.nodes.find((item) => item.id === id)
   if (!node) return
   await m.removeNode(id)
-  if (state.selectedId === id) state.selectedId = null
+  const wasSelected = state.selectedId === id
+  if (wasSelected) state.selectedId = null
   await refresh()
+  // 从墓碑区跳进来删命题：删完回到上一页（墓碑区），而不是留在主题页
+  if (wasSelected && state.backTo) {
+    const bt = state.backTo
+    state.backTo = null
+    setView(bt.view, bt.auditKind)
+  }
   toast(`已删除「${node.title}」及其子树`, 'var(--text-2)', {
     label: '撤销',
     onClick: async () => {
@@ -367,6 +377,7 @@ export async function deleteNodeWithUndo(id) {
 export function selectTheme(id) {
   state.themeId = id
   state.selectedId = null
+  state.backTo = null
   state.query = ''
   state.view = 'theme'
 
