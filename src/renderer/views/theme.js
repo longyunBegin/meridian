@@ -114,6 +114,7 @@ export function renderTheme(mid) {
   )
   const chainSection = () => renderChainSection(theme, {
     onOpen: (seg) => openSegmentDetail(theme, seg, { onEvidence: openEvidenceDetail }),
+    onEvidence: openEvidenceDetail,
   })
   // 主题头固定，下方内容区独立滚动；右栏检视面板本就独立滚动，不受影响
   const body = h('div', { class: 'theme-body' })
