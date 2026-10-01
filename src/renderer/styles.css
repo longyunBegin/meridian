@@ -1850,44 +1850,43 @@ body.tauri-macos .app {
 .chain-sect-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .chain-sect-title { font-size: var(--t-title); font-weight: 600; }
 .chain-sect-sub { font-size: var(--t-caption); color: var(--text-2); }
-/* 链：时间轴式 —— 一条轴线串起各段，轴上节点圆点颜色=段状态 */
-.chain-list { position: relative; display: grid; gap: 14px; padding-left: 30px; }
+/* 链：时间轴式 —— 高级简洁：一线、一圆点，条目无框靠留白呼吸 */
+.chain-list { position: relative; display: grid; gap: 30px; padding-left: 26px; }
 .chain-list::before {
-  content: ''; position: absolute; left: 8px; top: 18px; bottom: 18px; width: 2px;
-  background: linear-gradient(to bottom, transparent, var(--line) 10%, var(--line) 90%, transparent);
-  border-radius: 1px;
+  content: ''; position: absolute; left: 8px; top: 12px; bottom: 12px; width: 1px;
+  background: var(--hairline-soft);
 }
 .chain-card {
   position: relative;
-  text-align: left; background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r); padding: 12px 14px; cursor: pointer; width: 100%;
-  transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
+  text-align: left; background: transparent; border: none;
+  border-radius: var(--r-sm); padding: 6px 10px 6px 0; cursor: pointer; width: 100%;
+  transition: background .18s var(--ease);
 }
 .chain-card::before {
-  content: ''; position: absolute; left: -28px; top: 20px;
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--bg); border: 3px solid var(--text-3);
+  content: ''; position: absolute; left: -21px; top: 13px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-3);
 }
-.chain-card[data-status="confirmed"]::before { border-color: #1f9d4d; }
-.chain-card[data-status="pending"]::before { border-color: #e8930c; }
-.chain-card[data-status="forking"]::before { border-color: #8e44ad; }
-.chain-card[data-status="stale"]::before { border-color: var(--text-3); background: var(--fill); }
-.chain-card[data-status="closed"]::before { border-color: var(--text-3); background: var(--text-3); }
-.chain-card:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.08); border-color: var(--accent); }
-.chain-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.chain-card[data-status="confirmed"]::before { background: #1f9d4d; }
+.chain-card[data-status="pending"]::before { background: #e8930c; }
+.chain-card[data-status="forking"]::before { background: #8e44ad; }
+.chain-card[data-status="stale"]::before { background: var(--text-3); opacity: .55; }
+.chain-card[data-status="closed"]::before { background: var(--text-3); opacity: .3; }
+.chain-card:hover { background: var(--hover); }
+.chain-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
 .chain-seg-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.chain-seq { font-size: var(--t-caption); font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.chain-seq { font-size: var(--t-caption); font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
 .chain-seg-name { font-size: var(--t-title); font-weight: 600; }
 .chain-pill {
-  font-size: var(--t-caption); line-height: 1.6; padding: 1px 9px; border-radius: 999px; white-space: nowrap;
-  background: var(--fill); color: var(--text-2);
+  font-size: var(--t-caption); line-height: 1.6; white-space: nowrap;
+  background: none; padding: 0; color: var(--text-3); font-weight: 500;
 }
-.chain-pill.st-confirmed { background: rgba(52,199,89,.14); color: #1f9d4d; }
-.chain-pill.st-pending { background: rgba(255,159,10,.15); color: #b26a00; }
-.chain-pill.st-stale { background: var(--fill); color: var(--text-2); }
-.chain-pill.st-forking { background: rgba(175,82,222,.14); color: #8e44ad; }
-.chain-pill.st-closed { background: var(--fill); color: var(--text-3); }
-.chain-core { font-size: var(--t-body); color: var(--text-1); line-height: 1.5; margin-bottom: 8px; }
+.chain-pill.st-confirmed { color: #1f9d4d; }
+.chain-pill.st-pending { color: #b26a00; }
+.chain-pill.st-stale { color: var(--text-3); }
+.chain-pill.st-forking { color: #8e44ad; }
+.chain-pill.st-closed { color: var(--text-3); }
+.chain-core { font-size: var(--t-body); color: var(--text-1); line-height: 1.65; margin: 6px 0 8px; }
 .chain-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: var(--t-caption); color: var(--text-2); }
 .chain-src-ok { color: #1f9d4d; }
 .chain-affect { color: var(--accent); }
