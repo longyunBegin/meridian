@@ -1,5 +1,5 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
-import { state, refresh, settleAndPulse } from '../app.js'
+import { state, refresh, settleAndViewTheme } from '../app.js'
 import { confColor, nodePath, inferInboxThemeId, inboxRouteValid, splitInboxPicked } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
 import { renderProposalDraft } from './chain.js'
@@ -138,8 +138,8 @@ export async function renderToday(mid) {
             ),
           ),
           h('div', { class: 'q-acts' },
-            h('button', { class: 'btn btn-hit', onclick: async () => { await settleAndPulse(q.id, true); await renderToday(mid) } }, '对了'),
-            h('button', { class: 'btn btn-miss', onclick: async () => { await settleAndPulse(q.id, false); await renderToday(mid) } }, '错了'),
+            h('button', { class: 'btn btn-hit', onclick: async () => { await settleAndViewTheme(q.id, true); await renderToday(mid) } }, '对了'),
+            h('button', { class: 'btn btn-miss', onclick: async () => { await settleAndViewTheme(q.id, false); await renderToday(mid) } }, '错了'),
             h('button', {
               class: 'btn', title: '推迟两周',
               onclick: async () => {

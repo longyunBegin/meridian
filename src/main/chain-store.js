@@ -245,10 +245,8 @@ export function addChainSubsegment(themeId, segmentId, sub = {}) {
   const s = normSubsegment(sub)
   if (seg.subsegments.some((x) => x.id === s.id)) return seg.subsegments.find((x) => x.id === s.id)
   seg.subsegments.push(s)
-  if (seg.status !== 'forking') {
-    const openCount = seg.subsegments.filter((x) => x.status !== 'closed').length
-    if (openCount >= 2 || s.kind === 'conditional') seg.status = 'forking'
-  }
+  // 只有条件分叉才自动进入"待收敛"；结构分叉长期并存，不强行 forking
+  if (seg.status !== 'forking' && s.kind === 'conditional') seg.status = 'forking'
   seg.updatedAt = today()
   persistLedger()
   return s

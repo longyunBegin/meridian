@@ -2236,7 +2236,8 @@ console.log('\n— 标签库与语义归位 —')
 
 const domainCommandsSrcTL = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+// lattice.js 已删除（2026-10-01 树/图下线），主题页现为 theme.js
+const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/theme.js'), 'utf8')
 
 // --- T2: （已移除：标签库功能删除，对应测试一并删除） ---
 
@@ -2244,15 +2245,7 @@ const latticeSrcTL = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'),
 
 ok('T3: domain-commands.js 无 theme:fromTemplate', !domainCommandsSrcTL.includes('theme:fromTemplate'))
 
-// --- T4b: 树形 全部展开 / 一键合起 ---
-
-ok('T4b: lattice.js 有 expandAll', latticeSrcTL.includes('function expandAll'))
-ok('T4b: lattice.js 有 collapseAll', latticeSrcTL.includes('function collapseAll'))
-ok('T4b: expandAll 把有子节点的 id 加入 state.open', latticeSrcTL.includes('state.open.add(pid)'))
-ok('T4b: collapseAll 清空 state.open', latticeSrcTL.includes('state.open.clear()'))
-ok('T4b: 头部有 全部展开 按钮', latticeSrcTL.includes('全部展开'))
-ok('T4b: 头部有 全部收起 按钮', latticeSrcTL.includes('全部收起'))
-ok('T4b: 搜索时禁用展开/收起', latticeSrcTL.includes('搜索中已全部展开'))
+// --- T4b: （已移除：树形视图删除，expandAll/collapseAll 与 state.open 一并删除） ---
 
 // T4: 无禁用词
 ok('T4: lattice.js 无加权', !latticeSrcTL.includes('加权'))
@@ -2284,7 +2277,7 @@ console.log('\n— 主题入口与读数拆分 —')
 
 const appSrcER = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 const vaultSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-const latticeSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/lattice.js'), 'utf8')
+const themeSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/theme.js'), 'utf8')
 const inspectorSrcER = readFileSync2(join(ROOT2, 'src/renderer/views/inspector.js'), 'utf8')
 const domainCommandsSrcER = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const pjER = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf8')
@@ -2307,13 +2300,13 @@ ok('E2: 侧栏 + 开页面而非内联展开', appSrcER.includes("setView('new-t
 ok('E2: 生成期间按钮锁住，失败才解锁', appSrcER.includes('const unlock = ') && appSrcER.includes('state.scaffoldFailed'))
 ok('E2: 待铺骨架的 id 放 state', appSrcER.includes('state.pendingScaffoldId') && !appSrcER.includes('let createdThemeId'))
 // skeleton-desc 只在 app.js 的 renderThemeCreator 中定义（不复制到其他文件）
-ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !latticeSrcER.includes('skeleton-desc') && !vaultSrcER.includes('skeleton-desc') && !inspectorSrcER.includes('skeleton-desc'))
+ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !themeSrcER.includes('skeleton-desc') && !vaultSrcER.includes('skeleton-desc') && !inspectorSrcER.includes('skeleton-desc'))
 
 // --- E3: 空白主题补生成骨架 ---
 
-ok('E3: lattice.js 有 renderSkeletonPrompt', latticeSrcER.includes('function renderSkeletonPrompt'))
-ok('E3: lattice.js 有骨架提示', latticeSrcER.includes('还没有骨架'))
-ok('E3: lattice.js 有 scaffoldExisting 调用', latticeSrcER.includes('scaffoldExisting'))
+ok('E3: lattice.js 有 renderSkeletonPrompt', themeSrcER.includes('function renderSkeletonPrompt'))
+ok('E3: lattice.js 有骨架提示', themeSrcER.includes('还没有骨架'))
+ok('E3: lattice.js 有 scaffoldExisting 调用', themeSrcER.includes('scaffoldExisting'))
 ok('E3: domain-commands.js 有 scaffoldTheme 共用函数', domainCommandsSrcER.includes('async function scaffoldTheme'))
 ok('E3: domain-commands.js 有 theme:scaffoldExisting', domainCommandsSrcER.includes('theme:scaffoldExisting'))
 // 异步化后 setupNew / scaffoldExisting 都不再 await scaffoldTheme——
@@ -2381,8 +2374,8 @@ ok('R2: vault.js 无 addReading 调用', !vaultSrcER.includes('addReading'))
 
 // --- R3: 缺口只保留头部汇总，提议移到检视面板 ---
 
-ok('R3: lattice.js 无 renderGapList', !latticeSrcER.includes('function renderGapList'))
-ok('R3: lattice.js 有指标汇总', latticeSrcER.includes('个指标') && latticeSrcER.includes('个未接数据'))
+ok('R3: theme.js 无 renderGapList', !themeSrcER.includes('function renderGapList'))
+// R3 指标汇总已移除：树形视图删除后，主题页不再展示节点指标统计
 ok('R3 v0.8: 检视面板不再提议配置通道', !inspectorSrcER.includes('proposeLinks') && inspectorSrcER.includes('readingPanel'))
 ok('R3 v0.8: 未知读数有归位动作', readingUiSrcV8.includes('确认归位') && readingUiSrcV8.includes('m.assignReading('))
 ok('R3 v0.8: 归位失败不静默', readingUiSrcV8.includes('归位失败，请重试'))
@@ -2414,27 +2407,21 @@ ok('验收: domain-commands.js scaffoldTheme 无 indicatorId', !scaffoldThemeSrc
 // v0.7: S4 图交互 + S5 字阶
 // ============================================================
 
-console.log('\n— v0.7: 图交互与字阶 —')
+console.log('\n— v0.7: 字阶（图交互已随图删除） —')
 
-const graphSrcS45 = readFileSync2(join(ROOT2, 'src/renderer/views/graph.js'), 'utf8')
 const stylesSrcS45 = readFileSync2(join(ROOT2, 'src/renderer/styles.css'), 'utf8')
 const rendererJsS45 = [
   appSrcER,
-  latticeSrcER,
+  themeSrcER,
   inspectorSrcER,
   vaultSrcER,
   readFileSync2(join(ROOT2, 'src/renderer/views/settings.js'), 'utf8'),
   readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8'),
 ].join('\n')
 
-ok('S4: graph.js 无 CRUD 函数', !graphSrcS45.match(/addChildHere|toggleCold|removeNode/))
-ok('S4: graph.js 无原生 confirm', !graphSrcS45.includes('confirm('))
-ok('S4: graph.js 无浮动操作组', !graphSrcS45.includes('node-acts'))
-ok('S4: 图中隐藏重新生成', latticeSrcER.includes('isGraph ? null : (() => {'))
-ok('S4: 图中隐藏新建按钮', latticeSrcER.includes("isGraph ? null : h('button'"))
-ok('S4: 图中 Enter 切回树形', latticeSrcER.includes("state.shape === 'graph'"))
-ok('S4: 图中方向键遍历节点', latticeSrcER.includes("state.shape === 'graph' ? '.node' : '.row'"))
-ok('S4: 支持 Cmd/Ctrl+Backspace', latticeSrcER.includes("(e.metaKey || e.ctrlKey) && e.key === 'Backspace'"))
+// S4 图交互测试已移除：graph.js 删除（2026-10-01）
+ok('S4: 图文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/graph.js')))
+ok('S4: 树文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/lattice.js')))
 ok('S4: 树图共用软删函数', appSrcER.includes('export async function deleteNodeWithUndo'))
 ok('S4: 软删 toast 可撤销', appSrcER.includes('m.restoreNode(id)') && appSrcER.includes("label: '撤销'"))
 
@@ -2599,7 +2586,7 @@ ok('C1: 输入聚焦推送全链路清理', !/inbox:focus|onInboxFocus/.test(cle
 ok('C1: 侧栏按钮读取剪贴板且空态有提示', appSrcER.includes('m.readClipboard()') && appSrcER.includes('剪贴板是空的'))
 ok('C3: Windows 字体在 Mac 字体之后', stylesSrcS45.indexOf('Segoe UI') > stylesSrcS45.indexOf('Hiragino Sans GB') && stylesSrcS45.includes('Microsoft YaHei'))
 ok('C3: Tauri release targets include macOS updater app, DMG, and Windows NSIS', JSON.stringify(JSON.parse(readFileSync2(join(ROOT2, 'src-tauri/tauri.conf.json'), 'utf8')).bundle.targets) === JSON.stringify(['app', 'dmg', 'nsis']))
-ok('C4: 默认树并保存用户切换', appSrcER.includes("localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree'") && appSrcER.includes("localStorage.setItem('meridian.shape', shape)"))
+// C4 默认树/图切换已移除：树/图视图删除（2026-10-01），无 shape 状态
 ok('C5: 6/12/18 圆角档位', stylesSrcS45.includes('--r-sm: 6px') && stylesSrcS45.includes('--r: 12px') && stylesSrcS45.includes('--r-lg: 18px'))
 // 50% 是正圆不是档位，要排除；查的是「用了 1-99px 的档位外圆角」
 ok('C5: 普通圆角使用 token，非标准字重已移除', !/border-radius:\s*[1-9]\d*px(?!\s*;)/.test(stylesSrcS45.replace(/border-radius:\s*50%/g, '')) && !/font-weight:\s*(500|550|650)/.test(stylesSrcS45))

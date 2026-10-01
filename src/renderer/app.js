@@ -1,17 +1,15 @@
 import { h, icon, clear, $, toast } from './lib/dom.js'
 import { renderToday, inboxPaste } from './views/today.js'
-import { renderLattice } from './views/lattice.js'
+import { renderTheme } from './views/theme.js'
 import { renderAudit } from './views/audit.js'
 import { renderVault, renderReadings, renderSources } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
 import { renderInspectorLattice } from './views/inspector.js'
-import { refocusGraph, pulseFrom } from './views/graph.js'
 
 const m = window.meridian
 
 export const state = {
   view: 'today',
-  shape: localStorage.getItem('meridian.shape') === 'graph' ? 'graph' : 'tree',
   auditKind: 'cold',
   /** 正在铺骨架的主题 id。放 state 而不是闭包——addTheme 会触发 db:changed →
    *  refresh() 重画整个创建页，闭包里的变量被清零，骨架铺完就找不到该去哪个主题了。 */
@@ -30,7 +28,6 @@ export const state = {
   scaffoldFailed: false,
   themeId: null,
   selectedId: null,
-  open: new Set(),
   query: '',
   nodes: [],
   latestByNode: new Map(),
@@ -187,7 +184,7 @@ function settleScaffold(themeId, info) {
     state.scaffoldStageReasons = {}
     if (state.view === 'new-theme') {
       state.themeId = themeId
-      state.view = 'lattice'
+      state.view = 'theme'
       refresh()
       toast(info.skeletonFallback ? '已用通用模板建好骨架，配 key 后可重生成' : '骨架已生成')
     } else {
@@ -297,31 +294,22 @@ function applyUrlParams() {
   const view = p.get('view')
   if (!view) return
   const kind = p.get('audit')
-  const shape = p.get('shape')
-  if (shape === 'tree' || shape === 'graph') state.shape = shape
-  setView(view, kind)
+  // 旧 deep link ?view=lattice → theme（2026-10-01 树/图删除，视图改名）
+  setView(view === 'lattice' ? 'theme' : view, kind)
 
   // 复现「新建主题后侧栏不显示」：走与输入框回车相同的路径
   const newtheme = p.get('newtheme')
   if (newtheme) {
     m.addTheme(newtheme).then(async (theme) => {
       state.themeId = theme.id
-      state.view = 'lattice'
+      state.view = 'theme'
       await refresh()
     })
     return
   }
 
   const select = p.get('select')
-  if (select) {
-    // 选中前先展开它的全部祖先，否则树里看不到
-    let cur = state.nodes.find((n) => n.id === select)
-    while (cur?.parentId) {
-      state.open.add(cur.parentId)
-      cur = state.nodes.find((n) => n.id === cur.parentId)
-    }
-    selectNode(select)
-  }
+  if (select) selectNode(select)
 }
 
 let nodesRequest = 0
@@ -379,26 +367,15 @@ export async function deleteNodeWithUndo(id) {
 export function selectTheme(id) {
   state.themeId = id
   state.selectedId = null
-  state.open.clear()
   state.query = ''
-  state.view = 'lattice'
+  state.view = 'theme'
 
   refresh()
-}
-
-/** 树形 ↔ 图。只换形态，主题和选中项都留着。 */
-export function setShape(shape) {
-  localStorage.setItem('meridian.shape', shape)
-  if (state.shape === shape) return
-  state.shape = shape
-  render()
 }
 
 export function selectNode(id) {
   state.selectedId = id
   renderInspector()
-  // 图的因果聚焦跟着选中态走——选中只有一个来源，就是这里
-  if (state.shape === 'graph') refocusGraph(id)
   for (const el of document.querySelectorAll('.row')) {
     el.setAttribute('aria-selected', el.dataset.id === id ? 'true' : 'false')
   }
@@ -407,21 +384,21 @@ export function selectNode(id) {
 export function setView(v, auditKind) {
   state.view = v
   if (auditKind) state.auditKind = auditKind
-  if (v === 'lattice' && state.loadedTheme !== state.themeId) return refresh()
+  if (v === 'theme' && state.loadedTheme !== state.themeId) return refresh()
   render()
 }
 
 /**
- * 结算并脉冲：结算后切到脉络图视图，脉冲从结算节点击穿全部下游。
- * 「你这条 85% 黄了，顺着传导击穿 3 条下游」——本该是产品最壮观的时刻。
+ * 结算并回到主题：结算后切到该节点所在主题的认知链页。
+ * （2026-10-01 图删除，原来的脉冲动画随图一起下线。）
  */
-export async function settleAndPulse(id, correct) {
+export async function settleAndViewTheme(id, correct) {
   await m.settle(id, correct)
-  state.view = 'lattice'
-  state.shape = 'graph'
+  const node = state.nodes.find((n) => n.id === id)
+  if (node?.themeId) state.themeId = node.themeId
+  state.view = 'theme'
   state.selectedId = id
   await refresh()
-  setTimeout(() => pulseFrom(id), 100)
 }
 
 // ------------------------------------------------------------ 渲染
@@ -486,7 +463,7 @@ function renderThemes() {
       title: t.name,
       // 只有正停留在该主题的脉络页时才亮。曾经只看 themeId，
       // 于是切到读数/数据源后主题还高亮着——一个已经不在看的页面里的选中态。
-      'aria-selected': state.view === 'lattice' && state.themeId === t.id ? 'true' : 'false',
+      'aria-selected': state.view === 'theme' && state.themeId === t.id ? 'true' : 'false',
       onclick: () => selectTheme(t.id),
     }, h('span', { class: 'sw', style: { background: themeColor(t.id) } }), h('span', {}, t.name), count ? h('em', { class: 'count' }, String(count)) : null)
 
@@ -644,7 +621,7 @@ function renderOutcomeCard(outcome) {
       class: 'btn btn-primary',
       onclick: () => {
         state.themeId = outcome.themeId
-        state.view = 'lattice'
+        state.view = 'theme'
         state.scaffoldOutcome = null
         state.scaffoldStages = null
         refresh()
@@ -776,9 +753,9 @@ function renderMid() {
   clear(mid)
   if (state.view === 'today') renderToday(mid)
   else if (state.view === 'new-theme') mid.append(renderNewTheme())
-  else if (state.view === 'lattice') {
+  else if (state.view === 'theme') {
     if (!state.themeId) { mid.append(emptyState()); return }
-    renderLattice(mid)
+    renderTheme(mid)
   } else if (state.view === 'sources') {
     renderSources(mid)
   } else if (state.view === 'readings') {
@@ -817,7 +794,7 @@ function renderInspector() {
   clear(aside)
   // 打上本次渲染的节点 id：若复现"检查器与选中节点不一致"，可直接从 DOM 取证
   aside.dataset.nodeId = state.selectedId || ''
-  if (state.view === 'lattice' && state.themeId) renderInspectorLattice(aside)
+  if (state.view === 'theme' && state.themeId) renderInspectorLattice(aside)
   else aside.append(h('div', { class: 'insp-empty' }, h('span', {}, '')))
 }
 

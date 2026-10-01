@@ -71,7 +71,7 @@ export async function renderVault(mid, kind) {
                     await renderVault(mid, kind)
                   },
                 }, n.deletedAt ? '整棵复活' : (kind === 'cold' ? '移回主图谱' : '复活')),
-                h('button', { class: 'btn', onclick: () => { selectNode(n.id); setView('lattice') } }, '查看'),
+                h('button', { class: 'btn', onclick: () => { selectNode(n.id); setView('theme') } }, '查看'),
               ),
             )),
           ),
