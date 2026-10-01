@@ -12,7 +12,7 @@
     "tauri:prepare": "node tools/prepare-tauri-runtime.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run tauri:prepare && tauri build",
-    "test": "node test/command-registry.test.mjs && node test/engine.test.mjs && node test/commands.test.mjs && node test/inbox-theme.test.mjs && node test/redesign.test.mjs && node test/sync.test.mjs && node test/vm-oplog.test.mjs && node test/briefing.test.mjs && node test/tauri-bridge.test.mjs && node test/tauri-runtime.test.mjs && node test/tauri-config.test.mjs && node test/updater.test.mjs && node test/tauri-backend.test.mjs && node service/test/service.test.mjs && node service/test/sync-bridge.test.mjs",
+    "test": "node test/command-registry.test.mjs && node test/engine.test.mjs && node test/commands.test.mjs && node test/inbox-theme.test.mjs && node test/redesign.test.mjs && node test/chain-events.test.mjs && node test/sync.test.mjs && node test/vm-oplog.test.mjs && node test/briefing.test.mjs && node test/tauri-bridge.test.mjs && node test/tauri-runtime.test.mjs && node test/tauri-config.test.mjs && node test/updater.test.mjs && node test/tauri-backend.test.mjs && node service/test/service.test.mjs && node service/test/sync-bridge.test.mjs",
     "dist": "npm run tauri:build"
   },
   "dependencies": {
