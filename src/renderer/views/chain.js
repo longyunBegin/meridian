@@ -27,9 +27,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
  *
  * 走线统一为正交折线，所有边形状一致：
  *   源卡底边出（起点圆点）→ 下 12px 进层底留白 → 水平进入居中链轨
- *   → 沿链轨到目标卡底边留白 → 水平到目标卡中线 → 向上进目标卡（箭头）
- * SVG 在卡片下层，被卡片遮挡的线段天然不可见，不会穿过卡片；
- * 水平段只走层底留白，不穿过层标题。SVG 用像素坐标（viewBox = 容器像素尺寸）。
+ *   → 沿链轨到目标卡下方 14px → 水平到目标卡中线 → 向上到卡底 4px 处收箭头
+ * 箭头落在卡片之外的可见间隙里，方向可读；SVG 在卡片下层，被卡片遮挡的
+ * 线段天然不可见，不会穿过卡片；水平段只走层底留白，不穿过层标题。
+ * SVG 用像素坐标（viewBox = 容器像素尺寸）。
  */
 function drawChainEdges(layersEl, segments) {
   const svg = layersEl.querySelector('.chain-edges')
@@ -84,10 +85,12 @@ function drawChainEdges(layersEl, segments) {
     dot.setAttribute('class', 'chain-edge-dot')
     svg.appendChild(dot)
     const p = document.createElementNS(SVG_NS, 'path')
+    // 箭头必须落在卡片下方的可见间隙里（指向上方目标卡），不能伸进卡片背后——
+    // 否则方向不可读，连线看起来像无方向的分隔线。
     p.setAttribute('d',
       `M ${f(ax)} ${f(yA + 7)} L ${f(ax)} ${f(yA + 12)} ` +
-      `L ${f(cx)} ${f(yA + 12)} L ${f(cx)} ${f(yB + 12)} ` +
-      `L ${f(bx)} ${f(yB + 12)} L ${f(bx)} ${f(yB + 5)}`)
+      `L ${f(cx)} ${f(yA + 12)} L ${f(cx)} ${f(yB + 14)} ` +
+      `L ${f(bx)} ${f(yB + 14)} L ${f(bx)} ${f(yB + 4)}`)
     // 方向即语义：merged（合并而来）实线，affects（影响）虚线，箭头一律指向目标段
     p.setAttribute('class', 'chain-edge' + (e.kind === 'affects' ? ' is-affects' : ''))
     p.setAttribute('marker-end', 'url(#chainArrow)')

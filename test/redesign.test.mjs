@@ -1612,6 +1612,17 @@ ok('验收: bridge.js 无 feedImport', !bridgeSrc.includes('feedImport'))
 import { existsSync as existsSync2 } from 'node:fs'
 ok('验收: feeds.js 已删除', !existsSync2(join(ROOT2, 'src/renderer/views/feeds.js')))
 
+// --- 误杀审计页重构 2026-10-01：口径诚实化 + 首屏层级 ---
+const auditViewSrc = readFileSync2(join(ROOT2, 'src/renderer/views/audit.js'), 'utf8')
+const auditCssSrc = readFileSync2(join(ROOT2, 'src/renderer/styles.css'), 'utf8')
+const appSrc = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
+ok('验收: 审计页用"已确认误杀/待复核"替代模糊口径', auditViewSrc.includes('已确认误杀') && auditViewSrc.includes('待复核'))
+ok('验收: 审计页注明误杀率计算口径', auditViewSrc.includes('误杀率 = 已确认误杀 ÷ 筛掉总数'))
+ok('验收: 审计页不再把未回填说成"后来证明有用"', !auditViewSrc.includes('条后来证明有用'))
+ok('验收: 审计页闸门按已确认误杀数排序', auditViewSrc.includes('a.byGate[y].missed - a.byGate[x].missed'))
+ok('验收: 审计页样式收进单一标记块', auditCssSrc.includes('误杀审计页重构 2026-10-01'))
+ok('验收: 侧栏导航加分组小标题', appSrc.includes('fk-navgroup'))
+
 // ============================================================
 console.log('\n— R7: 指标来源面板 —')
 // ============================================================
