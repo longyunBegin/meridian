@@ -113,8 +113,8 @@ export function renderTheme(mid) {
     h('h1', {}, theme ? theme.name : ''),
   )
   const chainSection = () => renderChainSection(theme, {
-    onOpen: (node) => openNodeDetail(theme, node, { onEvidence: openEvidenceDetail }),
     onEvidence: openEvidenceDetail,
+    onOpen: (node, callbacks = {}) => openNodeDetail(theme, node, { ...callbacks, onEvidence: openEvidenceDetail }),
   })
   // 主题头固定，下方内容区独立滚动；右栏检视面板本就独立滚动，不受影响
   const body = h('div', { class: 'theme-body' })

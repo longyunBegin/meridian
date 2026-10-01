@@ -323,5 +323,25 @@ const updMissing = await fireAsync('db:updateNode', 'no-such-node', { title: 'x'
 ok('不存在的节点返回 null', updMissing === null)
 ok('空更新不发 db:changed', !dbEvents.some((e) => e.name === 'db:changed'))
 
+console.log('\n— chain:restoreNode 与旧版墓碑树一致性 —')
+const archiveTheme = store.addTheme('墓碑恢复集成测试')
+const deadRoot = store.addNode({ themeId: archiveTheme.id, kind: 'branch', title: '归档根命题', confidence: 60, status: 'dead' })
+deadRoot.deletedAt = '2026-09-01'
+const deadChild = store.addNode({ themeId: archiveTheme.id, parentId: deadRoot.id, kind: 'lemma', title: '归档子命题', confidence: 55, status: 'dead' })
+deadChild.deletedAt = '2026-09-01'
+store.persistLedgerNow()
+await fireAsync('chain:getProjection', archiveTheme.id) // 显式打开主题图时才迁移旧格式
+const beforeArchives = await fireAsync('chain:getArchive', archiveTheme.id)
+const rootRef = `branch:${deadRoot.id}`
+const childRef = `lemma:${deadChild.id}`
+ok('旧墓碑节点已迁移为可追溯归档', beforeArchives.nodes.some((n) => n.sourceRef === rootRef) && beforeArchives.nodes.some((n) => n.sourceRef === childRef))
+const restoration = await fireAsync('chain:restoreNode', archiveTheme.id, rootRef, '集成测试恢复')
+const afterArchives = await fireAsync('chain:getArchive', archiveTheme.id)
+const archiveHistory = (await fireAsync('chain:getEvents', archiveTheme.id)).events
+ok('恢复命令恢复旧版根与墓碑后代', restoration.ok && store.getNode(deadRoot.id).status !== 'dead' && store.getNode(deadChild.id).status !== 'dead')
+ok('根与子节点分别追加恢复事件', restoration.events.length === 2 && archiveHistory.filter((e) => e.type === 'node.restored').length === 2)
+ok('恢复不删除历史归档事件', archiveHistory.filter((e) => e.type === 'node.archived').length === 2)
+ok('恢复后墓碑视图只保留未恢复节点', !afterArchives.nodes.some((n) => [rootRef, childRef].includes(n.sourceRef)))
+
 console.log(`\n${pass} 通过, ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

@@ -1844,10 +1844,16 @@ body.tauri-macos .app {
 .cog-ledger-title { font-size: var(--t-head); font-weight: 700; }
 .cog-ledger-badge { margin-left: auto; font-size: var(--t-caption); letter-spacing: .08em; color: #059669; background: #ecfdf5; border-radius: 999px; padding: 3px 10px; font-weight: 700; }
 .cog-ledger-sub { font-size: var(--t-caption); color: var(--text-2); margin: 8px 0 0; }
+.cog-integrity-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.cog-integrity { flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 10px; font-size: var(--t-caption); line-height: 1.45; }
+.cog-integrity.is-ok { color: #166534; background: #f0fdf4; border-color: #86efac; }
+.cog-integrity.is-error { color: #991b1b; background: #fef2f2; border-color: #fca5a5; }
+.cog-verify-btn { flex: none; }
 .cog-ledger-colhead { font-size: var(--t-caption); color: var(--text-3); margin: 12px 0 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
 .cog-ledger-list { display: flex; flex-direction: column; gap: 10px; }
 .cog-ev { background: var(--bg-0, #fff); border: 1px solid var(--hairline); border-radius: 10px; padding: 10px 12px; }
 .cog-ev.is-correction { border-color: #fdba74; background: #fffbeb; }
+.cog-ev.is-invalid { border-color: #fca5a5; background: #fff7f7; }
 .cog-ev-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cog-ev-dot { width: 8px; height: 8px; border-radius: 50%; background: #059669; flex: none; }
 .cog-ev-dot.orange { background: #ea580c; }
@@ -1860,7 +1866,8 @@ body.tauri-macos .app {
 .cog-ev-hashes { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--hairline); display: flex; flex-direction: column; gap: 4px; }
 .cog-ev-hashrow { display: flex; gap: 10px; font-size: var(--t-caption); }
 .cog-ev-hk { color: var(--text-3); flex: none; width: 88px; }
-.cog-ev-hv { color: var(--text-2); font-family: ui-monospace, monospace; }
+.cog-ev-hv { color: var(--text-2); font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.cog-ev-invalid-raw { margin: 6px 0 0; max-height: 100px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #7f1d1d; font: 11px/1.45 ui-monospace, monospace; }
 .cog-ledger-foot { margin-top: 12px; font-size: var(--t-caption); color: var(--text-2); background: var(--bg-2); border-radius: 10px; padding: 10px 12px; line-height: 1.6; }
 /* 图谱 */
 .cog-svg { width: 100%; height: auto; display: block; background: var(--bg-1); border: 1px solid var(--hairline); border-radius: 12px; }
@@ -1868,6 +1875,8 @@ body.tauri-macos .app {
 .cog-node.is-theme { cursor: default; }
 .cog-node rect { transition: stroke-width .15s; }
 .cog-node:hover rect { stroke-width: 2.5; }
+.cog-node:focus-visible { outline: none; }
+.cog-node:focus-visible rect { stroke: #0a84ff; stroke-width: 3; }
 .cog-node-title { font-size: var(--t-body); fill: var(--text-1); font-weight: 600; }
 .cog-node-sub { font-size: var(--t-caption); fill: var(--text-3); }
 .cog-edge { fill: none; stroke-width: 1.6; }
@@ -2030,6 +2039,21 @@ body.tauri-macos .app {
 .tomb-cite { font-size: var(--t-caption); color: var(--text-2); background: var(--surface-solid); border: 0.5px solid var(--hairline); border-radius: 999px; padding: 3px 12px; cursor: pointer; }
 .tomb-cite:hover { border-color: var(--text-3); color: var(--text); }
 .tomb-acts { display: flex; gap: 8px; align-items: center; padding-top: 2px; white-space: nowrap; }
+.event-archive-section { border-top: 1px solid var(--hairline); }
+.event-archive-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 0; }
+.event-archive-search { width: min(320px, 100%); min-height: 32px; }
+.event-archive-details { margin-top: 8px; font-size: var(--t-caption); color: var(--text-2); }
+.event-archive-details summary { width: fit-content; cursor: pointer; color: var(--accent); }
+.event-archive-details p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.event-archive-row .tomb-acts { align-self: center; }
+.chain-archive-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.chain-archive-actions .txt { width: 100%; }
+@media (max-width: 720px) {
+  .cog-integrity-row { align-items: stretch; flex-direction: column; }
+  .event-archive-row { flex-direction: column; }
+  .event-archive-row .tomb-acts { width: 100%; justify-content: flex-end; }
+  .event-archive-controls { align-items: flex-start; flex-direction: column; }
+}
 
 /* 提案草稿 */
 /* ------------- 确认归位 · 认知链挂载（高级表单） ------------- */

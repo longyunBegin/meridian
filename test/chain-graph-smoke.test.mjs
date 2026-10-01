@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(ROOT, 'src/renderer/views/chain.js'), 'utf8')
+const vaultSrc = readFileSync(join(ROOT, 'src/renderer/views/vault.js'), 'utf8')
+const cssSrc = readFileSync(join(ROOT, 'src/renderer/styles.css'), 'utf8')
 
 let pass = 0
 let fail = 0
@@ -103,6 +105,15 @@ for (const e of edges) {
   if (!/^M [\d.-]+ [\d.-]+ Q/.test(dd)) badEdge++
 }
 ok('全部边路径合法', badEdge === 0)
+
+console.log('\n— UI 完整性、provenance 与可访问性 —')
+ok('校验状态和手动复核入口', src.includes('m.chainVerify(theme.id)') && src.includes('role: integrity?.ok ? \'status\' : \'alert\''))
+ok('明确不提供绝对不可篡改保证', src.includes('本地可控攻击者仍可重写整链') && src.includes('未提供签名或远端锚定'))
+ok('图节点可键盘打开且声明来源', src.includes("ev.key !== 'Enter'") && src.includes('data-provenance') && src.includes('provenanceEventIds'))
+ok('恢复是新事件而非旧记录删除', src.includes('node.restored') && src.includes('追加恢复事件'))
+ok('墓碑区有归档原因、证据数和日期', vaultSrc.includes('归档原因：') && vaultSrc.includes('证据 ${node.evidenceCount') && vaultSrc.includes('归档于 ${date}'))
+ok('墓碑区具备筛选、详情与恢复入口', vaultSrc.includes("type: 'search'") && vaultSrc.includes('来源与历史事件') && vaultSrc.includes('m.chainRestoreNode'))
+ok('校验、键盘焦点和墓碑布局有可见样式', cssSrc.includes('.cog-integrity.is-error') && cssSrc.includes('.cog-node:focus-visible rect') && cssSrc.includes('.event-archive-section'))
 // 重叠检查（按各自尺寸）
 let overlap = 0
 const pts = nodes.map((n) => ({ ...pos.get(n.id), sz: size.get(n.id) }))

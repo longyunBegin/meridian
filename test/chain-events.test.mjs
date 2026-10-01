@@ -108,6 +108,26 @@ console.log('\n— 篡改检测 —')
   store.persistLedger()
   const v = ev.verifyChain(theme.id)
   ok('篡改被检出', !v.ok && v.index === 5, v.reason || '')
+  ok('损坏记录仍可读用于恢复', ev.getEvents(theme.id)[5].payload.reason === '被篡改')
+  let appendBlocked = false
+  try { ev.appendEvent(theme.id, { type: 'evidence.appended', payload: { text: '不得接在损坏后缀上' } }) } catch { appendBlocked = true }
+  ok('损坏账本拒绝继续追加', appendBlocked)
+}
+
+console.log('\n— 非法记录恢复边界 —')
+{
+  const damagedTheme = store.addTheme('含非法行的账本')
+  ev.appendEvent(damagedTheme.id, { id: 'valid-prefix', type: 'evidence.appended', payload: { text: '有效前缀' } })
+  const row = store.load().themes.find((x) => x.id === damagedTheme.id)
+  row.eventChain.events.push(null)
+  store.persistLedgerNow()
+  const readBack = ev.getEvents(damagedTheme.id)
+  const integrity = ev.verifyChain(damagedTheme.id)
+  ok('非法尾行不被静默过滤', readBack.length === 2 && readBack[1] === null)
+  ok('校验报告给出最后有效前缀', !integrity.ok && integrity.index === 1 && integrity.lastValidSeq === 1)
+  let blocked = false
+  try { ev.appendEvent(damagedTheme.id, { type: 'evidence.appended', payload: { text: 'blocked' } }) } catch { blocked = true }
+  ok('非法尾行存在时拒绝追加', blocked)
 }
 
 console.log('\n— 追加校验 —')

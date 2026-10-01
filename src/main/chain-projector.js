@@ -13,7 +13,9 @@
  * 端点解析：{eventId} → 对应节点；{ref} → 已有节点或外部证据节点；
  * {name} → 按标题找主张节点，找不到则为外部节点。
  */
-import { getEvents, appendEvent, migrateThemeToEvents } from './chain-events.js'
+import { getEvents, appendEvent, appendEvents as appendEventBatch, migrateThemeToEvents, verifyChain } from './chain-events.js'
+import { digest } from './reading-store.js'
+import { randomUUID } from 'node:crypto'
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 
@@ -80,6 +82,7 @@ export function projectEvents(events) {
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
       eventIds: [e.id],
+      provenanceEventIds: [e.id],
       external: false,
     })
     nodeOfEvent.set(e.id, node.id)
@@ -103,6 +106,7 @@ export function projectEvents(events) {
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
       eventIds: [e.id],
+      provenanceEventIds: [e.id],
       external: false,
     })
     nodeOfEvent.set(e.id, node.id)
@@ -126,24 +130,30 @@ export function projectEvents(events) {
   }
 
   // 外部证据节点（relation 端点引用了账本外对象时）
-  const externalNode = (key, title) => addNode({
-    id: key,
-    kind: 'evidence',
-    title: shortTitle(title || key),
-    status: 'pending',
-    confidence: null,
-    correct: null,
-    resolved: null,
-    archived: false,
-    superseded: false,
-    currentText: '',
-    sourceKind: 'external',
-    sourceRef: key,
-    eventIds: [],
-    external: true,
-  })
+  const externalNode = (key, title, eventId) => {
+    const node = addNode({
+      id: key,
+      kind: 'evidence',
+      title: shortTitle(title || key),
+      status: 'pending',
+      confidence: null,
+      correct: null,
+      resolved: null,
+      archived: false,
+      superseded: false,
+      currentText: '',
+      sourceKind: 'external',
+      sourceRef: key,
+      eventIds: [],
+      provenanceEventIds: [],
+      external: true,
+    })
+    if (eventId && !node.provenanceEventIds.includes(eventId)) node.provenanceEventIds.push(eventId)
+    if (eventId && !node.eventIds.includes(eventId)) node.eventIds.push(eventId)
+    return node
+  }
 
-  const resolveEndpoint = (ep) => {
+  const resolveEndpoint = (ep, eventId) => {
     if (!isObj(ep)) return null
     if (ep.eventId && nodeOfEvent.has(ep.eventId)) return nodeOfEvent.get(ep.eventId)
     if (isObj(ep.ref)) {
@@ -152,13 +162,13 @@ export function projectEvents(events) {
         const nid = `evt:node:${ref.id}`
         if (nodes.has(nid)) return nid
       }
-      return externalNode(`ext:ref:${ref.type || 'unknown'}:${ref.id || 'noid'}`, ref.title).id
+      return externalNode(`ext:ref:${ref.type || 'unknown'}:${ref.id || 'noid'}`, ref.title, eventId).id
     }
     if (ep.name) {
       for (const n of nodes.values()) {
         if ((n.kind === 'claim' || n.kind === 'inference') && !n.external && n.title === ep.name) return n.id
       }
-      return externalNode(`ext:name:${ep.name}`, ep.name).id
+      return externalNode(`ext:name:${ep.name}`, ep.name, eventId).id
     }
     return null
   }
@@ -169,8 +179,8 @@ export function projectEvents(events) {
     if (e.type !== 'relation.declared') continue
     const p = e.payload || {}
     if (!['supports', 'derives', 'contradicts'].includes(p.rel)) continue
-    const from = resolveEndpoint(p.from)
-    const to = resolveEndpoint(p.to)
+    const from = resolveEndpoint(p.from, e.id)
+    const to = resolveEndpoint(p.to, e.id)
     if (!from || !to || from === to) continue
     edges.push({
       id: e.id,
@@ -179,22 +189,47 @@ export function projectEvents(events) {
       to,
       pendingReview: p.reviewStatus === 'pending-review',
       mapping: p.mapping || '',
+      eventId: e.id,
+      provenanceEventIds: [e.id],
+      sourceRef: p.sourceRef || `event:${e.id}`,
     })
   }
 
-  // 结算 / 归档：按 sourceRef 找到对应的主张节点
+  for (const node of nodes.values()) {
+    const evidenceIds = edges.filter((edge) => edge.rel === 'supports'
+      && (edge.from === node.id || edge.to === node.id))
+      .map((edge) => edge.from === node.id ? edge.to : edge.from)
+      .filter((id) => nodes.get(id)?.kind === 'evidence')
+    node.evidenceCount = new Set(evidenceIds).size
+  }
+
+  // 结算 / 归档 / 恢复：按 sourceRef 找到节点，状态只由追加事件顺序决定。
   for (const e of events) {
-    if (e.type !== 'settlement.recorded' && e.type !== 'node.archived') continue
+    if (!['settlement.recorded', 'node.archived', 'node.restored'].includes(e.type)) continue
     const p = e.payload || {}
     if (!p.sourceRef) continue
-    const node = [...nodes.values()].find((n) => !n.external && n.sourceRef === p.sourceRef)
-    if (!node) continue
-    if (e.type === 'settlement.recorded') {
-      node.correct = p.correct ?? null
-      node.resolved = p.resolved ?? null
-      node.settledAt = p.date || null
-    } else if (e.type === 'node.archived') {
-      node.archived = true
+    const matched = [...nodes.values()].filter((n) => !n.external && n.sourceRef === p.sourceRef)
+    for (const node of matched) {
+      node.provenanceEventIds ||= [...node.eventIds]
+      if (!node.provenanceEventIds.includes(e.id)) node.provenanceEventIds.push(e.id)
+      if (!node.eventIds.includes(e.id)) node.eventIds.push(e.id)
+      if (e.type === 'settlement.recorded') {
+        node.correct = p.correct ?? null
+        node.resolved = p.resolved ?? null
+        node.settledAt = p.date || null
+        node.settlementEventId = e.id
+      } else if (e.type === 'node.archived') {
+        node.archived = true
+        node.archiveReason = p.reason || ''
+        node.archivedAt = p.archivedAt || e.at || null
+        node.archiveEventIds ||= []
+        node.archiveEventIds.push(e.id)
+      } else {
+        node.archived = false
+        node.restoredAt = e.at || null
+        node.restoreEventIds ||= []
+        node.restoreEventIds.push(e.id)
+      }
     }
   }
 
@@ -223,15 +258,21 @@ export function chainScope(projection) {
 /** 主题投影（含懒迁移：无事件但有旧数据时先迁移再投影；幂等、可重入）。 */
 export function getChainProjection(themeId, { migrateIfEmpty = true } = {}) {
   let events = getEvents(themeId)
-  if (migrateIfEmpty && events.length === 0) {
+  let integrity = verifyChain(themeId)
+  if (migrateIfEmpty && integrity.ok && events.length === 0) {
     const { created } = migrateThemeToEvents(themeId)
-    if (created > 0) events = getEvents(themeId)
+    if (created > 0) {
+      events = getEvents(themeId)
+      integrity = verifyChain(themeId)
+    }
   }
-  const projection = projectEvents(events)
+  const safeEvents = integrity.ok ? events : events.slice(0, integrity.lastValidSeq || 0)
+  const projection = projectEvents(safeEvents)
   const scope = chainScope(projection)
   return {
     themeId,
     eventCount: events.length,
+    integrity,
     nodes: scope.nodes,
     edges: scope.edges,
     floatingCount: scope.floating.length,
@@ -239,13 +280,74 @@ export function getChainProjection(themeId, { migrateIfEmpty = true } = {}) {
   }
 }
 
+/** Archive browsing is deliberately read-only and does not trigger legacy migration. */
+export function getArchivedProjectionNodes(themeId) {
+  const events = getEvents(themeId)
+  const integrity = verifyChain(themeId)
+  const safeEvents = integrity.ok ? events : events.slice(0, integrity.lastValidSeq || 0)
+  const projection = projectEvents(safeEvents)
+  return {
+    themeId,
+    integrity,
+    nodes: projection.nodes.filter((n) => n.archived),
+    edges: projection.edges,
+  }
+}
+
+/** Restore is a new event; the archived event remains in the verified history. */
+export function restoreProjectedNode(themeId, sourceRef, reason = '') {
+  return restoreProjectedNodes(themeId, [sourceRef], reason)[0]
+}
+
+/** Restore a node and any archived descendants in one atomic append batch. */
+export function restoreProjectedNodes(themeId, sourceRefs = [], reason = '') {
+  const requested = [...new Set((sourceRefs || []).filter((ref) => typeof ref === 'string' && ref))]
+  if (!requested.length) throw new Error('sourceRef 无效')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const nodes = projectEvents(getEvents(themeId)).nodes
+  const targets = requested.map((sourceRef) => nodes.find((n) => !n.external && n.sourceRef === sourceRef && n.archived)).filter(Boolean)
+  if (!targets.length || !targets.some((n) => n.sourceRef === requested[0])) throw new Error('该节点当前未归档')
+  return appendEventBatch(themeId, targets.map((node) => ({
+    actor: 'user',
+    type: 'node.restored',
+    payload: {
+      sourceRef: node.sourceRef,
+      reason: String(reason || '').trim(),
+      restoredArchiveEventId: [...(node.archiveEventIds || [])].at(-1) || null,
+      title: node.title,
+    },
+  })))
+}
+
+/** Archive changes only the current projection; no source claim or confidence is rewritten. */
+export function archiveProjectedNode(themeId, sourceRef, reason = '') {
+  if (!sourceRef || typeof sourceRef !== 'string') throw new Error('sourceRef 无效')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const node = projectEvents(getEvents(themeId)).nodes.find((n) => !n.external && n.sourceRef === sourceRef)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived) throw new Error('该节点已归档')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.archived',
+    payload: {
+      sourceRef,
+      title: node.title,
+      reason: String(reason || '').trim(),
+      evidenceCount: node.evidenceCount || 0,
+      archivedAt: new Date().toISOString(),
+    },
+  })
+}
+
 /**
  * 收件箱提案草稿 → 事件账本（P2：挂载流跟上新模型）。
  *
  * 旧 mountToChain 写 theme.chain.segments；新挂载只追加事件：
- * - 名字命中已有主张 → evidence.appended + relation.declared(supports)，
+ * - 名字命中已有主张 → 有明确证据文本/来源引用时追加 evidence.appended + relation.declared(supports)，
  *   若 newValue 与当前值不同再追 correction.appended
- * - 名字是新的 → claim.created + evidence.appended + supports
+ * - 名字是新的 → claim.created；有明确证据文本/来源引用时再追加证据与 supports
  * 不创建 ledger node，不碰 lemma/confidence（公理1）。
  */
 export function mountDraftToEvents(themeId, payload = {}) {
@@ -254,75 +356,85 @@ export function mountDraftToEvents(themeId, payload = {}) {
   const unique = [...new Set(names)]
   if (!unique.length) throw new Error('请选择或输入要挂载的主张')
 
-  const evidenceRefs = [
+  const evidenceRefsRaw = [
     ...(payload.inboxId ? [{ type: 'inbox', id: payload.inboxId, title: payload.inboxTitle || '' }] : []),
     ...(Array.isArray(payload.evidenceRefs) ? payload.evidenceRefs : []),
   ]
+  const evidenceRefs = [...new Map(evidenceRefsRaw
+    .filter((r) => isObj(r) && r.type && r.id)
+    .map((r) => [`${r.type}:${r.id}`, r])).values()]
   const newValue = String(payload.newValue ?? '').trim()
-  const evidenceText = String(payload.evidence || newValue || '').trim()
+  const evidenceText = String(payload.evidence || '').trim()
+  const hasEvidence = !!evidenceText || evidenceRefs.length > 0
 
-  let count = 0
+  const priorEvents = getEvents(themeId)
+  const drafts = []
   const touched = []
+  const eventId = (kind, semantic) => `evt:mount:${digest({ themeId, inboxId: payload.inboxId || null, kind, semantic }).slice(0, 32)}`
   for (const name of unique) {
     // 按标题找现存主张（未归档、非外部）
-    const proj = projectEvents(getEvents(themeId))
+    const proj = projectEvents([...priorEvents, ...drafts])
     let node = proj.nodes.find(
       (n) => (n.kind === 'claim' || n.kind === 'inference') && !n.archived && !n.external && n.title === name)
     let claimId
     if (!node) {
-      const created = appendEvent(themeId, {
-        actor: 'user', type: 'claim.created',
+      claimId = payload.inboxId
+        ? eventId('claim', { name })
+        : `evt:mount:${randomUUID()}`
+      drafts.push({
+        id: claimId, actor: 'user', type: 'claim.created',
         payload: {
           nodeKind: 'claim', claimType: 'segment', title: name,
           coreInfo: String(payload.coreInfo || ''), falsifier: String(payload.falsifier || ''),
           confidence: null, status: 'pending',
-          sourceKind: 'segment', sourceRef: `mount:${Date.now()}`,
+          sourceKind: 'segment', sourceRef: payload.inboxId ? `mount:${payload.inboxId}:${name}` : `mount:${claimId}`,
         },
       })
-      claimId = created.id
-      count++
     } else {
       claimId = node.id
     }
     touched.push(name)
 
-    if (evidenceText) {
-      const evAppended = appendEvent(themeId, {
-        actor: 'user', type: 'evidence.appended',
+    if (hasEvidence) {
+      const stableEvidenceId = eventId('evidence', { name, evidenceText, evidenceRefs })
+      const evId = payload.inboxId ? stableEvidenceId : `evt:mount:${randomUUID()}`
+      drafts.push({
+        id: evId, actor: 'user', type: 'evidence.appended',
         payload: {
           text: evidenceText, reason: String(payload.evidence || ''),
           evidenceRefs, sourceKind: 'mount',
-          sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : '',
+          sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${evId}`,
         },
       })
-      count++
-      appendEvent(themeId, {
+      drafts.push({
+        id: payload.inboxId ? eventId('support', { evidenceId: evId, claimId }) : `evt:mount:${randomUUID()}`,
         actor: 'user', type: 'relation.declared',
         payload: {
-          rel: 'supports', from: { eventId: evAppended.id }, to: { eventId: claimId },
-          sourceKind: 'mount',
+          rel: 'supports', from: { eventId: evId }, to: { eventId: claimId },
+          sourceKind: 'mount', sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${evId}`,
         },
       })
-      count++
     }
 
     if (newValue) {
-      const fresh = getEvents(themeId)
+      const fresh = [...priorEvents, ...drafts]
       const { head } = claimLineage(fresh, claimId)
-      const headEvent = fresh.find((e) => e.id === head)
+      const headEvent = [...fresh].reverse().find((e) => e.id === head)
       const hp = headEvent?.payload || {}
-      const curText = String(headEvent?.type === 'correction.appended' ? hp.newValue : hp.coreInfo || '').trim()
+      const curText = String(headEvent?.type === 'correction.appended' ? hp.newValue : hp.coreInfo || hp.title || '').trim()
       if (curText !== newValue) {
-        appendEvent(themeId, {
+        drafts.push({
+          id: payload.inboxId ? eventId('correction', { claimId, newValue, reason: String(payload.evidence || '') }) : `evt:mount:${randomUUID()}`,
           actor: 'user', type: 'correction.appended', supersedes: head,
           payload: {
             oldValue: curText, newValue, reason: String(payload.evidence || ''),
             evidenceRefs, sourceKind: 'mount',
           },
         })
-        count++
       }
     }
   }
-  return { ok: true, events: count, claims: touched }
+  const appended = appendEventBatch(themeId, drafts)
+  return { ok: true, events: appended.filter((e) => !e.replayed).length, claims: touched,
+    replayed: appended.length > 0 && appended.every((e) => e.replayed) }
 }

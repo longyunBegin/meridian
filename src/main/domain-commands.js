@@ -20,7 +20,7 @@ import {
   updateTheme, kindToTags, sicToTags,
   upsertNodeSnapshot,
   addResearchNote, allResearchNotes, researchNotesByNode, researchHitRate, vsInstitution,
-  uid, readingSnapshot,
+  uid, readingSnapshot, persistLedgerNow,
 } from './store.js'
 import { extractLemmas, socraticQuestions, generateSkeleton, generateThemeTags } from './extract.js'
 import { labelSource, jevLabel } from './labeler.js'
@@ -34,8 +34,8 @@ import {
   getInboxItem, setInboxChainDraft, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
-import { getChainProjection, mountDraftToEvents } from './chain-projector.js'
-import { getEvents as getChainEvents } from './chain-events.js'
+import { getChainProjection, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes, archiveProjectedNode } from './chain-projector.js'
+import { getEvents as getChainEvents, verifyChain as verifyThemeChain } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
@@ -43,6 +43,63 @@ import { ingestReadings } from './reading-ingest.js'
 
 function hashText(text) {
   return createHash('sha256').update(text).digest('hex').slice(0, 16)
+}
+
+function restoreArchivedProjectionNode(themeId, sourceRef, reason = '') {
+  const snapshots = []
+  let legacyTheme = null
+  let legacyChainSnapshot = null
+  let legacyChainHadValue = false
+  const match = String(sourceRef || '').match(/^(lemma|branch):(.+)$/)
+  if (match) {
+    const root = getNode(match[2])
+    if (root?.status === 'dead') {
+      const all = allNodes()
+      const ids = new Set([root.id])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const n of all) if (n.parentId && ids.has(n.parentId) && !ids.has(n.id)) { ids.add(n.id); changed = true }
+      }
+      for (const n of all) if (ids.has(n.id)) snapshots.push({ node: n, values: Object.fromEntries(
+        ['status', 'parentId', 'deletedAt', 'deletedFrom'].filter((k) => Object.hasOwn(n, k)).map((k) => [k, n[k]])),
+      })
+      if (root.deletedAt) restoreNode(root.id)
+      else updateNode(root.id, { status: 'live' })
+    }
+  } else {
+    const matchSegment = String(sourceRef || '').match(/^segment:(.+)$/)
+    if (matchSegment) {
+      legacyTheme = allThemes().find((t) => t.id === themeId) || null
+      if (legacyTheme) {
+        legacyChainHadValue = Object.hasOwn(legacyTheme, 'chain')
+        legacyChainSnapshot = legacyTheme.chain == null ? legacyTheme.chain : JSON.parse(JSON.stringify(legacyTheme.chain))
+        reviveChainSegment(themeId, matchSegment[1], reason)
+      }
+    }
+  }
+  try {
+    const sourceRefs = snapshots.length
+      ? [sourceRef, ...snapshots.filter(({ values, node }) => values.status === 'dead' && node.status !== 'dead').map(({ node }) => `${node.kind}:${node.id}`)]
+      : [sourceRef]
+    const events = restoreProjectedNodes(themeId, sourceRefs, reason)
+    return { ok: true, event: events[0], events, restoredLegacy: snapshots.length > 0 || !!legacyTheme }
+  } catch (error) {
+    for (const { node, values } of snapshots) {
+      for (const key of ['status', 'parentId', 'deletedAt', 'deletedFrom']) {
+        if (Object.hasOwn(values, key)) node[key] = values[key]
+        else delete node[key]
+      }
+    }
+    if (legacyTheme) {
+      if (legacyChainHadValue) legacyTheme.chain = legacyChainSnapshot
+      else delete legacyTheme.chain
+    }
+    if (snapshots.length || legacyTheme) {
+      try { persistLedgerNow() } catch { /* keep the in-memory rollback; original error is more useful */ }
+    }
+    throw error
+  }
 }
 
 function branchTitles(themeId, depth = 3) {
@@ -558,8 +615,12 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
    */
   commands.register('chain:get', (themeId) => getChain(themeId))
   // 当前认知图（只读投影）：事件账本 → 语义图谱。本地命令，不进 outbox。
-  commands.register('chain:getProjection', (themeId) => getChainProjection(themeId))
+  commands.register('chain:getProjection', (themeId, options) => getChainProjection(themeId, options))
+  commands.register('chain:getArchive', (themeId) => getArchivedProjectionNodes(themeId))
   commands.register('chain:getEvents', (themeId) => ({ ok: true, events: getChainEvents(themeId) }))
+  commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
+  commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
+  commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {
@@ -583,8 +644,17 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     ({ ok: true, subsegment: addChainSubsegment(themeId, segmentId, sub) }))
   commands.register('chain:closeBranch', (themeId, segmentId, subId, reason) =>
     ({ ok: true, subsegment: closeChainBranch(themeId, segmentId, subId, reason) }))
-  commands.register('chain:reviveSegment', (themeId, segmentId, reason) =>
-    ({ ok: true, ...reviveChainSegment(themeId, segmentId, reason) }))
+  commands.register('chain:reviveSegment', (themeId, segmentId, reason) => {
+    const projection = getChainProjection(themeId)
+    const sourceRef = `segment:${segmentId}`
+    const archived = projection.nodes.some((n) => n.sourceRef === sourceRef && n.archived)
+    if (archived) {
+      const restored = restoreArchivedProjectionNode(themeId, sourceRef, reason)
+      const seg = getChain(themeId).segments.find((s) => s.id === segmentId)
+      return { ok: true, seg, reopened: ['segment'], event: restored.event }
+    }
+    return { ok: true, ...reviveChainSegment(themeId, segmentId, reason) }
+  })
   commands.register('chain:setLayers', (themeId, names) =>
     ({ ok: true, ...setChainLayers(themeId, names) }))
   commands.register('chain:setDraft', (inboxId, draft) =>

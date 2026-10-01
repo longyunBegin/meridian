@@ -58,6 +58,9 @@ ok('A 谱系 3 个事件', nodeA.eventIds.length === 3)
 ok('B 标记已证伪', nodeB.correct === false)
 ok('C 标记已归档', nodeC.archived === true)
 ok('外部证据节点', proj.nodes.some((n) => n.external && n.title.includes('收件箱线索')))
+ok('节点带来源事件 provenance', nodeA.provenanceEventIds.includes('e-a') && nodeA.sourceRef === 'segment:sa')
+ok('关系边带来源事件 provenance', proj.edges.every((edge) => edge.provenanceEventIds.includes(edge.eventId)))
+ok('支持关系汇总唯一证据数', nodeA.evidenceCount === 2, `实际 ${nodeA.evidenceCount}`)
 const contradicts = proj.edges.find((e) => e.rel === 'contradicts')
 ok('反驳边存在', !!contradicts && contradicts.from === 'e-e2' && contradicts.to === 'e-b')
 
@@ -76,6 +79,9 @@ const theme2 = store.addTheme('懒迁移主题')
   store.addNode({ themeId: theme2.id, kind: 'lemma', title: '旧命题', type: 'observation', confidence: 55 })
   store.persistLedger()
 }
+const archiveReadBeforeMigration = pj.getArchivedProjectionNodes(theme2.id)
+ok('事件墓碑只读查询不触发旧数据迁移', archiveReadBeforeMigration.nodes.length === 0
+  && !Object.hasOwn(store.allThemes().find((t) => t.id === theme2.id), 'eventChain'))
 const gp = pj.getChainProjection(theme2.id)
 ok('懒迁移后有事件', gp.eventCount === 2, `实际 ${gp.eventCount}`)
 ok('旧段成为骨干节点', gp.nodes.some((n) => n.title === '旧段'))
@@ -108,6 +114,41 @@ const mEvents2 = ev.getEvents(theme3.id)
 const mProj2 = pj.projectEvents(mEvents2)
 ok('同名挂载不建新主张', mProj2.nodes.filter((n) => n.kind === 'claim' && n.title === '新主张').length === 1)
 ok('同名挂载只追加证据+关系', mEvents2.length === mEvents.length + 2, `实际 ${mEvents2.length}`)
+const replay = pj.mountDraftToEvents(theme3.id, {
+  inboxId: 'inbox-10', segmentNames: ['新主张'], newSegmentName: '', evidence: '第二条依据',
+})
+ok('同一收件箱挂载重放不产生重复事件', replay.events === 0 && replay.replayed && ev.getEvents(theme3.id).length === mEvents2.length)
+
+const unsupportedTheme = store.addTheme('无自我佐证测试')
+pj.mountDraftToEvents(unsupportedTheme.id, {
+  newSegmentName: '未附证据的判断', newValue: '判断文本不得冒充证据',
+})
+const unsupportedEvents = ev.getEvents(unsupportedTheme.id)
+ok('新值不会被复制成支持自身的证据节点', unsupportedEvents.filter((e) => e.type === 'evidence.appended').length === 0
+  && unsupportedEvents.filter((e) => e.type === 'relation.declared').length === 0
+  && unsupportedEvents.length === 2)
+const citedTheme = store.addTheme('显式引用测试')
+pj.mountDraftToEvents(citedTheme.id, {
+  newSegmentName: '有来源判断', evidenceRefs: [{ type: 'url', id: 'source-1', title: '来源一' }],
+})
+const citedEvents = ev.getEvents(citedTheme.id)
+ok('明确来源引用可生成带来源的证据节点与支持边', citedEvents.some((e) => e.type === 'evidence.appended'
+  && e.payload.evidenceRefs.some((r) => r.id === 'source-1'))
+  && citedEvents.some((e) => e.type === 'relation.declared' && e.payload.rel === 'supports'))
+
+console.log('\n— 投影归档 / 恢复 —')
+const eventNode = pj.getChainProjection(theme3.id).nodes.find((n) => n.title === '新主张')
+const archiveEvent = pj.archiveProjectedNode(theme3.id, eventNode.sourceRef, '证据已过时')
+const archivedRead = pj.getArchivedProjectionNodes(theme3.id)
+ok('归档追加事件含原因与证据数', archiveEvent.type === 'node.archived' && archiveEvent.payload.reason === '证据已过时' && archiveEvent.payload.evidenceCount === 2)
+ok('归档查询返回详情和日期', archivedRead.nodes.some((n) => n.sourceRef === eventNode.sourceRef && n.archiveReason === '证据已过时' && n.archivedAt))
+const restoreEvent = pj.restoreProjectedNode(theme3.id, eventNode.sourceRef, '重新核验后恢复')
+const restoredNode = pj.projectEvents(ev.getEvents(theme3.id)).nodes.find((n) => n.sourceRef === eventNode.sourceRef)
+ok('恢复只追加 node.restored 且保留归档史', restoreEvent.type === 'node.restored' && ev.getEvents(theme3.id).some((e) => e.id === archiveEvent.id))
+ok('重放恢复后节点重新进入当前图', !restoredNode.archived && restoredNode.restoredAt && ev.verifyChain(theme3.id).ok)
+let restoreTwiceRejected = false
+try { pj.restoreProjectedNode(theme3.id, eventNode.sourceRef, '重复恢复') } catch { restoreTwiceRejected = true }
+ok('重复恢复拒绝', restoreTwiceRejected)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

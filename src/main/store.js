@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync, renameSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, rmSync, renameSync, openSync, fsyncSync, closeSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { encrypt, decrypt, encryptSettings, decryptSettings } from './crypto.js'
 import { __testHooks as llmHooks } from './llmlog.js'
@@ -174,6 +174,7 @@ function sqlite() {
     mkdirSync(dirname(file), { recursive: true })
     sqliteDb = new DatabaseSync(file)
     initSchema(sqliteDb)
+    sqliteDb.exec('PRAGMA synchronous = FULL')
   }
   return sqliteDb
 }
@@ -422,6 +423,7 @@ function migrate(d) {
 function persist() {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
+    saveTimer = null
     try {
       persistNow()
     } catch (err) {
@@ -433,6 +435,13 @@ function persist() {
 
 /** 供 chain-store 等外部模块在直接变更 db 后触发落盘（与 updateTheme 同一防抖通道）。 */
 export function persistLedger() { persist() }
+
+/** 事件账本提交使用同步 durability barrier，避免返回成功后仍留在 debounce 窗口。 */
+export function persistLedgerNow() {
+  clearTimeout(saveTimer)
+  saveTimer = null
+  persistNow()
+}
 
 /** 防抖到期后的实际落盘。meridian.sqlite 存在 → 单事务写 SQLite；
  *  否则走 legacy JSON 整文件重写（向后兼容）。raw.jsonl / readings.jsonl /
@@ -448,9 +457,28 @@ function persistNow() {
   // 原子写：先写临时文件再改名。直接 writeFileSync 大文件时是多 syscall，
   // 并发的 load()/快照读取可能读到半截 JSON → 解析失败 → 静默 blank() 丢数据。
   // 2026-09-26 Mac 账本清空事故后加固。
-  const tmp = file + '.tmp'
-  writeFileSync(tmp, JSON.stringify(snapshot, null, 2))
-  renameSync(tmp, file)
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
+  let fd = null
+  try {
+    fd = openSync(tmp, 'wx', 0o600)
+    writeFileSync(fd, JSON.stringify(snapshot, null, 2))
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = null
+    renameSync(tmp, file)
+    // POSIX directory sync makes the rename durable across a power loss. Windows
+    // does not expose directory handles through Node's fsync API; atomic rename
+    // still protects readers from a partial JSON document there.
+    if (process.platform !== 'win32') {
+      try {
+        const dirFd = openSync(dirname(file), 'r')
+        try { fsyncSync(dirFd) } finally { closeSync(dirFd) }
+      } catch { /* best-effort on filesystems that do not support directory fsync */ }
+    }
+  } finally {
+    if (fd !== null) { try { closeSync(fd) } catch { /* already closed */ } }
+    try { rmSync(tmp, { force: true }) } catch { /* temp cleanup is best-effort */ }
+  }
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)

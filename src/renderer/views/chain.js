@@ -46,6 +46,7 @@ const TYPE_LABEL = {
   'correction.appended': '更正',
   'settlement.recorded': '结算',
   'node.archived': '归档',
+  'node.restored': '恢复',
   'topic.linked': '主题关联',
 }
 const ACTOR_LABEL = { user: '你', migration: '迁移', 'pipeline:capture': '收件箱捕获' }
@@ -84,7 +85,17 @@ export function renderChainSection(theme, opts = {}) {
   graphPane.append(stage)
   concept.append(ledgerPane, divider, graphPane)
   wrap.append(concept)
-  loadConcept(theme, ledgerPane, stage, opts).catch((e) => {
+  const viewOpts = {
+    ...opts,
+    onChanged: () => {
+      clear(ledgerPane)
+      clear(stage)
+      loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
+        clear(stage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
+      })
+    },
+  }
+  loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
     clear(stage).append(h('p', { class: 'chain-note' }, '投影加载失败：' + (e.message || e)))
   })
   return wrap
@@ -105,7 +116,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   if (kinds.evidence) parts.push(`证据 ${kinds.evidence}`)
   if (countsEl) countsEl.textContent = `事件 ${proj.eventCount} · ` + (parts.join(' · ') || '暂无节点')
 
-  renderLedgerPanel(ledgerPane, theme, events)
+  renderLedgerPanel(ledgerPane, theme, events, proj.integrity)
 
   if (!proj.nodes.length) {
     stage.append(h('div', { class: 'chain-empty' },
@@ -129,6 +140,7 @@ const EVENT_KIND_LABEL = {
   'correction.appended': '追加更正事件',
   'settlement.recorded': '结算记录',
   'node.archived': '归档',
+  'node.restored': '追加恢复',
   'topic.linked': '主题关联',
 }
 const shortHash = (hx) => {
@@ -145,13 +157,15 @@ function eventSummary(e, titleOf) {
   const p = e.payload || {}
   switch (e.type) {
     case 'correction.appended': {
-      const t = titleOf?.(p.claimEventId || p.targetEventId) || ''
+      const t = titleOf?.(p.claimEventId || p.targetEventId || e.supersedes) || ''
       return `更正${t ? `「${t}」` : ''}：${p.oldValue || '—'} → ${p.newValue || '—'}${p.reason ? `（${p.reason}）` : ''}`
     }
     case 'relation.declared': {
       const rel = REL[p.rel] || {}
-      const a = titleOf?.(p.from) || String(p.from || '').slice(0, 8)
-      const b = titleOf?.(p.to) || String(p.to || '').slice(0, 8)
+      const endpointLabel = (ep) => ep?.eventId ? (titleOf?.(ep.eventId) || ep.eventId.slice(0, 12))
+        : ep?.ref?.title || ep?.ref?.id || ep?.name || '外部引用'
+      const a = endpointLabel(p.from)
+      const b = endpointLabel(p.to)
       return `${a} —${rel.label || p.rel}→ ${b}${p.reviewStatus === 'pending-review' ? '（待复核）' : ''}`
     }
     case 'settlement.recorded':
@@ -159,61 +173,102 @@ function eventSummary(e, titleOf) {
     case 'evidence.appended':
       return String(p.text || p.reason || p.title || '').slice(0, 60) || '证据追加'
     case 'node.archived':
-      return `归档${titleOf?.(p.targetEventId) ? `「${titleOf(p.targetEventId)}」` : ''}`
+      return `归档「${p.title || titleOf?.(p.targetEventId) || '未命名节点'}」${p.reason ? ` · ${p.reason}` : ''}`
+    case 'node.restored':
+      return `恢复「${p.title || '未命名节点'}」${p.reason ? ` · ${p.reason}` : ''}`
     default:
       return String(p.title || p.coreInfo || p.text || '').slice(0, 60)
   }
 }
 
 /** 追加式完整性账本面板：事件序列只增不改，更正追加新事件。 */
-function renderLedgerPanel(pane, theme, events) {
+function integrityText(integrity) {
+  if (integrity?.ok) return `校验通过 · ${integrity.count} 条事件`
+  const seq = Number.isInteger(integrity?.index) ? `第 ${integrity.index + 1} 条` : '账本'
+  return `校验失败 · ${seq} · ${integrity?.reason || '格式不可读'} · 仅投影已验证前缀 ${integrity?.lastValidSeq || 0} 条`
+}
+
+function renderLedgerPanel(pane, theme, events, integrity) {
   clear(pane)
+  const integrityBox = h('div', {
+    class: `cog-integrity ${integrity?.ok ? 'is-ok' : 'is-error'}`,
+    role: integrity?.ok ? 'status' : 'alert', 'aria-live': 'polite',
+  }, integrityText(integrity))
+  const verifyButton = h('button', {
+    type: 'button', class: 'btn cog-verify-btn',
+    onclick: async () => {
+      verifyButton.disabled = true
+      integrityBox.textContent = '正在重新校验…'
+      try {
+        const result = await m.chainVerify(theme.id)
+        const checked = result?.integrity
+        integrityBox.setAttribute('class', `cog-integrity ${checked?.ok ? 'is-ok' : 'is-error'}`)
+        integrityBox.setAttribute('role', checked?.ok ? 'status' : 'alert')
+        integrityBox.textContent = integrityText(checked)
+      } catch (error) {
+        integrityBox.setAttribute('class', 'cog-integrity is-error')
+        integrityBox.setAttribute('role', 'alert')
+        integrityBox.textContent = `校验失败 · ${error?.message || error}`
+      } finally { verifyButton.disabled = false }
+    },
+  }, '重新校验')
   pane.append(
     h('div', { class: 'cog-ledger-head' },
       h('span', { class: 'cog-ledger-num' }, '01'),
       h('span', { class: 'cog-ledger-title' }, '追加式完整性账本'),
-      h('span', { class: 'cog-ledger-badge' }, 'APPEND-ONLY')),
-    h('p', { class: 'cog-ledger-sub' }, '事件序列 · 只增不改 · 更正追加新事件，历史持续保留'),
-    h('p', { class: 'cog-ledger-colhead' }, '每条记录包含下列字段 · 哈希值截断显示'),
+      h('span', { class: 'cog-ledger-badge' }, '追加式')),
+    h('p', { class: 'cog-ledger-sub' }, '更正、归档与恢复均追加事件；历史保留，当前图由事件重放生成。'),
+    h('div', { class: 'cog-integrity-row' }, integrityBox, verifyButton),
+    h('p', { class: 'cog-ledger-colhead' }, '事件来源、前序哈希与本条哈希 · 截断显示'),
   )
   if (!events.length) {
     pane.append(h('p', { class: 'chain-note' }, '暂无事件。'))
     return
   }
-  const byId = new Map(events.map((x) => [x.id, x]))
+  const byId = new Map(events.filter((x) => x && typeof x === 'object').map((x) => [x.id, x]))
   const titleOf = (eventId) => {
     const e = byId.get(eventId)
     return e ? String(e.payload?.title || e.payload?.coreInfo || '').slice(0, 24) : ''
   }
   const list = h('div', { class: 'cog-ledger-list' })
-  const ordered = [...events].sort((x, y) => x.seq - y.seq)
-  for (const e of ordered) {
+  const ordered = events.map((record, index) => ({ record, index })).sort((a, b) => {
+    const ax = Number.isSafeInteger(a.record?.seq) ? a.record.seq : Number.MAX_SAFE_INTEGER
+    const bx = Number.isSafeInteger(b.record?.seq) ? b.record.seq : Number.MAX_SAFE_INTEGER
+    return ax - bx || a.index - b.index
+  })
+  for (const item of ordered) {
+    const raw = item.record
+    const e = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? raw
+      : { id: `invalid-${item.index}`, seq: null, type: 'invalid', at: '', actor: '', payload: { raw: String(raw) }, hash: '', prevHash: '' }
+    const isInvalid = !e.id || !e.type || !Number.isSafeInteger(e.seq) || !e.hash
     const isCorrection = e.type === 'correction.appended'
     const isFirst = e.seq === 1
-    const kindLabel = isFirst ? '初始记录' : (EVENT_KIND_LABEL[e.type] || e.type)
+    const kindLabel = isInvalid ? '无法解析的事件记录' : (isFirst ? '初始记录' : (EVENT_KIND_LABEL[e.type] || e.type))
     const superseded = isCorrection && e.supersedes ? byId.get(e.supersedes) : null
-    const card = h('div', { class: `cog-ev${isCorrection ? ' is-correction' : ''}` },
+    const card = h('div', { class: `cog-ev${isCorrection ? ' is-correction' : ''}${isInvalid ? ' is-invalid' : ''}` },
       h('div', { class: 'cog-ev-top' },
         h('span', { class: `cog-ev-dot${isCorrection ? ' orange' : ''}` }),
-        h('span', { class: 'cog-ev-seq' }, `v${String(e.seq).padStart(2, '0')}`),
+        h('span', { class: 'cog-ev-seq' }, Number.isSafeInteger(e.seq) ? `v${String(e.seq).padStart(2, '0')}` : `记录 ${item.index + 1}`),
         h('span', { class: 'cog-ev-kind' }, kindLabel),
         h('span', { class: 'cog-ev-at' }, `时间戳 ${fmtAt(e.at)}`),
-        h('span', { class: `cog-ev-flag${isCorrection ? ' orange' : ''}` },
-          isCorrection ? `更正 · 取代 v${String(superseded?.seq || '?').padStart(2, '0')}` : '已追加')),
+        h('span', { class: `cog-ev-flag${isCorrection || isInvalid ? ' orange' : ''}` },
+          isInvalid ? '待检查' : isCorrection ? `更正 · 取代 v${String(superseded?.seq || '?').padStart(2, '0')}` : '已追加')),
       h('div', { class: 'cog-ev-summary' }, eventSummary(e, titleOf)),
       h('div', { class: 'cog-ev-hashes' },
         h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '内容 / 证据哈希'),
-          h('span', { class: 'cog-ev-hv' }, `sha256 · ${shortHash(e.hash)}`)),
+          h('span', { class: 'cog-ev-hk' }, '来源引用'),
+          h('span', { class: 'cog-ev-hv' }, String(e.payload?.sourceRef || e.payload?.sourceKind || `事件 ${e.id || '未知'}`))),
         h('div', { class: 'cog-ev-hashrow' },
           h('span', { class: 'cog-ev-hk' }, '前序哈希'),
           h('span', { class: 'cog-ev-hv' }, isFirst ? 'GENESIS · 起始' : `sha256 · ${shortHash(e.prevHash)}`)),
         h('div', { class: 'cog-ev-hashrow' },
           h('span', { class: 'cog-ev-hk' }, '本条哈希'),
-          h('span', { class: 'cog-ev-hv' }, `sha256 · ${shortHash(e.hash)}`)),
+          h('span', { class: 'cog-ev-hv' }, e.hash ? `sha256 · ${shortHash(e.hash)}` : '不可用')),
         isCorrection ? h('div', { class: 'cog-ev-hashrow' },
           h('span', { class: 'cog-ev-hk' }, '取代声明'),
           h('span', { class: 'cog-ev-hv' }, `指向 v${String(superseded?.seq || '?').padStart(2, '0')}`)) : null,
+        isInvalid ? h('pre', { class: 'cog-ev-invalid-raw' }, JSON.stringify(raw, null, 2)?.slice(0, 360) || String(raw)) : null,
       ),
     )
     list.append(card)
@@ -222,7 +277,9 @@ function renderLedgerPanel(pane, theme, events) {
   pane.append(
     h('div', { class: 'cog-ledger-foot' },
       h('strong', {}, '更正 ≠ 覆盖'),
-      ' — 被取代的版本仍保留；新事件追加并声明取代关系，当前效力切换，历史不改写。'))
+      ' — 被取代的版本仍保留；新事件追加并声明取代关系，当前效力切换，历史不改写。',
+      h('br'),
+      '安全边界：哈希链可发现未同步重算后续哈希的修改或意外损坏；本地可控攻击者仍可重写整链，本版本未提供签名或远端锚定。主题根节点与虚线是展示元数据，不是账本事件。'))
 }
 
 /** 未连入图谱的节点：收成一条可展开的安静列表，不进图。 */
@@ -426,7 +483,7 @@ function drawGraph(stage, proj, theme, opts) {
 
   const { pos, size, height: H } = layoutGraph(nodes, edges, W, THEME_NODE_ID)
 
-  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'cog-svg', role: 'img', 'aria-label': '当前认知图' })
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'cog-svg', role: 'group', 'aria-label': '当前认知图；主题根节点为主题元数据，其余节点和关系来自事件记录' })
   const defs = el('defs')
   for (const [rel, cfg] of Object.entries(REL)) {
     const marker = el('marker', {
@@ -512,6 +569,11 @@ function drawGraph(stage, proj, theme, opts) {
     const g = el('g', {
       class: 'cog-node' + (isTheme ? ' is-theme' : ''), transform: `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`,
       'data-kind': n.kind, 'data-status': n.status || 'pending',
+      'data-source-ref': n.sourceRef || `theme:${theme.id}`,
+      'data-provenance': (n.provenanceEventIds || n.eventIds || []).join(','),
+      tabindex: isTheme ? '-1' : '0', role: isTheme ? 'img' : 'button',
+      'aria-label': isTheme ? `研究主题：${n.title}（主题元数据）`
+        : `${kind.label}：${n.title}；${n.archived ? '已归档' : '当前图节点'}；来源事件 ${(n.provenanceEventIds || n.eventIds || []).join(', ') || '无'}`,
     })
     const stroke = n.correct === false ? '#ea580c' : kind.border
     const rect = el('rect', {
@@ -547,7 +609,7 @@ function drawGraph(stage, proj, theme, opts) {
     tip.textContent = isTheme ? `研究主题 · ${n.title}` : `${kind.label} · ${n.title}`
     g.appendChild(tip)
 
-    // 拖拽 / 点击（主题根节点静态占位，不可拖不动点）
+    // 拖拽 / 点击 / 键盘打开（主题根节点静态占位，不可拖不动点）
     if (!isTheme) {
       let sx = 0
       let sy = 0
@@ -570,10 +632,15 @@ function drawGraph(stage, proj, theme, opts) {
         const onUp = () => {
           g.removeEventListener('pointermove', onMove)
           g.removeEventListener('pointerup', onUp)
-          if (!moved) opts.onOpen?.(n)
+          if (!moved) opts.onOpen?.(n, { onChanged: opts.onChanged })
         }
         g.addEventListener('pointermove', onMove)
         g.addEventListener('pointerup', onUp)
+      })
+      g.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return
+        ev.preventDefault()
+        opts.onOpen?.(n, { onChanged: opts.onChanged })
       })
     }
     nodeLayer.appendChild(g)
@@ -645,7 +712,7 @@ export async function openNodeDetail(theme, node, opts = {}) {
     clear(body).append(h('p', { class: 'chain-note' }, '事件读取失败：' + (e.message || e)))
     return
   }
-  const byId = new Map(events.map((e) => [e.id, e]))
+  const byId = new Map(events.filter((e) => e && typeof e === 'object').map((e) => [e.id, e]))
   const nodeById = new Map((proj?.nodes || []).map((n) => [n.id, n]))
   const lineage = (node.eventIds || [node.id]).map((id) => byId.get(id)).filter(Boolean)
     .sort((a, b) => a.seq - b.seq)
@@ -654,6 +721,25 @@ export async function openNodeDetail(theme, node, opts = {}) {
   if (node.correct === false) badges.push(h('span', { class: 'chain-pill st-forking' }, '已证伪'))
   if (node.archived) badges.push(h('span', { class: 'chain-pill st-closed' }, '已归档'))
   if (node.superseded) badges.push(h('span', { class: 'chain-pill st-stale' }, '已更正'))
+  const archiveReason = h('input', { class: 'txt', type: 'text', placeholder: '填写归档原因（必填）', 'aria-label': '归档原因' })
+  const archiveButton = h('button', {
+    type: 'button', class: node.archived ? 'btn btn-primary' : 'btn', disabled: !node.sourceRef,
+    onclick: async (ev) => {
+      const button = ev.currentTarget
+      if (!node.archived && !archiveReason.value.trim()) { toast('请填写归档原因', 'var(--red)'); archiveReason.focus(); return }
+      button.disabled = true
+      try {
+        const result = node.archived
+          ? await m.chainRestoreNode(theme.id, node.sourceRef, archiveReason.value.trim() || '从归档区恢复')
+          : await m.chainArchiveNode(theme.id, node.sourceRef, archiveReason.value.trim())
+        if (result?.ok === false) throw new Error(result.error || '操作未完成')
+        toast(node.archived ? '已追加恢复事件' : '已追加归档事件')
+        close()
+        opts.onChanged?.()
+      } catch (error) { toast((node.archived ? '恢复' : '归档') + '失败：' + (error.message || error), 'var(--red)') }
+      finally { button.disabled = false }
+    },
+  }, node.archived ? '追加恢复事件' : '追加归档事件')
 
   clear(body).append(
     h('div', { class: 'chain-drawer-kicker' },
@@ -666,6 +752,12 @@ export async function openNodeDetail(theme, node, opts = {}) {
     node.confidence != null
       ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
     node.external ? h('p', { class: 'chain-note' }, '外部引用节点：关系端点指向账本外的对象。') : null,
+    proj?.integrity?.ok === false
+      ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `事件账本校验失败：${proj.integrity.reason}。当前仅显示已验证前缀。`) : null,
+    h('section', { class: 'chain-dsect' },
+      h('div', { class: 'chain-detail-h' }, '来源与 provenance'),
+      h('p', { class: 'chain-note' }, `来源引用：${node.sourceRef || '未记录'}`),
+      h('p', { class: 'chain-note' }, `关联事件：${(node.provenanceEventIds || node.eventIds || []).join(' · ') || '无'}`)),
     // 语义关系
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '语义关系'),
@@ -678,6 +770,11 @@ export async function openNodeDetail(theme, node, opts = {}) {
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '证据引用'),
       ...renderNodeEvidence(lineage, opts)),
+    !node.external ? h('section', { class: 'chain-dsect chain-archive-actions' },
+      h('div', { class: 'chain-detail-h' }, node.archived ? '归档状态' : '节点操作'),
+      node.archived && node.archiveReason ? h('p', { class: 'chain-note' }, `归档原因：${node.archiveReason}`) : null,
+      node.archived ? null : archiveReason,
+      archiveButton) : null,
   )
 }
 
@@ -711,6 +808,10 @@ function renderHistoryEvent(e) {
     summary = `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' ? '（待复核）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
   } else if (e.type === 'settlement.recorded') {
     summary = p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
+  } else if (e.type === 'node.archived') {
+    summary = `归档：${p.reason || '未记录原因'}`
+  } else if (e.type === 'node.restored') {
+    summary = `恢复：${p.reason || '未记录原因'}`
   } else if (e.type === 'evidence.appended') {
     summary = String(p.text || p.reason || '').slice(0, 80)
   } else {
@@ -1035,5 +1136,3 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
   )
   return box
 }
-
-

@@ -14,7 +14,7 @@
  *
  * 持久化：通过 store.js 导出的 persistLedger() 落盘（与 updateTheme 同一通道）。
  */
-import { load, uid, persistLedger } from './store.js'
+import { load, uid, persistLedgerNow } from './store.js'
 import { digest } from './reading-store.js'
 import { normalizeChain } from './chain-store.js'
 
@@ -28,6 +28,7 @@ export const EVENT_TYPES = [
   'correction.appended', // 更正事件，supersedes 指向上被取代事件
   'settlement.recorded', // 结算：正确 / 错误（错误即证伪）
   'node.archived', // 归档（墓碑），只读标记
+  'node.restored', // 恢复 = 追加新事件，不改写归档历史
   'topic.linked', // 主题关联
 ]
 
@@ -44,19 +45,28 @@ function getThemeOrThrow(themeId) {
 }
 
 /** 取主题事件链（归一化后返回可写引用；读操作请用 getEvents）。 */
-function eventChain(theme) {
-  if (!isObj(theme.eventChain)) theme.eventChain = {}
+function rawEvents(theme) {
   const c = theme.eventChain
-  if (!Array.isArray(c.events)) c.events = []
-  c.version = CHAIN_EVENTS_VERSION
-  return c
+  if (c == null) return []
+  if (!isObj(c) || !Array.isArray(c.events)) throw new Error('事件账本格式非法；为保护原数据，已停止读写')
+  if (c.version !== CHAIN_EVENTS_VERSION) throw new Error(`不支持的事件账本版本：${c.version ?? '未声明'}`)
+  return c.events
+}
+
+function writableEventChain(theme) {
+  if (theme.eventChain == null) theme.eventChain = { version: CHAIN_EVENTS_VERSION, events: [] }
+  const events = rawEvents(theme)
+  return { ...theme.eventChain, events }
 }
 
 function normEvent(e) {
   if (!isObj(e)) return null
   if (!textId(e.id) || !textId(e.themeId) || !Number.isSafeInteger(e.seq) || e.seq < 1) return null
   if (!EVENT_TYPES.includes(e.type) || !textId(e.actor)) return null
+  if (!textId(e.at) || !isObj(e.payload)) return null
   if (!(typeof e.hash === 'string' && /^[a-f0-9]{64}$/.test(e.hash))) return null
+  if (!['id', 'themeId', 'seq', 'at', 'actor', 'type', 'payload', 'supersedes', 'prevHash', 'hash'].every((k) => Object.hasOwn(e, k))) return null
+  if (Object.keys(e).some((k) => !['id', 'themeId', 'seq', 'at', 'actor', 'type', 'payload', 'supersedes', 'prevHash', 'hash'].includes(k))) return null
   return {
     id: e.id,
     themeId: e.themeId,
@@ -64,7 +74,7 @@ function normEvent(e) {
     at: String(e.at || ''),
     actor: e.actor,
     type: e.type,
-    payload: isObj(e.payload) ? e.payload : {},
+    payload: e.payload,
     supersedes: textId(e.supersedes) ? e.supersedes : null,
     prevHash: e.prevHash ?? null,
     hash: e.hash,
@@ -74,7 +84,8 @@ function normEvent(e) {
 /** 读某主题全部事件（深拷贝，防外部篡改内存）。 */
 export function getEvents(themeId) {
   const theme = getThemeOrThrow(themeId)
-  return eventChain(theme).events.map(normEvent).filter(Boolean).map(copy)
+  // Keep malformed rows visible to verification/recovery; never silently drop history.
+  return rawEvents(theme).map((e) => copy(e))
 }
 
 /** 按 id 取单个事件。 */
@@ -93,7 +104,7 @@ function buildNextEvent(events, themeId, { id = null, at = null, actor = 'user',
   if (!textId(actor)) throw new Error('actor 不能为空')
   if (!isObj(payload)) throw new Error('payload 必须为对象')
   const eventId = textId(id) ? id : uid()
-  if (events.some((e) => e.id === eventId)) throw new Error(`事件 id 已存在：${eventId}`)
+  if (events.some((e) => e?.id === eventId)) throw new Error(`事件 id 已存在：${eventId}`)
   if (supersedes != null && !events.some((e) => e.id === supersedes)) {
     throw new Error(`supersedes 指向不存在的事件：${supersedes}`)
   }
@@ -111,17 +122,118 @@ function buildNextEvent(events, themeId, { id = null, at = null, actor = 'user',
  * 追加事件：算 seq/prevHash/hash 后落盘。
  * 显式 id 已存在 → 幂等返回已有事件（replayed: true），不重复追加。
  */
-export function appendEvent(themeId, fields = {}) {
-  const theme = getThemeOrThrow(themeId)
-  const chain = eventChain(theme)
-  if (textId(fields.id)) {
-    const existing = chain.events.find((e) => e.id === fields.id)
-    if (existing) return { ...copy(normEvent(existing)), replayed: true }
+function verifyEvents(events, themeId) {
+  const ids = new Map()
+  const corrected = new Set()
+  const correctionRoot = new Map()
+  const correctionHead = new Map()
+  const archiveState = new Map()
+  for (let i = 0; i < events.length; i++) {
+    const e = normEvent(events[i])
+    if (!e) return { ok: false, index: i, lastValidSeq: i, reason: '事件格式非法' }
+    if (e.themeId !== themeId) return { ok: false, index: i, lastValidSeq: i, reason: '事件属于其他主题' }
+    if (ids.has(e.id)) return { ok: false, index: i, lastValidSeq: i, reason: `事件 id 重复：${e.id}` }
+    if (e.seq !== i + 1) return { ok: false, index: i, lastValidSeq: i, reason: `seq 不连续：期望 ${i + 1}，实际 ${e.seq}` }
+    const expectPrev = i === 0 ? 'GENESIS' : events[i - 1]?.hash
+    if (e.prevHash !== expectPrev) return { ok: false, index: i, lastValidSeq: i, reason: 'prevHash 衔接断裂' }
+    const { hash, ...body } = e
+    if (digest(body) !== hash) return { ok: false, index: i, lastValidSeq: i, reason: 'hash 重算不一致（可能被篡改）' }
+    if (e.supersedes != null && e.type !== 'correction.appended') return { ok: false, index: i, lastValidSeq: i, reason: '非更正事件包含 supersedes' }
+
+    const p = e.payload
+    if ((e.type === 'claim.created' || e.type === 'inference.created') && !textId(p.title)) return { ok: false, index: i, lastValidSeq: i, reason: '主张/推断缺少标题' }
+    if (e.type === 'correction.appended') {
+      const target = ids.get(e.supersedes)
+      if (!textId(e.supersedes) || !target || !['claim.created', 'inference.created', 'correction.appended'].includes(target.type)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '更正目标不存在或不是主张版本' }
+      }
+      if (corrected.has(e.supersedes)) return { ok: false, index: i, lastValidSeq: i, reason: '更正形成分叉版本' }
+      const root = target.type === 'correction.appended' ? correctionRoot.get(target.id) : target.id
+      if (!root || (correctionHead.get(root) || root) !== target.id) return { ok: false, index: i, lastValidSeq: i, reason: '更正未沿当前版本顺序追加' }
+      corrected.add(e.supersedes)
+      correctionRoot.set(e.id, root)
+      correctionHead.set(root, e.id)
+    }
+    if (e.type === 'relation.declared') {
+      if (!REL_TYPES.includes(p.rel) || !isObj(p.from) || !isObj(p.to)) return { ok: false, index: i, lastValidSeq: i, reason: '关系类型或端点非法' }
+      for (const endpoint of [p.from, p.to]) {
+        if (endpoint.eventId && !ids.has(endpoint.eventId)) return { ok: false, index: i, lastValidSeq: i, reason: '关系引用了尚不存在的事件' }
+        if (!endpoint.eventId && !endpoint.ref && !textId(endpoint.name)) return { ok: false, index: i, lastValidSeq: i, reason: '关系端点缺少来源' }
+      }
+    }
+    if (e.type === 'node.archived' || e.type === 'node.restored' || e.type === 'settlement.recorded') {
+      if (!textId(p.sourceRef)) return { ok: false, index: i, lastValidSeq: i, reason: `${e.type} 缺少 sourceRef` }
+    }
+    if (e.type === 'node.archived') archiveState.set(p.sourceRef, true)
+    if (e.type === 'node.restored') {
+      if (!archiveState.get(p.sourceRef)) return { ok: false, index: i, lastValidSeq: i, reason: '恢复事件没有先前归档事件' }
+      archiveState.set(p.sourceRef, false)
+    }
+    ids.set(e.id, e)
   }
-  const event = buildNextEvent(chain.events, themeId, fields)
-  chain.events.push(event)
-  persistLedger()
-  return copy(event)
+  return { ok: true, count: events.length, lastValidSeq: events.length }
+}
+
+function sameIntent(existing, fields) {
+  const expected = {
+    actor: fields.actor || 'user',
+    type: fields.type,
+    payload: copy(fields.payload || {}),
+    supersedes: fields.supersedes ?? null,
+  }
+  const actual = {
+    actor: existing.actor,
+    type: existing.type,
+    payload: existing.payload,
+    supersedes: existing.supersedes ?? null,
+  }
+  return JSON.stringify(actual) === JSON.stringify(expected)
+}
+
+/** 先验证旧链，再将一批事件作为单次账本快照提交；显式 id 可安全重放。 */
+export function appendEvents(themeId, drafts = []) {
+  if (!Array.isArray(drafts)) throw new Error('事件批次必须为数组')
+  const theme = getThemeOrThrow(themeId)
+  const originalChain = theme.eventChain == null ? null : copy(theme.eventChain)
+  const existingEvents = rawEvents(theme)
+  const before = verifyEvents(existingEvents, themeId)
+  if (!before.ok) throw new Error(`事件账本校验失败（第 ${before.index + 1} 条）：${before.reason}`)
+
+  const work = existingEvents.map((e) => copy(e))
+  const results = []
+  let created = 0
+  for (const fields of drafts) {
+    if (!isObj(fields)) throw new Error('事件草稿必须为对象')
+    if (textId(fields.id)) {
+      const existing = work.find((e) => e.id === fields.id)
+      if (existing) {
+        const normalized = normEvent(existing)
+        if (!normalized || !sameIntent(normalized, fields)) throw new Error(`事件 id 已被不同内容占用：${fields.id}`)
+        results.push({ ...copy(normalized), replayed: true })
+        continue
+      }
+    }
+    const event = buildNextEvent(work, themeId, fields)
+    work.push(event)
+    results.push(copy(event))
+    created++
+  }
+  const verified = verifyEvents(work, themeId)
+  if (!verified.ok) throw new Error(`事件批次校验失败（第 ${verified.index + 1} 条）：${verified.reason}`)
+  if (!created) return results
+
+  theme.eventChain = { ...(originalChain || {}), version: CHAIN_EVENTS_VERSION, events: work }
+  try {
+    persistLedgerNow()
+  } catch (error) {
+    theme.eventChain = originalChain
+    throw error
+  }
+  return results
+}
+
+export function appendEvent(themeId, fields = {}) {
+  return appendEvents(themeId, [fields])[0]
 }
 
 /**
@@ -130,17 +242,7 @@ export function appendEvent(themeId, fields = {}) {
  */
 export function verifyChain(themeId) {
   const theme = getThemeOrThrow(themeId)
-  const events = eventChain(theme).events
-  for (let i = 0; i < events.length; i++) {
-    const e = normEvent(events[i])
-    if (!e) return { ok: false, index: i, reason: '事件格式非法' }
-    if (e.seq !== i + 1) return { ok: false, index: i, reason: `seq 不连续：期望 ${i + 1}，实际 ${e.seq}` }
-    const expectPrev = i === 0 ? 'GENESIS' : events[i - 1].hash
-    if (e.prevHash !== expectPrev) return { ok: false, index: i, reason: 'prevHash 衔接断裂' }
-    const { hash, ...body } = e
-    if (digest(body) !== hash) return { ok: false, index: i, reason: 'hash 重算不一致（可能被篡改）' }
-  }
-  return { ok: true, count: events.length }
+  return verifyEvents(rawEvents(theme), themeId)
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +275,11 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
   // 注意：不过滤 deletedAt——已删除/已归档节点正是要搬运的历史（→ claim.created + node.archived）
 
   // 工作区：persist=false 时在内存副本上构造，不碰真实账本
-  const workEvents = persist ? eventChain(theme).events : [...eventChain(theme).events]
+  const originalChain = theme.eventChain == null ? null : copy(theme.eventChain)
+  const existingEvents = rawEvents(theme)
+  const existingCheck = verifyEvents(existingEvents, themeId)
+  if (!existingCheck.ok) throw new Error(`事件账本校验失败（第 ${existingCheck.index + 1} 条）：${existingCheck.reason}`)
+  const workEvents = existingEvents.map((e) => copy(e))
   const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0 }
   let created = 0
   let skipped = 0
@@ -220,7 +326,7 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     report.segments++
 
     // 变化 log：按段内顺序，correction 串起 supersedes 链
-    let prevInSeg = segEvent.id
+    let prevClaimVersion = segEvent.id
     for (const logEntry of seg.changeLog || []) {
       const hasCorrection = String(logEntry.oldValue ?? '').trim() !== '' || String(logEntry.newValue ?? '').trim() !== ''
       if (hasCorrection) {
@@ -228,7 +334,7 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
           id: `evt:log:${logEntry.id}`,
           at: logEntry.at || null,
           type: 'correction.appended',
-          supersedes: prevInSeg,
+          supersedes: prevClaimVersion,
           payload: {
             oldValue: String(logEntry.oldValue ?? ''),
             newValue: String(logEntry.newValue ?? ''),
@@ -254,8 +360,24 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
           },
         })
       }
-      prevInSeg = `evt:log:${logEntry.id}`
+      if (hasCorrection) prevClaimVersion = `evt:log:${logEntry.id}`
       report.changeLogs++
+    }
+
+    if (seg.status === 'closed') {
+      put({
+        id: `evt:arch:segment:${seg.id}`,
+        at: seg.closedAt || seg.updatedAt || null,
+        type: 'node.archived',
+        payload: {
+          reason: seg.closeReason || seg.reason || '旧认知段已关闭',
+          archivedAt: seg.closedAt || seg.updatedAt || null,
+          evidenceCount: Array.isArray(seg.evidenceRefs) ? seg.evidenceRefs.length : 0,
+          sourceKind: 'segment',
+          sourceRef: `segment:${seg.id}`,
+        },
+      })
+      report.archived++
     }
 
     // affects → derives（待复核标注）
@@ -374,6 +496,16 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     }
   }
 
-  if (persist) persistLedger()
+  const finalCheck = verifyEvents(workEvents, themeId)
+  if (!finalCheck.ok) throw new Error(`迁移结果校验失败（第 ${finalCheck.index + 1} 条）：${finalCheck.reason}`)
+  if (persist && created > 0) {
+    theme.eventChain = { ...(originalChain || {}), version: CHAIN_EVENTS_VERSION, events: workEvents }
+    try {
+      persistLedgerNow()
+    } catch (error) {
+      theme.eventChain = originalChain
+      throw error
+    }
+  }
   return { created, skipped, report, events: workEvents.map((e) => copy(normEvent(e) || e)) }
 }

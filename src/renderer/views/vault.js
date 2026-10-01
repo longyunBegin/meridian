@@ -211,10 +211,47 @@ function deadLemmaRow(n, cites) {
 /** 墓碑区命题筛选：全部 / 已证伪 / 低置信度（模块内状态，切页重进回到全部）。 */
 let deadFilter = 'all'
 const DEAD_FILTERS = [['all', '全部'], ['falsified', '已证伪'], ['lowconf', '低置信度']]
+let eventArchiveFilter = 'all'
+let eventArchiveQuery = ''
+const EVENT_ARCHIVE_FILTERS = [['all', '全部类型'], ['claim', '主张'], ['inference', '推断'], ['evidence', '证据']]
 function passDeadFilter(n) {
   if (deadFilter === 'falsified') return n.settlement?.correct === false
   if (deadFilter === 'lowconf') return !n.deletedAt && (n.confidence ?? 100) < 20
   return true
+}
+
+function eventArchiveRow(item, refreshView) {
+  const { theme, node, edges } = item
+  const connectedEvidence = new Set(edges.filter((e) => e.rel === 'supports' && (e.from === node.id || e.to === node.id))
+    .map((e) => e.from === node.id ? e.to : e.from)).size
+  const date = String(node.archivedAt || '').slice(0, 10) || '未记录'
+  const typeLabel = { claim: '主张', inference: '推断', evidence: '证据' }[node.kind] || node.kind
+  const row = h('div', { class: 'tomb-row event-archive-row' },
+    h('div', { class: 'tomb-body' },
+      h('div', { class: 'tomb-title' }, h('span', { class: 'tomb-pill' }, `${typeLabel} · 已归档`), h('span', {}, node.title || '未命名节点')),
+      node.archiveReason ? h('div', { class: 'tomb-core' }, `归档原因：${node.archiveReason}`)
+        : h('div', { class: 'tomb-core' }, '归档原因：未记录'),
+      h('div', { class: 'tomb-meta' }, `${theme.name || '未命名主题'} · 证据 ${node.evidenceCount ?? connectedEvidence} 条 · 归档于 ${date}`),
+      h('details', { class: 'event-archive-details' },
+        h('summary', {}, '来源与历史事件'),
+        h('p', {}, `来源引用：${node.sourceRef || '未记录'}`),
+        h('p', {}, `节点事件：${(node.provenanceEventIds || node.eventIds || []).join(' · ') || '无'}`),
+        h('p', {}, `归档事件：${(node.archiveEventIds || []).join(' · ') || '未记录'}`),
+        h('p', {}, `关联支持边：${edges.filter((e) => e.rel === 'supports' && (e.from === node.id || e.to === node.id)).map((e) => e.eventId).join(' · ') || '无'}`))),
+    h('div', { class: 'tomb-acts' },
+      h('button', { type: 'button', class: 'btn', onclick: () => row.querySelector('details')?.toggleAttribute('open') }, '详情'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: async (ev) => {
+        const button = ev.currentTarget
+        button.disabled = true
+        try {
+          const result = await m.chainRestoreNode(theme.id, node.sourceRef, '从墓碑区恢复')
+          if (result?.ok === false) throw new Error(result.error || '恢复未完成')
+          toast('已追加恢复事件；原归档记录仍保留')
+          await refreshView()
+        } catch (error) { toast(`恢复失败：${error.message || error}`, 'var(--red)') }
+        finally { button.disabled = false }
+      } }, '追加恢复')))
+  return row
 }
 
 async function renderDead(mid, meta) {
@@ -237,11 +274,19 @@ async function renderDead(mid, meta) {
   }
   const nodes = (await m.allNodes()).filter((n) => n.status === 'dead')
   const shown = nodes.filter(passDeadFilter)
+  const archiveResults = await Promise.all(themes.map(async (theme) => {
+    try { return { theme, result: await m.chainArchives(theme.id) } }
+    catch (error) { return { theme, error } }
+  }))
+  const eventArchives = archiveResults.flatMap(({ theme, result }) => (result?.nodes || []).map((node) => ({
+    theme, node, edges: result.edges || [],
+  })))
+  const damagedArchiveThemes = archiveResults.filter(({ result }) => result?.integrity?.ok === false).length
 
   const page = h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', {}, meta.title),
-      h('p', {}, '认知段被关闭，或命题被证伪 / 置信度跌破 20 / 被删除后，都会归档到这里。只回顾、可恢复，不删除。'),
+      h('p', {}, '认知段或命题归档后仍保留其来源与历史。恢复会追加新事件，不删除或改写旧记录。'),
     ))
   mid.append(page)
 
@@ -249,6 +294,53 @@ async function renderDead(mid, meta) {
     const sect = h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '已关闭的认知段'), h('em', {}, String(closedSegs.length))))
     for (const { theme, seg } of closedSegs) sect.append(closedSegRow(theme, seg))
+    page.append(sect)
+  }
+
+  if (eventArchives.length || archiveResults.length) {
+    const archiveList = h('div', { class: 'event-archive-list' })
+    const search = h('input', {
+      class: 'txt event-archive-search', type: 'search', value: eventArchiveQuery,
+      placeholder: '搜索名称、原因、主题或来源', 'aria-label': '搜索事件归档',
+    })
+    const controls = h('div', { class: 'event-archive-controls' },
+      search,
+      h('div', { class: 'tomb-filters', role: 'group', 'aria-label': '按归档节点类型筛选' },
+        ...EVENT_ARCHIVE_FILTERS.map(([key, label]) => h('button', {
+          type: 'button', class: `tomb-filter${eventArchiveFilter === key ? ' is-on' : ''}`,
+          'aria-pressed': String(eventArchiveFilter === key),
+          onclick: () => {
+            eventArchiveFilter = key
+            controls.querySelectorAll('.tomb-filter').forEach((button) => {
+              const on = button.textContent === label
+              button.classList.toggle('is-on', on)
+              button.setAttribute('aria-pressed', String(on))
+            })
+            renderEventArchiveRows()
+          },
+        }, label))),
+    )
+    const refreshView = () => renderDead(mid, meta)
+    const renderEventArchiveRows = () => {
+      clear(archiveList)
+      const query = eventArchiveQuery.trim().toLocaleLowerCase()
+      const rows = eventArchives.filter(({ theme, node }) => {
+        if (eventArchiveFilter !== 'all' && node.kind !== eventArchiveFilter) return false
+        if (!query) return true
+        return [node.title, node.archiveReason, theme.name, node.sourceRef].some((text) => String(text || '').toLocaleLowerCase().includes(query))
+      })
+      if (!rows.length) {
+        archiveList.append(h('p', { class: 'chain-note' }, eventArchives.length ? '当前筛选没有匹配的归档。' : '没有事件归档；只读查看不会触发旧数据迁移。'))
+      } else {
+        for (const item of rows) archiveList.append(eventArchiveRow(item, refreshView))
+      }
+    }
+    search.addEventListener('input', () => { eventArchiveQuery = search.value; renderEventArchiveRows() })
+    renderEventArchiveRows()
+    const sect = h('section', { class: 'sect event-archive-section' },
+      h('div', { class: 'sect-h sect-h-row' }, h('h2', {}, '事件归档'), h('em', {}, String(eventArchives.length))),
+      damagedArchiveThemes ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `${damagedArchiveThemes} 个主题的事件链校验失败；展示的归档仅来自已验证前缀。`) : null,
+      controls, archiveList)
     page.append(sect)
   }
 
@@ -272,7 +364,7 @@ async function renderDead(mid, meta) {
     page.append(sect)
   }
 
-  if (!closedSegs.length && !nodes.length) {
+  if (!closedSegs.length && !nodes.length && !eventArchives.length) {
     page.append(h('section', { class: 'sect' },
       h('div', { class: 'sect-b' },
         h('div', { class: 'q' }, h('div', { class: 'q-body' },
