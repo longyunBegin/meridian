@@ -9,7 +9,8 @@
  *
  * 持久化：通过 store.js 导出的 persistLedger() 落盘（与 updateTheme 同一通道）。
  */
-import { load, uid, today, persistLedger } from './store.js'
+import { randomUUID } from 'node:crypto'
+import { load, today, persistLedger } from './store.js'
 import { digest } from './reading-store.js'
 
 export const CHAIN_VERSION = 1
@@ -28,10 +29,10 @@ export function sanitizeLayerNames(names) {
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
-function normLogEntry(e) {
+function normLogEntry(e, fallbackId = randomUUID()) {
   if (!isObj(e)) return null
   return {
-    id: String(e.id || uid()),
+    id: String(e.id || fallbackId),
     at: String(e.at || today()),
     oldValue: String(e.oldValue ?? ''),
     newValue: String(e.newValue ?? ''),
@@ -42,16 +43,18 @@ function normLogEntry(e) {
   }
 }
 
-function normSubsegment(s) {
+function normSubsegment(s, parentId, index) {
   if (!isObj(s)) return null
+  const id = String(s.id || `legacy-subsegment-${digest([parentId, index]).slice(0, 24)}`)
   return {
-    id: String(s.id || uid()),
+    id,
     name: String(s.name || '未命名分支'),
     coreInfo: String(s.coreInfo || ''),
     status: SEG_STATUSES.includes(s.status) ? s.status : 'pending',
     kind: s.kind === 'structural' ? 'structural' : 'conditional',
     convergeCondition: String(s.convergeCondition || ''),
-    changeLog: (Array.isArray(s.changeLog) ? s.changeLog : []).map(normLogEntry).filter(Boolean),
+    changeLog: (Array.isArray(s.changeLog) ? s.changeLog : [])
+      .map((entry, logIndex) => normLogEntry(entry, `legacy-log-${digest([id, logIndex]).slice(0, 24)}`)).filter(Boolean),
     evidenceRefs: Array.isArray(s.evidenceRefs) ? s.evidenceRefs.filter(isObj) : [],
     closeReason: String(s.closeReason || ''),
     closedAt: s.closedAt || null,
@@ -60,11 +63,12 @@ function normSubsegment(s) {
   }
 }
 
-function normSegment(s) {
+function normSegment(s, index = 0) {
   if (!isObj(s)) return null
   const strArr = (v) => Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()) : []
+  const id = String(s.id || `legacy-segment-${digest(['segment', index]).slice(0, 24)}`)
   return {
-    id: String(s.id || uid()),
+    id,
     name: String(s.name || '未命名段'),
     coreInfo: String(s.coreInfo || ''),
     status: SEG_STATUSES.includes(s.status) ? s.status : 'pending',
@@ -84,8 +88,10 @@ function normSegment(s) {
     falsifier: String(s.falsifier || ''),
     convergeCondition: String(s.convergeCondition || ''),
     settleAt: String(s.settleAt || ''),
-    subsegments: (Array.isArray(s.subsegments) ? s.subsegments : []).map(normSubsegment).filter(Boolean),
-    changeLog: (Array.isArray(s.changeLog) ? s.changeLog : []).map(normLogEntry).filter(Boolean),
+    subsegments: (Array.isArray(s.subsegments) ? s.subsegments : [])
+      .map((subsegment, subIndex) => normSubsegment(subsegment, id, subIndex)).filter(Boolean),
+    changeLog: (Array.isArray(s.changeLog) ? s.changeLog : [])
+      .map((entry, logIndex) => normLogEntry(entry, `legacy-log-${digest([id, logIndex]).slice(0, 24)}`)).filter(Boolean),
     evidenceRefs: Array.isArray(s.evidenceRefs) ? s.evidenceRefs.filter(isObj) : [],
     createdAt: s.createdAt || today(),
     updatedAt: s.updatedAt || today(),
@@ -100,7 +106,7 @@ export function normalizeChain(chain) {
   return {
     version: CHAIN_VERSION,
     layerNames,
-    segments: (Array.isArray(c.segments) ? c.segments : []).map(normSegment).filter(Boolean)
+    segments: (Array.isArray(c.segments) ? c.segments : []).map((segment, index) => normSegment(segment, index)).filter(Boolean)
       .map((s) => ({ ...s, layer: Math.min(s.layer, layerNames.length - 1) })),
     readingMap: isObj(c.readingMap) ? c.readingMap : {},
   }
@@ -133,7 +139,7 @@ export function findSegment(chain, idOrName) {
 /** 变化 log 追加：算 prevHash/hash。entry.id 已存在则幂等跳过。 */
 function appendLog(segment, { oldValue = '', newValue = '', reason = '', evidenceRefs = [], id = null, at = null }) {
   const logs = segment.changeLog
-  const entryId = id || uid()
+  const entryId = id || randomUUID()
   if (logs.some((e) => e.id === entryId)) return logs.find((e) => e.id === entryId)
   const prevHash = logs.length ? logs[logs.length - 1].hash : 'GENESIS'
   const body = {
@@ -161,7 +167,7 @@ export function mountToChain(themeId, {
 } = {}) {
   const theme = getThemeOrThrow(themeId)
   const chain = themeChain(theme)
-  const mid = mountId || uid()
+  const mid = mountId || randomUUID()
   const changed = []
   const created = []
   const names = [...new Set((segmentNames || []).map((n) => String(n || '').trim()).filter(Boolean))]
@@ -171,6 +177,7 @@ export function mountToChain(themeId, {
     let seg = chain.segments.find((s) => s.name === name)
     if (!seg) {
       seg = normSegment({
+        id: randomUUID(),
         name, coreInfo, status: 'pending',
         layer: Math.min(Number.isInteger(layer) && layer >= 0 ? layer : 0, chain.layerNames.length - 1),
         falsifier, source,

@@ -18,6 +18,28 @@ import { digest } from './reading-store.js'
 import { randomUUID } from 'node:crypto'
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+const copyValue = (v) => JSON.parse(JSON.stringify(v ?? null))
+
+function evidenceRefKey(ref) {
+  if (!isObj(ref) || !ref.type || !ref.id) return null
+  return JSON.stringify([String(ref.type).trim(), String(ref.id).trim()])
+}
+
+/** Preserve first-seen order; for duplicate keys, retain the first ref and fill a missing title. */
+function uniqueEvidenceRefs(refs) {
+  const ordered = new Map()
+  for (const raw of Array.isArray(refs) ? refs : []) {
+    const key = evidenceRefKey(raw)
+    if (!key) continue
+    const prior = ordered.get(key)
+    if (prior) {
+      if (!prior.title && raw.title) prior.title = raw.title
+      continue
+    }
+    ordered.set(key, { ...copyValue(raw), type: String(raw.type).trim(), id: String(raw.id).trim() })
+  }
+  return [...ordered.values()]
+}
 
 function shortTitle(s, n = 28) {
   const t = String(s || '').replace(/\s+/g, ' ').trim()
@@ -78,6 +100,7 @@ export function projectEvents(events) {
       resolved: null,
       archived: false,
       superseded: false,
+      createdSeq: e.seq,
       currentText: p.coreInfo || p.title || '',
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
@@ -102,6 +125,7 @@ export function projectEvents(events) {
       resolved: null,
       archived: false,
       superseded: false,
+      createdSeq: e.seq,
       currentText: p.text || p.reason || '',
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
@@ -141,6 +165,7 @@ export function projectEvents(events) {
       resolved: null,
       archived: false,
       superseded: false,
+      createdSeq: byId.get(eventId)?.seq ?? null,
       currentText: '',
       sourceKind: 'external',
       sourceRef: key,
@@ -178,6 +203,7 @@ export function projectEvents(events) {
   for (const e of events) {
     if (e.type !== 'relation.declared') continue
     const p = e.payload || {}
+    if (p.reviewOf) continue
     if (!['supports', 'derives', 'contradicts'].includes(p.rel)) continue
     const from = resolveEndpoint(p.from, e.id)
     const to = resolveEndpoint(p.to, e.id)
@@ -187,16 +213,36 @@ export function projectEvents(events) {
       rel: p.rel,
       from,
       to,
-      pendingReview: p.reviewStatus === 'pending-review',
+      pendingReview: p.reviewStatus === 'pending-review' || p.rel === 'derives',
+      reviewDecision: null,
+      reviewReason: '',
+      reviewEventId: null,
+      reviewedAt: null,
+      reviewedBy: null,
       mapping: p.mapping || '',
       eventId: e.id,
+      seq: e.seq,
       provenanceEventIds: [e.id],
       sourceRef: p.sourceRef || `event:${e.id}`,
     })
   }
 
+  for (const e of events) {
+    if (e.type !== 'relation.declared' || !e.payload?.reviewOf) continue
+    const edge = edges.find((candidate) => candidate.eventId === e.payload.reviewOf)
+    if (!edge) continue
+    edge.pendingReview = false
+    edge.reviewDecision = e.payload.reviewDecision
+    edge.reviewReason = e.payload.decisionReason || ''
+    edge.reviewEventId = e.id
+    edge.reviewedAt = e.at || null
+    edge.reviewedBy = e.actor || null
+    edge.provenanceEventIds.push(e.id)
+  }
+
   for (const node of nodes.values()) {
     const evidenceIds = edges.filter((edge) => edge.rel === 'supports'
+      && edge.reviewDecision !== 'rejected'
       && (edge.from === node.id || edge.to === node.id))
       .map((edge) => edge.from === node.id ? edge.to : edge.from)
       .filter((id) => nodes.get(id)?.kind === 'evidence')
@@ -267,6 +313,10 @@ export function getChainProjection(themeId, options = {}) {
       integrity = verifyChain(themeId)
     }
   }
+  return projectionResult(themeId, events, integrity)
+}
+
+function projectionResult(themeId, events, integrity, history = null) {
   const safeEvents = integrity.ok ? events : events.slice(0, integrity.lastValidSeq || 0)
   const projection = projectEvents(safeEvents)
   const scope = chainScope(projection)
@@ -276,9 +326,30 @@ export function getChainProjection(themeId, options = {}) {
     integrity,
     nodes: scope.nodes,
     edges: scope.edges,
+    allNodes: projection.nodes,
+    allEdges: projection.edges,
     floatingCount: scope.floating.length,
-    floating: scope.floating.map((n) => ({ id: n.id, kind: n.kind, title: n.title, sourceKind: n.sourceKind })),
+    floating: scope.floating,
+    ...(history || {}),
   }
+}
+
+/** Deterministic, read-only replay. It never migrates legacy data or writes the ledger. */
+export function getChainProjectionAt(themeId, sequence) {
+  if (!Number.isSafeInteger(sequence)) throw new Error('回放序号必须是安全整数')
+  const events = getEvents(themeId)
+  const integrity = verifyChain(themeId)
+  const validPrefixSeq = integrity.ok ? events.length : (integrity.lastValidSeq || 0)
+  const selectedSeq = Math.max(0, Math.min(validPrefixSeq, sequence))
+  const replayEvents = events.slice(0, selectedSeq)
+  const replayIntegrity = { ...integrity, replayed: true, selectedSeq, validPrefixSeq }
+  return projectionResult(themeId, replayEvents, replayIntegrity, {
+    replayed: true,
+    selectedSeq,
+    requestedSeq: sequence,
+    validPrefixSeq,
+    selectedAt: selectedSeq ? replayEvents.at(-1)?.at || null : null,
+  })
 }
 
 /** Archive browsing is deliberately read-only and does not trigger legacy migration. */
@@ -348,7 +419,8 @@ export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
   const to = nodes.find((node) => node.id === toNodeId && !node.external && !node.archived)
   if (!from || !to) throw new Error('关系端点必须是当前未归档的图谱节点')
   const projection = projectEvents(getEvents(themeId))
-  if (projection.edges.some((edge) => edge.rel === rel && edge.from === fromNodeId && edge.to === toNodeId)) {
+  if (projection.edges.some((edge) => edge.rel === rel && edge.from === fromNodeId && edge.to === toNodeId
+    && edge.reviewDecision !== 'rejected')) {
     throw new Error('这条关系已经存在')
   }
   return appendEvent(themeId, {
@@ -358,8 +430,41 @@ export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
       rel,
       from: { eventId: fromNodeId },
       to: { eventId: toNodeId },
+      ...(rel === 'derives' ? { reviewStatus: 'pending-review' } : {}),
       sourceKind: 'user-declared-relation',
       sourceRef: `relation:${fromNodeId}:${toNodeId}`,
+    },
+  })
+}
+
+/** Record a human decision as a new relation.declared event; never edit the original edge. */
+export function reviewProjectedRelation(themeId, relationEventId, decision, reason) {
+  if (!['confirmed', 'rejected'].includes(decision)) throw new Error('请选择确认或驳回')
+  const decisionReason = String(reason || '').trim()
+  if (!decisionReason) throw new Error('请填写复核理由')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const events = getEvents(themeId)
+  const original = events.find((event) => event.id === relationEventId
+    && event.type === 'relation.declared' && !event.payload?.reviewOf
+    && (event.payload?.reviewStatus === 'pending-review' || event.payload?.rel === 'derives'))
+  if (!original) throw new Error('找不到待复核关系')
+  if (events.some((event) => event.type === 'relation.declared' && event.payload?.reviewOf === relationEventId)) {
+    throw new Error('该关系已有复核决定；如需改变判断，请追加一条新的关系声明')
+  }
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'relation.declared',
+    payload: {
+      rel: original.payload.rel,
+      from: copyValue(original.payload.from),
+      to: copyValue(original.payload.to),
+      reviewStatus: 'pending-review',
+      reviewOf: original.id,
+      reviewDecision: decision,
+      decisionReason,
+      sourceKind: 'relation-review',
+      sourceRef: original.payload.sourceRef || `event:${original.id}`,
     },
   })
 }
@@ -421,13 +526,15 @@ export function mountDraftToEvents(themeId, payload = {}) {
   const unique = [...new Set(names)]
   if (!unique.length) throw new Error('请选择或输入要挂载的主张')
 
-  const evidenceRefsRaw = [
+  const rawEvidenceRefs = [
     ...(payload.inboxId ? [{ type: 'inbox', id: payload.inboxId, title: payload.inboxTitle || '' }] : []),
     ...(Array.isArray(payload.evidenceRefs) ? payload.evidenceRefs : []),
   ]
-  const evidenceRefs = [...new Map(evidenceRefsRaw
+  // Keep the old deterministic identity available for already-written inbox mounts.
+  const legacyEvidenceRefs = [...new Map(rawEvidenceRefs
     .filter((r) => isObj(r) && r.type && r.id)
     .map((r) => [`${r.type}:${r.id}`, r])).values()]
+  const evidenceRefs = uniqueEvidenceRefs(rawEvidenceRefs)
   const newValue = String(payload.newValue ?? '').trim()
   const evidenceText = String(payload.evidence || '').trim()
   const hasEvidence = !!evidenceText || evidenceRefs.length > 0
@@ -436,6 +543,30 @@ export function mountDraftToEvents(themeId, payload = {}) {
   const drafts = []
   const touched = []
   const eventId = (kind, semantic) => `evt:mount:${digest({ themeId, inboxId: payload.inboxId || null, kind, semantic }).slice(0, 32)}`
+  const intentExists = (id) => [...priorEvents, ...drafts].some((event) => event?.id === id)
+  const addReplayDraft = (event) => drafts.push({
+    id: event.id, actor: event.actor, type: event.type, payload: copyValue(event.payload),
+    supersedes: event.supersedes ?? null,
+  })
+  const addSupport = (evidenceId, claimId) => {
+    const fresh = [...priorEvents, ...drafts]
+    const exists = fresh.some((event) => event.type === 'relation.declared'
+      && !event.payload?.reviewOf && event.payload?.rel === 'supports'
+      && event.payload?.from?.eventId === evidenceId && event.payload?.to?.eventId === claimId)
+    const supportId = payload.inboxId
+      ? eventId('support', { evidenceId, claimId }) : `evt:mount:${randomUUID()}`
+    const replay = fresh.find((event) => event.id === supportId)
+    if (replay) { addReplayDraft(replay); return }
+    if (exists) return
+    drafts.push({
+      id: supportId, actor: 'user', type: 'relation.declared',
+      payload: {
+        rel: 'supports', from: { eventId: evidenceId }, to: { eventId: claimId },
+        sourceKind: 'mount', sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${evidenceId}`,
+      },
+    })
+  }
+
   for (const name of unique) {
     // 按标题找现存主张（未归档、非外部）
     const proj = projectEvents([...priorEvents, ...drafts])
@@ -461,24 +592,49 @@ export function mountDraftToEvents(themeId, payload = {}) {
     touched.push(name)
 
     if (hasEvidence) {
-      const stableEvidenceId = eventId('evidence', { name, evidenceText, evidenceRefs })
-      const evId = payload.inboxId ? stableEvidenceId : `evt:mount:${randomUUID()}`
-      drafts.push({
-        id: evId, actor: 'user', type: 'evidence.appended',
-        payload: {
-          text: evidenceText, reason: String(payload.evidence || ''),
-          evidenceRefs, sourceKind: 'mount',
-          sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${evId}`,
-        },
-      })
-      drafts.push({
-        id: payload.inboxId ? eventId('support', { evidenceId: evId, claimId }) : `evt:mount:${randomUUID()}`,
-        actor: 'user', type: 'relation.declared',
-        payload: {
-          rel: 'supports', from: { eventId: evId }, to: { eventId: claimId },
-          sourceKind: 'mount', sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${evId}`,
-        },
-      })
+      const fresh = [...priorEvents, ...drafts]
+      const legacyStableId = payload.inboxId
+        ? eventId('evidence', { name, evidenceText, evidenceRefs: legacyEvidenceRefs }) : null
+      const existingReplay = legacyStableId && fresh.find((event) => event.id === legacyStableId
+        && event.type === 'evidence.appended')
+      const byRef = new Map()
+      for (const event of fresh) {
+        if (event.type !== 'evidence.appended') continue
+        for (const ref of uniqueEvidenceRefs(event.payload?.evidenceRefs || [])) {
+          const key = evidenceRefKey(ref)
+          if (key && !byRef.has(key)) byRef.set(key, event.id)
+        }
+      }
+
+      let evidenceIds = []
+      if (existingReplay) {
+        addReplayDraft(existingReplay)
+        evidenceIds = [existingReplay.id]
+      } else {
+        const referencedIds = [...new Set(evidenceRefs.map((ref) => byRef.get(evidenceRefKey(ref))).filter(Boolean))]
+        const unseenRefs = evidenceRefs.filter((ref) => !byRef.has(evidenceRefKey(ref)))
+        evidenceIds = [...new Set(referencedIds)]
+
+        // A repeated source ref reuses its first event; prose alone is not an
+        // identity key, so each intentional evidence append remains auditable.
+        const createEvidence = unseenRefs.length > 0 || Boolean(evidenceText)
+        if (createEvidence) {
+          const refsForNewEvent = unseenRefs
+          const semantic = { name, evidenceText, evidenceRefs }
+          const stableId = payload.inboxId
+            ? eventId('evidence', semantic) : `evt:mount:${randomUUID()}`
+          const evidencePayload = {
+            text: evidenceText, reason: String(payload.evidence || ''),
+            evidenceRefs: refsForNewEvent, sourceKind: 'mount',
+            sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${stableId}`,
+          }
+          const oldStableEvent = payload.inboxId && fresh.find((event) => event.id === stableId)
+          if (oldStableEvent) addReplayDraft(oldStableEvent)
+          else drafts.push({ id: stableId, actor: 'user', type: 'evidence.appended', payload: evidencePayload })
+          evidenceIds.push(stableId)
+        }
+      }
+      for (const evidenceId of new Set(evidenceIds)) addSupport(evidenceId, claimId)
     }
 
     if (newValue) {
@@ -500,6 +656,12 @@ export function mountDraftToEvents(themeId, payload = {}) {
     }
   }
   const appended = appendEventBatch(themeId, drafts)
+  const stableIntentIds = unique.flatMap((name) => [
+    ...(payload.inboxId ? [eventId('claim', { name })] : []),
+  ])
+  const replayed = appended.length
+    ? appended.every((event) => event.replayed)
+    : Boolean(payload.inboxId && stableIntentIds.some(intentExists))
   return { ok: true, events: appended.filter((e) => !e.replayed).length, claims: touched,
-    replayed: appended.length > 0 && appended.every((e) => e.replayed) }
+    replayed }
 }

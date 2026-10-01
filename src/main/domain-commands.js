@@ -35,8 +35,8 @@ import {
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
 import {
-  getChainProjection, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
-  archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation,
+  getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
+  archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, verifyChain as verifyThemeChain } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -619,6 +619,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:get', (themeId) => getChain(themeId))
   // 当前认知图（只读投影）：事件账本 → 语义图谱。本地命令，不进 outbox。
   commands.register('chain:getProjection', (themeId, options) => getChainProjection(themeId, options))
+  commands.register('chain:getProjectionAt', (themeId, sequence) => getChainProjectionAt(themeId, sequence))
   commands.register('chain:getArchive', (themeId) => getArchivedProjectionNodes(themeId))
   commands.register('chain:getEvents', (themeId) => ({ ok: true, events: getChainEvents(themeId) }))
   commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
@@ -626,6 +627,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
   commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))
   commands.register('chain:declareRelation', (themeId, fromNodeId, toNodeId, rel) => ({ ok: true, event: declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) }))
+  commands.register('chain:reviewRelation', (themeId, eventId, decision, reason) => ({ ok: true, event: reviewProjectedRelation(themeId, eventId, decision, reason) }))
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {

@@ -150,6 +150,7 @@ function verifyEvents(events, themeId) {
   const correctionRoot = new Map()
   const correctionHead = new Map()
   const archiveState = new Map()
+  const reviewedRelations = new Set()
   for (let i = 0; i < events.length; i++) {
     const e = normEvent(events[i])
     if (!e) return { ok: false, index: i, lastValidSeq: i, reason: '事件格式非法' }
@@ -181,6 +182,21 @@ function verifyEvents(events, themeId) {
       for (const endpoint of [p.from, p.to]) {
         if (endpoint.eventId && !ids.has(endpoint.eventId)) return { ok: false, index: i, lastValidSeq: i, reason: '关系引用了尚不存在的事件' }
         if (!endpoint.eventId && !endpoint.ref && !textId(endpoint.name)) return { ok: false, index: i, lastValidSeq: i, reason: '关系端点缺少来源' }
+      }
+      if (p.reviewOf != null) {
+        const original = ids.get(p.reviewOf)
+        const op = original?.payload || {}
+        if (!textId(p.reviewOf) || original?.type !== 'relation.declared' || op.reviewOf
+          || (op.reviewStatus !== 'pending-review' && op.rel !== 'derives') || reviewedRelations.has(p.reviewOf)) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '关系复核目标不存在、不是待复核关系或已作出决定' }
+        }
+        if (!['confirmed', 'rejected'].includes(p.reviewDecision) || !textId(p.decisionReason)
+          || p.rel !== op.rel || JSON.stringify(p.from) !== JSON.stringify(op.from) || JSON.stringify(p.to) !== JSON.stringify(op.to)) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定或理由非法，或与原关系不一致' }
+        }
+        reviewedRelations.add(p.reviewOf)
+      } else if (p.reviewDecision != null || p.decisionReason != null) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定缺少 reviewOf' }
       }
     }
     if (e.type === 'node.archived' || e.type === 'node.restored' || e.type === 'settlement.recorded') {
@@ -442,10 +458,18 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     })
 
     // evidenceRefs → supports（证据→主张）
-    const evidenceRefs = Array.isArray(seg.evidenceRefs) ? seg.evidenceRefs : []
-    evidenceRefs.forEach((ref, i) => {
+    const seenEvidenceRefs = new Set()
+    const evidenceRefs = []
+    for (const [legacyIndex, ref] of (Array.isArray(seg.evidenceRefs) ? seg.evidenceRefs : []).entries()) {
+      if (!isObj(ref) || !ref.type || !ref.id) continue
+      const key = JSON.stringify([String(ref.type).trim(), String(ref.id).trim()])
+      if (seenEvidenceRefs.has(key)) continue
+      seenEvidenceRefs.add(key)
+      evidenceRefs.push({ ref, legacyIndex })
+    }
+    evidenceRefs.forEach(({ ref, legacyIndex }) => {
       put({
-        id: `evt:rel:ev:${seg.id}:${i}`,
+        id: `evt:rel:ev:${seg.id}:${legacyIndex}`,
         at: seg.updatedAt || null,
         type: 'relation.declared',
         payload: {

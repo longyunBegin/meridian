@@ -156,6 +156,91 @@ ok('明确来源引用可生成带来源的证据节点与支持边', citedEvent
   && e.payload.evidenceRefs.some((r) => r.id === 'source-1'))
   && citedEvents.some((e) => e.type === 'relation.declared' && e.payload.rel === 'supports'))
 
+console.log('\n— evidence ref 去重与回放稳定性 —')
+const duplicateRefTheme = store.addTheme('重复证据引用测试')
+const duplicateRefs = [
+  { type: 'lemma', id: 'same-ref', title: '首个标题' },
+  { type: 'lemma', id: 'same-ref', title: '后续标题不得覆盖' },
+  { type: 'url', id: 'https://example.test/evidence', title: 'URL 来源' },
+]
+const duplicateMount = pj.mountDraftToEvents(duplicateRefTheme.id, {
+  inboxId: 'duplicate-ref-inbox', inboxTitle: '重复引用条目', newSegmentName: '引用去重主张',
+  evidence: '保留的依据摘要', evidenceRefs: duplicateRefs,
+})
+const duplicateEvents = ev.getEvents(duplicateRefTheme.id)
+const duplicateEvidence = duplicateEvents.filter((event) => event.type === 'evidence.appended')
+const normalizedRefs = duplicateEvidence[0]?.payload.evidenceRefs || []
+ok('同一挂载中的重复 ref 按规范化 type/id 去重且保留首次顺序/标题', duplicateMount.ok
+  && normalizedRefs.length === 3
+  && normalizedRefs[1]?.id === 'same-ref' && normalizedRefs[1]?.title === '首个标题'
+  && normalizedRefs[2]?.type === 'url')
+const eventCountAfterFirstDuplicateMount = duplicateEvents.length
+const duplicateReplay = pj.mountDraftToEvents(duplicateRefTheme.id, {
+  inboxId: 'duplicate-ref-inbox', inboxTitle: '重复引用条目', newSegmentName: '引用去重主张',
+  evidence: '保留的依据摘要', evidenceRefs: duplicateRefs,
+})
+ok('重复挂载重放不会再追加同一证据事件或支持关系', duplicateReplay.events === 0
+  && ev.getEvents(duplicateRefTheme.id).length === eventCountAfterFirstDuplicateMount)
+pj.mountDraftToEvents(duplicateRefTheme.id, {
+  inboxId: 'second-inbox-same-evidence', segmentNames: ['引用去重主张'], evidence: '保留的依据摘要',
+  evidenceRefs: duplicateRefs,
+})
+const crossInboxEvents = ev.getEvents(duplicateRefTheme.id)
+const repeatedReferenceCount = crossInboxEvents.filter((event) => event.type === 'evidence.appended')
+  .flatMap((event) => event.payload.evidenceRefs || []).filter((ref) => ref.type === 'lemma' && ref.id === 'same-ref').length
+ok('不同 inbox 重用同一 evidence ref 时不重复写入该引用', repeatedReferenceCount === 1
+  && crossInboxEvents.filter((event) => event.type === 'evidence.appended').length === 2)
+
+const repeatedTextTheme = store.addTheme('重复正文独立挂接测试')
+pj.mountDraftToEvents(repeatedTextTheme.id, { newSegmentName: '原文相同的主张', evidence: '相同正文' })
+pj.mountDraftToEvents(repeatedTextTheme.id, { segmentNames: ['原文相同的主张'], evidence: '相同正文' })
+ok('相同正文的独立挂接仍各自追加证据事件，不按文本误去重', ev.getEvents(repeatedTextTheme.id)
+  .filter((event) => event.type === 'evidence.appended').length === 2)
+
+const reviewTheme = store.addTheme('推导关系复核测试')
+const reviewFrom = ev.appendEvent(reviewTheme.id, { id: 'review-from', type: 'claim.created', payload: { title: '推断 A', nodeKind: 'inference' } })
+const reviewTo = ev.appendEvent(reviewTheme.id, { id: 'review-to', type: 'claim.created', payload: { title: '主张 B', nodeKind: 'claim' } })
+const derivedEdge = pj.declareProjectedRelation(reviewTheme.id, reviewFrom.id, reviewTo.id, 'derives')
+const beforeDecision = pj.projectEvents(ev.getEvents(reviewTheme.id)).edges.find((edge) => edge.eventId === derivedEdge.id)
+ok('derives 声明默认待用户复核', derivedEdge.payload.reviewStatus === 'pending-review' && beforeDecision?.pendingReview === true)
+const reviewedCount = ev.getEvents(reviewTheme.id).length
+const reviewDecision = pj.reviewProjectedRelation(reviewTheme.id, derivedEdge.id, 'confirmed', '已检查前提与来源')
+const afterDecisionEvents = ev.getEvents(reviewTheme.id)
+const afterDecisionEdge = pj.projectEvents(afterDecisionEvents).edges.find((edge) => edge.eventId === derivedEdge.id)
+ok('人工确认以新关系事件追加且原关系 payload 未变', reviewDecision.id !== derivedEdge.id
+  && reviewDecision.payload.reviewOf === derivedEdge.id
+  && ev.getEvents(reviewTheme.id).find((event) => event.id === derivedEdge.id).payload.reviewStatus === 'pending-review'
+  && afterDecisionEvents.length === reviewedCount + 1)
+ok('复核后投影保留决定者、时间、理由并只解除待复核状态', afterDecisionEdge?.pendingReview === false
+  && afterDecisionEdge?.reviewDecision === 'confirmed' && afterDecisionEdge?.reviewReason === '已检查前提与来源'
+  && afterDecisionEdge?.reviewedBy === 'user' && !!afterDecisionEdge?.reviewedAt)
+let repeatedReviewRejected = false
+try { pj.reviewProjectedRelation(reviewTheme.id, derivedEdge.id, 'rejected', '改主意') } catch { repeatedReviewRejected = true }
+ok('已决定的关系不可原地反转或重复复核', repeatedReviewRejected && ev.verifyChain(reviewTheme.id).ok)
+
+const replayTheme = store.addTheme('历史只读回放测试')
+ev.appendEvent(replayTheme.id, { id: 'replay-a', type: 'claim.created', payload: { title: '版本 A', sourceRef: 'fixture:a' } })
+ev.appendEvent(replayTheme.id, { id: 'replay-b', type: 'claim.created', payload: { title: '版本 B', sourceRef: 'fixture:b' } })
+const eventsBeforeReplay = JSON.stringify(ev.getEvents(replayTheme.id))
+const replayAtOne = pj.getChainProjectionAt(replayTheme.id, 1)
+ok('v1 回放仅含 v1 节点且标记只读序号', replayAtOne.selectedSeq === 1
+  && replayAtOne.allNodes.some((node) => node.id === 'replay-a')
+  && !replayAtOne.allNodes.some((node) => node.id === 'replay-b')
+  && replayAtOne.integrity.replayed === true)
+pj.getChainProjectionAt(replayTheme.id, 99)
+ok('只读历史回放不写入或修改生产 ledger', JSON.stringify(ev.getEvents(replayTheme.id)) === eventsBeforeReplay)
+const damagedReplayTheme = store.addTheme('损坏前缀回放测试')
+ev.appendEvent(damagedReplayTheme.id, { id: 'safe-prefix', type: 'claim.created', payload: { title: '最后有效前缀' } })
+ev.appendEvent(damagedReplayTheme.id, { id: 'bad-future', type: 'claim.created', payload: { title: '损坏后的未来' } })
+const damagedRow = store.load().themes.find((item) => item.id === damagedReplayTheme.id)
+damagedRow.eventChain.events[1].payload.title = '被篡改的未来状态'
+store.persistLedger()
+const damagedReplay = pj.getChainProjectionAt(damagedReplayTheme.id, 999)
+ok('账本损坏时回放自动截断到最后校验有效前缀', damagedReplay.selectedSeq === 1
+  && damagedReplay.validPrefixSeq === 1
+  && damagedReplay.allNodes.some((node) => node.id === 'safe-prefix')
+  && !damagedReplay.allNodes.some((node) => node.id === 'bad-future'))
+
 console.log('\n— 明确添加证据与语义关系 —')
 const manualTheme = store.addTheme('手动建模主题')
 const manualClaimEvent = ev.appendEvent(manualTheme.id, {

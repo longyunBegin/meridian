@@ -46,6 +46,7 @@ chain.mountToChain(theme.id, {
   const t = store.load().themes.find((x) => x.id === theme.id)
   const segA = t.chain.segments.find((s) => s.name === '段A')
   segA.affects = ['段B']
+  segA.evidenceRefs.push({ type: 'lemma', id: 'L-ev1', title: '重复引用不得覆盖首个名称' })
   segA.evidenceRefs.push({ type: 'inbox', id: 'inbox-9', title: '补充证据' })
   store.persistLedger()
 }
@@ -65,6 +66,10 @@ store.addNode({ themeId: theme.id, kind: 'lemma', title: '命题乙', type: 'obs
 console.log('\n— 迁移映射 —')
 const r1 = ev.migrateThemeToEvents(theme.id)
 ok('段映射 2', r1.report.segments === 2, JSON.stringify(r1.report))
+const newlyCreatedSegments = chain.getChain(theme.id).segments
+ok('新建旧链段以各自 UUID 作为稳定身份', newlyCreatedSegments.length === 2
+  && newlyCreatedSegments[0].id !== newlyCreatedSegments[1].id
+  && newlyCreatedSegments.every((segment) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment.id)))
 ok('changeLog 映射 3', r1.report.changeLogs === 3)
 ok('affects 映射 1', r1.report.affects === 1)
 ok('evidenceRefs 映射 2', r1.report.evidenceRefs === 2)
@@ -90,6 +95,11 @@ ok('更正带 supersedes', corrections.every((e) => typeof e.supersedes === 'str
 ok('原 changeLog hash 存证', corrections.every((e) => e.payload.provenance && e.payload.provenance.hash))
 const affRel = events.find((e) => e.type === 'relation.declared' && e.payload.mapping)
 ok('affects 暂译 derives 待复核', affRel && affRel.payload.rel === 'derives' && affRel.payload.reviewStatus === 'pending-review')
+const migratedEvidenceEdges = events.filter((event) => event.type === 'relation.declared' && event.payload.sourceKind === 'segment-evidenceRef')
+ok('旧段重复 evidence ref 按 type/id 去重且保留首次来源顺序', migratedEvidenceEdges.length === 2
+  && migratedEvidenceEdges[0].payload.from.ref.id === 'L-ev1'
+  && migratedEvidenceEdges[1].payload.from.ref.id === 'inbox-9'
+  && migratedEvidenceEdges[0].id.endsWith(':0') && migratedEvidenceEdges[1].id.endsWith(':2'))
 const claims = events.filter((e) => e.type === 'claim.created')
 const lemmaClaim = claims.find((e) => e.payload.sourceRef === 'lemma:' + store.load().nodes.find((n) => n.title === '命题甲').id)
 ok('confidence 原样携带', lemmaClaim && lemmaClaim.payload.confidence === 70)
@@ -154,6 +164,31 @@ chain.mountToChain(theme3.id, { mountId: 'd1', segmentNames: ['段D'], reason: '
 const dr = ev.migrateThemeToEvents(theme3.id, { persist: false })
 ok('dry-run 构造出事件', dr.created > 0, `构造 ${dr.created}`)
 ok('dry-run 未写账本', ev.getEvents(theme3.id).length === 0)
+
+console.log('\n— 缺失旧 ID 的确定性迁移身份 —')
+const missingIdTheme = store.addTheme('旧记录缺失 ID 主题')
+{
+  const row = store.load().themes.find((item) => item.id === missingIdTheme.id)
+  row.chain = { segments: [{ name: '缺失 ID 的旧段', coreInfo: '旧结论', status: 'pending', layer: 0,
+    changeLog: [{ oldValue: '旧值', newValue: '新值', reason: '旧更正', at: '2025-01-01' }] }] }
+  store.persistLedger()
+}
+const missingRawChain = store.load().themes.find((item) => item.id === missingIdTheme.id).chain
+const normalizedMissing1 = chain.normalizeChain(missingRawChain).segments[0]
+const normalizedMissing2 = chain.normalizeChain(missingRawChain).segments[0]
+ok('缺 ID 的旧段与 changeLog 在重复归一化时使用同一稳定哈希身份', normalizedMissing1.id === normalizedMissing2.id
+  && normalizedMissing1.changeLog[0].id === normalizedMissing2.changeLog[0].id
+  && normalizedMissing1.id.startsWith('legacy-segment-') && normalizedMissing1.changeLog[0].id.startsWith('legacy-log-'))
+const missingFirstMigration = ev.migrateThemeToEvents(missingIdTheme.id)
+const missingFirstEvents = ev.getEvents(missingIdTheme.id)
+const missingSecondMigration = ev.migrateThemeToEvents(missingIdTheme.id)
+const missingSecondEvents = ev.getEvents(missingIdTheme.id)
+ok('缺 ID 旧段迁移保留同一 sourceRef 与事件 ID，重跑不重复创建', missingFirstMigration.created === 2
+  && missingSecondMigration.created === 0 && missingFirstEvents.length === 2 && missingSecondEvents.length === 2
+  && missingFirstEvents[0].id === `evt:seg:${normalizedMissing1.id}`
+  && missingFirstEvents[0].payload.sourceRef === `segment:${normalizedMissing1.id}`
+  && missingFirstEvents[1].id === `evt:log:${normalizedMissing1.changeLog[0].id}`
+  && missingFirstEvents[1].payload.sourceRef === `segment:${normalizedMissing1.id}#log:${normalizedMissing1.changeLog[0].id}`)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -2,6 +2,7 @@ import { h, clear, toast } from '../lib/dom.js'
 import { state, selectNode, setView, refresh } from '../app.js'
 import { confColor, TYPE_LABEL, nodePath } from './shared.js'
 import { SCENARIO_LABELS } from '../../main/llmlog.js'
+import { requestChainEventJump } from '../lib/chain-ui-model.js'
 
 export { renderReadings, renderSources } from './readings.js'
 import { fmtValue, periodLabel, safeSourceLink, trustMark } from './readings.js'
@@ -88,66 +89,31 @@ export async function renderVault(mid, kind) {
 // 第二组：已证伪的命题——引用它的段就是它在链中的位置
 // ============================================================
 
-/** 跳到主题页认知链，滚动到段卡片并柔光高亮。记住从墓碑区过来：删命题后回到这里。 */
-async function jumpToSegment(themeId, segmentId) {
+async function jumpToLedgerEvent(themeId, eventId) {
   state.backTo = { view: 'vault', auditKind: 'dead' }
   state.themeId = themeId
   state.selectedId = null
+  requestChainEventJump(themeId, eventId)
   setView('theme')
-  const esc = (window.CSS && typeof CSS.escape === 'function')
-    ? (s) => CSS.escape(s)
-    : (s) => String(s).replace(/["\\]/g, '\\$&')
-  for (let i = 0; i < 50; i++) {
-    const card = document.querySelector(`[data-seg-id="${esc(segmentId)}"]`)
-    if (card) {
-      card.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      card.classList.add('flash')
-      setTimeout(() => card.classList.remove('flash'), 2400)
-      return
-    }
-    await new Promise((r) => setTimeout(r, 100))
-  }
 }
 
-function closedSegRow(theme, seg) {
-  const closedSubs = (seg.subsegments || []).filter((s) => s.status === 'closed')
+function legacyClosedSegRow(theme, seg) {
+  const closedSubs = (seg.subsegments || []).filter((item) => item.status === 'closed')
   const evCount = Array.isArray(seg.evidenceRefs) ? seg.evidenceRefs.length : 0
-  const metaBits = [
-    theme.name || '未命名主题',
-    `证据 ${evCount} 条`,
-    seg.updatedAt ? `更新于 ${String(seg.updatedAt).slice(0, 10)}` : null,
-  ].filter(Boolean)
-  if (seg.mergedInto?.length) metaBits.push(`汇入 → ${seg.mergedInto.join('、')}`)
+  const metaBits = [theme.name || '未命名主题', `旧格式证据引用 ${evCount} 条`, seg.updatedAt ? `更新于 ${String(seg.updatedAt).slice(0, 10)}` : null]
+    .filter(Boolean)
   if (closedSubs.length) metaBits.push(`含 ${closedSubs.length} 个已关闭分支`)
-  return h('div', { class: 'tomb-row' },
+  return h('div', { class: 'tomb-row legacy-tomb-row' },
     h('div', { class: 'tomb-body' },
-      h('div', { class: 'tomb-title' },
-        h('span', { class: 'tomb-pill' }, '已关闭'),
-        h('span', {}, seg.name || '未命名段')),
+      h('div', { class: 'tomb-title' }, h('span', { class: 'tomb-pill tomb-pill-legacy' }, '旧格式 · 待事件化'), h('span', {}, seg.name || '未命名段')),
       seg.coreInfo ? h('div', { class: 'tomb-core' }, seg.coreInfo) : null,
       h('div', { class: 'tomb-meta' }, metaBits.join(' · ')),
-    ),
+      h('p', { class: 'chain-note' }, '兼容只读预览：此记录尚未出现在校验后的事件投影中；原始数据保留，未对它执行复活或改写。')),
     h('div', { class: 'tomb-acts' },
-      h('button', { class: 'btn', onclick: () => jumpToSegment(theme.id, seg.id) }, '查看'),
-      h('button', {
-        class: 'btn btn-primary',
-        onclick: async (e) => {
-          const btn = e.currentTarget
-          btn.disabled = true
-          try {
-            const res = await m.chainReviveSegment(theme.id, seg.id)
-            toast(res?.reopened?.length
-              ? `已复活为待确认：${res.reopened.join('、')}`
-              : '已经是开放状态，无需复活', 'var(--text-2)')
-            await refresh()
-          } catch { toast('复活失败，请重试', 'var(--red)') }
-          finally { btn.disabled = false }
-        },
-      }, '整段复活'),
-    ))
+      h('button', { type: 'button', class: 'btn', onclick: () => { state.themeId = theme.id; setView('theme') } }, '打开主题链')))
 }
 
-/** 墓碑归档原因：只读账本已有字段推导，不引入新状态。 */
+/** Readable summary from verified legacy lemma data; ledger references are supplied separately. */
 function deadReason(n) {
   if (n.deletedAt) return { label: '已删除', kind: 'deleted' }
   if (n.settlement?.correct === false) return { label: '已证伪', kind: 'falsified' }
@@ -157,36 +123,27 @@ function deadReason(n) {
 
 function deadLemmaRow(n, cites) {
   const reason = deadReason(n)
-  const themeName = state.themes.find((t) => t.id === n.themeId)?.name || '已删主题'
+  const themeName = state.themes.find((theme) => theme.id === n.themeId)?.name || '已删主题'
   const updated = n.updatedAt ? String(n.updatedAt).slice(0, 10) : ''
-  const metaBits = [
-    themeName,
-    `被 ${cites.length} 个段引用`,
-    updated ? `更新于 ${updated}` : null,
-    `置信度 ${Math.round(n.confidence ?? 0)}`,
-  ].filter(Boolean)
+  const metaBits = [themeName, cites.length ? `被 ${cites.length} 条账本事件引用` : '账本中暂无可解析引用', updated ? `更新于 ${updated}` : null, `置信度 ${Math.round(n.confidence ?? 0)}`].filter(Boolean)
   return h('div', { class: 'tomb-row' },
     h('div', { class: 'tomb-body' },
-      h('div', { class: 'tomb-title' },
-        h('span', { class: `tomb-pill tomb-pill-${reason.kind}` }, reason.label),
-        h('span', {}, n.title)),
+      h('div', { class: 'tomb-title' }, h('span', { class: `tomb-pill tomb-pill-${reason.kind}` }, reason.label), h('span', {}, n.title)),
       h('div', { class: 'tomb-meta' }, metaBits.join(' · ')),
       h('div', { class: 'tomb-cites' },
-        h('span', { class: 'tomb-cites-label' }, '认知链引用'),
+        h('span', { class: 'tomb-cites-label' }, '账本引用'),
         cites.length
-          ? cites.map((c) => h('button', {
-              class: 'tomb-cite',
-              title: `跳到「${c.themeName}」的「${c.segName}」`,
-              onclick: () => jumpToSegment(c.themeId, c.segId),
-            }, c.segName || '未命名段'))
-          : h('span', { style: { color: 'var(--text-3)' } }, '未被引用'),
-      ),
+          ? cites.map((cite) => h('button', {
+              type: 'button', class: 'tomb-cite', title: `跳到「${cite.themeName}」第 ${cite.seq} 条已校验事件`,
+              onclick: () => jumpToLedgerEvent(cite.themeId, cite.eventId),
+            }, `${cite.themeName} · v${String(cite.seq).padStart(2, '0')} · ${cite.label || '引用事件'}`))
+          : h('span', { class: 'chain-note' }, '没有可解析的已校验事件引用；这不代表旧字段或外部来源不存在。')),
     ),
     h('div', { class: 'tomb-acts' },
       h('button', {
-        class: 'btn',
+        type: 'button', class: 'btn',
         onclick: () => {
-          if (cites.length) return jumpToSegment(cites[0].themeId, cites[0].segId)
+          if (cites.length) return jumpToLedgerEvent(cites[0].themeId, cites[0].eventId)
           state.backTo = { view: 'vault', auditKind: 'dead' }
           state.themeId = n.themeId
           selectNode(n.id)
@@ -194,34 +151,17 @@ function deadLemmaRow(n, cites) {
         },
       }, '查看'),
       h('button', {
-        class: 'btn',
+        type: 'button', class: 'btn',
         onclick: async () => {
-          if (n.deletedAt) {
-            await m.restoreNode(n.id)
-          } else {
-            // 公理1：复活只改状态，不碰 confidence
-            await m.updateNode(n.id, { status: 'live' })
-          }
+          if (n.deletedAt) await m.restoreNode(n.id)
+          else await m.updateNode(n.id, { status: 'live' })
           await refresh()
         },
-      }, n.deletedAt ? '恢复整条链' : '复活'),
-    ))
-}
-
-/** 墓碑区命题筛选：全部 / 已证伪 / 低置信度（模块内状态，切页重进回到全部）。 */
-let deadFilter = 'all'
-const DEAD_FILTERS = [['all', '全部'], ['falsified', '已证伪'], ['lowconf', '低置信度']]
-let eventArchiveFilter = 'all'
-let eventArchiveQuery = ''
-const EVENT_ARCHIVE_FILTERS = [['all', '全部类型'], ['claim', '主张'], ['inference', '推断'], ['evidence', '证据']]
-function passDeadFilter(n) {
-  if (deadFilter === 'falsified') return n.settlement?.correct === false
-  if (deadFilter === 'lowconf') return !n.deletedAt && (n.confidence ?? 100) < 20
-  return true
+      }, n.deletedAt ? '恢复整条链' : '复活')))
 }
 
 function eventArchiveRow(item, refreshView) {
-  const { theme, node, edges } = item
+  const { theme, node, edges, integrity } = item
   const connectedEvidence = new Set(edges.filter((e) => e.rel === 'supports' && (e.from === node.id || e.to === node.id))
     .map((e) => e.from === node.id ? e.to : e.from)).size
   const date = String(node.archivedAt || '').slice(0, 10) || '未记录'
@@ -229,12 +169,18 @@ function eventArchiveRow(item, refreshView) {
   const sourceRef = String(node.sourceRef || '')
   const lemmaId = sourceRef.match(/^lemma:(.+)$/)?.[1]
   const legacySource = lemmaId ? (state.nodes || []).find((candidate) => candidate.id === lemmaId) : null
-  const sourceLabel = legacySource?.title || ({ segment: '主题观点', branch: '主题分支', mount: '收件箱挂载', lemma: '旧命题', 'legacy-node-source': '旧节点来源' }[node.sourceKind]) || (sourceRef ? '来源未解析' : '未记录来源')
+  const sourceKindLabel = { segment: '主题观点', branch: '主题分支', mount: '收件箱挂载', lemma: '旧命题', 'legacy-node-source': '旧节点来源' }[node.sourceKind]
+  const sourceLabel = legacySource?.title
+    ? `对象已解析：${legacySource.title} · 来源真实性未核验`
+    : sourceKindLabel ? `引用类别：${sourceKindLabel} · 对象/真实性未核验`
+      : sourceRef ? '来源引用未解析' : '未记录来源'
   const row = h('div', { class: 'tomb-row event-archive-row' },
     h('div', { class: 'tomb-body' },
       h('div', { class: 'tomb-title' }, h('span', { class: 'tomb-pill' }, `${typeLabel} · 已归档`), h('span', {}, node.title || '未命名节点')),
       node.archiveReason ? h('div', { class: 'tomb-core' }, `归档原因：${node.archiveReason}`)
         : h('div', { class: 'tomb-core' }, '归档原因：未记录'),
+      h('p', { class: 'chain-note' }, '来源引用仅作追溯信息；外部来源的真实性不会由账本自动验证。'),
+      integrity?.ok === false ? h('p', { class: 'cog-integrity is-error', role: 'status' }, '仅展示最后校验有效前缀；账本损坏时不可追加恢复。') : null,
       h('div', { class: 'tomb-meta' }, `${theme.name || '未命名主题'} · 来源：${sourceLabel} · 证据 ${node.evidenceCount ?? connectedEvidence} 条 · 归档于 ${date}`),
       h('details', { class: 'event-archive-details' },
         h('summary', {}, '技术详情 · 原始引用与事件 ID'),
@@ -244,7 +190,8 @@ function eventArchiveRow(item, refreshView) {
         h('p', {}, `关联支持边：${edges.filter((e) => e.rel === 'supports' && (e.from === node.id || e.to === node.id)).map((e) => e.eventId).join(' · ') || '无'}`))),
     h('div', { class: 'tomb-acts' },
       h('button', { type: 'button', class: 'btn', onclick: () => row.querySelector('details')?.toggleAttribute('open') }, '详情'),
-      h('button', { type: 'button', class: 'btn btn-primary', onclick: async (ev) => {
+      h('button', { type: 'button', class: 'btn btn-primary', disabled: integrity?.ok !== true,
+        title: integrity?.ok === true ? '追加恢复事件' : '账本未通过完整性校验，不能追加恢复', onclick: async (ev) => {
         const button = ev.currentTarget
         button.disabled = true
         try {
@@ -261,43 +208,78 @@ function eventArchiveRow(item, refreshView) {
 async function renderDead(mid, meta) {
   clear(mid)
   const themes = state.themes || []
-  // lemmaId → [{ themeId, themeName, segId, segName }]：命题在链中的位置
+  const nodes = (await m.allNodes()).filter((node) => node.status === 'dead')
+  const shown = nodes.filter(passDeadFilter)
+  const [archiveResults, ledgerResults] = await Promise.all([
+    Promise.all(themes.map(async (theme) => {
+      try { return { theme, result: await m.chainArchives(theme.id) } }
+      catch (error) { return { theme, error } }
+    })),
+    Promise.all(themes.map(async (theme) => {
+      try { return { theme, result: await m.chainEvents(theme.id) } }
+      catch (error) { return { theme, error } }
+    })),
+  ])
+  const eventArchives = archiveResults.flatMap(({ theme, result }) => !result?.integrity ? []
+    : (result.nodes || []).map((node) => ({ theme, node, edges: result.edges || [], integrity: result.integrity })))
+  const eventBackedSourceRefs = new Set()
+  for (const { theme, result } of ledgerResults) {
+    const integrity = archiveResults.find((entry) => entry.theme.id === theme.id)?.result?.integrity
+    if (!result?.events || !integrity) continue
+    const verified = integrity.ok ? result.events : result.events.slice(0, integrity.lastValidSeq || 0)
+    for (const event of verified) if (typeof event?.payload?.sourceRef === 'string') eventBackedSourceRefs.add(event.payload.sourceRef)
+  }
+  const damagedArchiveThemes = archiveResults.filter(({ result }) => result?.integrity?.ok === false).length
+  const failedArchiveThemes = archiveResults.filter(({ result, error }) => error || !result?.integrity).length
+
+  // Legacy segments are only an explicit read-only fallback when no event-backed archive exists.
+  const legacyClosedSegs = []
+  for (const theme of themes) {
+    const archive = archiveResults.find((entry) => entry.theme.id === theme.id)?.result
+    if (!archive?.integrity) continue
+    const segments = Array.isArray(theme.chain?.segments) ? theme.chain.segments : []
+    for (const segment of segments) {
+      if (segment.status === 'closed' && !eventBackedSourceRefs.has(`segment:${segment.id}`)) legacyClosedSegs.push({ theme, seg: segment })
+    }
+  }
+
+  // Index only references in the verified chronological prefix. A display title is never treated as verification.
   const citeIndex = new Map()
-  const closedSegs = []
-  for (const t of themes) {
-    const segs = t.chain && Array.isArray(t.chain.segments) ? t.chain.segments : []
-    for (const s of segs) {
-      if (s.status === 'closed') closedSegs.push({ theme: t, seg: s })
-      for (const r of s.evidenceRefs || []) {
-        if (r && r.type === 'lemma' && r.id) {
-          if (!citeIndex.has(r.id)) citeIndex.set(r.id, [])
-          citeIndex.get(r.id).push({ themeId: t.id, themeName: t.name, segId: s.id, segName: s.name })
-        }
+  for (const { theme, result } of ledgerResults) {
+    if (!result) continue
+    const archive = archiveResults.find((entry) => entry.theme.id === theme.id)?.result
+    if (!archive?.integrity) continue
+    const rows = result.events || []
+    const safeRows = archive?.integrity?.ok === false ? rows.slice(0, archive.integrity.lastValidSeq || 0) : rows
+    for (const event of safeRows) {
+      const payload = event?.payload || {}
+      const refs = [...(Array.isArray(payload.evidenceRefs) ? payload.evidenceRefs : [])]
+      if (event.type === 'relation.declared') refs.push(payload.from?.ref, payload.to?.ref)
+      const seen = new Set()
+      for (const ref of refs) {
+        if (ref?.type !== 'lemma' || !ref.id || seen.has(ref.id)) continue
+        seen.add(ref.id)
+        if (!citeIndex.has(ref.id)) citeIndex.set(ref.id, [])
+        citeIndex.get(ref.id).push({
+          themeId: theme.id, themeName: theme.name || '未命名主题', eventId: event.id, seq: event.seq,
+          label: event.type === 'relation.declared' ? `关系引用${payload.mapping ? ` · ${payload.mapping}` : ''}`
+            : event.type === 'correction.appended' ? '更正引用' : event.type === 'evidence.appended' ? '证据引用' : '事件引用',
+        })
       }
     }
   }
-  const nodes = (await m.allNodes()).filter((n) => n.status === 'dead')
-  const shown = nodes.filter(passDeadFilter)
-  const archiveResults = await Promise.all(themes.map(async (theme) => {
-    try { return { theme, result: await m.chainArchives(theme.id) } }
-    catch (error) { return { theme, error } }
-  }))
-  const eventArchives = archiveResults.flatMap(({ theme, result }) => (result?.nodes || []).map((node) => ({
-    theme, node, edges: result.edges || [],
-  })))
-  const damagedArchiveThemes = archiveResults.filter(({ result }) => result?.integrity?.ok === false).length
 
   const page = h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', {}, meta.title),
-      h('p', {}, '认知段或命题归档后仍保留其来源与历史。恢复会追加新事件，不删除或改写旧记录。'),
-    ))
+      h('p', {}, '事件归档来自只读账本投影；恢复会追加新事件，不删除或改写旧记录。未解析来源会保留为未核实引用。')))
   mid.append(page)
 
-  if (closedSegs.length) {
-    const sect = h('section', { class: 'sect' },
-      h('div', { class: 'sect-h' }, h('h2', {}, '已关闭的认知段'), h('em', {}, String(closedSegs.length))))
-    for (const { theme, seg } of closedSegs) sect.append(closedSegRow(theme, seg))
+  if (legacyClosedSegs.length) {
+    const sect = h('section', { class: 'sect legacy-tomb-section' },
+      h('div', { class: 'sect-h' }, h('h2', {}, '旧格式 · 待事件化的关闭段'), h('em', {}, String(legacyClosedSegs.length))),
+      h('p', { class: 'chain-note' }, '以下仅为旧字段的兼容只读预览，不作为当前认知状态；不会在这里直接复活或修改。'))
+    for (const { theme, seg } of legacyClosedSegs) sect.append(legacyClosedSegRow(theme, seg))
     page.append(sect)
   }
 
@@ -333,47 +315,36 @@ async function renderDead(mid, meta) {
         if (!query) return true
         return [node.title, node.archiveReason, theme.name, node.sourceRef].some((text) => String(text || '').toLocaleLowerCase().includes(query))
       })
-      if (!rows.length) {
-        archiveList.append(h('p', { class: 'chain-note' }, eventArchives.length ? '当前筛选没有匹配的归档。' : '没有事件归档；只读查看不会触发旧数据迁移。'))
-      } else {
-        for (const item of rows) archiveList.append(eventArchiveRow(item, refreshView))
-      }
+      if (!rows.length) archiveList.append(h('p', { class: 'chain-note' }, eventArchives.length ? '当前筛选没有匹配的归档。' : '没有事件归档；只读查看不会触发旧数据迁移。'))
+      else for (const item of rows) archiveList.append(eventArchiveRow(item, refreshView))
     }
     search.addEventListener('input', () => { eventArchiveQuery = search.value; renderEventArchiveRows() })
     renderEventArchiveRows()
-    const sect = h('section', { class: 'sect event-archive-section' },
+    page.append(h('section', { class: 'sect event-archive-section' },
       h('div', { class: 'sect-h sect-h-row' }, h('h2', {}, '事件归档'), h('em', {}, String(eventArchives.length))),
       damagedArchiveThemes ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `${damagedArchiveThemes} 个主题的事件链校验失败；展示的归档仅来自已验证前缀。`) : null,
-      controls, archiveList)
-    page.append(sect)
+      failedArchiveThemes ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `${failedArchiveThemes} 个主题无法取得完整性结果；隐藏其历史引用与旧段预览，避免把未校验内容当作已确认数据。`) : null,
+      controls, archiveList))
   }
 
-  {
-    const sect = h('section', { class: 'sect' },
-      h('div', { class: 'sect-h sect-h-row' },
-        h('h2', {}, '归档的命题'),
-        h('em', {}, String(shown.length)),
-        h('div', { class: 'tomb-filters' },
-          ...DEAD_FILTERS.map(([k, label]) => h('button', {
-            type: 'button',
-            class: 'tomb-filter' + (deadFilter === k ? ' is-on' : ''),
-            onclick: () => { deadFilter = k; renderDead(mid, meta) },
-          }, label)))),
-      ...shown.map((n) => deadLemmaRow(n, citeIndex.get(n.id) || [])),
-    )
-    if (!shown.length) {
-      sect.append(h('p', { class: 'chain-note' },
-        nodes.length ? '这个筛选下没有命题。' : '还没有归档的命题。'))
-    }
-    page.append(sect)
-  }
+  const sect = h('section', { class: 'sect' },
+    h('div', { class: 'sect-h sect-h-row' },
+      h('h2', {}, '归档的命题'), h('em', {}, String(shown.length)),
+      h('div', { class: 'tomb-filters' },
+        ...DEAD_FILTERS.map(([key, label]) => h('button', {
+          type: 'button', class: `tomb-filter${deadFilter === key ? ' is-on' : ''}`,
+          'aria-pressed': String(deadFilter === key),
+          onclick: () => { deadFilter = key; renderDead(mid, meta) },
+        }, label)))),
+    ...shown.map((node) => deadLemmaRow(node, citeIndex.get(node.id) || [])),
+  )
+  if (!shown.length) sect.append(h('p', { class: 'chain-note' }, nodes.length ? '这个筛选下没有命题。' : '还没有归档的命题。'))
+  page.append(sect)
 
-  if (!closedSegs.length && !nodes.length && !eventArchives.length) {
-    page.append(h('section', { class: 'sect' },
-      h('div', { class: 'sect-b' },
-        h('div', { class: 'q' }, h('div', { class: 'q-body' },
-          h('div', { class: 'q-text', style: { color: 'var(--text-2)' } }, '墓碑区是空的，挺好，说明还没什么认知死掉。'),
-        )))))
+  if (!legacyClosedSegs.length && !nodes.length && !eventArchives.length) {
+    page.append(h('section', { class: 'sect' }, h('div', { class: 'sect-b' },
+      h('div', { class: 'q' }, h('div', { class: 'q-body' },
+        h('div', { class: 'q-text', style: { color: 'var(--text-2)' } }, '墓碑区是空的，挺好，说明还没什么认知死掉。'))))))
   }
 }
 

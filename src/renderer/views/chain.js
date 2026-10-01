@@ -14,9 +14,11 @@
 import { h, clear, mount, toast } from '../lib/dom.js'
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
+import { LEDGER_PAGE_SIZE, FLOATING_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, countFloating, floatingStatusKey, selectGraphWindow, consumeChainEventJump, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence } from '../lib/chain-ui-model.js'
 
 const m = window.meridian
 const SVG_NS = 'http://www.w3.org/2000/svg'
+const ledgerPageByTheme = new Map()
 
 /** 节点语义色（对齐概念图）。 */
 const KIND = {
@@ -38,6 +40,10 @@ const NODE_STATUS = {
   stale: { label: '数据待更新' },
   forking: { label: '分叉待收敛' },
   closed: { label: '已关闭' },
+  archived: { label: '已归档' },
+  disproved: { label: '已证伪' },
+  superseded: { label: '已更正' },
+  resolved: { label: '已结案' },
 }
 const TYPE_LABEL = {
   'evidence.appended': '证据追加',
@@ -108,6 +114,12 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     m.chainEvents(theme.id).catch(() => null),
   ])
   const events = evRes?.events || []
+  const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
+  const validPrefixSeq = verifiedEvents.length
+  const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
+  let graphController = null
+  let ledgerController = null
+  let replayGeneration = 0
   const countsEl = stage.closest('.chain-section')?.querySelector('[data-cog-counts]')
   const kinds = { claim: 0, inference: 0, evidence: 0 }
   for (const n of proj.nodes) if (kinds[n.kind] !== undefined) kinds[n.kind]++
@@ -115,11 +127,75 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   if (kinds.claim) parts.push(`主张 ${kinds.claim}`)
   if (kinds.inference) parts.push(`推断 ${kinds.inference}`)
   if (kinds.evidence) parts.push(`证据 ${kinds.evidence}`)
-  if (countsEl) countsEl.textContent = `事件 ${proj.eventCount} · ` + (parts.join(' · ') || '暂无节点')
+  if (countsEl) {
+    const eventCountLabel = proj.integrity?.ok === false
+      ? `有效事件 ${validPrefixSeq} / 原始记录 ${events.length}` : `事件 ${validPrefixSeq}`
+    countsEl.textContent = `${eventCountLabel} · ` + (parts.join(' · ') || '暂无节点')
+  }
 
-  renderLedgerPanel(ledgerPane, theme, events, proj.integrity)
-
-  renderGraphTools(stage, theme, proj, opts)
+  const replayTo = async (sequence, focusEvent = null) => {
+    const generation = ++replayGeneration
+    try {
+      const snapshot = await m.chainProjectionAt(theme.id, Number(sequence))
+      if (generation !== replayGeneration) return null
+      viewState.projection = { ...snapshot, allEvents: events }
+      viewState.selectedSeq = snapshot.selectedSeq
+      viewState.events = eventsThroughSequence(events, proj.integrity, snapshot.selectedSeq)
+      graphController?.render(viewState, focusEvent ? firstAffectedNode(focusEvent, snapshot, events) : null)
+      ledgerController?.syncReplay(viewState)
+      return snapshot
+    } catch (error) {
+      if (generation !== replayGeneration) return null
+      toast(`历史回放失败：${error?.message || error}`, 'var(--red)')
+      return null
+    }
+  }
+  const focusEvent = async (event) => {
+    if (!Number.isSafeInteger(event?.seq) || !verifiedEvents.some((row) => row?.id === event.id)) {
+      toast('该记录未通过账本校验，不能用于历史回放或图谱定位', 'var(--red)')
+      return
+    }
+    if (viewState.selectedSeq != null && event.seq > viewState.selectedSeq) {
+      const snapshot = await replayTo(event.seq, event)
+      if (!snapshot) return
+    }
+    const targetId = firstAffectedNode(event, viewState.projection, events)
+    if (targetId) graphController?.render(viewState, targetId)
+    else toast('这条事件在当前版本没有可定位的图节点', 'var(--text-2)')
+  }
+  const openEvent = async (event) => {
+    await focusEvent(event)
+    ledgerController?.showEvent(event?.id)
+  }
+  const returnLive = () => {
+    replayGeneration++
+    viewState.projection = { ...proj, allEvents: events }
+    viewState.selectedSeq = null
+    viewState.events = verifiedEvents
+    graphController?.render(viewState)
+    ledgerController?.syncReplay(viewState)
+  }
+  const graphOpts = { ...opts, onJumpToEvent: openEvent }
+  graphController = renderGraphTools(stage, theme, proj, graphOpts, {
+    onReplay: replayTo,
+    onLive: returnLive,
+    validPrefixSeq,
+  })
+  ledgerController = renderLedgerPanel(ledgerPane, theme, events, proj.integrity, {
+    onFocusEvent: focusEvent,
+    onReplay: replayTo,
+    onChanged: opts.onChanged,
+    initialState: viewState,
+    verifiedEvents,
+  })
+  graphController.render(viewState)
+  const pendingLedgerJump = consumeChainEventJump(theme.id)
+  if (pendingLedgerJump) {
+    const request = pendingLedgerJump
+    const target = verifiedEvents.find((event) => event?.id === request.eventId)
+    if (target) queueMicrotask(() => openEvent(target))
+    else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
+  }
 
   if (!proj.nodes.length) {
     stage.append(h('div', { class: 'chain-empty' },
@@ -130,9 +206,9 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
       h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '创建第一个观点')))
     return
   }
-  drawGraph(stage, proj, theme, opts)
-  if (proj.floatingCount > 0) renderFloating(stage, proj)
 }
+
+const firstAffectedNode = affectedNodeIdForEvent
 
 /* ------------------------------------------------------------------ */
 /* 左：追加式完整性账本（概念 01）                                      */
@@ -167,10 +243,15 @@ function eventSummary(e, titleOf) {
     case 'relation.declared': {
       const rel = REL[p.rel] || {}
       const endpointLabel = (ep) => ep?.eventId ? (titleOf?.(ep.eventId) || '来源未解析')
-        : ep?.ref?.title || ep?.name || '来源未解析'
+        : ep?.ref?.title ? `引用名称（未解析）：${ep.ref.title}`
+          : ep?.name ? `引用名称（未解析）：${ep.name}` : '来源未解析'
       const a = endpointLabel(p.from)
       const b = endpointLabel(p.to)
-      return `${a} —${rel.label || p.rel}→ ${b}${p.reviewStatus === 'pending-review' ? '（待复核）' : ''}`
+      if (p.reviewOf) {
+        const decision = p.reviewDecision === 'confirmed' ? '确认' : '驳回'
+        return `人工复核${decision}：${a} —${rel.label || p.rel}→ ${b}${p.decisionReason ? `（${p.decisionReason}）` : ''}`
+      }
+      return `${a} —${rel.label || p.rel}→ ${b}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待复核）' : ''}`
     }
     case 'settlement.recorded':
       return p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
@@ -200,9 +281,12 @@ function eventObjectLabel(e, events, byId) {
     return String(tp.title || tp.coreInfo || tp.text || tp.legacySource?.label || '').trim()
   }
   if (e.type === 'relation.declared') {
+    const original = p.reviewOf ? byId.get(p.reviewOf) : e
+    const relationPayload = original?.payload || p
     const endpoint = (ep) => ep?.eventId ? (titleOf(ep.eventId) || '来源未解析')
-      : ep?.ref?.title || ep?.name || '来源未解析'
-    return `${endpoint(p.from)} ↔ ${endpoint(p.to)}`
+      : ep?.ref?.title ? `引用名称（未解析）：${ep.ref.title}`
+        : ep?.name ? `引用名称（未解析）：${ep.name}` : '来源未解析'
+    return `${endpoint(relationPayload.from)} ↔ ${endpoint(relationPayload.to)}`
   }
   if (e.type === 'correction.appended') return titleOf(e.supersedes) || '观点或问题'
   if (['node.archived', 'node.restored', 'settlement.recorded'].includes(e.type)) {
@@ -220,10 +304,11 @@ function eventObjectLabel(e, events, byId) {
 
 function eventSourceLabel(e, events) {
   const p = e.payload || {}
-  if (p.legacySource) return String(p.legacySource.label || p.legacySource.kind || '历史来源')
-  if (p.sourceLabel) return String(p.sourceLabel)
+  if (p.legacySource) return `历史来源元数据 · 未核验（${String(p.legacySource.label || p.legacySource.kind || '历史来源')}）`
+  if (p.sourceLabel) return `来源声明 · 未核验（${String(p.sourceLabel)}）`
+  if (p.sourceKind === 'relation-review') return '人工复核决定'
   const evidenceRef = Array.isArray(p.evidenceRefs) ? p.evidenceRefs.find((ref) => ref?.title || ref?.url) : null
-  if (evidenceRef) return String(evidenceRef.title || evidenceRef.url)
+  if (evidenceRef) return `引用记录 · 未核实（${String(evidenceRef.title || evidenceRef.url)}）`
   const kindLabels = {
     'legacy-node-source': '旧节点来源迁移',
     'segment-changeLog': '主题更新记录',
@@ -235,10 +320,10 @@ function eventSourceLabel(e, events) {
     'manual-evidence': '手动添加的证据',
     'user-declared-relation': '手动声明的关系',
   }
-  if (kindLabels[p.sourceKind]) return kindLabels[p.sourceKind]
+  if (kindLabels[p.sourceKind]) return `记录类别：${kindLabels[p.sourceKind]} · 来源真实性未核验`
   if (p.sourceRef) {
     const result = resolveEventReference(events, p.sourceRef)
-    if (result.status === 'resolved') return result.subjectTitle || '已解析来源'
+    if (result.status === 'resolved') return `引用已解析到「${result.subjectTitle || '未命名对象'}」· 来源真实性未核验`
     return '来源未解析'
   }
   return '未记录来源'
@@ -252,7 +337,7 @@ function copyLedgerReference(value, label) {
     .catch(() => toast('复制失败，请检查系统剪贴板权限', 'var(--red)'))
 }
 
-function renderLedgerPanel(pane, theme, events, integrity) {
+function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   clear(pane)
   const integrityBox = h('div', {
     class: `cog-integrity ${integrity?.ok ? 'is-ok' : 'is-error'}`,
@@ -276,138 +361,327 @@ function renderLedgerPanel(pane, theme, events, integrity) {
       } finally { verifyButton.disabled = false }
     },
   }, '重新校验')
-  pane.append(
-    h('div', { class: 'cog-ledger-head' },
-      h('span', { class: 'cog-ledger-num' }, '01'),
-      h('span', { class: 'cog-ledger-title' }, '追加式完整性账本'),
-      h('span', { class: 'cog-ledger-badge' }, '追加式')),
-    h('p', { class: 'cog-ledger-sub' }, '每条记录保留名称、对象、变化、时间、操作者与来源。更正、归档和恢复追加新事件，不覆盖旧记录。'),
-    h('div', { class: 'cog-integrity-row' }, integrityBox, verifyButton),
-    h('p', { class: 'cog-ledger-colhead' }, '事件记录'),
-  )
-  if (!events.length) {
-    pane.append(h('div', { class: 'cog-ledger-empty' }, '还没有账本事件。创建观点或补充证据后，操作会按顺序记录在这里。'))
-    return
-  }
-  const byId = new Map(events.filter((x) => x && typeof x === 'object').map((x) => [x.id, x]))
-  const titleOf = (eventId) => {
-    const e = byId.get(eventId)
-    return e ? String(e.payload?.title || e.payload?.coreInfo || e.payload?.text || e.payload?.legacySource?.label || '').slice(0, 80) : ''
-  }
-  const list = h('div', { class: 'cog-ledger-list' })
+  const replayBadge = h('p', { class: 'cog-replay-state', role: 'status', 'aria-live': 'polite' }, '当前投影 · 全部已校验事件')
+  const pageLabel = h('span', { class: 'cog-page-label', 'aria-live': 'polite' })
   const ordered = events.map((record, index) => ({ record, index })).sort((a, b) => {
     const ax = Number.isSafeInteger(a.record?.seq) ? a.record.seq : Number.MAX_SAFE_INTEGER
     const bx = Number.isSafeInteger(b.record?.seq) ? b.record.seq : Number.MAX_SAFE_INTEGER
     return ax - bx || a.index - b.index
   })
-  for (const item of ordered) {
-    const raw = item.record
-    const e = raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? raw
-      : { id: `invalid-${item.index}`, seq: null, type: 'invalid', at: '', actor: '', payload: { raw: String(raw) }, hash: '', prevHash: '' }
-    const isInvalid = !e.id || !e.type || !Number.isSafeInteger(e.seq) || !e.hash
-    const isCorrection = e.type === 'correction.appended'
-    const isFirst = e.seq === 1
-    const kindLabel = isInvalid ? '无法解析的事件记录' : (isFirst ? '初始记录' : (EVENT_KIND_LABEL[e.type] || '未识别事件'))
-    const superseded = isCorrection && e.supersedes ? byId.get(e.supersedes) : null
-    const verification = integrity?.ok ? '已校验'
-      : Number.isInteger(integrity?.index) && item.index < integrity.index ? '前缀已校验'
-        : Number.isInteger(integrity?.index) && item.index === integrity.index ? '校验失败' : '未校验'
-    const verificationClass = verification === '校验失败' ? 'is-error' : verification === '未校验' ? 'is-pending' : 'is-ok'
-    const actor = ACTOR_LABEL[e.actor] || e.actor || '未记录'
-    const sourceLabel = eventSourceLabel(e, events)
-    const objectLabel = eventObjectLabel(e, events, byId)
-    const eventId = typeof e.id === 'string' ? e.id : ''
-    const sourceRef = typeof e.payload?.sourceRef === 'string' ? e.payload.sourceRef : ''
-    const card = h('article', { class: `cog-ev${isCorrection ? ' is-correction' : ''}${isInvalid ? ' is-invalid' : ''}` },
-      h('div', { class: 'cog-ev-top' },
-        h('span', { class: `cog-ev-dot${isCorrection ? ' orange' : ''}` }),
-        h('span', { class: 'cog-ev-seq' }, Number.isSafeInteger(e.seq) ? `第 ${e.seq} 条` : `记录 ${item.index + 1}`),
-        h('span', { class: 'cog-ev-kind' }, kindLabel),
-        h('span', { class: 'cog-ev-at' }, fmtAt(e.at) || '时间未记录'),
-        h('span', { class: `cog-ev-validation ${verificationClass}`, role: verification === '校验失败' ? 'alert' : 'status' }, verification)),
-      h('div', { class: 'cog-ev-readable' },
-        h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '对象'), h('span', { class: 'cog-ev-readable-value' }, objectLabel)),
-        h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '变化'), h('span', { class: 'cog-ev-readable-value' }, eventSummary(e, titleOf) || '未记录摘要')),
-        h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '操作者'), h('span', { class: 'cog-ev-readable-value' }, actor)),
-        h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '来源'), h('span', { class: `cog-ev-readable-value${sourceLabel === '来源未解析' ? ' is-unresolved' : ''}` }, sourceLabel))),
-      h('details', { class: 'cog-ev-technical' },
-        h('summary', {}, '技术详情 · 原始 ID、引用与哈希'),
-        h('div', { class: 'cog-ev-hashes' },
-        h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '事件 ID'),
-          h('span', { class: 'cog-ev-hv' }, eventId || '不可用'),
-          eventId ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(eventId, '事件 ID') }, '复制') : null),
-        h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '来源引用'),
-          h('span', { class: 'cog-ev-hv' }, sourceRef || '未记录'),
-          sourceRef ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(sourceRef, '来源引用') }, '复制') : null),
-        h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '事件类型'), h('span', { class: 'cog-ev-hv' }, String(e.type || '未记录'))),
-        h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '前序哈希'),
-          h('span', { class: 'cog-ev-hv' }, isFirst ? 'GENESIS · 起始' : String(e.prevHash || '不可用'))),
-        h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '本条哈希'),
-          h('span', { class: 'cog-ev-hv' }, e.hash ? `sha256 · ${e.hash}` : '不可用')),
-        isCorrection ? h('div', { class: 'cog-ev-hashrow' },
-          h('span', { class: 'cog-ev-hk' }, '取代声明'),
-          h('span', { class: 'cog-ev-hv' }, superseded ? `第 ${superseded.seq} 条事件` : '目标未解析')) : null,
-        isInvalid ? h('pre', { class: 'cog-ev-invalid-raw' }, JSON.stringify(raw, null, 2)?.slice(0, 2000) || String(raw)) : null,
-      )),
-    )
-    list.append(card)
-  }
-  pane.append(list)
+  const pageCount = Math.max(1, Math.ceil(ordered.length / LEDGER_PAGE_SIZE))
+  let page = Math.min(pageCount, Math.max(1, ledgerPageByTheme.get(theme.id) || pageCount))
+  const list = h('div', { class: 'cog-ledger-list', 'aria-live': 'polite' })
+  const prev = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => setPage(page - 1) }, '更早')
+  const next = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => setPage(page + 1) }, '较新')
+  const pagination = h('div', { class: 'cog-pagination', 'aria-label': '账本分页' }, prev, pageLabel, next)
   pane.append(
+    h('div', { class: 'cog-ledger-head' },
+      h('span', { class: 'cog-ledger-num' }, '01'),
+      h('span', { class: 'cog-ledger-title' }, '追加式完整性账本'),
+      h('span', { class: 'cog-ledger-badge' }, '追加式')),
+    h('p', { class: 'cog-ledger-sub' }, '完整时间顺序保留；窗口分页避免一次性渲染大账本。更正、归档、恢复与复核均追加新事件，不覆盖旧记录。'),
+    replayBadge,
+    h('div', { class: 'cog-integrity-row' }, integrityBox, verifyButton),
+    h('p', { class: 'cog-ledger-colhead' }, '按 append sequence 升序 · 每页最多 40 条'),
+  )
+  if (!events.length) {
+    pane.append(h('div', { class: 'cog-ledger-empty' }, '还没有账本事件。创建观点或补充证据后，操作会按顺序记录在这里。'))
+    return { syncReplay: () => {}, showEvent: () => {} }
+  }
+
+  const verifiedEvents = handlers.verifiedEvents || verifiedLedgerPrefix(events, integrity)
+  const reviewedBy = new Map(verifiedEvents.filter((event) => event?.payload?.reviewOf)
+    .map((event) => [event.payload.reviewOf, event]))
+
+  let currentViewState = handlers.initialState
+  function setPage(nextPage) {
+    page = Math.max(1, Math.min(pageCount, Math.floor(nextPage)))
+    ledgerPageByTheme.set(theme.id, page)
+    renderPage(currentViewState)
+  }
+
+  function renderPage(viewState = currentViewState) {
+    currentViewState = viewState
+    const visibleEvents = eventsThroughSequence(events, integrity, viewState?.selectedSeq)
+    const byId = new Map(visibleEvents.filter((x) => x && typeof x === 'object').map((x) => [x.id, x]))
+    const titleOf = (eventId) => {
+      const e = byId.get(eventId)
+      return e ? String(e.payload?.title || e.payload?.coreInfo || e.payload?.text || e.payload?.legacySource?.label || '').slice(0, 80) : ''
+    }
+    clear(list)
+    const pageRows = paginate(ordered, page, LEDGER_PAGE_SIZE)
+    page = pageRows.page
+    const first = pageRows.total ? pageRows.start + 1 : 0
+    pageLabel.textContent = `${first}–${pageRows.end} / ${pageRows.total} 条 · 第 ${pageRows.page} / ${pageRows.pages} 页`
+    prev.disabled = page <= 1
+    next.disabled = page >= pageRows.pages
+    for (const item of pageRows.items) {
+      const raw = item.record
+      const e = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? raw
+        : { id: `invalid-${item.index}`, seq: null, type: 'invalid', at: '', actor: '', payload: { raw: String(raw) }, hash: '', prevHash: '' }
+      const isInvalid = !e.id || !e.type || !Number.isSafeInteger(e.seq) || !e.hash
+      const isCorrection = e.type === 'correction.appended'
+      const isReviewEvent = e.type === 'relation.declared' && !!e.payload?.reviewOf
+      const needsHumanReview = e.payload?.reviewStatus === 'pending-review' || e.payload?.rel === 'derives'
+      const isPendingReview = e.type === 'relation.declared' && needsHumanReview && !isReviewEvent
+      const isFirst = e.seq === 1
+      const kindLabel = isInvalid ? '无法解析的事件记录' : isReviewEvent ? '关系复核决定'
+        : (isFirst ? '初始记录' : (EVENT_KIND_LABEL[e.type] || '未识别事件'))
+      const superseded = isCorrection && e.supersedes ? byId.get(e.supersedes) : null
+      const verification = integrity?.ok ? '已校验'
+        : Number.isInteger(integrity?.index) && item.index < integrity.index ? '前缀已校验'
+          : Number.isInteger(integrity?.index) && item.index === integrity.index ? '校验失败' : '未校验'
+      const verificationClass = verification === '校验失败' ? 'is-error' : verification === '未校验' ? 'is-pending' : 'is-ok'
+      const actor = ACTOR_LABEL[e.actor] || e.actor || '未记录'
+      const sourceLabel = eventSourceLabel(e, visibleEvents)
+      const objectLabel = eventObjectLabel(e, visibleEvents, byId)
+      const eventId = typeof e.id === 'string' ? e.id : ''
+      const sourceRef = typeof e.payload?.sourceRef === 'string' ? e.payload.sourceRef : ''
+      const afterReplay = viewState?.selectedSeq != null && Number.isSafeInteger(e.seq) && e.seq > viewState.selectedSeq
+      const rawReviewDecision = isPendingReview ? reviewedBy.get(e.id) : null
+      const reviewDecision = rawReviewDecision && (viewState?.selectedSeq == null || rawReviewDecision.seq <= viewState.selectedSeq)
+        ? rawReviewDecision : null
+      const reviewText = reviewDecision
+        ? `已${reviewDecision.payload.reviewDecision === 'confirmed' ? '确认' : '驳回'} · ${ACTOR_LABEL[reviewDecision.actor] || reviewDecision.actor || '未记录'} · ${fmtAt(reviewDecision.at) || '时间未记录'} · ${reviewDecision.payload.decisionReason || '未填写理由'}`
+        : isPendingReview ? '待人工复核；在明确决定前，不作为已确认关系展示。' : ''
+      const focusButton = h('button', {
+        type: 'button', class: 'btn cog-event-focus', disabled: isInvalid || verification === '校验失败' || verification === '未校验',
+        onclick: () => handlers.onFocusEvent?.(e),
+      }, '在图中定位')
+      const card = h('article', {
+        class: `cog-ev${isCorrection ? ' is-correction' : ''}${isInvalid ? ' is-invalid' : ''}${afterReplay ? ' is-future' : ''}`,
+        'data-event-id': eventId, tabindex: '-1',
+      },
+        h('div', { class: 'cog-ev-top' },
+          h('span', { class: `cog-ev-dot${isCorrection || isReviewEvent ? ' orange' : ''}` }),
+          h('span', { class: 'cog-ev-seq' }, Number.isSafeInteger(e.seq) ? `第 ${e.seq} 条` : `记录 ${item.index + 1}`),
+          h('span', { class: 'cog-ev-kind' }, kindLabel),
+          h('span', { class: 'cog-ev-at' }, fmtAt(e.at) || '时间未记录'),
+          h('span', { class: `cog-ev-validation ${verificationClass}`, role: verification === '校验失败' ? 'alert' : 'status' }, verification),
+          afterReplay ? h('span', { class: 'cog-ev-future-tag' }, '未纳入当前回放') : null,
+          focusButton),
+        h('div', { class: 'cog-ev-readable' },
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '对象'), h('span', { class: 'cog-ev-readable-value' }, objectLabel)),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '变化'), h('span', { class: 'cog-ev-readable-value' }, eventSummary(e, titleOf) || '未记录摘要')),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '操作者'), h('span', { class: 'cog-ev-readable-value' }, actor)),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '来源'), h('span', { class: `cog-ev-readable-value${sourceLabel === '来源未解析' ? ' is-unresolved' : ''}` }, sourceLabel)),
+          reviewText ? h('div', { class: 'cog-review-status', role: 'status' }, reviewText) : null),
+        isPendingReview && !reviewDecision && viewState?.selectedSeq == null && integrity?.ok
+          ? renderReviewControls(theme, e, handlers.onChanged) : null,
+        h('details', { class: 'cog-ev-technical' },
+          h('summary', {}, '技术详情 · 原始 ID、引用与哈希'),
+          h('div', { class: 'cog-ev-hashes' },
+            h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '事件 ID'), h('span', { class: 'cog-ev-hv' }, eventId || '不可用'),
+              eventId ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(eventId, '事件 ID') }, '复制') : null),
+            h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '来源引用'), h('span', { class: 'cog-ev-hv' }, sourceRef || '未记录'),
+              sourceRef ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(sourceRef, '来源引用') }, '复制') : null),
+            h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '事件类型'), h('span', { class: 'cog-ev-hv' }, String(e.type || '未记录'))),
+            h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '前序哈希'), h('span', { class: 'cog-ev-hv' }, isFirst ? 'GENESIS · 起始' : String(e.prevHash || '不可用'))),
+            h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '本条哈希'), h('span', { class: 'cog-ev-hv' }, e.hash ? `sha256 · ${e.hash}` : '不可用')),
+            isCorrection ? h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '取代声明'), h('span', { class: 'cog-ev-hv' }, superseded ? `第 ${superseded.seq} 条事件` : '目标未解析')) : null,
+            isReviewEvent ? h('div', { class: 'cog-ev-hashrow' },
+              h('span', { class: 'cog-ev-hk' }, '复核对象'), h('span', { class: 'cog-ev-hv' }, byId.has(e.payload.reviewOf) ? `第 ${byId.get(e.payload.reviewOf).seq} 条事件` : '目标未解析')) : null,
+            isInvalid ? h('pre', { class: 'cog-ev-invalid-raw' }, JSON.stringify(raw, null, 2)?.slice(0, 2000) || String(raw)) : null,
+          )))
+      list.append(card)
+    }
+  }
+
+  pane.append(pagination, list, pagination,
     h('div', { class: 'cog-ledger-foot' },
       h('strong', {}, '更正 ≠ 覆盖'),
       ' — 被取代的版本仍保留；新事件追加并声明取代关系，当前效力切换，历史不改写。',
       h('br'),
       '校验边界：哈希链可帮助发现未同步重算后续哈希的修改或意外损坏；本地可控攻击者仍可重写整链，本版本未提供签名或远端锚定。主题根节点与虚线是展示元数据，不是账本事件。'))
+  renderPage(handlers.initialState)
+
+  return {
+    syncReplay(viewState) {
+      currentViewState = viewState
+      if (viewState?.selectedSeq == null) replayBadge.textContent = '当前投影 · 全部已校验事件'
+      else {
+        const at = viewState.events?.at(-1)?.at
+        replayBadge.textContent = `历史回放 · v${viewState.selectedSeq} · ${viewState.selectedSeq ? fmtAt(at) || '时间未记录' : '账本起点'} · 只读`
+      }
+      renderPage(viewState)
+    },
+    showEvent(id) {
+      const index = ordered.findIndex((item) => item.record?.id === id)
+      if (index < 0) return
+      setPage(Math.floor(index / LEDGER_PAGE_SIZE) + 1)
+      requestAnimationFrame(() => {
+        const target = list.querySelector(`[data-event-id="${CSS.escape(String(id))}"]`)
+        target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        target?.focus({ preventScroll: true })
+      })
+    },
+  }
 }
 
-function renderGraphTools(stage, theme, proj, opts) {
-  const claims = (proj.nodes || []).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
-  const derivesCount = (proj.edges || []).filter((edge) => edge.rel === 'derives').length
-  const derivesToggle = h('button', {
-    type: 'button', class: 'btn cog-derived-toggle', 'aria-pressed': 'false', hidden: !derivesCount,
-    onclick: () => {
-      const svg = stage.querySelector('.cog-svg')
-      if (!svg) return
-      const show = svg.dataset.showDerived !== 'true'
-      svg.dataset.showDerived = String(show)
-      derivesToggle.setAttribute('aria-pressed', String(show))
-      derivesToggle.textContent = `${show ? '隐藏' : '显示'}推导关系（${derivesCount}）`
-    },
-  }, `显示推导关系（${derivesCount}）`)
-  const help = h('details', { class: 'cog-graph-help' },
-    h('summary', {}, '如何阅读这张图'),
-    h('div', { class: 'cog-graph-help-body' },
-      h('p', {}, '研究主题 → 观点或问题 → 证据。线条表示账本中由用户声明的关系；“支持”或“反驳”不是自动验证，也不代表已经证明因果。'),
-      h('p', {}, '选择一个节点可聚焦它相邻的路径；打开节点详情可补充证据或添加关系。推导关系默认收起，可按需展开。'), derivesToggle, renderLegend()))
+function renderReviewControls(theme, event, onChanged) {
+  const reason = h('textarea', {
+    class: 'txt cog-review-reason', rows: '2', required: true,
+    placeholder: '写明你确认/驳回这条关系的理由', 'aria-label': '关系复核理由',
+  })
+  const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+  const submit = async (decision, button) => {
+    if (!reason.value.trim()) { error.hidden = false; error.textContent = '请先填写复核理由。'; reason.focus(); return }
+    error.hidden = true
+    button.disabled = true
+    try {
+      const result = await m.chainReviewRelation(theme.id, event.id, decision, reason.value.trim())
+      if (result?.ok === false) throw new Error(result.error || '决定未写入')
+      toast(decision === 'confirmed' ? '已追加确认决定' : '已追加驳回决定')
+      onChanged?.()
+    } catch (failure) {
+      error.hidden = false
+      error.textContent = failure?.message || String(failure)
+      button.disabled = false
+    }
+  }
+  const confirm = h('button', { type: 'button', class: 'btn btn-primary', onclick: (event) => submit('confirmed', event.currentTarget) }, '确认关系')
+  const reject = h('button', { type: 'button', class: 'btn', onclick: (event) => submit('rejected', event.currentTarget) }, '驳回关系')
+  return h('details', { class: 'cog-review-controls' },
+    h('summary', {}, '人工复核 · 选择确认或驳回'),
+    h('p', { class: 'cog-entry-note' }, '推断关系未获确认前不会显示为已证实；每项决定都会作为新事件追加，原声明保留。'),
+    reason, error, h('div', { class: 'cog-review-actions' }, confirm, reject))
+}
+
+function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
+  const graphCanvas = h('div', { class: 'cog-graph-canvas' })
   const focusLabel = h('span', { class: 'cog-focus-label', 'aria-live': 'polite' }, '选择一个节点以聚焦相关路径')
   const focusDetails = h('button', { type: 'button', class: 'btn cog-focus-detail', hidden: true }, '查看详情')
   const clearFocus = h('button', { type: 'button', class: 'btn cog-focus-clear', hidden: true }, '清除聚焦')
+  const nodeSearch = h('input', { class: 'txt cog-node-search', type: 'search', placeholder: '搜索所有节点', 'aria-label': '搜索所有观点、证据或推断' })
+  const searchButton = h('button', { type: 'button', class: 'btn', onclick: focusBySearch }, '定位节点')
+  const searchError = h('span', { class: 'cog-search-error', role: 'status', 'aria-live': 'polite' })
+  const sliderLabel = h('label', { class: 'cog-time-slider-label', for: 'cog-time-slider' }, '账本版本')
+  const maxSeq = Math.max(0, handlers.validPrefixSeq || 0)
+  const timeSlider = h('input', {
+    id: 'cog-time-slider', class: 'cog-time-slider', type: 'range', min: '0', max: String(maxSeq), step: '1',
+    value: String(maxSeq), disabled: maxSeq === 0, 'aria-label': '账本事件序号历史回放',
+  })
+  const timeLabel = h('span', { class: 'cog-time-label', role: 'status', 'aria-live': 'polite' }, `当前投影 · v${maxSeq}`)
+  const timePreview = h('span', { class: 'cog-time-preview', 'aria-live': 'polite' })
+  const liveButton = h('button', { type: 'button', class: 'btn cog-live-button', hidden: true, onclick: () => handlers.onLive?.() }, '退出历史回放')
+  const addClaim = h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '＋ 添加观点')
+  const addEvidence = h('button', { type: 'button', class: 'btn', onclick: () => openEntryDialog(theme, proj, 'evidence', opts) }, '补充证据')
+  const derivesToggle = h('button', { type: 'button', class: 'btn cog-derived-toggle', 'aria-pressed': 'false', hidden: true }, '显示其他推导关系')
+  const help = h('details', { class: 'cog-graph-help' },
+    h('summary', {}, '如何阅读这张图'),
+    h('div', { class: 'cog-graph-help-body' },
+      h('p', {}, '研究主题 → 观点或问题 → 证据。线条表示账本中由用户声明的关系；“支持”或“反驳”不是自动验证，也不代表已经证明因果。待复核关系以文字状态和虚线共同标识。'),
+      h('p', {}, '单帧最多绘制 60 个节点和 72 条账本关系；使用搜索、事件定位或“待归置”列表查看其余节点，避免把全部节点堆进一张大图。'),
+      h('p', {}, '历史回放只读取并重建通过校验的事件前缀；回放期间不提供写入操作。'), derivesToggle, renderLegend()))
   stage.append(
     h('div', { class: 'cog-graph-toolbar' },
       h('div', { class: 'cog-graph-intro' },
         h('div', { class: 'cog-graph-title' }, '认知图谱'),
         h('p', { class: 'cog-graph-caption' }, '从主题到观点，再连接证据；不把观点文字当作证据。')),
-      h('div', { class: 'cog-graph-actions' },
-        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '＋ 添加观点'),
-        h('button', { type: 'button', class: 'btn', disabled: !claims.length, title: claims.length ? '' : '先创建观点或问题', onclick: () => openEntryDialog(theme, proj, 'evidence', opts) }, '补充证据')),
-    ),
-    h('div', { class: 'cog-focus-bar' }, focusLabel, h('div', { class: 'cog-focus-actions' }, focusDetails, clearFocus)),
+      h('div', { class: 'cog-graph-actions' }, addClaim, addEvidence)),
+    h('div', { class: 'cog-time-controls' },
+      sliderLabel, timeSlider, timePreview, timeLabel, liveButton),
+    h('div', { class: 'cog-focus-bar' }, focusLabel,
+      h('div', { class: 'cog-focus-actions' }, nodeSearch, searchButton, searchError, focusDetails, clearFocus)),
     help,
+    graphCanvas,
   )
-  focusDetails.onclick = () => {
-    const selected = stage.querySelector('.cog-node.is-selected')
-    const nodeId = selected?.getAttribute('data-node-id')
-    const node = claims.concat((proj.nodes || []).filter((n) => n.kind === 'evidence')).find((n) => n.id === nodeId)
-    if (node) opts.onOpen?.(node, { onChanged: opts.onChanged })
+  let currentView = { projection: proj, selectedSeq: null, events: [] }
+  let currentFocus = null
+  let showDerived = false
+  derivesToggle.onclick = () => {
+    showDerived = !showDerived
+    derivesToggle.setAttribute('aria-pressed', String(showDerived))
+    derivesToggle.textContent = `${showDerived ? '隐藏' : '显示'}其他推导关系`
+    const svg = graphCanvas.querySelector('.cog-svg')
+    if (svg) svg.dataset.showDerived = String(showDerived)
   }
-  clearFocus.onclick = () => stage.querySelector('.cog-svg')?.dispatchEvent(new CustomEvent('cog-clear-focus'))
+  timeSlider.addEventListener('input', () => { timePreview.textContent = `待回放：v${timeSlider.value}` })
+  timeSlider.addEventListener('change', () => handlers.onReplay?.(Number(timeSlider.value)))
+  nodeSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') focusBySearch() })
+
+  function focusBySearch() {
+    const query = nodeSearch.value.trim().toLocaleLowerCase()
+    if (!query) { searchError.textContent = '请输入节点名称。'; nodeSearch.focus(); return }
+    const nodes = currentView.projection?.allNodes || currentView.projection?.nodes || []
+    const match = nodes.find((node) => String(node.title || '').toLocaleLowerCase() === query)
+      || nodes.find((node) => String(node.title || '').toLocaleLowerCase().includes(query))
+    if (!match) { searchError.textContent = '没有找到匹配节点。'; return }
+    searchError.textContent = ''
+    render(currentView, match.id)
+  }
+
+  function render(viewState, focusNodeId = null) {
+    currentView = viewState
+    currentFocus = focusNodeId
+    const projection = viewState.projection
+    const frame = selectGraphWindow(projection, {
+      focusNodeId,
+      maxNodes: GRAPH_FRAME_NODE_LIMIT - 1,
+      maxEdges: GRAPH_FRAME_EDGE_LIMIT - 24,
+    })
+    clear(graphCanvas)
+    if (frame.truncated) {
+      graphCanvas.append(h('p', { class: 'cog-frame-note', role: 'status' },
+        `为保持清晰，本帧最多 60 个节点（含主题元数据根节点）和 72 条线。当前显示 ${frame.nodes.length} 个关联节点、${frame.edges.length} 条账本关系；搜索节点或从账本事件定位可查看其他局部子图。`))
+    }
+    const frameProjection = { ...projection, nodes: frame.nodes, edges: frame.edges }
+    const selectedEvents = viewState.events || []
+    const graphOptions = {
+      ...opts,
+      historyContext: { events: selectedEvents, projection, selectedSeq: viewState.selectedSeq },
+      focusNodeId: frame.focusNodeId,
+      focusLabel,
+      focusDetails,
+      clearFocus,
+      showDerived,
+    }
+    drawGraph(stage, frameProjection, theme, graphOptions, graphCanvas)
+    renderFloating(graphCanvas, projection, theme, graphOptions)
+    const replaying = viewState.selectedSeq != null
+    const selectedAt = projection.selectedAt || selectedEvents.at(-1)?.at || null
+    timeLabel.textContent = replaying
+      ? `历史回放 · v${viewState.selectedSeq} · ${selectedAt ? fmtAt(selectedAt) : '账本起点'} · 只读`
+      : `当前投影 · v${maxSeq}`
+    timeSlider.value = String(replaying ? viewState.selectedSeq : maxSeq)
+    timePreview.textContent = ''
+    liveButton.hidden = !replaying
+    addClaim.disabled = replaying
+    addEvidence.disabled = replaying
+    addEvidence.title = replaying ? '历史回放为只读' : ''
+    const choices = (projection.allNodes || projection.nodes || []).filter((node) => !node.archived && !node.external && ['claim', 'inference'].includes(node.kind))
+    addEvidence.disabled = replaying || !choices.length
+    const derivesCount = (projection.edges || []).filter((edge) => edge.rel === 'derives'
+      && !edge.pendingReview && !edge.reviewDecision).length
+    derivesToggle.hidden = !derivesCount
+    derivesToggle.textContent = `${showDerived ? '隐藏' : '显示'}其他推导关系（${derivesCount}）`
+    derivesToggle.setAttribute('aria-pressed', String(showDerived))
+    if (!focusNodeId) {
+      focusLabel.textContent = '选择一个节点以聚焦相关路径'
+      focusDetails.hidden = true
+      clearFocus.hidden = true
+    }
+    if (focusNodeId) {
+      focusLabel.textContent = `已聚焦：${(projection.allNodes || projection.nodes || []).find((node) => node.id === focusNodeId)?.title || '节点'}`
+      focusDetails.hidden = false
+      clearFocus.hidden = false
+    }
+  }
+
+  focusDetails.onclick = () => {
+    const id = currentFocus || graphCanvas.querySelector('.cog-node.is-selected')?.getAttribute('data-node-id')
+    const node = (currentView.projection.allNodes || currentView.projection.nodes || []).find((candidate) => candidate.id === id)
+    if (node) opts.onOpen?.(node, { onChanged: opts.onChanged, historyContext: { events: currentView.events || [], projection: currentView.projection, selectedSeq: currentView.selectedSeq }, onJumpToEvent: opts.onJumpToEvent })
+  }
+  clearFocus.onclick = () => render(currentView, null)
+  return { render, focus: (id) => render(currentView, id) }
 }
 
 function openEntryDialog(theme, proj, mode, opts) {
@@ -491,22 +765,81 @@ function openEntryDialog(theme, proj, mode, opts) {
   requestAnimationFrame(() => (isEvidence ? targetSelect : titleInput).focus())
 }
 
-/** 未连入图谱的节点：收成一条可展开的安静列表，不进图。 */
-function renderFloating(stage, proj) {
-  const list = h('div', { class: 'cog-float-list', hidden: true })
-  for (const n of (proj.floating || []).slice(0, 200)) {
-    list.append(h('span', { class: 'cog-float-item' },
-      h('i', { class: 'cog-dot', style: `background:${(KIND[n.kind] || KIND.claim).color}` }),
-      `${(KIND[n.kind] || KIND.claim).label} · ${n.title}`))
+/** Searchable, paged unplaced-node index. It never copies all floating nodes into the graph. */
+function renderFloating(stage, proj, theme, opts = {}) {
+  const nodes = Array.isArray(proj.floating) ? proj.floating : []
+  if (!nodes.length) return
+  const counts = countFloating(nodes)
+  const byKind = Object.entries(counts.byKind).map(([kind, count]) => `${KIND[kind]?.label || kind} ${count}`).join(' · ')
+  const byStatus = Object.entries(counts.byStatus).map(([status, count]) => `${NODE_STATUS[status]?.label || status} ${count}`).join(' · ')
+  const query = h('input', { class: 'txt cog-float-search', type: 'search', placeholder: '搜索待归置节点', 'aria-label': '搜索待归置节点' })
+  const kindFilter = h('select', { class: 'txt', 'aria-label': '按节点类型筛选' },
+    h('option', { value: '' }, '全部类型'),
+    ...Object.entries(KIND).filter(([kind]) => counts.byKind[kind]).map(([kind, config]) => h('option', { value: kind }, `${config.label} · ${counts.byKind[kind]}`)))
+  const statusFilter = h('select', { class: 'txt', 'aria-label': '按节点状态筛选' },
+    h('option', { value: '' }, '全部状态'),
+    ...Object.entries(counts.byStatus).map(([status, count]) => h('option', { value: status }, `${NODE_STATUS[status]?.label || status} · ${count}`)))
+  const list = h('div', { class: 'cog-float-list', hidden: true, 'aria-live': 'polite' })
+  const resultLabel = h('span', { class: 'cog-float-result-count', role: 'status', 'aria-live': 'polite' })
+  const pageLabel = h('span', { class: 'cog-page-label' })
+  const pageState = { value: 1 }
+  const prev = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => { pageState.value--; renderRows() } }, '上一页')
+  const next = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => { pageState.value++; renderRows() } }, '下一页')
+  const pagination = h('div', { class: 'cog-pagination' }, prev, pageLabel, next)
+  const toggle = h('button', {
+    type: 'button', class: 'btn cog-float-toggle', 'aria-expanded': 'false',
+    onclick: () => {
+      list.hidden = !list.hidden
+      toggle.setAttribute('aria-expanded', String(!list.hidden))
+      toggle.textContent = `${list.hidden ? '显示' : '收起'}全部待归置节点（${nodes.length}）`
+    },
+  }, `显示全部待归置节点（${nodes.length}）`)
+  const countsLine = h('p', { class: 'cog-float-counts' },
+    `主题「${theme.name || '未命名主题'}」· 共 ${counts.total} 项`,
+    h('br'), `类型：${byKind || '无'} · 状态：${byStatus || '无'}`)
+  const container = h('section', { class: 'cog-float', 'aria-label': '待归置节点' },
+    h('div', { class: 'cog-float-head' }, h('strong', {}, '待归置'), resultLabel, toggle),
+    countsLine,
+    h('div', { class: 'cog-float-filters' }, query, kindFilter, statusFilter),
+    pagination, list, pagination)
+  stage.append(container)
+
+  function renderRows() {
+    clear(list)
+    const search = query.value.trim().toLocaleLowerCase()
+    const filtered = nodes.filter((node) => (!search || `${node.title || ''} ${node.currentText || ''}`.toLocaleLowerCase().includes(search))
+      && (!kindFilter.value || node.kind === kindFilter.value)
+      && (!statusFilter.value || floatingStatusKey(node) === statusFilter.value))
+    const page = paginate(filtered, pageState.value, FLOATING_PAGE_SIZE)
+    pageState.value = page.page
+    resultLabel.textContent = `${page.total} 项符合筛选`
+    pageLabel.textContent = `${page.total ? page.start + 1 : 0}–${page.end} / ${page.total} · 第 ${page.page}/${page.pages} 页`
+    prev.disabled = page.page <= 1
+    next.disabled = page.page >= page.pages
+    for (const node of page.items) {
+      const kind = KIND[node.kind] || KIND.claim
+      const statusKey = floatingStatusKey(node)
+      const status = NODE_STATUS[statusKey] || { label: statusKey }
+      const button = h('button', {
+        type: 'button', class: 'btn cog-float-open',
+        onclick: () => opts.onOpen?.(node, {
+          onChanged: opts.onChanged,
+          historyContext: opts.historyContext,
+          onJumpToEvent: opts.onJumpToEvent,
+        }),
+      }, opts.historyContext?.selectedSeq != null ? '查看历史' : node.archived ? '查看与恢复' : '查看并挂接')
+      list.append(h('article', { class: 'cog-float-row' },
+        h('span', { class: 'cog-kind-tag' }, kind.label),
+        h('span', { class: 'cog-float-title' }, node.title || '未命名节点'),
+        h('span', { class: 'cog-float-status' }, `状态：${status.label}`),
+        node.sourceRef ? h('span', { class: 'cog-float-source' }, `来源：${node.sourceRef}`) : h('span', { class: 'cog-float-source is-unresolved' }, '来源引用未记录'),
+        button))
+    }
   }
-  if ((proj.floating || []).length > 200) {
-    list.append(h('span', { class: 'cog-float-item' }, `……等共 ${proj.floating.length} 项`))
-  }
-  const btn = h('button', {
-    type: 'button', class: 'cog-float-btn',
-    onclick: () => { list.hidden = !list.hidden; btn.textContent = `${list.hidden ? '展开' : '收起'}未连入图谱（${proj.floatingCount}）` },
-  }, `展开未连入图谱（${proj.floatingCount}）`)
-  stage.append(h('div', { class: 'cog-float' }, btn, list))
+  for (const control of [query, kindFilter, statusFilter]) control.addEventListener('input', () => { pageState.value = 1; renderRows() })
+  kindFilter.addEventListener('change', () => { pageState.value = 1; renderRows() })
+  statusFilter.addEventListener('change', () => { pageState.value = 1; renderRows() })
+  renderRows()
 }
 
 /* ------------------------------------------------------------------ */
@@ -678,7 +1011,7 @@ function edgeGeom(a, b, sa, sb) {
 
 const THEME_NODE_ID = '__cog_theme__'
 
-function drawGraph(stage, proj, theme, opts) {
+function drawGraph(stage, proj, theme, opts, canvas = stage) {
   const W = 1120
   // 视图层合成主题根节点（概念 02 的"研究主题"占位），不进投影
   const themeNode = { id: THEME_NODE_ID, kind: 'theme', title: theme.name || '研究主题' }
@@ -687,12 +1020,19 @@ function drawGraph(stage, proj, theme, opts) {
   const derivedTargets = new Set(proj.edges.filter((e) => e.rel === 'derives').map((e) => e.to))
   const topicEdges = proj.nodes
     .filter((n) => n.kind !== 'evidence' && !derivedTargets.has(n.id))
+    .sort((a, b) => (Number(b.createdSeq) || 0) - (Number(a.createdSeq) || 0) || String(a.id).localeCompare(String(b.id)))
+    .slice(0, 24)
     .map((n) => ({ from: THEME_NODE_ID, to: n.id, rel: 'topic', synthetic: true }))
   const edges = [...proj.edges, ...topicEdges]
 
   const { pos, size, height: H } = layoutGraph(nodes, edges, W, THEME_NODE_ID)
 
-  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'cog-svg', role: 'group', 'aria-label': '当前认知图；主题根节点为主题元数据，其余节点和关系来自事件记录', 'data-show-derived': 'false' })
+  const replaySeq = opts.historyContext?.selectedSeq
+  const svg = el('svg', {
+    viewBox: `0 0 ${W} ${H}`, class: 'cog-svg', role: 'group',
+    'aria-label': replaySeq != null ? `历史回放 v${replaySeq} 的认知图；只读` : '当前认知图；主题根节点为主题元数据，其余节点和关系来自事件记录',
+    'data-show-derived': String(Boolean(opts.showDerived)),
+  })
   const defs = el('defs')
   for (const [rel, cfg] of Object.entries(REL)) {
     const marker = el('marker', {
@@ -736,28 +1076,40 @@ function drawGraph(stage, proj, theme, opts) {
       continue
     }
     const rel = REL[e.rel] || REL.supports
+    const rejected = e.reviewDecision === 'rejected'
+    const pending = e.pendingReview
+    const confirmed = e.reviewDecision === 'confirmed'
+    const relationStatus = pending ? '待复核' : confirmed ? '已确认' : rejected ? '已驳回' : ''
     const p = el('path', {
       d: g.d,
-      class: `cog-edge cog-edge-${e.rel}${e.pendingReview ? ' is-review' : ''}`,
+      class: `cog-edge cog-edge-${e.rel}${pending ? ' is-review' : ''}${rejected ? ' is-rejected' : ''}${confirmed ? ' is-confirmed' : ''}`,
       'data-from': e.from, 'data-to': e.to, 'data-rel': e.rel,
-      stroke: e.pendingReview ? '#94a3b8' : rel.color,
-      'marker-end': `url(#cog-arrow-${e.pendingReview ? 'review' : e.rel})`,
+      stroke: pending ? '#64748b' : rejected ? '#b91c1c' : rel.color,
+      'stroke-dasharray': pending || rejected ? '5 4' : 'none',
+      'marker-end': `url(#cog-arrow-${pending || rejected ? 'review' : e.rel})`,
     })
     const title = el('title')
-    title.textContent = `${rel.label}${e.pendingReview ? '（待复核）' : ''}${e.mapping ? ` · ${e.mapping}` : ''}`
+    const reviewMeta = e.reviewDecision
+      ? ` · 决定者：${ACTOR_LABEL[e.reviewedBy] || e.reviewedBy || '未记录'} · 时间：${fmtAt(e.reviewedAt)}${e.reviewReason ? ` · 理由：${e.reviewReason}` : ''}`
+      : ''
+    title.textContent = `${rel.label}${relationStatus ? `（${relationStatus}）` : ''}${reviewMeta}${e.mapping ? ` · ${e.mapping}` : ''}`
     p.appendChild(title)
     edgeLayer.appendChild(p)
     // 关系名标注（概念 02 边上标 derives · 推导）
-    const labelText = e.pendingReview ? '待复核' : `${e.rel} · ${rel.label}`
-    const labelG = el('g', { class: 'cog-edge-label', 'data-rel': e.rel, transform: `translate(${g.px.toFixed(1)} ${g.py.toFixed(1)})` })
+    const labelText = relationStatus ? `${relationStatus} · ${rel.label}` : `${e.rel} · ${rel.label}`
+    const labelG = el('g', {
+      class: 'cog-edge-label', 'data-rel': e.rel,
+      'data-review-status': pending ? 'pending' : confirmed ? 'confirmed' : rejected ? 'rejected' : 'none',
+      transform: `translate(${g.px.toFixed(1)} ${g.py.toFixed(1)})`,
+    })
     const w = labelText.length * 12 + 14
     labelG.appendChild(el('rect', {
       x: -w / 2, y: -10, width: w, height: 20, rx: 10,
-      fill: '#ffffff', stroke: e.pendingReview ? '#cbd5e1' : rel.color, 'stroke-opacity': 0.45,
+      fill: '#ffffff', stroke: pending ? '#64748b' : rejected ? '#b91c1c' : rel.color, 'stroke-opacity': 0.7,
     }))
     labelG.appendChild(textEl(labelText, {
       'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-edge-label-text',
-      fill: e.pendingReview ? '#94a3b8' : rel.color,
+      fill: pending ? '#475569' : rejected ? '#991b1b' : rel.color,
     }))
     labelLayer.appendChild(labelG)
     edgeRecs.push({ el: p, edge: e, labelEl: labelG })
@@ -803,6 +1155,11 @@ function drawGraph(stage, proj, theme, opts) {
     if (clearFocus) clearFocus.hidden = !selected
   }
   svg.addEventListener('cog-clear-focus', () => setFocus(null))
+  const openNode = (node) => opts.onOpen?.(node, {
+    onChanged: opts.onChanged,
+    historyContext: opts.historyContext,
+    onJumpToEvent: opts.onJumpToEvent,
+  })
 
   // 节点
   for (const n of nodes) {
@@ -818,7 +1175,7 @@ function drawGraph(stage, proj, theme, opts) {
       'data-provenance': (n.provenanceEventIds || n.eventIds || []).join(','),
       tabindex: isTheme ? '-1' : '0', role: isTheme ? 'img' : 'button',
       'aria-label': isTheme ? `研究主题：${n.title}（主题元数据）`
-        : `${kind.label}：${n.title}；${n.archived ? '已归档' : '当前图节点'}${n.correct === false ? '；已证伪' : ''}${n.superseded ? '；已更正' : ''}。按回车打开详情，按空格也可打开。`,
+        : `${kind.label}：${n.title}；${n.archived ? '已归档' : replaySeq != null ? `历史回放 v${replaySeq}` : '当前图节点'}${n.correct === false ? '；已证伪' : ''}${n.superseded ? '；已更正' : ''}。按回车打开详情，按空格也可打开。`,
     })
     const stroke = n.correct === false ? '#ea580c' : kind.border
     const rect = el('rect', {
@@ -880,7 +1237,7 @@ function drawGraph(stage, proj, theme, opts) {
           g.removeEventListener('pointermove', onMove)
           g.removeEventListener('pointerup', onUp)
           if (!moved) {
-            if (wasFocused) opts.onOpen?.(n, { onChanged: opts.onChanged })
+            if (wasFocused) openNode(n)
             else setFocus(n.id)
           }
         }
@@ -890,13 +1247,14 @@ function drawGraph(stage, proj, theme, opts) {
       g.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter' && ev.key !== ' ') return
         ev.preventDefault()
-        opts.onOpen?.(n, { onChanged: opts.onChanged })
+        openNode(n)
       })
     }
     nodeLayer.appendChild(g)
   }
 
-  stage.append(svg)
+  canvas.append(svg)
+  if (opts.focusNodeId) setFocus(opts.focusNodeId)
 }
 function renderLegend() {
   const item = (color, label, dashed) => h('span', { class: 'cog-legend-item' },
@@ -928,6 +1286,8 @@ export async function openNodeDetail(theme, node, opts = {}) {
   closeNodeDetail()
   const kind = KIND[node.kind] || KIND.claim
   const st = NODE_STATUS[node.status] || NODE_STATUS.pending
+  const historyContext = opts.historyContext || null
+  const historical = historyContext?.selectedSeq != null
 
   const backdrop = h('div', { class: 'chain-drawer-backdrop' })
   const drawer = h('aside', { class: 'chain-drawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': `节点详情：${node.title}`, tabindex: '-1' })
@@ -963,13 +1323,18 @@ export async function openNodeDetail(theme, node, opts = {}) {
   }
   document.addEventListener('keydown', onKey)
 
-  // 事件历史 + 语义关系（都来自投影/事件，不读旧链字段）
   let events = []
   let proj = null
   try {
-    const [evRes, p] = await Promise.all([m.chainEvents(theme.id), m.chainProjection(theme.id)])
-    events = evRes?.events || []
-    proj = p
+    if (historyContext?.projection) {
+      events = historyContext.events || []
+      const snapshot = historyContext.projection
+      proj = { ...snapshot, nodes: snapshot.allNodes || snapshot.nodes || [] }
+    } else {
+      const [evRes, p] = await Promise.all([m.chainEvents(theme.id), m.chainProjection(theme.id)])
+      events = verifiedLedgerPrefix(evRes?.events || [], p.integrity)
+      proj = { ...p, nodes: p.allNodes || p.nodes || [] }
+    }
   } catch (e) {
     clear(body).append(h('p', { class: 'chain-note' }, '事件读取失败：' + (e.message || e)))
     return
@@ -979,6 +1344,8 @@ export async function openNodeDetail(theme, node, opts = {}) {
   const readableSource = resolveEventReference(events, node.sourceRef)
   const lineage = (node.eventIds || [node.id]).map((id) => byId.get(id)).filter(Boolean)
     .sort((a, b) => a.seq - b.seq)
+  const versionEvents = lineage.filter((event) => ['claim.created', 'inference.created', 'correction.appended'].includes(event.type))
+  const relatedEvents = collectNodeHistory(node, events)
 
   const badges = []
   if (node.correct === false) badges.push(h('span', { class: 'chain-pill st-forking' }, '已证伪'))
@@ -1005,49 +1372,109 @@ export async function openNodeDetail(theme, node, opts = {}) {
   }, node.archived ? '追加恢复事件' : '追加归档事件')
 
   mount(clear(body),
+    historical ? h('p', { class: 'cog-history-banner', role: 'status' }, `历史回放 · v${historyContext.selectedSeq} · 只读；节点状态与事件历史均截于该序号。`) : null,
     h('div', { class: 'chain-drawer-kicker' },
       h('span', { class: 'chain-role-tag', style: `color:${kind.color};border-color:${kind.border}` }, kind.label),
       h('span', { class: 'chain-pill st-pending' }, st.label),
       ...badges),
     h('div', { class: 'chain-drawer-name' }, node.title),
-    node.currentText && node.currentText !== node.title
-      ? h('p', { class: 'chain-dcore' }, node.currentText) : null,
-    node.confidence != null
-      ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
+    node.currentText && node.currentText !== node.title ? h('p', { class: 'chain-dcore' }, node.currentText) : null,
+    node.confidence != null ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
     node.external ? h('p', { class: 'chain-note' }, '外部引用节点：关系端点指向账本外的对象。') : null,
-    proj?.integrity?.ok === false
-      ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `事件账本校验失败：${proj.integrity.reason}。当前仅显示已验证前缀。`) : null,
+    proj?.integrity?.ok === false ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `事件账本校验失败：${proj.integrity.reason}。当前仅显示已验证前缀。`) : null,
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '来源'),
       h('p', { class: `chain-note${readableSource.status === 'unresolved' ? ' is-unresolved' : ''}` },
-        readableSource.status === 'resolved' ? (readableSource.subjectTitle || '已解析来源')
-          : readableSource.status === 'unresolved' ? '来源未解析' : '未记录来源'),
+        readableSource.status === 'resolved' ? `${readableSource.subjectTitle || '已解析来源'} · 引用来源真实性未自动核验`
+          : readableSource.status === 'unresolved' ? '来源未解析 · 引用尚未核实' : '未记录来源'),
+      h('p', { class: 'chain-note' }, '来源引用表示一条可追溯声明，不等于来源真实性已核验。'),
       h('details', { class: 'chain-technical' },
         h('summary', {}, '技术详情 · 原始引用与事件 ID'),
         h('p', { class: 'chain-note' }, `来源引用：${node.sourceRef || '未记录'}`),
         node.sourceRef ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(node.sourceRef, '来源引用') }, '复制来源引用') : null,
         h('p', { class: 'chain-note' }, `关联事件：${(node.provenanceEventIds || node.eventIds || []).join(' · ') || '无'}`))),
-    // 语义关系
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '语义关系'),
       ...renderNodeRelations(proj, nodeById, node, theme, opts)),
-    !node.external && !node.archived && ['claim', 'inference'].includes(node.kind)
+    !historical && !node.external && !node.archived && ['claim', 'inference'].includes(node.kind)
       ? renderEvidenceComposer(theme, node, opts) : null,
-    !node.external && !node.archived ? renderRelationComposer(proj, node, theme, opts) : null,
-    // 历史版本（v01/v02…，追加式账本的可追溯性）
+    !historical && !node.external && !node.archived ? renderRelationComposer(proj, node, theme, opts) : null,
     h('section', { class: 'chain-dsect' },
-      h('div', { class: 'chain-detail-h' }, `历史版本（${lineage.length}）`),
-      ...lineage.map((e) => renderHistoryEvent(e))),
-    // 证据引用（命题可点进右栏）
+      h('div', { class: 'chain-detail-h' }, `历史版本（${versionEvents.length}）`),
+      renderLineageThread(versionEvents, opts)),
     h('section', { class: 'chain-dsect' },
-      h('div', { class: 'chain-detail-h' }, '证据引用'),
-      ...renderNodeEvidence(lineage, opts)),
-    !node.external ? h('section', { class: 'chain-dsect chain-archive-actions' },
+      h('div', { class: 'chain-detail-h' }, `节点一生 · 来源与相关事件（${relatedEvents.length}）`),
+      renderNodeHistoryTimeline(relatedEvents, opts)),
+    h('section', { class: 'chain-dsect' },
+      h('div', { class: 'chain-detail-h' }, '证据引用 · 未自动核实来源真实性'),
+      ...renderNodeEvidence(relatedEvents, opts)),
+    !historical && !node.external ? h('section', { class: 'chain-dsect chain-archive-actions' },
       h('div', { class: 'chain-detail-h' }, node.archived ? '归档状态' : '节点操作'),
       node.archived && node.archiveReason ? h('p', { class: 'chain-note' }, `归档原因：${node.archiveReason}`) : null,
       node.archived ? null : archiveReason,
       archiveButton) : null,
   )
+}
+
+function collectNodeHistory(node, events) {
+  const ids = new Set([node.id, ...(node.eventIds || []), ...(node.provenanceEventIds || [])].filter(Boolean))
+  const sourceRefs = new Set([node.sourceRef].filter(Boolean))
+  const related = new Set()
+  const refMatchesNode = (ref) => ref?.type && ref?.id && sourceRefs.has(`${ref.type}:${ref.id}`)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const event of events) {
+      const p = event?.payload || {}
+      let touches = ids.has(event.id) || (event.supersedes && ids.has(event.supersedes))
+        || (p.sourceRef && sourceRefs.has(p.sourceRef)) || (p.reviewOf && ids.has(p.reviewOf))
+      if (event.type === 'relation.declared') {
+        const original = p.reviewOf ? events.find((row) => row.id === p.reviewOf) : event
+        const rp = original?.payload || p
+        const endpoints = [rp.from, rp.to]
+        touches ||= endpoints.some((endpoint) => (endpoint?.eventId && ids.has(endpoint.eventId))
+          || refMatchesNode(endpoint?.ref))
+        if (touches) {
+          for (const endpoint of endpoints) if (endpoint?.eventId && !ids.has(endpoint.eventId)) { ids.add(endpoint.eventId); changed = true }
+          if (original?.id && !ids.has(original.id)) { ids.add(original.id); changed = true }
+        }
+      }
+      if (touches && !related.has(event.id)) { related.add(event.id); changed = true }
+      if (touches && event.id && !ids.has(event.id)) { ids.add(event.id); changed = true }
+      if (p.sourceRef && touches && !sourceRefs.has(p.sourceRef)) { sourceRefs.add(p.sourceRef); changed = true }
+    }
+  }
+  return events.filter((event) => related.has(event.id)).sort((a, b) => (a.seq || 0) - (b.seq || 0))
+}
+
+function renderLineageThread(events, opts) {
+  if (!events.length) return h('p', { class: 'chain-note' }, '暂无创建或更正版本。')
+  const labels = events.map((event) => `v${String(event.seq).padStart(2, '0')}`)
+  return h('details', { class: 'chain-lineage-thread' },
+    h('summary', {}, `展开更正谱系 · ${labels.join(' → ')}`),
+    h('p', { class: 'chain-note' }, '每个版本和差异均保留在账本中；这里仅将同一节点的 lineage 聚合展示。'),
+    ...events.map((event) => renderHistoryEvent(event, opts)))
+}
+
+function renderNodeHistoryTimeline(events, opts) {
+  if (!events.length) return h('p', { class: 'chain-note' }, '暂无可追溯来源或相关事件。')
+  const pageSize = 30
+  let page = 1
+  const list = h('div', { class: 'chain-node-timeline' })
+  const label = h('span', { class: 'cog-page-label', 'aria-live': 'polite' })
+  const prev = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => draw(page - 1) }, '更早')
+  const next = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => draw(page + 1) }, '较新')
+  function draw(value) {
+    const range = paginate(events, value, pageSize)
+    page = range.page
+    label.textContent = `${range.total ? range.start + 1 : 0}–${range.end} / ${range.total} 条`
+    prev.disabled = page <= 1
+    next.disabled = page >= range.pages
+    clear(list)
+    for (const event of range.items) list.append(renderHistoryEvent(event, opts))
+  }
+  draw(1)
+  return h('div', { class: 'chain-node-timeline-wrap' }, h('div', { class: 'cog-pagination' }, prev, label, next), list)
 }
 
 function renderEvidenceComposer(theme, node, opts) {
@@ -1138,23 +1565,31 @@ function renderRelationComposer(proj, node, theme, opts) {
 function renderNodeRelations(proj, nodeById, node, theme, opts) {
   const edges = (proj?.edges || []).filter((e) => e.from === node.id || e.to === node.id)
   if (!edges.length) return [h('p', { class: 'chain-note' }, '暂无语义关系。')]
+  const eventsById = new Map((opts.historyContext?.events || []).map((event) => [event.id, event]))
   return edges.map((e) => {
     const otherId = e.from === node.id ? e.to : e.from
     const other = nodeById.get(otherId)
     const rel = REL[e.rel] || REL.supports
     const dir = e.from === node.id ? '→' : '←'
-    return h('button', {
-      type: 'button', class: 'chain-evidence',
-      title: other && !other.external ? '查看该节点' : '',
-      onclick: () => { if (other && !other.external) openNodeDetail(theme, other, opts) },
-    },
-      h('span', { class: 'chain-evidence-type', style: `color:${rel.color}` },
-        `${e.pendingReview ? '待复核·' : ''}${rel.label} ${dir}`),
-      h('span', { class: 'chain-evidence-id' }, other ? other.title : '来源未解析'))
+    const status = e.pendingReview ? '待人工复核' : e.reviewDecision === 'confirmed' ? '已由用户确认'
+      : e.reviewDecision === 'rejected' ? '已由用户驳回' : '用户声明 · 未自动验证'
+    const decisionEvent = e.reviewEventId ? eventsById.get(e.reviewEventId) : null
+    const declarationEvent = eventsById.get(e.eventId)
+    return h('div', { class: `chain-relation-item${e.pendingReview ? ' is-pending' : ''}${e.reviewDecision === 'rejected' ? ' is-rejected' : ''}` },
+      h('button', {
+        type: 'button', class: 'chain-evidence', title: other && !other.external ? '查看该节点' : '',
+        onclick: () => { if (other && !other.external) openNodeDetail(theme, other, opts) },
+      },
+        h('span', { class: 'chain-evidence-type', style: `color:${rel.color}` }, `${status} · ${rel.label} ${dir}`),
+        h('span', { class: 'chain-evidence-id' }, other ? other.title : '来源未解析')),
+      e.reviewReason ? h('p', { class: 'chain-note' }, `决定理由：${e.reviewReason}`) : null,
+      e.reviewedBy || e.reviewedAt ? h('p', { class: 'chain-note' }, `决定者：${ACTOR_LABEL[e.reviewedBy] || e.reviewedBy || '未记录'} · 时间：${fmtAt(e.reviewedAt)}`) : null,
+      e.pendingReview && declarationEvent ? h('button', { type: 'button', class: 'btn cog-event-focus', onclick: () => opts.onJumpToEvent?.(declarationEvent) }, `前往账本复核 · 第 ${declarationEvent.seq} 条`) : null,
+      decisionEvent ? h('button', { type: 'button', class: 'btn cog-event-focus', onclick: () => opts.onJumpToEvent?.(decisionEvent) }, `查看决定事件 · 第 ${decisionEvent.seq} 条`) : null)
   })
 }
 
-function renderHistoryEvent(e) {
+function renderHistoryEvent(e, opts = {}) {
   const p = e.payload || {}
   const at = String(e.at || '').slice(0, 10)
   const actor = ACTOR_LABEL[e.actor] || e.actor || ''
@@ -1162,7 +1597,9 @@ function renderHistoryEvent(e) {
   if (e.type === 'correction.appended') {
     summary = `${p.oldValue || '—'} → ${p.newValue || '—'}${p.reason ? `（${p.reason}）` : ''}`
   } else if (e.type === 'relation.declared') {
-    summary = `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' ? '（待复核）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
+    summary = p.reviewOf
+      ? `人工复核${p.reviewDecision === 'confirmed' ? '确认' : '驳回'} · ${p.decisionReason || '未记录理由'}`
+      : `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待复核）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
   } else if (e.type === 'settlement.recorded') {
     summary = p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
   } else if (e.type === 'node.archived') {
@@ -1174,12 +1611,17 @@ function renderHistoryEvent(e) {
   } else {
     summary = String(p.title || p.coreInfo || p.text || '').slice(0, 80)
   }
+  const typeLabel = e.type === 'relation.declared' && p.reviewOf ? '关系复核决定' : (TYPE_LABEL[e.type] || e.type)
+  const jump = typeof opts.onJumpToEvent === 'function'
+    ? h('button', { type: 'button', class: 'btn cog-event-focus', onclick: () => opts.onJumpToEvent(e) }, `跳回账本 · 第 ${e.seq} 条`)
+    : null
   return h('div', { class: 'chain-log-item' },
     h('div', { class: 'chain-log-at' }, `v${String(e.seq).padStart(2, '0')} · ${at}${actor ? ` · ${actor}` : ''}`),
     h('div', { class: 'chain-log-body' },
       h('div', { class: 'chain-log-delta' },
-        h('span', { class: 'chain-log-new' }, TYPE_LABEL[e.type] || e.type)),
-      summary ? h('div', { class: 'chain-log-reason' }, summary) : null))
+        h('span', { class: 'chain-log-new' }, typeLabel)),
+      summary ? h('div', { class: 'chain-log-reason' }, summary) : null,
+      jump))
 }
 
 /** 证据引用：命题走右栏（selectNode），读数/收件箱走 onEvidence。 */
@@ -1207,8 +1649,8 @@ function renderNodeEvidence(lineage, opts) {
           onclick: () => { closeNodeDetail(); selectNode(ref.id) },
         },
           h('span', { class: 'chain-evidence-type' }, '旧命题'),
-          h('span', { class: `chain-evidence-id${node || ref.title ? '' : ' is-unresolved'}` }, node?.title || ref.title || '来源未解析'),
-          node ? h('span', { class: 'chain-evidence-conf' }, `置信度 ${Math.round(node.confidence ?? 0)}%`) : null),
+          h('span', { class: `chain-evidence-id${node ? '' : ' is-unresolved'}` }, node?.title || ref.title || '来源未解析'),
+          h('span', { class: 'chain-evidence-conf' }, node ? '对象已解析 · 来源真实性未核验' : '引用未解析 · 仅保存原始引用名')),
         !node ? h('details', { class: 'chain-technical' }, h('summary', {}, '技术详情 · 原始命题 ID'),
           h('p', { class: 'chain-note' }, String(ref.id || '未记录')),
           ref.id ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(ref.id, '命题 ID') }, '复制命题 ID') : null) : null)
@@ -1219,7 +1661,8 @@ function renderNodeEvidence(lineage, opts) {
         type: 'button', class: 'chain-evidence',
         onclick: () => opts.onEvidence?.(ref),
       }, h('span', { class: 'chain-evidence-type' }, label),
-        h('span', { class: `chain-evidence-id${ref.title ? '' : ' is-unresolved'}` }, ref.title || '来源未解析')),
+        h('span', { class: `chain-evidence-id${ref.title ? '' : ' is-unresolved'}` }, ref.title || ref.id || '来源未解析')),
+      h('p', { class: 'chain-note is-unresolved' }, '引用尚未在账本外部解析；名称与 ID 均不代表来源已核实。'),
       h('details', { class: 'chain-technical' }, h('summary', {}, '技术详情 · 原始引用 ID'),
         h('p', { class: 'chain-note' }, String(ref.id || '未记录')),
         ref.id ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(ref.id, '引用 ID') }, '复制引用 ID') : null))

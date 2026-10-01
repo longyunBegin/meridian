@@ -2341,8 +2341,8 @@ body.tauri-macos .app {
 .cog-edge[data-focus="false"] { opacity:.1; }
 .cog-edge-label { opacity:0; pointer-events:none; transition:opacity .14s ease; }
 .cog-edge-label.is-visible { opacity:1; }
-.cog-svg[data-show-derived="false"] .cog-edge-derives,
-.cog-svg[data-show-derived="false"] .cog-edge-label[data-rel="derives"] { display:none; }
+.cog-svg[data-show-derived="false"] .cog-edge-derives:not(.is-review):not(.is-confirmed):not(.is-rejected),
+.cog-svg[data-show-derived="false"] .cog-edge-label[data-rel="derives"]:not([data-review-status="pending"]):not([data-review-status="confirmed"]):not([data-review-status="rejected"]) { display:none; }
 .cog-node:focus-visible rect { stroke:var(--accent)!important; stroke-width:3.5!important; }
 .cog-empty-steps { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; margin:16px 0; color:var(--text-2); font-size:var(--t-body); }
 .cog-empty-steps span:not([aria-hidden]) { padding:6px 10px; background:var(--surface-solid); border:1px solid var(--hairline); border-radius:50%; }
@@ -2411,3 +2411,57 @@ body.tauri-macos .app {
 @media (prefers-reduced-motion:reduce) {
   .cog-node, .cog-edge, .cog-edge-label, .cog-entry-dialog { transition:none!important; }
 }
+
+
+/* 认知账本增强：版本回放、窗口分页、人工复核与节点一生 */
+.cog-replay-state,.cog-history-banner{margin:10px 0;padding:8px 10px;border:1px solid var(--hairline);border-radius:9px;background:var(--bg-2);color:var(--text-1);font-size:var(--t-caption);line-height:1.5;font-weight:600}
+.cog-history-banner{border-color:#b7c6d8;background:#f2f6fb;color:#24364b}
+.cog-time-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0;padding:10px 12px;background:var(--bg-1);border:1px solid var(--hairline);border-radius:var(--r);}
+.cog-time-slider-label{font-size:var(--t-caption);font-weight:600;color:var(--text-1);white-space:nowrap}
+.cog-time-slider{flex:1 1 180px;min-width:120px;accent-color:#315e8a}
+.cog-time-label,.cog-time-preview{font-size:var(--t-caption);color:var(--text-1);font-variant-numeric:tabular-nums}
+.cog-live-button{flex:none}
+.cog-frame-note{margin:8px 0;padding:8px 10px;border-left:3px solid #5b7899;border-radius:0 8px 8px 0;background:#f2f6fb;color:#26384b;font-size:var(--t-caption);line-height:1.5}
+.cog-node-search{width:min(240px,45vw)}
+.cog-search-error{font-size:var(--t-caption);color:#8a3b12}
+.cog-event-focus,.cog-page-btn{min-height:30px;padding:4px 9px;font-size:var(--t-caption)}
+.cog-pagination{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:9px 0}
+.cog-page-label{color:var(--text-2);font-size:var(--t-caption);font-variant-numeric:tabular-nums;text-align:center}
+.cog-ledger-list{contain:content}
+.cog-ev{scroll-margin:16px}
+.cog-ev:focus{outline:2px solid #315e8a;outline-offset:2px}
+.cog-ev.is-future{background:#f4f5f7;border-color:#cbd0d8}
+.cog-ev-future-tag{padding:2px 7px;border:1px solid #aeb5bf;border-radius:999px;color:#384454;background:#edf0f3;font-size:var(--t-caption);font-weight:600}
+.cog-review-status{grid-column:1/-1;padding:7px 9px;border-left:3px solid #5b7899;background:#f2f6fb;color:#24364b;font-size:var(--t-caption);line-height:1.5}
+.cog-review-controls{margin-top:8px;padding:9px 10px;border:1px solid #c3d0df;border-radius:9px;background:#f7f9fc}
+.cog-review-controls>summary{color:#24364b;font-size:var(--t-caption);font-weight:700;cursor:pointer}
+.cog-review-reason{width:100%;min-height:58px;margin-top:8px;resize:vertical}
+.cog-review-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.cog-review-actions .btn{min-height:34px}
+.cog-float{margin-top:14px;padding:14px;background:var(--bg-1);border:1px solid var(--hairline);border-radius:var(--r);}
+.cog-float-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--text-1)}
+.cog-float-result-count{font-size:var(--t-caption);color:var(--text-2)}
+.cog-float-toggle{margin-left:auto}
+.cog-float-counts{margin:7px 0;color:var(--text-2);font-size:var(--t-caption);line-height:1.6}
+.cog-float-filters{display:grid;grid-template-columns:minmax(160px,1fr) minmax(130px,.45fr) minmax(130px,.45fr);gap:8px;margin:9px 0}
+.cog-float-list{display:grid;gap:8px;max-height:500px;overflow:auto;contain:content}
+.cog-float-row{display:grid;grid-template-columns:auto minmax(120px,1fr) auto minmax(100px,.7fr) auto;align-items:center;gap:9px;padding:9px 10px;background:var(--bg-0,#fff);border:1px solid var(--hairline);border-radius:var(--r-sm);}
+.cog-float-title{min-width:0;color:var(--text-1);overflow-wrap:anywhere;font-size:var(--t-body)}
+.cog-float-status,.cog-float-source{font-size:var(--t-caption);color:var(--text-2);overflow-wrap:anywhere}
+.cog-float-source.is-unresolved{color:#7a4b00;font-weight:600}
+.cog-float-open{white-space:nowrap}
+.cog-frame-note+.cog-svg{margin-top:0}
+.cog-graph-help-body p{line-height:1.6}
+.cog-edge.is-rejected{stroke-dasharray:5 4}
+.chain-relation-item{display:grid;gap:5px;margin:7px 0;padding:8px;border:1px solid var(--hairline-soft);border-radius:9px;background:var(--bg-1)}
+.chain-relation-item.is-pending{border-left:3px solid #657a91}
+.chain-relation-item.is-rejected{border-left:3px solid #9c3b3b;background:#fff8f8}
+.chain-lineage-thread{padding:8px 10px;border:1px solid var(--hairline);border-radius:10px;background:var(--bg-1)}
+.chain-lineage-thread>summary{font-size:var(--t-caption);font-weight:700;color:var(--text-1);cursor:pointer}
+.chain-node-timeline{display:grid;gap:5px;max-height:440px;overflow:auto;contain:content}
+.chain-log-item{padding:8px 10px;border-left:2px solid #a9b6c4;background:var(--bg-1);border-radius:0 8px 8px 0}
+.chain-log-at{font-size:var(--t-caption);color:var(--text-2);font-variant-numeric:tabular-nums}
+.chain-log-reason{margin-top:4px;color:var(--text-1);font-size:var(--t-caption);line-height:1.5;overflow-wrap:anywhere}
+.chain-evidence-conf{font-size:var(--t-caption);color:var(--text-2)}
+.cog-copy-btn:focus-visible,.cog-event-focus:focus-visible,.cog-page-btn:focus-visible,.cog-time-slider:focus-visible,.cog-node-search:focus-visible,.cog-float-toggle:focus-visible,.cog-float-open:focus-visible{outline:2px solid #315e8a;outline-offset:2px}
+@media(max-width:760px){.cog-float-filters{grid-template-columns:1fr}.cog-float-row{grid-template-columns:1fr auto}.cog-float-row .cog-kind-tag,.cog-float-row .cog-float-status,.cog-float-row .cog-float-source{grid-column:1}.cog-float-open{grid-column:2;grid-row:1/5}.cog-time-controls{align-items:flex-start}.cog-time-slider{order:3;flex-basis:100%}.cog-node-search{width:min(220px,52vw)}}
