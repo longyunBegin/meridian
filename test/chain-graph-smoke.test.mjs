@@ -1,7 +1,7 @@
 /**
- * 认知链图谱 · 几何/布局冒烟测试。
+ * 认知链图谱 · 几何/布局冒烟测试（概念 02 分层语义布局）。
  * 从 src/renderer/views/chain.js 源码中提取纯函数真实执行，
- * 验证布局与走线不崩、节点不严重重叠。
+ * 验证分层布局与走线不崩、节点不严重重叠。
  * 运行：node test/chain-graph-smoke.test.mjs
  */
 import { readFileSync } from 'node:fs'
@@ -30,7 +30,7 @@ const grab = (name) => {
   if (!m) { console.log(' FAIL  提取失败：' + name); fail++; return '' }
   return m[0]
 }
-for (const name of ['seededRand', 'hashStr', 'nodeSize', 'layoutGraph', 'rectExit', 'edgeD', 'splitLines']) {
+for (const name of ['seededRand', 'hashStr', 'nodeSize', 'layoutGraph', 'rectExit', 'edgeGeom', 'edgeD', 'splitLines']) {
   fns[name] = grab(name)
 }
 const NODE_SIZE_SRC = src.match(/const NODE_SIZE = \{[\s\S]*?\n\}/)?.[0] || ''
@@ -41,11 +41,12 @@ ${fns.seededRand || ''}
 ${fns.hashStr || ''}
 ${fns.rectExit || ''}
 ${fns.splitLines || ''}
+${fns.edgeGeom || ''}
 ${fns.edgeD || ''}
 ${fns.layoutGraph || ''}
 `
-const api = new Function(`${sandbox}; return { layoutGraph, rectExit, edgeD, splitLines, nodeSize }`)()
-const { layoutGraph, rectExit, edgeD, splitLines, nodeSize } = api
+const api = new Function(`${sandbox}; return { layoutGraph, rectExit, edgeD, edgeGeom, splitLines, nodeSize }`)()
+const { layoutGraph, rectExit, edgeD, edgeGeom, splitLines, nodeSize } = api
 
 console.log('\n— splitLines —')
 ok('短标题一行', JSON.stringify(splitLines('市场规模')) === '["市场规模"]')
@@ -53,9 +54,10 @@ ok('长标题两行', splitLines('这是一个很长的主张标题文本内容'
 ok('空标题兜底', splitLines('')[0] === '未命名')
 ok('证据节点更短', splitLines('这是一个很长的主张标题文本内容', 10).length === 2)
 
-console.log('\n— nodeSize / rectExit / edgeD —')
+console.log('\n— nodeSize / rectExit / edgeD / edgeGeom —')
 ok('主张节点 150x56', nodeSize({ kind: 'claim' }).w === 150)
 ok('证据节点更小', nodeSize({ kind: 'evidence' }).w < nodeSize({ kind: 'claim' }).w)
+ok('主题节点尺寸', nodeSize({ kind: 'theme' }).w === 170)
 const a = { x: 100, y: 100 }
 const b = { x: 400, y: 300 }
 const s = rectExit(a, b, 75, 28)
@@ -63,28 +65,38 @@ ok('出点在矩形边界上', Math.abs(Math.abs(s.x - 100) - 75) < 1 || Math.ab
 const d = edgeD(a, b, { w: 150, h: 56 }, { w: 150, h: 56 })
 ok('边路径是二次贝塞尔', /^M [\d.-]+ [\d.-]+ Q [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+$/.test(d), d)
 ok('零距离不崩', typeof edgeD(a, { ...a }, { w: 150, h: 56 }, { w: 150, h: 56 }) === 'string')
+const g = edgeGeom(a, b, { w: 150, h: 56 }, { w: 150, h: 56 })
+ok('edgeGeom 给出标注中点', typeof g.px === 'number' && typeof g.py === 'number' && !Number.isNaN(g.px))
+ok('edgeD 与 edgeGeom 路径一致', edgeD(a, b, { w: 150, h: 56 }, { w: 150, h: 56 }) === g.d)
 
-console.log('\n— layoutGraph（模拟真实规模：14 主张 + 16 证据） —')
-const nodes = []
+console.log('\n— layoutGraph 分层语义布局（14 主张 + 16 证据 + 主题根） —')
+const nodes = [{ id: '__theme__', kind: 'theme' }]
 for (let i = 0; i < 14; i++) nodes.push({ id: 'seg' + i, kind: 'claim' })
 for (let i = 0; i < 16; i++) nodes.push({ id: 'ev' + i, kind: 'evidence' })
 const edges = []
 for (let i = 0; i < 14; i++) edges.push({ from: 'ev' + (i % 16), to: 'seg' + i })
 edges.push({ from: 'seg0', to: 'seg1' })
 const t0 = Date.now()
-const { pos, size } = layoutGraph(nodes, edges, 1120, 620)
+const { pos, size, height } = layoutGraph(nodes, edges, 1120, '__theme__')
 const dt = Date.now() - t0
-ok('30 节点布局 < 2s', dt < 2000, `${dt}ms`)
+ok('31 节点布局 < 2s', dt < 2000, `${dt}ms`)
+ok('返回动态高度', typeof height === 'number' && height >= 320, `H=${height}`)
 let bad = 0
 for (const n of nodes) {
   const p = pos.get(n.id)
   const sz = size.get(n.id)
   if (!p || Number.isNaN(p.x) || Number.isNaN(p.y)) bad++
-  if (p.x < sz.w / 2 || p.x > 1120 - sz.w / 2 || p.y < sz.h / 2 || p.y > 620 - sz.h / 2) bad++
+  if (p.x < sz.w / 2 || p.x > 1120 - sz.w / 2 || p.y < sz.h / 2 || p.y > height - sz.h / 2) bad++
 }
 ok('所有节点位置有效且在边界内', bad === 0, `坏点 ${bad}`)
-const r2 = layoutGraph(nodes, edges, 1120, 620)
-ok('布局确定性', r2.pos.get('seg0').x === pos.get('seg0').x)
+const themeY = pos.get('__theme__').y
+const claimYs = nodes.filter((n) => n.kind === 'claim').map((n) => pos.get(n.id).y)
+const evYs = nodes.filter((n) => n.kind === 'evidence').map((n) => pos.get(n.id).y)
+ok('主题根节点在最上', claimYs.every((y) => y > themeY) && evYs.every((y) => y > themeY), `themeY=${themeY}`)
+ok('主张层在证据层之上', Math.max(...claimYs) < Math.min(...evYs),
+  `claim max=${Math.max(...claimYs)} ev min=${Math.min(...evYs)}`)
+const r2 = layoutGraph(nodes, edges, 1120, '__theme__')
+ok('布局确定性', r2.pos.get('seg0').x === pos.get('seg0').x && r2.pos.get('seg0').y === pos.get('seg0').y)
 let badEdge = 0
 for (const e of edges) {
   const dd = edgeD(pos.get(e.from), pos.get(e.to), size.get(e.from), size.get(e.to))

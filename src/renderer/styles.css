@@ -1824,16 +1824,55 @@ body.tauri-macos .app {
 
 /* ============ 主题认知链 ============ */
 .chain-section { margin-top: 20px; }
-/* 当前认知图（P2）：语义图谱 */
-.cog-stage { margin-top: 12px; }
+/* 当前认知图（概念 01 + 02）：左账本 + 右图谱 */
+.cog-concept { display: grid; grid-template-columns: 400px 40px minmax(0, 1fr); gap: 0; margin-top: 12px; align-items: stretch; }
+.cog-graph-pane { min-width: 0; }
+.cog-stage { margin-top: 0; }
+@media (max-width: 1100px) {
+  .cog-concept { grid-template-columns: 1fr; }
+  .cog-proj-divider { display: none; }
+  .cog-ledger-pane { max-height: 420px; margin-bottom: 12px; }
+}
+/* 只读投影分隔 */
+.cog-proj-divider { display: flex; align-items: center; justify-content: center; position: relative; }
+.cog-proj-divider::before { content: ''; position: absolute; top: 8px; bottom: 8px; width: 1px; background: var(--hairline); }
+.cog-proj-divider span { position: relative; z-index: 1; font-size: var(--t-caption); color: var(--text-3); background: var(--bg-1); border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 10px; white-space: nowrap; }
+/* 追加式完整性账本面板 */
+.cog-ledger-pane { background: var(--bg-1); border: 1px solid var(--hairline); border-radius: 12px; padding: 16px 14px; max-height: 760px; overflow-y: auto; }
+.cog-ledger-head { display: flex; align-items: center; gap: 10px; }
+.cog-ledger-num { width: 26px; height: 26px; border-radius: 50%; background: #ecfdf5; color: #059669; font-size: var(--t-caption); font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.cog-ledger-title { font-size: var(--t-head); font-weight: 700; }
+.cog-ledger-badge { margin-left: auto; font-size: var(--t-caption); letter-spacing: .08em; color: #059669; background: #ecfdf5; border-radius: 999px; padding: 3px 10px; font-weight: 700; }
+.cog-ledger-sub { font-size: var(--t-caption); color: var(--text-2); margin: 8px 0 0; }
+.cog-ledger-colhead { font-size: var(--t-caption); color: var(--text-3); margin: 12px 0 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.cog-ledger-list { display: flex; flex-direction: column; gap: 10px; }
+.cog-ev { background: var(--bg-0, #fff); border: 1px solid var(--hairline); border-radius: 10px; padding: 10px 12px; }
+.cog-ev.is-correction { border-color: #fdba74; background: #fffbeb; }
+.cog-ev-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cog-ev-dot { width: 8px; height: 8px; border-radius: 50%; background: #059669; flex: none; }
+.cog-ev-dot.orange { background: #ea580c; }
+.cog-ev-seq { font-weight: 700; font-size: var(--t-body); }
+.cog-ev-kind { font-size: var(--t-body); color: var(--text-1); }
+.cog-ev-at { font-size: var(--t-caption); color: var(--text-3); }
+.cog-ev-flag { margin-left: auto; font-size: var(--t-caption); color: #059669; background: #ecfdf5; border-radius: 999px; padding: 2px 10px; }
+.cog-ev-flag.orange { color: #9a3412; background: #ffedd5; }
+.cog-ev-summary { font-size: var(--t-caption); color: var(--text-2); margin-top: 6px; line-height: 1.5; }
+.cog-ev-hashes { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--hairline); display: flex; flex-direction: column; gap: 4px; }
+.cog-ev-hashrow { display: flex; gap: 10px; font-size: var(--t-caption); }
+.cog-ev-hk { color: var(--text-3); flex: none; width: 88px; }
+.cog-ev-hv { color: var(--text-2); font-family: ui-monospace, monospace; }
+.cog-ledger-foot { margin-top: 12px; font-size: var(--t-caption); color: var(--text-2); background: var(--bg-2); border-radius: 10px; padding: 10px 12px; line-height: 1.6; }
+/* 图谱 */
 .cog-svg { width: 100%; height: auto; display: block; background: var(--bg-1); border: 1px solid var(--hairline); border-radius: 12px; }
 .cog-node { cursor: pointer; }
+.cog-node.is-theme { cursor: default; }
 .cog-node rect { transition: stroke-width .15s; }
 .cog-node:hover rect { stroke-width: 2.5; }
 .cog-node-title { font-size: var(--t-body); fill: var(--text-1); font-weight: 600; }
 .cog-node-sub { font-size: var(--t-caption); fill: var(--text-3); }
 .cog-edge { fill: none; stroke-width: 1.6; }
 .cog-edge.is-review { stroke-dasharray: 5 4; }
+.cog-edge-label-text { font-size: var(--t-caption); font-weight: 600; }
 .cog-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: var(--t-caption); color: var(--text-2); }
 .cog-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .cog-legend-line { width: 34px; height: 8px; }
