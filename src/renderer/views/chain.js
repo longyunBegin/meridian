@@ -26,7 +26,7 @@ const SEARCH_RESULTS_PAGE_SIZE = 30
 /** 节点语义色（对齐概念图）。 */
 const KIND = {
   theme: { label: '研究主题', color: '#475569', bg: '#ffffff', border: '#cbd5e1' },
-  claim: { label: '主张', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+  claim: { label: '观点', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
   inference: { label: '推断', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
   evidence: { label: '证据', color: '#64748b', bg: '#f8fafc', border: '#e2e8f0' },
 }
@@ -93,7 +93,46 @@ export function renderChainSection(theme, opts = {}) {
   const graphPane = h('div', { class: 'cog-graph-pane', 'aria-label': '认知图谱阅读区' })
   const stage = h('div', { class: 'cog-stage' })
   graphPane.append(stage)
-  concept.append(ledgerBackdrop, ledgerPane, graphPane)
+  const themeStats = h('section', { class: 'cog-theme-stats', role: 'group', 'aria-label': '主题动态统计' },
+    ...[
+      ['points', '观点与推断'],
+      ['evidence', '证据条目'],
+      ['events', '账本事件'],
+      ['integrity', '账本完整性'],
+    ].map(([key, label]) => h('div', { class: `cog-theme-stat${key === 'integrity' ? ' is-integrity' : ''}`, 'data-theme-stat': key },
+      h('span', { class: 'cog-theme-stat-label' }, label),
+      h('strong', { class: 'cog-theme-stat-value', 'data-theme-stat-value': key, 'aria-live': key === 'integrity' ? 'polite' : 'off' }, '—'))))
+  const chainPanelId = `${drawerId}-chain-panel`
+  const overviewPanelId = `${drawerId}-overview-panel`
+  const chainTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-chain-tab`, 'aria-controls': chainPanelId, 'aria-selected': 'true', tabindex: '0' }, 'Chain')
+  const overviewTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-overview-tab`, 'aria-controls': overviewPanelId, 'aria-selected': 'false', tabindex: '-1' }, 'Overview')
+  const tabs = h('div', { class: 'cog-theme-tabs', role: 'tablist', 'aria-label': '主题视图' }, chainTab, overviewTab)
+  const chainPanel = h('div', { class: 'cog-chain-panel', id: chainPanelId, role: 'tabpanel', 'aria-labelledby': chainTab.id, tabindex: '0' }, graphPane)
+  const overviewContent = h('div', { class: 'cog-overview-content' })
+  const overviewPanel = h('section', { class: 'cog-overview-panel', id: overviewPanelId, role: 'tabpanel', 'aria-labelledby': overviewTab.id, tabindex: '0', hidden: true },
+    h('h2', { class: 'cog-overview-title' }, '主题概览'),
+    h('p', { class: 'cog-overview-caption' }, '以下内容仅汇总此主题当前投影与已校验事件；账本校验状态不等于观点已证实。'),
+    overviewContent)
+  const activateTab = (tab, focus = false) => {
+    const isChain = tab === chainTab
+    chainTab.setAttribute('aria-selected', String(isChain))
+    overviewTab.setAttribute('aria-selected', String(!isChain))
+    chainTab.tabIndex = isChain ? 0 : -1
+    overviewTab.tabIndex = isChain ? -1 : 0
+    chainPanel.hidden = !isChain
+    overviewPanel.hidden = isChain
+    if (focus) tab.focus()
+  }
+  chainTab.addEventListener('click', () => activateTab(chainTab))
+  overviewTab.addEventListener('click', () => activateTab(overviewTab))
+  tabs.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const next = event.key === 'Home' || event.key === 'ArrowLeft' ? chainTab
+      : event.key === 'End' || event.key === 'ArrowRight' ? overviewTab : chainTab
+    activateTab(next, true)
+  })
+  concept.append(ledgerBackdrop, ledgerPane, themeStats, tabs, chainPanel, overviewPanel)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -133,9 +172,14 @@ export function renderChainSection(theme, opts = {}) {
     openLedger,
     replayControlsSlot,
     ledgerTitleId: drawerTitleId,
+    themeStats,
+    overviewContent,
+    chainPanel,
+    overviewPanel,
     onChanged: () => {
       clear(ledgerPane)
       clear(stage)
+      clear(overviewContent)
       loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
         clear(stage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
       })
@@ -147,6 +191,52 @@ export function renderChainSection(theme, opts = {}) {
   return wrap
 }
 
+function updateThemeStats(stats, projection, events) {
+  if (!stats) return
+  const nodes = projection?.allNodes || projection?.nodes || []
+  const points = nodes.filter((node) => !node.external && ['claim', 'inference'].includes(node.kind)).length
+  const evidence = nodes.filter((node) => !node.external && node.kind === 'evidence').length
+  const eventCount = Number.isSafeInteger(projection?.eventCount) ? projection.eventCount : events.length
+  const integrity = projection?.integrity?.ok === true ? '校验通过'
+    : projection?.integrity?.ok === false ? '校验异常' : '待校验'
+  const values = { points, evidence, events: eventCount, integrity }
+  for (const [key, value] of Object.entries(values)) {
+    const card = stats.querySelector(`[data-theme-stat="${key}"]`)
+    const output = card?.querySelector(`[data-theme-stat-value="${key}"]`)
+    if (output) output.textContent = String(value)
+    if (card && key === 'integrity') card.dataset.state = projection?.integrity?.ok === false ? 'error' : projection?.integrity?.ok === true ? 'ok' : 'pending'
+  }
+}
+
+function renderOverviewContent(container, projection, verifiedEvents, onOpenEvent) {
+  if (!container) return
+  clear(container)
+  const counts = { claim: 0, inference: 0, evidence: 0 }
+  for (const node of (projection?.allNodes || projection?.nodes || [])) {
+    if (!node.external && counts[node.kind] !== undefined) counts[node.kind]++
+  }
+  container.append(
+    h('div', { class: 'cog-overview-count-line' }, `观点 ${counts.claim} · 推断 ${counts.inference} · 证据 ${counts.evidence}`),
+    h('h3', { class: 'cog-overview-title', style: { marginTop: '18px' } }, '最近记录'),
+  )
+  const recent = verifiedEvents.slice(-8).reverse()
+  if (!recent.length) {
+    container.append(h('p', { class: 'cog-overview-empty' }, '还没有账本事件。主题根节点是展示元数据；添加观点后，相关记录会出现在这里。'))
+    return
+  }
+  const list = h('div', { class: 'cog-overview-events', 'aria-label': '最近的已校验账本事件' })
+  for (const event of recent) {
+    const button = h('button', {
+      type: 'button', class: 'cog-overview-event',
+      'aria-label': `在账本中查看第 ${event.seq} 条事件：${compactEventSummary(event)}`,
+      onclick: () => onOpenEvent?.(event),
+    }, h('span', { class: 'cog-overview-event-summary' }, compactEventSummary(event)),
+    h('span', { class: 'cog-overview-event-time' }, fmtAt(event.at)))
+    list.append(button)
+  }
+  container.append(list)
+}
+
 async function loadConcept(theme, ledgerPane, stage, opts) {
   const [proj, evRes] = await Promise.all([
     m.chainProjection(theme.id),
@@ -156,6 +246,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
+  updateThemeStats(opts.themeStats, proj, events)
   let graphController = null
   let ledgerController = null
   let replayGeneration = 0
@@ -163,7 +254,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   const kinds = { claim: 0, inference: 0, evidence: 0 }
   for (const n of proj.nodes) if (kinds[n.kind] !== undefined) kinds[n.kind]++
   const parts = []
-  if (kinds.claim) parts.push(`主张 ${kinds.claim}`)
+  if (kinds.claim) parts.push(`观点 ${kinds.claim}`)
   if (kinds.inference) parts.push(`推断 ${kinds.inference}`)
   if (kinds.evidence) parts.push(`证据 ${kinds.evidence}`)
   if (countsEl) {
@@ -256,6 +347,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     verifiedEvents,
   })
   graphController.render(viewState)
+  renderOverviewContent(opts.overviewContent, proj, verifiedEvents, openEvent)
   const pendingLedgerJump = consumeChainEventJump(theme.id)
   if (pendingLedgerJump) {
     const request = pendingLedgerJump
@@ -264,13 +356,14 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
   }
 
-  if (!proj.nodes.length) {
-    stage.append(h('div', { class: 'chain-empty' },
+  if (!(proj.allNodes || proj.nodes || []).some((node) => !node.external && ['claim', 'inference'].includes(node.kind))) {
+    stage.querySelector('.cog-graph-main')?.insertBefore(h('div', { class: 'chain-empty cog-theme-empty' },
       h('div', { class: 'empty-title' }, '从一个可检验的问题开始'),
-      h('p', { class: 'chain-empty-sub' }, '先写下你目前的观点；有证据时再单独添加。观点文字不会自动变成证据。'),
+      h('p', { class: 'chain-empty-sub' }, '主题本身就是图根，无需再创建主题节点。先写下你的观点或问题；证据和支持、反驳关系由你明确补充。观点不会自动变成证据。'),
       h('div', { class: 'cog-empty-steps' },
-        h('span', {}, '1 观点或问题'), h('span', { 'aria-hidden': 'true' }, '→'), h('span', {}, '2 证据'), h('span', { 'aria-hidden': 'true' }, '→'), h('span', {}, '3 支持或反驳')),
-      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '创建第一个观点')))
+        h('span', {}, '1 添加观点'), h('span', { 'aria-hidden': 'true' }, '→'), h('span', {}, '2 补充证据'), h('span', { 'aria-hidden': 'true' }, '→'), h('span', {}, '3 选择关系')),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, proj, 'claim', opts) }, '添加第一个观点')),
+      stage.querySelector('.cog-graph-canvas'))
     return
   }
 }
@@ -631,7 +724,16 @@ function renderReviewControls(theme, event, onChanged) {
 
 function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   const graphCanvas = h('div', { class: 'cog-graph-canvas' })
+  const pointSummary = h('div', { class: 'cog-point-inspector-summary' })
   const focusRegion = h('section', { class: 'cog-local-focus', 'aria-label': '所选节点的证据与关系', hidden: true })
+  const historyBody = h('div', { class: 'cog-inspector-disclosure-body' })
+  const historyDisclosure = h('details', { class: 'cog-inspector-disclosure', hidden: true },
+    h('summary', { 'data-inspector-history-label': '' }, '节点历史与事件时间线'), historyBody)
+  const referencesBody = h('div', { class: 'cog-inspector-disclosure-body' })
+  const referencesDisclosure = h('details', { class: 'cog-inspector-disclosure', hidden: true },
+    h('summary', {}, '来源引用'), referencesBody)
+  const pointInspector = h('aside', { class: 'cog-point-inspector', 'aria-label': '所选观点详情', 'aria-live': 'polite' },
+    pointSummary, focusRegion, historyDisclosure, referencesDisclosure)
   const focusLabel = h('span', { class: 'cog-focus-label', 'aria-live': 'polite' }, '选择一个观点以展开其证据和关系')
   const focusDetails = h('button', { type: 'button', class: 'btn cog-focus-detail', hidden: true }, '查看详情')
   const clearFocus = h('button', { type: 'button', class: 'btn cog-focus-clear', hidden: true }, '清除聚焦')
@@ -672,20 +774,19 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       h('p', {}, '默认每页最多显示 20 个观点或推断，优先呈现主题下的观点骨架；证据与关系详情收起。选择一个观点后，下方只展开它直接关联的证据、来源事件和关系，主骨架仍保留。'),
       h('p', {}, '用“上一组观点 / 下一组观点”逐页阅读其余观点；搜索覆盖全部观点、推断、证据和外部引用。图下的完整节点与独立媒体清单保留逐条查看路径，不删节点、不合并来源。'),
       h('p', {}, '箭头和颜色含义见图谱常驻图例；关系是账本中的声明，不代表自动核实。历史回放仅重建通过校验的前缀并保持只读。'), derivesToggle))
-  stage.append(
-    h('div', { class: 'cog-graph-toolbar' },
-      h('div', { class: 'cog-graph-intro' },
-        h('div', { class: 'cog-graph-title-line' }, h('span', { class: 'cog-ledger-num cog-graph-num' }, '02'), h('div', { class: 'cog-graph-title' }, '认知图谱')),
-        h('p', { class: 'cog-graph-caption' }, '先看主题下的观点分布；证据与关系按需展开。')),
-      h('div', { class: 'cog-graph-actions' }, addClaim, addEvidence, evidenceGuidance),
-      renderLegend()),
+  const graphToolbar = h('div', { class: 'cog-graph-toolbar' },
+    h('div', { class: 'cog-graph-intro' },
+      h('div', { class: 'cog-graph-title-line' }, h('span', { class: 'cog-ledger-num cog-graph-num' }, '02'), h('div', { class: 'cog-graph-title' }, '认知图谱')),
+      h('p', { class: 'cog-graph-caption' }, '先看主题下的观点分布；证据与关系按需展开。')),
+    h('div', { class: 'cog-graph-actions' }, addClaim, addEvidence, evidenceGuidance),
+    renderLegend())
+  const graphMain = h('div', { class: 'cog-graph-main' },
     h('div', { class: 'cog-focus-bar' }, focusLabel,
       h('div', { class: 'cog-focus-actions' }, nodeSearch, searchButton, clearSearch, focusDetails, clearFocus)),
     searchResults, searchPager, searchError, claimPager,
     help,
-    graphCanvas,
-    focusRegion,
-  )
+    graphCanvas)
+  stage.append(graphToolbar, h('div', { class: 'cog-workspace-grid' }, graphMain, pointInspector))
   let currentView = { projection: proj, selectedSeq: null, events: [] }
   let currentFocus = null
   let showDerived = false
@@ -864,6 +965,77 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       focused.kind === 'evidence' ? eventButton(focusedEvent, '所选证据的来源事件') : null)
   }
 
+  function renderPointInspector(nodeId) {
+    clear(pointSummary)
+    clear(historyBody)
+    clear(referencesBody)
+    const projection = currentView.projection || {}
+    const allNodes = projection.allNodes || projection.nodes || []
+    const node = nodeId ? allNodes.find((candidate) => candidate.id === nodeId) : null
+    focusRegion.hidden = !node
+    historyDisclosure.hidden = !node
+    referencesDisclosure.hidden = !node
+    if (!node) {
+      const hasPoints = allNodes.some((candidate) => !candidate.external && ['claim', 'inference'].includes(candidate.kind))
+      pointSummary.append(
+        h('div', { class: 'cog-point-inspector-head' },
+          h('div', {}, h('span', { class: 'cog-point-inspector-kicker' }, '节点检视'),
+            h('h3', { class: 'cog-point-inspector-title' }, '选择一个观点或证据'))),
+        h('div', { class: 'cog-point-inspector-empty' },
+          h('p', {}, hasPoints ? '选择图中的节点，查看它的状态、来源、证据、关系与事件历史。' : '这个主题还没有观点。添加观点后，主题根会自动显示，无需重复创建。'),
+          !hasPoints ? h('button', { type: 'button', class: 'btn btn-primary', onclick: () => openEntryDialog(theme, projection, 'claim', opts) }, '添加第一个观点') : null))
+      return
+    }
+    const kind = KIND[node.kind] || KIND.claim
+    const statusLabel = node.archived ? '已归档'
+      : node.correct === false ? '已证伪'
+        : node.superseded ? '已更正'
+          : node.correct === true || node.status === 'confirmed' ? '已确认'
+            : node.status === 'stale' ? '待更新'
+              : node.status === 'forking' ? '待收敛'
+                : node.status === 'closed' ? '已关闭' : '待验证'
+    const events = currentView.events || []
+    const eventById = new Map(events.map((event) => [event.id, event]))
+    const firstEvent = [...(node.provenanceEventIds || []), ...(node.eventIds || []), node.id]
+      .map((id) => eventById.get(id)).find(Boolean)
+    const payload = firstEvent?.payload || {}
+    const resolvedSource = resolveEventReference(events, node.sourceRef)
+    const source = payload.sourceLabel || payload.legacySource?.label || payload.sourceKind || node.sourceKind
+      || (resolvedSource.status === 'resolved' ? resolvedSource.subjectTitle : '') || '来源未记录'
+    const sourceDate = payload.publishedAt || payload.date || firstEvent?.at
+    const history = collectNodeHistory(node, events)
+    const historyContext = { events, projection, selectedSeq: currentView.selectedSeq }
+    const detailOptions = { onChanged: opts.onChanged, historyContext, onJumpToEvent: opts.onJumpToEvent }
+    const confidence = node.confidence == null || !Number.isFinite(Number(node.confidence))
+      ? null : `${Math.round(Number(node.confidence))}%`
+    pointSummary.append(
+      h('div', { class: 'cog-point-inspector-head' },
+        h('div', {}, h('span', { class: 'cog-point-inspector-kicker' }, `${kind.label} · 节点详情`),
+          h('h3', { class: 'cog-point-inspector-title' }, node.title || '未命名节点'))),
+      node.currentText && node.currentText !== node.title
+        ? h('p', { class: 'cog-point-inspector-body' }, node.currentText) : null,
+      h('div', { class: 'cog-point-inspector-badges' },
+        h('span', { class: 'cog-point-inspector-badge' }, statusLabel),
+        confidence ? h('span', { class: 'cog-point-inspector-badge' }, `置信度 ${confidence}`) : null,
+        node.kind === 'inference' ? h('span', { class: 'cog-point-inspector-badge' }, '需人工复核推导') : null),
+      h('div', { class: 'cog-point-inspector-meta' },
+        h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '来源'), h('strong', {}, source)),
+        sourceDate ? h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '记录时间'), h('strong', {}, fmtAt(sourceDate))) : null,
+        h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '节点历史'), h('strong', {}, `${history.length} 条相关事件`))),
+      h('p', { class: 'cog-point-inspector-note' }, '状态与来源按已有记录展示；账本完整性校验不代表观点内容或来源已经证实。'),
+      h('div', { class: 'cog-point-inspector-actions' },
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpen?.(node, detailOptions) }, '完整详情与操作'),
+        !node.archived && !node.external && currentView.selectedSeq == null && ['claim', 'inference'].includes(node.kind)
+          ? h('button', { type: 'button', class: 'btn', onclick: () => openEntryDialog(theme, projection, 'evidence', opts) }, '补充证据') : null),
+      firstEvent && typeof opts.onJumpToEvent === 'function'
+        ? h('button', { type: 'button', class: 'btn cog-focus-event', onclick: () => opts.onJumpToEvent(firstEvent) }, `跳回来源事件 · 第 ${firstEvent.seq} 条`)
+        : null)
+    renderFocusRegion(node.id)
+    historyDisclosure.querySelector('[data-inspector-history-label]').textContent = `节点历史与事件时间线 · ${history.length} 条`
+    historyBody.append(renderNodeHistoryTimeline(history, detailOptions))
+    referencesBody.append(...renderNodeEvidence(history, detailOptions))
+  }
+
   function render(viewState, focusNodeId = null) {
     const viewChanged = viewState !== currentView
     currentView = viewState
@@ -921,8 +1093,8 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
         currentFocus = node?.id || null
         focusDetails.hidden = !currentFocus
         clearFocus.hidden = !currentFocus
-        focusLabel.textContent = node ? `已选择：${node.title || '节点'} · 下方展开证据与关系` : '选择一个观点以展开其证据和关系'
-        renderFocusRegion(currentFocus)
+        focusLabel.textContent = node ? `已选择：${node.title || '节点'} · 详情显示在右侧` : '选择一个观点以查看详情'
+        renderPointInspector(currentFocus)
       },
     }
     drawGraph(stage, frameProjection, theme, graphOptions, graphCanvas)
@@ -931,9 +1103,9 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     focusDetails.hidden = !focusNodeId
     clearFocus.hidden = !focusNodeId
     focusLabel.textContent = focusNodeId
-      ? `已选择：${focusedNode?.title || '节点'} · 下方展开证据与关系`
-      : '选择一个观点以展开其证据和关系'
-    renderFocusRegion(focusNodeId)
+      ? `已选择：${focusedNode?.title || '节点'} · 详情显示在右侧`
+      : '选择一个观点以查看详情'
+    renderPointInspector(focusNodeId)
     const replaying = viewState.selectedSeq != null
     handlers.onReplayStatus?.(viewState)
     timeSlider.value = String(replaying ? viewState.selectedSeq : maxSeq)
@@ -1514,19 +1686,13 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
     updateTopicEdge(focusedNodeId || hoveredNodeId)
     const selected = proj.nodes.find((node) => node.id === focusedNodeId)
     if (focusLabel) focusLabel.textContent = selected
-      ? `已选择：${selected.title} · 下方展开证据与关系`
-      : '选择一个观点以展开其证据和关系'
+      ? `已选择：${selected.title} · 详情显示在右侧`
+      : '选择一个观点以查看详情'
     if (focusDetails) focusDetails.hidden = !selected
     if (clearFocus) clearFocus.hidden = !selected
     if (notify && changed) opts.onFocusNode?.(selected || null)
   }
   svg.addEventListener('cog-clear-focus', () => setFocus(null))
-  const openNode = (node) => opts.onOpen?.(node, {
-    onChanged: opts.onChanged,
-    historyContext: opts.historyContext,
-    onJumpToEvent: opts.onJumpToEvent,
-  })
-
   // 节点
   for (const n of nodes) {
     const kind = KIND[n.kind] || KIND.claim
@@ -1541,7 +1707,7 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
       'data-provenance': (n.provenanceEventIds || n.eventIds || []).join(','),
       tabindex: isTheme ? '-1' : '0', role: isTheme ? 'img' : 'button',
       'aria-label': isTheme ? `研究主题：${n.title}（主题元数据）`
-        : `${kind.label}：${n.title}；${n.archived ? '已归档' : replaySeq != null ? `历史回放 v${replaySeq}` : '当前图节点'}${n.correct === false ? '；已证伪' : ''}${n.superseded ? '；已更正' : ''}。按回车打开详情，按空格也可打开。`,
+        : `${kind.label}：${n.title}；${n.archived ? '已归档' : replaySeq != null ? `历史回放 v${replaySeq}` : '当前图节点'}${n.correct === false ? '；已证伪' : ''}${n.superseded ? '；已更正' : ''}。按回车或空格选中并在右侧查看详情。`,
     })
     const stroke = n.correct === false ? '#ea580c' : kind.border
     const rect = el('rect', {
@@ -1561,7 +1727,7 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
       }))
     })
     if (isTheme) {
-      g.appendChild(textEl('主题占位', { x: 0, y: sz.h / 2 - 8, 'text-anchor': 'middle', class: 'cog-node-sub' }))
+      g.appendChild(textEl('主题根 · 元数据', { x: 0, y: sz.h / 2 - 8, 'text-anchor': 'middle', class: 'cog-node-sub' }))
     } else {
       const sub = []
       if (n.correct === false) sub.push('已证伪')
@@ -1577,7 +1743,7 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
     tip.textContent = isTheme ? `研究主题 · ${n.title}` : `${kind.label} · ${n.title}`
     g.appendChild(tip)
 
-    // 单击同时聚焦并打开详情；键盘焦点聚焦，Enter / Space 打开详情。
+    // 单击、键盘焦点、Enter / Space 均选择节点并更新右侧检视器。
     if (!isTheme) {
       let sx = 0
       let sy = 0
@@ -1617,7 +1783,6 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
           if (!moved) {
             g.focus({ preventScroll: true })
             setFocus(n.id, true)
-            openNode(n)
           }
           pointerActivation = true
           setTimeout(() => { pointerActivation = false }, 0)
@@ -1629,7 +1794,6 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
         if (pointerActivation) { pointerActivation = false; return }
         if (event.detail === 0 && suppressKeyboardClick) { suppressKeyboardClick = false; return }
         setFocus(n.id, true)
-        openNode(n)
       })
       g.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter' && ev.key !== ' ') return
@@ -1639,7 +1803,6 @@ function drawGraph(stage, proj, theme, opts, canvas = stage) {
         clearTimeout(keyboardClickTimer)
         keyboardClickTimer = setTimeout(() => { suppressKeyboardClick = false }, 750)
         setFocus(n.id, true)
-        openNode(n)
       })
     }
     nodeLayer.appendChild(g)

@@ -112,7 +112,11 @@
     }
     const emptyProjection = { nodes: [], allNodes: [], edges: [], allEdges: [], floating: [], integrity: { ok: true, count: 0, lastValidSeq: 0 } }
     const invalidProjection = { ...fullProjection, integrity: { ok: false, count: events.length, lastValidSeq: events.length - 1, reason: 'fixture tail corrupted' } }
+    window.__MERIDIAN_TEST_SKIP_BOOT__ = true
     window.meridian = {
+      async themes() { return [] },
+      async settings() { return {} },
+      onChanged() {}, onThemeScaffolded() {}, onInboxPaste() {}, onInboxPruned() {}, onDueNotify() {},
       async chainEvents(themeId) { return { events: themeId === 'empty-theme' ? [] : events, integrity } },
       async chainProjection(themeId) { return themeId === 'empty-theme' ? emptyProjection : themeId === 'invalid-theme' ? invalidProjection : fullProjection },
       async chainProjectionAt(themeId, requestedSeq) {
@@ -162,24 +166,37 @@
     const closeDrawer = async () => {
       if (!document.querySelector('.chain-drawer')) return
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-      await pause()
+      await waitFor(() => !document.querySelector('.chain-drawer'), '详情抽屉完成关闭动画')
     }
 
     try {
       await waitFor(() => document.querySelector('.cog-graph-canvas .cog-svg') && document.querySelector('[data-event-id="event-681"]'), '链图和第 681 条事件完成首绘')
       const rootEdges = document.querySelectorAll('.cog-edge-topic')
       const graphNodesInSvg = [...document.querySelectorAll('.cog-node:not(.is-theme)')].length
+      const statValue = (key) => document.querySelector(`[data-theme-stat-value="${key}"]`)?.textContent
       check('33+ 节点图默认仅显示 20 个观点骨架且无证据节点/主题虚线扇', graphNodesInSvg === 20
         && document.querySelectorAll('.cog-node[data-kind="evidence"]').length === 0 && rootEdges.length === 0,
         `可视主张 ${graphNodesInSvg}，证据 0，主题边 ${rootEdges.length}`)
+      check('主题统计来自当前投影和事件数据，账本完整性与观点确认分开显示', statValue('points') === '33'
+        && statValue('evidence') === '31' && statValue('events') === '681' && statValue('integrity') === '校验通过')
+      const chainTab = document.querySelector('.cog-theme-tab[aria-controls$="chain-panel"]')
+      const overviewTab = document.querySelector('.cog-theme-tab[aria-controls$="overview-panel"]')
+      overviewTab?.click()
+      check('Overview 标签切换到主题概览并呈现最近校验事件', overviewTab?.getAttribute('aria-selected') === 'true'
+        && document.querySelector('.cog-chain-panel')?.hidden && !document.querySelector('.cog-overview-panel')?.hidden
+        && document.querySelector('.cog-overview-events')?.textContent.includes('第 681 条'))
+      chainTab?.click()
+      check('Chain 标签可返回当前认知图', chainTab?.getAttribute('aria-selected') === 'true'
+        && !document.querySelector('.cog-chain-panel')?.hidden && document.querySelector('.cog-overview-panel')?.hidden)
       check('观点骨架按关联簇/尚无显式关系分组显示淡色背景', document.querySelectorAll('.cog-clusters .cog-cluster-bg').length > 0)
       const claimPager = document.querySelector('.cog-claim-pager')
       check('全量主张通过 20 项分页可读，不会静默截断', claimPager?.textContent.includes('观点 1–20 / 33')
         && [...document.querySelectorAll('.cog-claim-page-button')].at(-1)?.disabled === false)
       const graphPane = document.querySelector('.cog-graph-pane')
       const chainSection = document.querySelector('.chain-section')
-      check('默认图谱全宽，账本抽屉关闭时不占版面', graphPane?.clientWidth >= chainSection?.clientWidth * 0.9
-        && document.querySelector('.cog-ledger-drawer')?.hidden === true)
+      const inlineInspector = document.querySelector('.cog-point-inspector')
+      check('认知图与右侧选中节点面板并排；账本抽屉关闭时不占版面', graphPane?.clientWidth > inlineInspector?.clientWidth
+        && inlineInspector?.getBoundingClientRect().width > 0 && document.querySelector('.cog-ledger-drawer')?.hidden === true)
       const ledgerButton = document.querySelector('.cog-ledger-open')
       const ledgerDrawer = document.querySelector('.cog-ledger-drawer')
       const integrityBadge = document.querySelector('[data-ledger-status]')
@@ -285,25 +302,36 @@
       document.querySelector('.cog-local-focus [data-node-id="media-20"] .cog-focus-event')?.click()
       await waitFor(() => document.querySelector('.cog-ledger-drawer')?.hidden === false, '从节点来源事件打开账本抽屉')
       check('节点局部来源事件可反向打开账本并定位单条事件', !document.querySelector('.cog-ledger-drawer')?.hidden)
+      document.querySelector('.cog-ledger-close')?.click()
       document.querySelector('.cog-search-clear')?.click()
       check('清空图谱搜索复位查询与结果列表', search.value === '' && document.querySelectorAll('.cog-search-result').length === 0)
 
       const clickNode = (node) => node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       const claimNode = document.querySelector('.cog-node[data-node-id="claim-20"]')
       clickNode(claimNode)
-      await waitFor(() => document.querySelector('.chain-drawer-name'), '单击图节点打开详情')
-      check('第一次单击图节点即打开详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
+      await waitFor(() => document.querySelector('.cog-point-inspector-title')?.textContent === '核心观点 20', '单击节点后更新右侧检视器')
+      const inspectorText = document.querySelector('#fixture-root .cog-point-inspector')?.textContent || ''
+      check('第一次单击图节点即在右侧显示观点、状态、来源和历史', document.querySelector('#fixture-root .cog-point-inspector-title')?.textContent === '核心观点 20'
+        && document.querySelector('.cog-point-inspector').textContent.includes('待验证')
+        && document.querySelector('.cog-point-inspector').textContent.includes('节点历史与事件时间线')
+        && document.querySelector('.chain-drawer-name') === null,
+        JSON.stringify({ title: document.querySelector('#fixture-root .cog-point-inspector-title')?.textContent,
+          status: inspectorText.includes('待验证'), history: inspectorText.includes('节点历史与事件时间线'),
+          drawer: Boolean(document.querySelector('.chain-drawer-name')), text: inspectorText.slice(0, 220) }))
+      document.querySelector('.cog-point-inspector-actions .btn-primary')?.click()
+      await waitFor(() => document.querySelector('.chain-drawer-name'), '显式打开完整节点详情')
+      check('完整详情仍通过明确操作打开原详情抽屉', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
       await closeDrawer()
       claimNode?.focus()
       press(claimNode, 'Enter')
-      await waitFor(() => document.querySelector('.chain-drawer-name'), 'Enter 打开图节点详情')
-      check('Enter 打开节点详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
-      await closeDrawer()
+      check('Enter 选择节点并更新右侧详情而不强制打开抽屉', document.querySelector('.cog-point-inspector-title')?.textContent === '核心观点 20'
+        && document.querySelector('.chain-drawer-name') === null,
+        `title=${document.querySelector('#fixture-root .cog-point-inspector-title')?.textContent || ''}; drawer=${Boolean(document.querySelector('.chain-drawer-name'))}`)
       claimNode?.focus()
       press(claimNode, ' ')
-      await waitFor(() => document.querySelector('.chain-drawer-name'), 'Space 打开图节点详情')
-      check('Space 打开节点详情', document.querySelector('.chain-drawer-name')?.textContent === '核心观点 20')
-      await closeDrawer()
+      check('Space 选择节点并更新右侧详情而不强制打开抽屉', document.querySelector('.cog-point-inspector-title')?.textContent === '核心观点 20'
+        && document.querySelector('.chain-drawer-name') === null,
+        `title=${document.querySelector('#fixture-root .cog-point-inspector-title')?.textContent || ''}; drawer=${Boolean(document.querySelector('.chain-drawer-name'))}`)
 
       const slider = document.querySelector('.cog-time-slider')
       slider.value = '100'
@@ -316,7 +344,11 @@
         && document.querySelectorAll('.cog-review-controls').length === 0)
       const historyClaim = document.querySelector('.cog-node[data-node-id="claim-20"]')
       clickNode(historyClaim)
-      await waitFor(() => document.querySelector('.chain-drawer-name'), '打开回放中的节点详情')
+      check('回放中的节点选择只显示只读检视器', document.querySelector('.cog-point-inspector-title')?.textContent === '核心观点 20'
+        && document.querySelector('.chain-drawer-name') === null,
+        `title=${document.querySelector('#fixture-root .cog-point-inspector-title')?.textContent || ''}; drawer=${Boolean(document.querySelector('.chain-drawer-name'))}`)
+      document.querySelector('.cog-point-inspector-actions .btn-primary')?.click()
+      await waitFor(() => document.querySelector('.chain-drawer-name'), '显式打开回放中的节点详情')
       check('历史回放节点详情不含证据/关系写入或归档控件且不重复版本标签', !document.querySelector('.cog-evidence-composer')
         && !document.querySelector('.cog-relation-composer') && !document.querySelector('.chain-archive-actions')
         && !document.querySelector('.cog-history-banner'))
@@ -334,6 +366,10 @@
         onOpen: (node, more = {}) => openNodeDetail(emptyTheme, node, { ...more, onChanged() {} }), onChanged() {},
       }))
       await waitFor(() => document.querySelector('#empty-fixture .cog-graph-actions button[aria-describedby$="-evidence-guidance"]'), '空图工具栏')
+      await waitFor(() => document.querySelector('#empty-fixture .cog-theme-empty'), '主题空态和第一个观点入口')
+      check('新主题清晰显示空态和“添加第一个观点”，主题根不要求手动重复创建', Boolean(document.querySelector('#empty-fixture .cog-theme-empty')
+        && [...document.querySelectorAll('#empty-fixture .cog-theme-empty button')].some((button) => button.textContent === '添加第一个观点')
+        && document.querySelector('#empty-fixture .cog-point-inspector-empty')?.textContent.includes('主题根会自动显示')))
       const emptyAddEvidence = document.querySelector('#empty-fixture .cog-graph-actions button[aria-describedby$="-evidence-guidance"]:not(.btn-primary)')
       check('无可选观点时补证入口仍可点并提供明确先创建提示', Boolean(emptyAddEvidence && !emptyAddEvidence.disabled
         && emptyAddEvidence.title.includes('先创建') && document.querySelector('#empty-fixture .cog-write-guidance')?.textContent.includes('还没有可连接的观点')))

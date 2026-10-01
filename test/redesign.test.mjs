@@ -2297,9 +2297,12 @@ const pjER = readFileSync2(join(ROOT2, 'src/renderer/lib/tauri-bridge.js'), 'utf
 // --- E1: 单一路径建主题 ---
 
 ok('E1: app.js 有 renderThemeCreator', appSrcER.includes('function renderThemeCreator'))
-ok('E1: app.js 有 setupNewTheme 调用', appSrcER.includes('setupNewTheme'))
+const themeCreatorBlockER = appSrcER.slice(appSrcER.indexOf('export function renderThemeCreator('), appSrcER.indexOf('\nasync function exportJson()', appSrcER.indexOf('export function renderThemeCreator(')))
+ok('E1: 新主题只创建主题记录，不自动生成骨架', themeCreatorBlockER.includes('await m.addTheme(desc)')
+  && !themeCreatorBlockER.includes('setupNewTheme') && !themeCreatorBlockER.includes('scaffoldExisting'))
 ok('E1: app.js 无 addThemeFromTemplate 调用', !appSrcER.includes('addThemeFromTemplate'))
-ok('E1: app.js 只有描述输入框', appSrcER.includes('描述你要跟踪的'))
+ok('E1: 新主题输入为名称并明确从用户观点起步', themeCreatorBlockER.includes('placeholder: \'输入主题名称\'')
+  && appSrcER.includes('创建后从空白认知图开始'))
 
 // --- E2: 空态复用 ---
 
@@ -2307,18 +2310,20 @@ ok('E1: app.js 只有描述输入框', appSrcER.includes('描述你要跟踪的'
 ok('E2: 空态与新建入口共用同一个创建页', appSrcER.includes('function renderNewTheme') && appSrcER.includes('return renderNewTheme()'))
 ok('E2: 有 new-theme 视图路由', appSrcER.includes("state.view === 'new-theme'"))
 ok('E2: 侧栏 + 开页面而非内联展开', appSrcER.includes("setView('new-theme')") && !appSrcER.includes('function newThemePrompt'))
-// 失败态放 state 而不是闭包——addTheme 触发 db:changed 会重画整个创建页，
-// 闭包里的变量被清零，骨架铺完就找不到该去哪、也没法就地解锁
-ok('E2: 生成期间按钮锁住，失败才解锁', appSrcER.includes('const unlock = ') && appSrcER.includes('state.scaffoldFailed'))
-ok('E2: 待铺骨架的 id 放 state', appSrcER.includes('state.pendingScaffoldId') && !appSrcER.includes('let createdThemeId'))
-// skeleton-desc 只在 app.js 的 renderThemeCreator 中定义（不复制到其他文件）
-ok('E2: skeleton-desc 只在 app.js', appSrcER.includes('skeleton-desc') && !themeSrcER.includes('skeleton-desc') && !vaultSrcER.includes('skeleton-desc') && !inspectorSrcER.includes('skeleton-desc'))
+// 同时锁住回车和按钮，避免重复建立同名主题；错误后允许重试。
+ok('E2: 创建期间按钮和输入锁住，失败后可重试', themeCreatorBlockER.includes("lock('创建中…')")
+  && themeCreatorBlockER.includes("unlock('重新开始')"))
+ok('E2: 主题名称输入只属于主题创建器', themeCreatorBlockER.includes('id: \'theme-name\'')
+  && !themeSrcER.includes('theme-name') && !vaultSrcER.includes('theme-name') && !inspectorSrcER.includes('theme-name'))
 
 // --- E3: 空白主题补生成骨架 ---
 
-ok('E3: lattice.js 有 renderSkeletonPrompt', themeSrcER.includes('function renderSkeletonPrompt'))
-ok('E3: lattice.js 有骨架提示', themeSrcER.includes('还没有骨架'))
-ok('E3: lattice.js 有 scaffoldExisting 调用', themeSrcER.includes('scaffoldExisting'))
+ok('E3: 主题页展示已存主题标签而不捏造独立分类字段', themeSrcER.includes('function renderThemeMetadata')
+  && themeSrcER.includes('暂未添加标签') && themeSrcER.includes('renderThemeMetadata(theme)'))
+ok('E3: 主题页不触发旧式自动骨架提示', themeSrcER.includes('function renderSkeletonPrompt')
+  && !themeSrcER.includes('[renderSkeletonPrompt(theme), chainSection()'))
+ok('E3: 旧版空白主题 scaffold 命令保留兼容，但不从新建路径调用', themeSrcER.includes('scaffoldExisting')
+  && themeCreatorBlockER.includes('await m.addTheme(desc)') && !themeCreatorBlockER.includes('scaffoldExisting'))
 ok('E3: domain-commands.js 有 scaffoldTheme 共用函数', domainCommandsSrcER.includes('async function scaffoldTheme'))
 ok('E3: domain-commands.js 有 theme:scaffoldExisting', domainCommandsSrcER.includes('theme:scaffoldExisting'))
 // 异步化后 setupNew / scaffoldExisting 都不再 await scaffoldTheme——

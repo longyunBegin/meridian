@@ -665,21 +665,14 @@ async function retryScaffold() {
 
 export function renderThemeCreator(opts = {}) {
   const compact = opts.compact || false
-  const startFailed = !!opts.failed || !!state.scaffoldFailed
   const wrap = h('div', { class: 'theme-creator' + (compact ? ' theme-creator--compact' : '') })
   const statusEl = h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', marginLeft: '6px' } })
-
-  // 生成期间按钮锁住，只有失败才解锁。放在这里而不是各 onclick 里——
-  // Enter 键和按钮是两个入口，且都只禁自己不禁对方；用户输完按回车、
-  // 手指又点到按钮，就会建出两个同名主题、各跑一遍骨架。
-  const inFlight = !!state.pendingScaffoldId
-  let submitting = inFlight
+  let submitting = false
   const submitBtn = h('button', {
     class: 'btn btn-primary', style: { height: '34px' },
-    // 上一轮铺失败了就解锁让人填新的，否则等用户填描述
-    disabled: inFlight || !startFailed,
+    disabled: true,
     onclick: () => submitDesc(input.value.trim()),
-  }, icon('plus', 13), inFlight ? '骨架生成中…' : '开始跟踪')
+  }, icon('plus', 13), '创建主题')
 
   const lock = (label) => { submitting = true; submitBtn.disabled = true; submitBtn.textContent = label; input.disabled = true }
   const unlock = (label) => { submitting = false; submitBtn.disabled = false; submitBtn.textContent = label; input.disabled = false }
@@ -688,24 +681,13 @@ export function renderThemeCreator(opts = {}) {
     if (!desc || submitting) return
     lock('创建中…')
     statusEl.textContent = ''
-    state.scaffoldOutcome = null
     try {
-      const theme = await m.setupNewTheme(desc)
-      state.pendingScaffoldDesc = desc
-      state.scaffoldFailed = false
-      // setupNew 返回时主进程已经同步起跑（start 事件甚至可能比这个 await 先到，
-      // 那时 pendingScaffoldId 还没设、事件会被丢弃）——所以这里直接标 active，
-      // 不靠事件点亮前两步。
-      state.scaffoldStages = { skeleton: 'active', tags: 'active' }
-      state.scaffoldStageReasons = {}
-      if (theme.degraded) toast('已建主题。配 API key 后可生成针对这个主题的骨架。')
-      // 轮询兜底：theme:scaffolded 是推送，窗口没起来或渲染层还没订阅时就丢了。
-      // 丢了的后果是用户永远卡在这一页、按钮锁死——所以结果必须可查。
-      trackScaffold(theme.id)
-      // 整页重建而不是往 wrap 里 append：addTheme 不发 db:changed，侧栏要靠这次
-      // refresh 才出现新主题；而且 db:changed 随时会重画，闭包里的 wrap 可能已脱离文档。
-      // 重建后的创建器看到 inFlight，自己会锁住按钮输入框并挂上步骤卡。
+      const theme = await m.addTheme(desc)
+      if (!theme?.id) throw new Error('主题未创建')
+      state.themeId = theme.id
+      state.view = 'theme'
       await refresh()
+      toast('主题已创建。先添加观点；证据与关系由你明确补充。')
     } catch (e) {
       statusEl.textContent = '失败：' + (e.message || '未知错误')
       unlock('重新开始')
@@ -713,8 +695,7 @@ export function renderThemeCreator(opts = {}) {
   }
 
   const input = h('input', {
-    class: 'txt skeleton-input', placeholder: '描述你要跟踪的', id: 'skeleton-desc',
-    disabled: inFlight,
+    class: 'txt skeleton-input', placeholder: '输入主题名称', id: 'theme-name',
     oninput: () => { if (!submitting) submitBtn.disabled = !input.value.trim() },
     onkeydown: async (e) => {
       if (e.key !== 'Enter') return
@@ -728,9 +709,6 @@ export function renderThemeCreator(opts = {}) {
     submitBtn,
     statusEl,
   ))
-  // 用户切走又回来：进行中恢复步骤卡，已结束恢复结果卡——状态都在 state 里，不靠闭包
-  if (inFlight) wrap.append(renderScaffoldSteps())
-  else if (state.scaffoldOutcome) wrap.append(renderOutcomeCard(state.scaffoldOutcome))
   return wrap
 }
 
@@ -797,7 +775,7 @@ function renderNewTheme() {
   state.scaffoldFailed = false
   page.append(h('div', { class: 'page-head' },
     h('h1', {}, '新建主题'),
-    h('p', {}, '说一句话，模型搭骨架、提炼标签。之后在主题页写下你的判断，账本负责记录证据。'),
+    h('p', {}, '创建后从空白认知图开始。主题本身就是图根；添加观点后，再按需补充证据和明确的关系。'),
   ), creator)
   return page
 }
@@ -823,4 +801,4 @@ document.addEventListener('keydown', (e) => {
   if (map[e.key]) { e.preventDefault(); setView(map[e.key]) }
 })
 
-boot()
+if (!window.__MERIDIAN_TEST_SKIP_BOOT__) boot()

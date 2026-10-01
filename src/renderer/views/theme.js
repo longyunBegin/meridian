@@ -49,7 +49,17 @@ function renderThemeOpsSection(theme) {
   return h('div', { class: 'sect' }, toggle, body)
 }
 
-/** 空白主题补生成骨架入口（E3） */
+/** Display existing theme tags without inventing a separate category field. */
+function renderThemeMetadata(theme) {
+  const tags = Array.isArray(theme?.tags) ? theme.tags.filter((tag) => typeof tag === 'string' && tag.trim()) : []
+  return h('section', { class: 'theme-topic-meta', 'aria-label': '主题标签' },
+    h('span', { class: 'theme-topic-meta-label' }, '主题标签'),
+    tags.length
+      ? h('div', { class: 'theme-topic-tags' }, ...tags.map((tag) => h('span', { class: 'theme-topic-tag' }, tag)))
+      : h('span', { class: 'theme-topic-empty-tag' }, '暂未添加标签 · 可在主题设置中补充'))
+}
+
+/** Legacy optional scaffold helper; the graph-first theme page no longer mounts it. */
 function renderSkeletonPrompt(theme) {
   if (!theme) return null
   const hasBranch = state.nodes.some((n) => n.kind === 'branch')
@@ -116,8 +126,8 @@ export function renderTheme(mid) {
     onEvidence: openEvidenceDetail,
     onOpen: (node, callbacks = {}) => openNodeDetail(theme, node, { ...callbacks, onEvidence: openEvidenceDetail }),
   })
-  // 主题头固定，下方内容区独立滚动；右栏检视面板本就独立滚动，不受影响
+  // 主题头固定，下方内容区独立滚动；主题页使用图谱自身的选中节点面板。
   const body = h('div', { class: 'theme-body' })
-  for (const el of [renderSkeletonPrompt(theme), chainSection(), renderThemeOpsSection(theme)]) if (el) body.append(el)
+  for (const el of [renderThemeMetadata(theme), chainSection(), renderThemeOpsSection(theme)]) if (el) body.append(el)
   mid.append(head, body)
 }
