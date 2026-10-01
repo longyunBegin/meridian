@@ -51,8 +51,8 @@ function drawChainEdges(layersEl, segments) {
   marker.setAttribute('viewBox', '0 0 10 10')
   marker.setAttribute('refX', '9')
   marker.setAttribute('refY', '5')
-  marker.setAttribute('markerWidth', '4.5')
-  marker.setAttribute('markerHeight', '4.5')
+  marker.setAttribute('markerWidth', '6.5')
+  marker.setAttribute('markerHeight', '6.5')
   marker.setAttribute('orient', 'auto')
   const arrow = document.createElementNS(SVG_NS, 'path')
   arrow.setAttribute('d', 'M 1 1 L 9 5 L 1 9 z')
@@ -88,7 +88,8 @@ function drawChainEdges(layersEl, segments) {
       `M ${f(ax)} ${f(yA + 7)} L ${f(ax)} ${f(yA + 12)} ` +
       `L ${f(cx)} ${f(yA + 12)} L ${f(cx)} ${f(yB + 12)} ` +
       `L ${f(bx)} ${f(yB + 12)} L ${f(bx)} ${f(yB + 5)}`)
-    p.setAttribute('class', 'chain-edge')
+    // 方向即语义：merged（合并而来）实线，affects（影响）虚线，箭头一律指向目标段
+    p.setAttribute('class', 'chain-edge' + (e.kind === 'affects' ? ' is-affects' : ''))
     p.setAttribute('marker-end', 'url(#chainArrow)')
     svg.appendChild(p)
     drawn++
@@ -121,28 +122,39 @@ function fmtDate(at) {
   return String(at).slice(0, 10)
 }
 
-/** 因果路径节点卡：一行状态 + 段名 + 核心信息 + 依据/分支数。点击打开段详情抽屉。 */
+/** 段卡片：只留「结论＋一条关键证据＋状态」。依据数、分支数、核心信息收进点击后的详情抽屉。 */
 export function renderSegmentCard(theme, segment, opts = {}) {
   const st = SEG_STATUS[segment.status] || SEG_STATUS.pending
-  const subs = Array.isArray(segment.subsegments) ? segment.subsegments : []
-  const openSubs = subs.filter((s) => s.status !== 'closed')
-  const evCount = Array.isArray(segment.evidenceRefs) ? segment.evidenceRefs.length : 0
+  const refs = Array.isArray(segment.evidenceRefs) ? segment.evidenceRefs : []
+  const keyTitle = refs.length ? keyEvidenceTitle(refs[0]) : ''
 
-  const card = h('button', {
+  const attrs = {
     type: 'button', class: 'cnode', 'data-seg-id': segment.id,
     'data-status': segment.status || 'pending',
     onclick: () => opts.onOpen?.(segment),
-  },
+  }
+  if (keyTitle) attrs.title = `关键证据：${keyTitle}`
+  const card = h('button', attrs,
     h('div', { class: 'cnode-top' },
-      h('span', { class: `chain-pill ${st.cls}` }, st.label),
-      h('span', { class: 'cnode-ev' }, evCount ? `依据 ${evCount}` : '暂无依据')),
+      h('span', { class: `chain-pill ${st.cls}` }, st.label)),
     h('div', { class: 'cnode-name' }, segment.name || '未命名段'),
-    h('div', { class: 'cnode-core' }, segment.coreInfo || '—'),
-    h('div', { class: 'cnode-foot' },
-      openSubs.length ? h('span', { class: 'cnode-fork' }, `${openSubs.length} 个分支`) : h('span', {}),
-      h('span', { class: 'cnode-more' }, '详情 →')),
+    keyTitle
+      ? h('div', { class: 'cnode-key' },
+        h('span', { class: 'cnode-key-label' }, '关键证据'),
+        h('span', { class: 'cnode-key-text' }, keyTitle))
+      : null,
   )
   return card
+}
+
+/** 首条证据引用的展示标题：lemma 走节点标题，其余用引用自带标题。 */
+function keyEvidenceTitle(ref) {
+  if (!ref) return ''
+  if (ref.type === 'lemma') {
+    const node = (state.nodes || []).find((n) => n.id === ref.id)
+    if (node?.title) return node.title
+  }
+  return ref.title || String(ref.id || '').slice(0, 8)
 }
 
 /** 已关闭段：在链底部收成一条安静的 strip（墓碑区做管理，这里只留定位入口）。 */

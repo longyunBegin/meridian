@@ -238,5 +238,14 @@ ok('重名段取第一个', (() => {
   return es.length === 1 && es[0].from === 'p1' && es[0].to === 'q'
 })())
 
+
+console.log('\n— 视图源码断言（卡片精简 + 方向连线） —')
+ok('卡片只留结论＋关键证据＋状态（cnode-key）', chainViewSrc.includes("class: 'cnode-key'"))
+ok('卡片不再显示依据数量', !chainViewSrc.includes("class: 'cnode-ev'"))
+ok('卡片不再显示分支数/详情箭头', !chainViewSrc.includes("class: 'cnode-foot'"))
+ok('卡片不再直接渲染核心信息（收进抽屉）', !chainViewSrc.includes("class: 'cnode-core'"))
+ok('关键证据取首条引用标题', chainViewSrc.includes('keyEvidenceTitle'))
+ok('连线按关系区分样式（affects 虚线）', chainViewSrc.includes("is-affects"))
+
 console.log(`\nchain: ${pass} 通过, ${fail} 失败`)
 process.exit(fail ? 1 : 0)
