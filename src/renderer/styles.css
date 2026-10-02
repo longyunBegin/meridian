@@ -3239,7 +3239,7 @@ body.tauri-macos .app {
 .rdr-driver { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; width: 100%; padding: 8px 10px; border-radius: var(--r-sm); text-align: left; cursor: pointer; }
 .rdr-driver:hover { background: var(--hover); }
 .rdr-driver-name { font-size: var(--t-body); font-weight: 600; color: var(--text); }
-.rdr-driver-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.rdr-driver-bar { grid-column: 1 / -1; max-width: 140px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
 .rdr-driver-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
 .rdr-driver-refs { font-size: var(--t-caption); color: var(--text-3); white-space: nowrap; }
 .rdr-timeline, .rdr-list, .rdr-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
