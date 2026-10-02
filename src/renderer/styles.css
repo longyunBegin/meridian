@@ -3602,15 +3602,13 @@ body.tauri-macos .app {
 .builder-signal-tag { font-weight:600; }
 .builder-signal-nature { color:var(--text-3); }
 
-/* 三层修正对话框 */
-.builder-correct-overlay { position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:1000; }
-.builder-correct-dialog { background:var(--bg-1); border-radius:12px; padding:20px; width:400px; max-width:90vw; box-shadow:0 8px 32px rgba(0,0,0,.2); }
-.builder-correct-dialog h3 { margin:0 0 8px; font-size:1rem; }
-.builder-correct-text { color:var(--text-2); font-size:.875rem; margin:0 0 16px; }
-.builder-correct-group { margin-bottom:16px; }
-.builder-correct-label { display:block; font-size:.8125rem; font-weight:600; color:var(--text-2); margin-bottom:8px; }
-.builder-correct-opts { display:flex; gap:8px; flex-wrap:wrap; }
-.builder-correct-opt { padding:6px 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-2); cursor:pointer; font-size:.875rem; }
-.builder-correct-opt.is-sel { border-width:2px; font-weight:600; }
-.builder-correct-input { width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:.875rem; background:var(--bg-2); }
-.builder-correct-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+/* 三层内联修正编辑器（参考 demo 设计） */
+.builder-inline-editor { margin-top:12px; padding:12px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
+.builder-editor-row { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.builder-editor-row:last-child { margin-bottom:0; }
+.builder-editor-label { font-size:.8125rem; font-weight:600; color:var(--text-2); min-width:64px; }
+.builder-editor-opts { display:flex; gap:8px; flex-wrap:wrap; }
+.builder-editor-opt { padding:6px 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg-1); cursor:pointer; font-size:.875rem; }
+.builder-editor-opt.is-sel { border-width:2px; border-color:var(--accent); font-weight:600; }
+.builder-editor-input { flex:1; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:.875rem; background:var(--bg-1); }
+.builder-editor-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }

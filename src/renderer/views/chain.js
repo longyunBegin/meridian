@@ -690,7 +690,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     opts.attentionSec.append(feed)
   }
 
-  /* 单条信号：判决动作（三层模型） */
+  /* 单条信号：判决动作（三层模型，内联编辑器参考 demo 设计） */
   const renderSignalItem = (sig) => {
     const dirMeta = DIRECTION_META[sig.direction] || DIRECTION_META.stable
     const natMeta = NATURE_META[sig.nature] || NATURE_META.quantitative
@@ -703,12 +703,107 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('span', { class: 'builder-signal-tag', style: `color:${dirMeta.color}` }, sig.themeTag),
         h('span', { class: 'builder-signal-nature' }, `${natMeta.icon} ${natMeta.label}`),
         sig.confidence != null ? h('span', {}, `置信度 ${Math.round(sig.confidence * 100)}%`) : null),
+      /* 判决按钮：接受 / 修正 / 驳回 */
       h('div', { class: 'builder-signal-actions' },
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'node') }, '改节点'),
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'dir') }, '改方向'),
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'strength') }, '改强度'),
-        h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => rejectSignal(sig) }, '驳回')))
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => acceptSignal(sig) }, '✓ 接受'),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => toggleEditor(sig.id) }, '✎ 修正'),
+        h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => rejectSignal(sig) }, '✕ 驳回')),
+      /* 内联修正编辑器：三组独立选择（参考 demo 设计） */
+      renderInlineEditor(sig))
     return item
+  }
+
+  /* 内联三层修正编辑器 */
+  const renderInlineEditor = (sig) => {
+    const editor = h('div', { class: 'builder-inline-editor', 'data-editor': sig.id, hidden: true })
+
+    /* 状态量 */
+    const dirRow = h('div', { class: 'builder-editor-row' },
+      h('span', { class: 'builder-editor-label' }, '状态量'),
+      h('div', { class: 'builder-editor-opts' }))
+    for (const [k, m] of Object.entries(DIRECTION_META)) {
+      const btn = h('button', {
+        type: 'button',
+        class: `builder-editor-opt${k === sig.direction ? ' is-sel' : ''}`,
+        onclick: (e) => {
+          sig._editDir = k
+          dirRow.querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
+          e.currentTarget.classList.add('is-sel')
+        },
+      }, `${m.icon} ${m.label}`)
+      dirRow.querySelector('.builder-editor-opts').append(btn)
+    }
+
+    /* 变化性质 */
+    const natRow = h('div', { class: 'builder-editor-row' },
+      h('span', { class: 'builder-editor-label' }, '变化性质'),
+      h('div', { class: 'builder-editor-opts' }))
+    for (const [k, m] of Object.entries(NATURE_META)) {
+      const btn = h('button', {
+        type: 'button',
+        class: `builder-editor-opt${k === sig.nature ? ' is-sel' : ''}`,
+        onclick: (e) => {
+          sig._editNat = k
+          natRow.querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
+          e.currentTarget.classList.add('is-sel')
+        },
+      }, `${m.icon} ${m.label}`)
+      natRow.querySelector('.builder-editor-opts').append(btn)
+    }
+
+    /* 主题标签 */
+    const tagInput = h('input', {
+      type: 'text', class: 'builder-editor-input',
+      value: sig.themeTag || '', placeholder: '输入或修改标签',
+      oninput: (e) => { sig._editTag = e.target.value },
+    })
+    const tagRow = h('div', { class: 'builder-editor-row' },
+      h('span', { class: 'builder-editor-label' }, '主题标签'),
+      tagInput)
+
+    /* 确认/取消 */
+    const actions = h('div', { class: 'builder-editor-actions' },
+      h('button', {
+        type: 'button', class: 'btn btn-sm',
+        onclick: () => toggleEditor(sig.id),
+      }, '取消'),
+      h('button', {
+        type: 'button', class: 'btn btn-sm btn-primary',
+        onclick: () => confirmEdit(sig),
+      }, '确认修正'))
+
+    editor.append(dirRow, natRow, tagRow, actions)
+    return editor
+  }
+
+  const toggleEditor = (sigId) => {
+    const el = document.querySelector(`[data-editor="${sigId}"]`)
+    if (el) el.hidden = !el.hidden
+  }
+
+  const acceptSignal = async (sig) => {
+    try {
+      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'accept' })
+      toast('已接受')
+      opts.onChanged?.()
+    } catch (e) {
+      toast('接受失败：' + (e.message || e), 'var(--danger)')
+    }
+  }
+
+  const confirmEdit = async (sig) => {
+    const change = {
+      direction: sig._editDir || sig.direction,
+      nature: sig._editNat || sig.nature,
+      themeTag: sig._editTag ?? sig.themeTag,
+    }
+    try {
+      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'correct', change })
+      toast('已修正')
+      opts.onChanged?.()
+    } catch (e) {
+      toast('修正失败：' + (e.message || e), 'var(--danger)')
+    }
   }
 
   /* 批量接受一组信号 */
@@ -730,85 +825,6 @@ async function loadConcept(theme, ledgerPane, opts) {
   }
 
   /* 校正单条信号 */
-  const correctSignal = (sig, kind) => {
-    /* 三层模型修正对话框：状态量 / 变化性质 / 主题标签 */
-    const dirMeta = DIRECTION_META
-    const natMeta = NATURE_META
-    let newDir = sig.direction || 'stable'
-    let newNat = sig.nature || 'quantitative'
-    let newTag = sig.themeTag || ''
-
-    const overlay = h('div', { class: 'builder-correct-overlay' },
-      h('div', { class: 'builder-correct-dialog' },
-        h('h3', {}, '修正信号'),
-        h('p', { class: 'builder-correct-text' }, sig.text),
-
-        /* 第一组：状态量 */
-        h('div', { class: 'builder-correct-group' },
-          h('label', { class: 'builder-correct-label' }, '状态量'),
-          h('div', { class: 'builder-correct-opts' },
-            Object.entries(dirMeta).map(([k, m]) =>
-              h('button', {
-                type: 'button',
-                class: `builder-correct-opt${k === newDir ? ' is-sel' : ''}`,
-                style: k === newDir ? `border-color:${m.color};color:${m.color}` : '',
-                onclick: (e) => {
-                  newDir = k
-                  overlay.querySelectorAll('.builder-correct-opts')[0]
-                    .querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
-                  e.currentTarget.classList.add('is-sel')
-                },
-              }, `${m.icon} ${m.label}`)))),
-
-        /* 第二组：变化性质 */
-        h('div', { class: 'builder-correct-group' },
-          h('label', { class: 'builder-correct-label' }, '变化性质'),
-          h('div', { class: 'builder-correct-opts' },
-            Object.entries(natMeta).map(([k, m]) =>
-              h('button', {
-                type: 'button',
-                class: `builder-correct-opt${k === newNat ? ' is-sel' : ''}`,
-                onclick: (e) => {
-                  newNat = k
-                  overlay.querySelectorAll('.builder-correct-opts')[1]
-                    .querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
-                  e.currentTarget.classList.add('is-sel')
-                },
-              }, `${m.icon} ${m.label}`)))),
-
-        /* 第三组：主题标签 */
-        h('div', { class: 'builder-correct-group' },
-          h('label', { class: 'builder-correct-label' }, '主题标签'),
-          h('input', {
-            type: 'text', class: 'builder-correct-input',
-            value: newTag, placeholder: '输入或修改标签',
-            oninput: (e) => { newTag = e.target.value },
-          })),
-
-        h('div', { class: 'builder-correct-actions' },
-          h('button', {
-            type: 'button', class: 'btn',
-            onclick: () => overlay.remove(),
-          }, '取消'),
-          h('button', {
-            type: 'button', class: 'btn btn-primary',
-            onclick: async () => {
-              try {
-                await m.chainConfirmSignal?.(theme.id, sig.id, {
-                  decision: 'correct',
-                  change: { direction: newDir, nature: newNat, themeTag: newTag },
-                })
-                toast('已修正')
-                overlay.remove()
-                opts.onChanged?.()
-              } catch (e) {
-                toast('修正失败：' + (e.message || e), 'var(--danger)')
-              }
-            },
-          }, '确认修正'))))
-    document.body.append(overlay)
-  }
-
   const rejectSignal = async (sig) => {
     try {
       await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'reject' })
