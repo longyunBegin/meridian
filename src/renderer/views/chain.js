@@ -96,29 +96,20 @@ export function renderChainSection(theme, opts = {}) {
   const drawerId = `cog-ledger-drawer-${++chainSectionCounter}`
   const drawerTitleId = `${drawerId}-title`
   const integrityBadge = h('span', { class: 'cog-integrity-badge is-pending', role: 'status', 'aria-live': 'polite', 'data-ledger-status': '' }, '账本校验中…')
-  const replayStatus = h('span', { class: 'cog-replay-status', role: 'status', 'aria-live': 'polite', 'data-replay-status': '', hidden: true })
+  const addNodeBtn = h('button', { type: 'button', class: 'btn', disabled: true }, '＋ 添加节点')
+  const addEvidenceBtn = h('button', { type: 'button', class: 'btn', disabled: true }, '＋ 补充证据')
   const concept = h('div', { class: 'cog-concept cog-reading-layout' })
   const ledgerBackdrop = h('div', { class: 'cog-ledger-backdrop', hidden: true, 'aria-hidden': 'true' })
   const ledgerPane = h('aside', {
     class: 'cog-ledger-pane cog-ledger-drawer', id: drawerId,
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': drawerTitleId, tabindex: '-1', hidden: true,
   }, h('p', { class: 'chain-note' }, '正在读取事件…'))
-  const graphPane = h('div', { class: 'cog-graph-pane', 'aria-label': '主题网络画布' })
-  const stage = h('div', { class: 'cog-stage' })
-  graphPane.append(stage)
-  /* 建设者：图主导（70%）+ 右侧抽屉（命题/详情/待处理）。
-     点节点 → 抽屉滑出详情；焦点永远在图上。 */
-  const drawerEl = h('aside', { class: 'cog-drawer', 'aria-label': '建设者抽屉' })
-  const drawerTabs = h('div', { class: 'cog-drawer-tabs', role: 'tablist', 'aria-label': '抽屉切面' })
-  const drawerPanels = {
-    props: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '命题列表' }),
-    detail: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '节点详情' }),
-    queue: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '待处理' }),
-  }
-  drawerEl.append(drawerTabs, drawerPanels.props, drawerPanels.detail, drawerPanels.queue)
-  const graphCol = h('div', { class: 'cog-builder-graph' }, graphPane)
-  const builder = h('div', { class: 'cog-builder' }, graphCol, drawerEl)
-  concept.append(ledgerBackdrop, ledgerPane, builder)
+  /* 建设者：三栏工作台（命题列表 | 命题详情 | 待处理），无图 */
+  const propsCol = h('section', { class: 'cog-wb-col cog-wb-props', 'aria-label': '命题列表' })
+  const detailCol = h('section', { class: 'cog-wb-col cog-wb-detail', 'aria-label': '命题详情' })
+  const queueCol = h('section', { class: 'cog-wb-col cog-wb-queue', 'aria-label': '待处理' })
+  const workbench = h('div', { class: 'cog-workbench' }, propsCol, detailCol, queueCol)
+  concept.append(ledgerBackdrop, ledgerPane, workbench)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -148,28 +139,29 @@ export function renderChainSection(theme, opts = {}) {
   }, h('span', { 'aria-hidden': 'true' }, '▤'), h('span', {}, '账本'))
   const toolbar = h('header', { class: 'chain-path-h cog-global-toolbar' },
     h('div', { class: 'cog-global-brand' },
-      h('div', { class: 'chain-kicker' }, '主题认知网络'),
-      h('div', { class: 'chain-counts', 'data-cog-counts': '' }, '正在重放事件…')),
-    h('div', { class: 'cog-global-actions' }, integrityBadge, replayStatus, ledgerButton))
-  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题认知网络' }, toolbar, concept)
+      h('div', { class: 'chain-kicker' }, '主题建设'),
+      h('div', { class: 'chain-counts', 'data-cog-counts': '' }, '正在读取事件…')),
+    h('div', { class: 'cog-global-actions' }, addNodeBtn, addEvidenceBtn, integrityBadge, ledgerButton))
+  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, toolbar, concept)
   const viewOpts = {
     ...opts,
     closeLedger,
     openLedger,
     ledgerTitleId: drawerTitleId,
-    chainPanel: graphPane,
-    drawerEl,
-    drawerTabs,
-    drawerPanels,
+    propsCol,
+    detailCol,
+    queueCol,
+    addNodeBtn,
+    addEvidenceBtn,
     onChanged: () => {
       clear(ledgerPane)
       clear(stage)
-      loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
+      loadConcept(theme, ledgerPane, viewOpts).catch((e) => {
         clear(stage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
       })
     },
   }
-  loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
+  loadConcept(theme, ledgerPane, viewOpts).catch((e) => {
     clear(stage).append(h('p', { class: 'chain-note' }, '投影加载失败：' + (e.message || e)))
   })
   return wrap
@@ -489,7 +481,7 @@ function fmtDate(value) {
   return Number.isNaN(date.getTime()) ? s.slice(0, 10) : date.toLocaleDateString('zh-CN')
 }
 
-async function loadConcept(theme, ledgerPane, stage, opts) {
+async function loadConcept(theme, ledgerPane, opts) {
   const [proj, evRes] = opts.initialProjection
     ? [opts.initialProjection, { events: opts.initialEvents || [] }]
     : await Promise.all([
@@ -501,10 +493,9 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
   updateThemeStats(opts.themeStats, proj, events)
-  let graphController = null
   let ledgerController = null
-  let replayGeneration = 0
-  const countsEl = stage.closest('.chain-section')?.querySelector('[data-cog-counts]')
+  const sectionEl = ledgerPane.closest('.chain-section')
+  const countsEl = sectionEl?.querySelector('[data-cog-counts]')
   const kinds = Object.fromEntries(NETWORK_NODE_TYPES.map((type) => [type, 0]))
   const scopedNodes = Array.isArray(proj.nodes) ? proj.nodes : projectedNodes(proj)
   for (const node of scopedNodes) if (!node.external) kinds[networkNodeType(node)]++
@@ -512,11 +503,10 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   for (const type of NETWORK_NODE_TYPES) if (kinds[type]) parts.push(`${NODE_TYPE_META[type].label} ${kinds[type]}`)
   if (countsEl) {
     countsEl.textContent = parts.length
-      ? `主题网络 · ${parts.join(' · ')}${scopedNodes.some((node) => node.external) ? ' · 含外部引用' : ''}`
-      : '主题网络 · 暂无节点'
+      ? `${parts.join(' · ')} · ${events.length} 事件${scopedNodes.some((node) => node.external) ? ' · 含外部引用' : ''}`
+      : '暂无节点'
   }
-  const replayStatusEl = stage.closest('.chain-section')?.querySelector('[data-replay-status]')
-  const integrityBadge = stage.closest('.chain-section')?.querySelector('[data-ledger-status]')
+  const integrityBadge = sectionEl?.querySelector('[data-ledger-status]')
   const updateIntegrityBadge = (current = proj.integrity, validCount = validPrefixSeq, rawCount = events.length) => {
     if (!integrityBadge) return
     const valid = current?.ok === true
@@ -529,72 +519,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     integrityBadge.title = valid ? '追加式账本完整性校验通过' : integrityText(current || { ok: false })
   }
   updateIntegrityBadge()
-  const updateReplayStatus = (state) => {
-    if (!replayStatusEl) return
-    const replaying = state?.selectedSeq != null
-    const projection = state?.projection || proj
-    const at = projection.selectedAt || state?.events?.at(-1)?.at || null
-    replayStatusEl.hidden = !replaying
-    replayStatusEl.classList.toggle('is-replay', replaying)
-    replayStatusEl.textContent = replaying ? `历史回放 · v${state.selectedSeq} · ${at ? fmtAt(at) : '账本起点'} · 只读` : ''
-  }
-
-  const replayTo = async (sequence, focusEvent = null) => {
-    const generation = ++replayGeneration
-    try {
-      const snapshot = await m.chainProjectionAt(theme.id, Number(sequence))
-      if (generation !== replayGeneration) return null
-      viewState.projection = { ...snapshot, allEvents: events }
-      viewState.selectedSeq = snapshot.selectedSeq
-      viewState.events = eventsThroughSequence(events, proj.integrity, snapshot.selectedSeq)
-      graphController?.render(viewState, focusEvent ? firstAffectedNode(focusEvent, snapshot, events) : null)
-      ledgerController?.syncReplay(viewState)
-      return snapshot
-    } catch (error) {
-      if (generation !== replayGeneration) return null
-      toast(`历史回放失败：${error?.message || error}`, 'var(--red)')
-      return null
-    }
-  }
-  const focusEvent = async (event) => {
-    if (!Number.isSafeInteger(event?.seq) || !verifiedEvents.some((row) => row?.id === event.id)) {
-      toast('该记录未通过账本校验，不能用于历史回放或图谱定位', 'var(--red)')
-      return
-    }
-    if (viewState.selectedSeq != null && event.seq > viewState.selectedSeq) {
-      const snapshot = await replayTo(event.seq, event)
-      if (!snapshot) return
-    }
-    const targetId = firstAffectedNode(event, viewState.projection, events)
-    if (targetId) graphController?.render(viewState, targetId)
-    else toast('这条事件在当前版本没有可定位的图节点', 'var(--text-2)')
-  }
-  const openEvent = async (event) => {
-    await focusEvent(event)
-    opts.openLedger?.()
-    ledgerController?.showEvent(event?.id)
-  }
-  const returnLive = () => {
-    replayGeneration++
-    viewState.projection = { ...proj, allEvents: events }
-    viewState.selectedSeq = null
-    viewState.events = verifiedEvents
-    graphController?.render(viewState)
-    ledgerController?.syncReplay(viewState)
-  }
-  const graphOpts = { ...opts, onJumpToEvent: openEvent }
-  const nodeSelectRef = { current: null }
-  graphController = renderGraphTools(stage, theme, proj, graphOpts, {
-    onReplay: replayTo,
-    onLive: returnLive,
-    onReplayStatus: updateReplayStatus,
-    onNodeSelect: (node) => nodeSelectRef.current?.(node),
-    validPrefixSeq,
-    verifiedEvents,
-  })
   ledgerController = renderLedgerPanel(ledgerPane, theme, events, proj.integrity, {
-    onFocusEvent: focusEvent,
-    onReplay: replayTo,
     onIntegrityChange: updateIntegrityBadge,
     onClose: opts.closeLedger,
     titleId: opts.ledgerTitleId,
@@ -602,79 +527,56 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     initialState: viewState,
     verifiedEvents,
   })
-  graphController.render(viewState)
-  /* ---- 抽屉：命题 / 详情 / 待处理。点节点 → 滑出详情；焦点永远在图上 ---- */
-  const drawerTabDefs = [['props', '命题'], ['detail', '详情'], ['queue', '待处理']]
-  const drawerTabBtns = {}
-  const showDrawerTab = (tab) => {
-    for (const [key, btn] of Object.entries(drawerTabBtns)) {
-      const active = key === tab
-      btn.classList.toggle('is-active', active)
-      btn.setAttribute('aria-selected', String(active))
-      btn.tabIndex = active ? 0 : -1
-    }
-    for (const [key, panel] of Object.entries(opts.drawerPanels)) {
-      panel.hidden = key !== tab
-    }
-    opts.drawerEl.dataset.tab = tab
-  }
-  for (const [key, label] of drawerTabDefs) {
-    const btn = h('button', {
-      type: 'button', role: 'tab', class: 'cog-drawer-tab', 'aria-selected': 'false', tabindex: '-1',
-      onclick: () => showDrawerTab(key),
-    }, label)
-    drawerTabBtns[key] = btn
-    opts.drawerTabs.append(btn)
-  }
+  /* ---- 三栏工作台：命题列表 | 命题详情 | 待处理（无图） ---- */
   let selectedPropId = null
-  const selectProposition = (nodeId, { fromNetwork = false } = {}) => {
+  const selectProposition = (nodeId) => {
     selectedPropId = nodeId || null
-    for (const el of opts.drawerPanels.props.querySelectorAll('[data-prop-id]')) {
+    for (const el of opts.propsCol.querySelectorAll('[data-prop-id]')) {
       el.classList.toggle('is-selected', el.dataset.propId === selectedPropId)
     }
-    if (!fromNetwork && selectedPropId) graphController.focus(selectedPropId)
     const node = selectedPropId
       ? projectedNodes(viewState.projection).find((n) => n.id === selectedPropId)
       : null
-    renderPropDetail(opts.drawerPanels.detail, theme, viewState, selectedPropId, {
+    renderPropDetail(opts.detailCol, theme, viewState, selectedPropId, {
       onChanged: opts.onChanged,
       onClose: () => selectProposition(null),
       onOpenAttribution: (rel) => openAttributionDialog(theme, node, rel, { onChanged: opts.onChanged }),
     })
     if (node) {
       /* 节点管理（改名/失效）收进详情底部折叠 */
-      opts.drawerPanels.detail.append(renderNodeLifecycleControls(theme, node, {
+      opts.detailCol.append(renderNodeLifecycleControls(theme, node, {
         onChanged: opts.onChanged,
       }))
-      showDrawerTab('detail')
     }
   }
-  nodeSelectRef.current = (node) => selectProposition(node?.id || null, { fromNetwork: true })
-  renderPropList(opts.drawerPanels.props, theme, viewState, {
+  renderPropList(opts.propsCol, theme, viewState, {
     selectedId: selectedPropId,
     onSelect: (nodeId) => selectProposition(nodeId),
   })
-  renderQueuePanel(opts.drawerPanels.queue, theme, viewState, {
+  renderQueuePanel(opts.queueCol, theme, viewState, {
     onChanged: opts.onChanged,
     onFocusNode: (nodeId) => selectProposition(nodeId),
   })
-  showDrawerTab('props')
+  /* 工具栏：添加节点 / 补充证据 */
+  if (opts.addNodeBtn) {
+    opts.addNodeBtn.disabled = false
+    opts.addNodeBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'node', { onChanged: opts.onChanged })
+  }
+  if (opts.addEvidenceBtn) {
+    opts.addEvidenceBtn.disabled = false
+    opts.addEvidenceBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'evidence', { onChanged: opts.onChanged })
+  }
   const pendingLedgerJump = consumeChainEventJump(theme.id)
   if (pendingLedgerJump) {
     const request = pendingLedgerJump
     const target = verifiedEvents.find((event) => event?.id === request.eventId)
-    if (target) queueMicrotask(() => openEvent(target))
+    if (target) queueMicrotask(() => { opts.openLedger?.(); ledgerController?.showEvent(target.id) })
     else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
   }
   const pendingBuilderJump = consumeBuilderJump(theme.id)
-  if (pendingBuilderJump) {
-    if (pendingBuilderJump.pane === 'attribution') {
-      queueMicrotask(() => showDrawerTab('queue'))
-    }
-    if (pendingBuilderJump.nodeId) {
-      const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
-      if (exists) queueMicrotask(() => selectProposition(pendingBuilderJump.nodeId))
-    }
+  if (pendingBuilderJump?.nodeId) {
+    const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
+    if (exists) queueMicrotask(() => selectProposition(pendingBuilderJump.nodeId))
   }
 
 }

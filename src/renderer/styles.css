@@ -3270,13 +3270,22 @@ body.tauri-macos .app {
 .rdr-card-link { margin-top: 12px; padding: 0; color: var(--text-3); font-size: var(--t-caption); cursor: pointer; }
 .rdr-card-link:hover { color: var(--accent); }
 .rdr-tail { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--hairline); text-align: center; }
-.rdr-graph { margin: 26px 0 6px; }
-.rdr-minigraph { display: block; width: 100%; padding: 0; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); cursor: pointer; overflow: hidden; }
-.rdr-minigraph:hover { border-color: var(--accent); }
-.rdr-minigraph-svg { display: block; width: 100%; height: auto; }
-.rdr-minigraph-edge { stroke: var(--text-3); stroke-width: 1; opacity: .45; }
-.rdr-minigraph-edge.is-against { stroke: var(--red); opacity: .7; }
-.rdr-minigraph-hint { display: block; padding: 8px; color: var(--text-3); font-size: var(--t-caption); text-align: center; border-top: 1px solid var(--hairline-soft); }
+/* 主题骨架：一眼建模（关键观点主干） */
+.rdr-skeleton { margin: 26px 0 6px; }
+.rdr-skeleton-host { display: block; }
+.rdr-skeleton-svg { display: block; width: 100%; height: auto; }
+.rdr-skel-spine { stroke: var(--hairline); stroke-width: 2; }
+.rdr-skel-link { stroke: var(--hairline); stroke-width: 1.5; }
+.rdr-skel-card { fill: var(--surface-solid); stroke: var(--hairline); stroke-width: 1; }
+.rdr-skel-node { cursor: pointer; }
+.rdr-skel-node:hover .rdr-skel-card, .rdr-skel-node:focus-visible .rdr-skel-card { stroke: var(--accent); stroke-width: 1.5; }
+.rdr-skel-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 12px; }
+.rdr-skel-bar.is-verified, .rdr-skel-dot.is-verified { fill: var(--green, #3fa46f); }
+.rdr-skel-bar.is-disputed, .rdr-skel-dot.is-disputed { fill: var(--red, #c25); }
+.rdr-skel-bar.is-draft, .rdr-skel-dot.is-draft { fill: var(--text-3); }
+.rdr-skel-title { font-size: var(--t-body); font-weight: 600; fill: var(--text); }
+.rdr-skel-meta { font-size: var(--t-caption); fill: var(--text-3); }
+.rdr-skel-hint { margin: 8px 4px 0; color: var(--text-3); font-size: var(--t-caption); text-align: center; }
 .rdr-tail-title { margin: 0 0 6px; font-size: var(--t-body); font-weight: 700; }
 .rdr-tail-sub { margin: 0 0 16px; color: var(--text-3); font-size: var(--t-caption); }
 .rdr-empty { padding: 40px 0; }
@@ -3354,8 +3363,8 @@ body.tauri-macos .app {
 .cog-seg-btn.is-active { background:var(--surface-solid); color:var(--text); box-shadow:0 1px 4px rgba(0,0,0,.12); }
 
 @media (max-width:1100px) {
-  .cog-builder { grid-template-columns:minmax(0,1fr); }
-  .cog-drawer { position:static; max-height:none; }
+  .cog-workbench { grid-template-columns:minmax(0,1fr); }
+  .cog-wb-col { position:static; max-height:none; }
 }
 
 
@@ -3375,19 +3384,12 @@ body.tauri-macos .app {
   .rdr-title { font-size: var(--t-head); }
 }
 
-/* 建设者布局：图 70% + 抽屉 */
-.cog-builder { display:grid; grid-template-columns:minmax(0,7fr) minmax(300px,3fr); gap:12px; align-items:start; margin-top:12px; }
-.cog-builder-graph { min-width:0; }
-/* 收起冗余：内层标题、右侧检查器（由抽屉接管） */
-.cog-builder .cog-graph-intro { display:none; }
-.cog-builder .cog-point-inspector { display:none; }
-.cog-builder .cog-workspace-grid { grid-template-columns:minmax(0,1fr); }
-.cog-graph-legend-wrap, .cog-graph-time-wrap { margin:8px 0; }
-.cog-graph-legend-wrap > summary, .cog-graph-time-wrap > summary { cursor:pointer; color:var(--text-2); font-size:var(--t-caption); font-weight:600; }
-/* 抽屉 */
-.cog-drawer { position:sticky; top:76px; min-width:0; max-height:calc(100vh - 96px); overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface-solid); }
-.cog-drawer-tabs { display:flex; gap:2px; padding:8px 8px 0; border-bottom:1px solid var(--hairline); position:sticky; top:0; background:var(--surface-solid); z-index:2; }
-.cog-drawer-tab { flex:1; padding:8px 4px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--text-2); font-size:var(--t-body); font-family:inherit; font-weight:600; cursor:pointer; }
-.cog-drawer-tab.is-active { color:var(--text); border-bottom-color:var(--accent); }
-.cog-drawer-panel { padding:14px; }
-.cog-drawer-panel[hidden] { display:none; }
+/* 建设者布局：三栏工作台（命题列表 | 命题详情 | 待处理），无图 */
+.cog-workbench { display:grid; grid-template-columns:minmax(240px,2.6fr) minmax(0,4.4fr) minmax(260px,3fr); gap:12px; align-items:start; margin-top:12px; }
+.cog-wb-col { min-width:0; max-height:calc(100vh - 120px); overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface-solid); padding:14px; position:sticky; top:76px; }
+.cog-wb-col:empty { padding:0; border:0; background:transparent; }
+
+@media (max-width:1100px) {
+  .cog-workbench { grid-template-columns:minmax(0,1fr); }
+  .cog-wb-col { position:static; max-height:none; }
+}
