@@ -19,10 +19,10 @@ tauri-plugin-opener = "2"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
-
-[target.'cfg(debug_assertions)'.dependencies]
-# E2E 测试专用（debug only）：在应用内嵌入 W3C WebDriver 服务，供自动化测试驱动；release 构建不包含
-tauri-plugin-wdio-webdriver = "1"
+# E2E 测试专用：cargo build --features webdriver 时在应用内嵌入 W3C WebDriver 服务；
+# 默认构建（及所有 release 构建）绝不包含
+webdriver = ["tauri-plugin-wdio-webdriver"]

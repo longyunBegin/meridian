@@ -15,7 +15,8 @@
 
 ## 前置
 
-1. Mac 上本分支已构建：`cd src-tauri && cargo build`（debug，带 WebDriver 插件）。
+1. Mac 上本分支已构建：`cd src-tauri && cargo build --features webdriver`
+   （WebDriver 插件是 cargo feature，默认构建不含；release 构建永远不含）。
 2. `cd test/e2e && npm install`。
 3. 前端 dev server 在跑（`npm run dev`，默认 :1420），或 App 已打 release 包
    （release 构建不含 WebDriver 插件，只能测 debug）。

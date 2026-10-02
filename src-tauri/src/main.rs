@@ -358,8 +358,8 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
-    // E2E 测试专用：仅 debug 构建在应用内嵌入 WebDriver 服务，release 构建绝不包含
-    #[cfg(debug_assertions)]
+    // E2E 测试专用：仅 --features webdriver 构建时在应用内嵌入 WebDriver 服务，默认/release 构建绝不包含
+    #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     let builder = builder
         .invoke_handler(tauri::generate_handler![
