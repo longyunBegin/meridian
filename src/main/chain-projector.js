@@ -14,6 +14,7 @@
  * {name} → 按标题找主张节点，找不到则为外部节点。
  */
 import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, verifyChain, NODE_TYPES, REL_TYPES } from './chain-events.js'
+import { updateConfidence, estimateStrength } from './engine-confidence.js'
 import { digest } from './reading-store.js'
 import { randomUUID } from 'node:crypto'
 
@@ -309,6 +310,17 @@ export function projectEvents(events) {
         node.resolved = p.resolved ?? null
         node.settledAt = p.date || null
         node.settlementEventId = e.id
+      } else if (e.type === 'confidence.updated') {
+        /* 置信度更新（红区已批准）：记录历史，更新当前值 */
+        node.confidenceHistory ||= []
+        node.confidenceHistory.push({
+          eventId: e.id, seq: e.seq, at: e.at,
+          oldConfidence: p.oldConfidence ?? null,
+          newConfidence: p.newConfidence ?? null,
+          reason: p.reason || '',
+          evidenceEventId: p.evidenceEventId || null,
+        })
+        if (Number.isFinite(p.newConfidence)) node.confidence = p.newConfidence
       } else if (e.type === 'node.archived') {
         node.archived = true
         node.archiveReason = p.reason || ''
@@ -493,7 +505,7 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
     ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
     : []
   const reason = String(input.reason || '').trim()
-  return appendEventBatch(themeId, [
+  const events = [
     {
       id: evidenceId,
       actor: 'user',
@@ -512,7 +524,27 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
         ...(reason ? { reason } : {}),
       },
     },
-  ])
+  ]
+  /* 置信度更新（红区已批准）：用户确认归因后，系统机械应用贝叶斯公式 */
+  if ((rel === 'supports' || rel === 'contradicts') && target.confidence != null && Number.isFinite(Number(target.confidence))) {
+    const oldConf = Number(target.confidence) / 100 /* 存的是 0-100，转为 0-1 */
+    const strength = estimateStrength({ isHardFact: false, hasUrl: !!sourceUrl })
+    const newConf = updateConfidence(oldConf, strength, rel)
+    if (newConf != null && newConf !== oldConf) {
+      events.push({
+        actor: 'user',
+        type: 'confidence.updated',
+        payload: {
+          nodeId: target.id,
+          oldConfidence: Math.round(oldConf * 100),
+          newConfidence: Math.round(newConf * 100),
+          reason: `${rel === 'supports' ? '支持' : '反驳'}证据：${text.slice(0, 50)}`,
+          evidenceEventId: evidenceId,
+        },
+      })
+    }
+  }
+  return appendEventBatch(themeId, events)
 }
 
 /** Declare a user-authored semantic edge; this records a relationship, not verified causality. */

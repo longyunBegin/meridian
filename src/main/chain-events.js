@@ -33,6 +33,7 @@ export const EVENT_TYPES = [
   'node.archived', // 归档（墓碑），只读标记
   'node.restored', // 恢复 = 追加新事件，不改写归档历史
   'topic.linked', // 主题关联
+  'confidence.updated', // 置信度更新（红区已批准，2026-10-02）：贝叶斯公式机械应用
 ]
 
 export const NODE_TYPES = ['concept', 'object', 'event', 'viewpoint', 'evidence']

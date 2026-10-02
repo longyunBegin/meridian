@@ -104,12 +104,12 @@ export function renderChainSection(theme, opts = {}) {
     class: 'cog-ledger-pane cog-ledger-drawer', id: drawerId,
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': drawerTitleId, tabindex: '-1', hidden: true,
   }, h('p', { class: 'chain-note' }, '正在读取事件…'))
-  /* 建设者：三栏工作台（命题列表 | 命题详情 | 待处理），无图 */
-  const propsCol = h('section', { class: 'cog-wb-col cog-wb-props', 'aria-label': '命题列表' })
-  const detailCol = h('section', { class: 'cog-wb-col cog-wb-detail', 'aria-label': '命题详情' })
-  const queueCol = h('section', { class: 'cog-wb-col cog-wb-queue', 'aria-label': '待处理' })
-  const workbench = h('div', { class: 'cog-workbench' }, propsCol, detailCol, queueCol)
-  concept.append(ledgerBackdrop, ledgerPane, workbench)
+  /* 建设者：单栏聚焦（第一性原理）— 需要关注置顶，详情是主舞台，其他折叠 */
+  const attentionSec = h('section', { class: 'builder-attention', 'aria-label': '需要关注' })
+  const detailSec = h('section', { class: 'builder-detail', 'aria-label': '命题详情' })
+  const othersSec = h('section', { class: 'builder-others', 'aria-label': '其他命题' })
+  const focus = h('div', { class: 'builder-focus' }, attentionSec, detailSec, othersSec)
+  concept.append(ledgerBackdrop, ledgerPane, focus)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -148,9 +148,9 @@ export function renderChainSection(theme, opts = {}) {
     closeLedger,
     openLedger,
     ledgerTitleId: drawerTitleId,
-    propsCol,
-    detailCol,
-    queueCol,
+    attentionSec,
+    detailSec,
+    othersSec,
     addNodeBtn,
     addEvidenceBtn,
     onChanged: () => {
@@ -573,37 +573,80 @@ async function loadConcept(theme, ledgerPane, opts) {
     initialState: viewState,
     verifiedEvents,
   })
-  /* ---- 三栏工作台：命题列表 | 命题详情 | 待处理（无图） ---- */
+  /* ---- 单栏聚焦：需要关注置顶，详情是主舞台，其他折叠 ---- */
   let selectedPropId = null
   const selectProposition = (nodeId) => {
     selectedPropId = nodeId || null
-    for (const el of opts.propsCol.querySelectorAll('[data-prop-id]')) {
+    /* 更新关注卡片的选中态 */
+    for (const el of opts.attentionSec.querySelectorAll('[data-prop-id]')) {
       el.classList.toggle('is-selected', el.dataset.propId === selectedPropId)
     }
     const node = selectedPropId
       ? projectedNodes(viewState.projection).find((n) => n.id === selectedPropId)
       : null
-    renderPropDetail(opts.detailCol, theme, viewState, selectedPropId, {
+    renderPropDetail(opts.detailSec, theme, viewState, selectedPropId, {
       onChanged: opts.onChanged,
-      onClose: () => selectProposition(null),
-      onOpenAttribution: (rel) => openAttributionDialog(theme, node, rel, { onChanged: opts.onChanged }),
+      onOpenAttribution: (rel) => openInlineAttribution(theme, node, rel, opts.detailSec, { onChanged: opts.onChanged }),
     })
     if (node) {
-      /* 节点管理（改名/失效）收进详情底部折叠 */
-      opts.detailCol.append(renderNodeLifecycleControls(theme, node, {
+      opts.detailSec.append(renderNodeLifecycleControls(theme, node, {
         onChanged: opts.onChanged,
       }))
+      /* 滚动到详情 */
+      opts.detailSec.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }
-  renderPropList(opts.propsCol, theme, viewState, {
-    selectedId: selectedPropId,
-    onSelect: (nodeId) => selectProposition(nodeId),
-  })
-  renderQueuePanel(opts.queueCol, theme, viewState, {
-    onChanged: opts.onChanged,
-    onFocusNode: (nodeId) => selectProposition(nodeId),
-  })
-  /* 中栏永不空置：无跳转时自动选中首个命题（待确认 > 有争议 > 已建立） */
+  /* 需要关注：待确认 + 有争议，卡片式，一键进入 */
+  const renderAttention = () => {
+    const { pending, disputed } = viewpointGroups(viewState)
+    const items = [...pending, ...disputed].slice(0, 5)
+    clear(opts.attentionSec)
+    if (!items.length) return
+    opts.attentionSec.append(h('h2', { class: 'builder-section-title' }, `需要关注 · ${pending.length + disputed.length}`))
+    const cards = h('div', { class: 'builder-attention-cards' })
+    for (const node of items) {
+      const { supports, against } = evidenceForNode(viewState, node.id)
+      const card = h('button', {
+        type: 'button',
+        class: `builder-attention-card is-${node.status || 'pending'}${node.id === selectedPropId ? ' is-selected' : ''}`,
+        'data-prop-id': node.id,
+        onclick: () => selectProposition(node.id),
+      },
+        h('div', { class: 'builder-attention-top' },
+          h('span', { class: `cog-wb-meta-pill is-${node.status || 'pending'}` }, PROP_STATUS_LABEL[node.status] || '待确认'),
+          confidenceBar(node.confidence, { showLabel: false })),
+        h('div', { class: 'builder-attention-title' }, node.title || '未命名命题'),
+        h('div', { class: 'builder-attention-meta' },
+          h('span', { class: 'is-support' }, `${supports.length} 支持`),
+          h('span', {}, '·'),
+          h('span', { class: 'is-against' }, `${against.length} 反驳`)))
+      cards.append(card)
+    }
+    opts.attentionSec.append(cards)
+  }
+  renderAttention()
+  /* 其他命题：已建立 + 已归档，折叠 */
+  const renderOthers = () => {
+    const { established, archived } = viewpointGroups(viewState)
+    const items = [...established, ...archived]
+    clear(opts.othersSec)
+    if (!items.length) return
+    const details = h('details', { class: 'builder-others-details' },
+      h('summary', { class: 'builder-others-summary' }, `其他命题 · ${items.length}`),
+      h('div', { class: 'builder-others-list' }))
+    const list = details.querySelector('.builder-others-list')
+    for (const node of items) {
+      list.append(h('button', {
+        type: 'button', class: 'builder-others-item',
+        onclick: () => selectProposition(node.id),
+      },
+        h('span', { class: 'cog-wb-prop-dot', 'data-status': node.status || 'pending' }),
+        h('span', {}, node.title || '未命名命题')))
+    }
+    opts.othersSec.append(details)
+  }
+  renderOthers()
+  /* 自动选中首个需要关注的 */
   const autoSelectFirst = () => {
     if (selectedPropId) return
     const { pending, disputed, established } = viewpointGroups(viewState)
@@ -2335,6 +2378,70 @@ function renderEnginePipeline(item, { themeId, onDone } = {}) {
   }
   wrap.append(attrList)
   return wrap
+}
+
+/* ------------------------------------------------------------------ */
+/* 内联归因：点支持/反驳后，表单在原地展开，填完回车即确认。不弹框。      */
+/* ------------------------------------------------------------------ */
+
+function openInlineAttribution(theme, node, presetRel, container, { onChanged } = {}) {
+  if (!node || !container) return
+  /* 如果已有展开的表单，先收起 */
+  container.querySelector('.inline-attr-form')?.remove()
+  let rel = presetRel === 'contradicts' ? 'contradicts' : 'supports'
+  const form = h('div', { class: 'inline-attr-form' })
+  const seg = h('div', { class: 'cog-seg', role: 'group', 'aria-label': '支持或反驳' })
+  const btns = {}
+  for (const [value, label] of [['supports', '支持'], ['contradicts', '反驳']]) {
+    const btn = h('button', { type: 'button', class: 'cog-seg-btn', 'aria-pressed': String(value === rel) }, label)
+    btn.classList.toggle('is-active', value === rel)
+    btn.addEventListener('click', () => {
+      rel = value
+      for (const [v, b] of Object.entries(btns)) {
+        b.classList.toggle('is-active', v === rel)
+        b.setAttribute('aria-pressed', String(v === rel))
+      }
+    })
+    btns[value] = btn
+    seg.append(btn)
+  }
+  const textInput = h('textarea', { class: 'txt', rows: '3', placeholder: '证据摘要或原文摘录', 'aria-label': '证据内容' })
+  const urlInput = h('input', { class: 'txt', type: 'url', placeholder: '来源链接（选填）', 'aria-label': '来源链接' })
+  const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+  const actions = h('div', { class: 'inline-attr-actions' },
+    h('button', { type: 'button', class: 'btn', onclick: () => form.remove() }, '取消'),
+    h('button', { type: 'button', class: 'btn btn-primary' }, '确认'))
+  const confirmBtn = actions.querySelector('.btn-primary')
+  confirmBtn.addEventListener('click', async () => {
+    const text = textInput.value.trim()
+    if (!text) { error.hidden = false; error.textContent = '请填写证据内容。'; textInput.focus(); return }
+    error.hidden = true
+    confirmBtn.disabled = true
+    try {
+      const input = { text, rel }
+      const url = urlInput.value.trim()
+      if (url) input.url = url
+      const res = await m.chainAddEvidence(theme.id, node.id, input)
+      if (res?.ok === false) throw new Error(res.error || '写入失败')
+      toast(rel === 'supports' ? '已支持' : '已反驳')
+      form.remove()
+      onChanged?.()
+    } catch (e) {
+      error.hidden = false
+      error.textContent = e.message || String(e)
+      confirmBtn.disabled = false
+    }
+  })
+  /* 回车确认（Shift+回车换行） */
+  textInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmBtn.click() }
+  })
+  form.append(seg, textInput, urlInput, error, actions)
+  /* 插到操作按钮后面 */
+  const actionsBar = container.querySelector('.cog-wb-detail-actions')
+  if (actionsBar) actionsBar.after(form)
+  else container.append(form)
+  textInput.focus()
 }
 
 /* 提案草稿：收件箱条目详情内展开。只起草、不拍板；用户点"确认挂载"生效。 */

@@ -3409,7 +3409,31 @@ body.tauri-macos .app {
 }
 
 /* 建设者布局：中栏是主舞台（文档感），两侧是轻量侧栏 */
-.cog-workbench { display:grid; grid-template-columns:minmax(220px,2.2fr) minmax(0,5.6fr) minmax(240px,2.2fr); gap:20px; align-items:start; margin-top:16px; }
+/* 建造者：单栏聚焦（第一性原理）— 一个视觉主舞台，大留白，内容为王 */
+.builder-focus { display:flex; flex-direction:column; gap:32px; margin-top:20px; max-width:760px; }
+.builder-section-title { font-size:.8125rem; font-weight:600; color:var(--text-2); letter-spacing:.04em; margin:0 0 12px; text-transform:uppercase; }
+.builder-attention-cards { display:flex; flex-direction:column; gap:12px; }
+.builder-attention-card { display:block; width:100%; text-align:left; background:var(--surface-1); border:1px solid var(--border); border-radius:14px; padding:16px 18px; cursor:pointer; transition:border-color .15s, transform .15s; }
+.builder-attention-card:hover { border-color:var(--text-3); }
+.builder-attention-card.is-selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.builder-attention-top { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.builder-attention-title { font-size:1rem; font-weight:600; line-height:1.4; margin:0 0 6px; }
+.builder-attention-meta { font-size:.8125rem; color:var(--text-2); display:flex; gap:6px; }
+.builder-attention-meta .is-support { color:var(--ok); }
+.builder-attention-meta .is-against { color:var(--danger); }
+.builder-detail { min-height:200px; }
+.builder-others-details { border-top:1px solid var(--border); padding-top:16px; }
+.builder-others-summary { font-size:.875rem; color:var(--text-2); cursor:pointer; list-style:none; }
+.builder-others-summary::-webkit-details-marker { display:none; }
+.builder-others-summary::before { content:'› '; }
+.builder-others-details[open] .builder-others-summary::before { content:'‹ '; }
+.builder-others-list { display:flex; flex-direction:column; gap:4px; margin-top:12px; }
+.builder-others-item { display:flex; align-items:center; gap:10px; background:none; border:none; padding:8px 4px; font-size:.875rem; color:var(--text-1); cursor:pointer; text-align:left; border-radius:8px; }
+.builder-others-item:hover { background:var(--surface-1); }
+/* 内联归因：原地展开，不弹框 */
+.inline-attr-form { display:flex; flex-direction:column; gap:10px; margin-top:16px; padding:16px; background:var(--surface-1); border:1px solid var(--border); border-radius:12px; animation:cogFadeIn .18s ease-out; }
+.inline-attr-form .txt { width:100%; }
+.inline-attr-actions { display:flex; justify-content:flex-end; gap:8px; }
 /* 侧栏：去卡片化，轻量导航 */
 .cog-wb-col.cog-wb-props, .cog-wb-col.cog-wb-queue { background:transparent; border:0; padding:4px 0; position:sticky; top:76px; max-height:calc(100vh - 120px); overflow-y:auto; }
 /* 中栏：主舞台，文档感 */
