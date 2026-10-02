@@ -120,6 +120,7 @@ export function projectEvents(events) {
       createdSeq: e.seq,
       currentText: p.detail ?? p.coreInfo ?? p.title ?? '',
       detail: p.detail ?? p.coreInfo ?? '',
+      applicability: String(p.applicability || '').trim() || null,
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || `event:${e.id}`,
       eventIds: [e.id],
@@ -170,6 +171,7 @@ export function projectEvents(events) {
       const p = lastCorrection?.payload || {}
       if (String(p.newValue ?? '').trim()) node.currentText = String(p.newValue)
       node.correctionReason = p.reason || ''
+      if (Object.hasOwn(p, 'applicability')) node.applicability = String(p.applicability || '').trim() || null
     }
   }
 
@@ -256,7 +258,8 @@ export function projectEvents(events) {
     edges.push({
       id: e.id,
       rel: p.rel,
-      relationGroup: ['supports', 'derives', 'contradicts'].includes(p.rel) ? 'argument' : 'association',
+      relationGroup: ['supports', 'derives', 'contradicts'].includes(p.rel) ? 'argument'
+        : p.rel === 'supersedes' ? 'revision' : 'association',
       from,
       to,
       pendingReview: p.reviewStatus ? p.reviewStatus === 'pending-review' : p.rel === 'derives',
@@ -456,6 +459,7 @@ export function createProjectedNode(themeId, input = {}) {
       status: ['pending', 'verified', 'disputed'].includes(input.status) ? input.status : 'pending',
       sourceKind: 'user-authored',
       sourceRef: `theme-node:${id}`,
+      ...(String(input.applicability || '').trim() ? { applicability: String(input.applicability).trim().slice(0, 160) } : {}),
     },
   })
 }
@@ -481,6 +485,42 @@ export function renameProjectedNode(themeId, nodeId, newTitle, reason = '') {
       reason: String(reason || '').trim(),
     },
   })
+}
+
+/** Revise a user-authored viewpoint as an append-only correction; safe to retry with requestId. */
+export function correctProjectedNode(themeId, nodeId, input = {}) {
+  const newValue = String(input.newValue || '').trim()
+  const reason = String(input.reason || '').trim()
+  const applicability = String(input.applicability || '').trim().slice(0, 160)
+  const requestId = String(input.requestId || '').trim().slice(0, 200)
+  if (!newValue || newValue.length > 10000) throw new Error('修订后的观点说明必须为 1–10000 个字符')
+  if (!reason || reason.length > 1000) throw new Error('请填写不超过 1000 个字符的修订原因')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const events = getEvents(themeId)
+  const eventId = requestId
+    ? `evt:manual-correction:${digest({ themeId, nodeId, requestId }).slice(0, 24)}`
+    : `evt:manual-correction:${randomUUID()}`
+  const prior = events.find((event) => event.id === eventId)
+  if (prior) {
+    const sameRequest = prior.type === 'correction.appended' && prior.payload?.nodeId === nodeId
+      && prior.payload?.newValue === newValue && prior.payload?.reason === reason
+      && (prior.payload?.applicability || null) === (applicability || null)
+    if (sameRequest) return { ...prior, replayed: true }
+    throw new Error('此修订请求标识已用于其他内容；请重新载入后再编辑')
+  }
+  const node = projectEvents(events).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
+  if (!node || node.nodeType !== 'viewpoint') throw new Error('目前仅支持修订观点节点；其他节点可使用追加式改名')
+  if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能修订')
+  const { head } = claimLineage(events, nodeId)
+  const oldValue = String(node.currentText || node.title || '')
+  const nextApplicability = applicability || null
+  if (oldValue === newValue && (node.applicability || null) === nextApplicability) throw new Error('修订内容与当前版本相同')
+  const payload = {
+    oldValue, newValue, reason, nodeId, sourceRef: node.sourceRef,
+    applicability: nextApplicability, sourceKind: 'user-authored-correction',
+  }
+  return appendEvent(themeId, { id: eventId, actor: 'user', type: 'correction.appended', supersedes: head, payload })
 }
 
 /** Mark a node invalid by appending an event; it remains visible as a historical ghost. */
@@ -529,7 +569,11 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
       id: evidenceId,
       actor: 'user',
       type: 'evidence.appended',
-      payload: { text, sourceLabel: String(input.sourceLabel || '').trim(), sourceKind: 'manual-evidence', sourceRef, evidenceRefs },
+      payload: {
+        text, sourceLabel: String(input.sourceLabel || '').trim(), sourceKind: 'manual-evidence', sourceRef, evidenceRefs,
+        ...(String(input.sourcePublishedAt || '').trim() ? { sourcePublishedAt: String(input.sourcePublishedAt).trim().slice(0, 100) } : {}),
+        ...(String(input.applicability || '').trim() ? { applicability: String(input.applicability).trim().slice(0, 160) } : {}),
+      },
     },
     {
       actor: 'user',
@@ -614,6 +658,16 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
       change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) },
       recommendationId,
+      ...(proposal.payload.sourcePublishedAt ? { sourcePublishedAt: proposal.payload.sourcePublishedAt } : {}),
+      ...(proposal.payload.sourceFetchedAt ? { sourceFetchedAt: proposal.payload.sourceFetchedAt } : {}),
+      ...(proposal.payload.ingestedAt ? { ingestedAt: proposal.payload.ingestedAt } : {}),
+      ...(statement.timeWindow ? { applicability: statement.timeWindow } : {}),
+      scores: {
+        ...(Number.isFinite(recommendation.matchScore) ? { matchScore: recommendation.matchScore } : {}),
+        ...(Number.isFinite(recommendation.strength) ? { attributionStrength: recommendation.strength } : {}),
+        ...(Number.isFinite(recommendation.effectiveStrength) ? { effectiveStrength: recommendation.effectiveStrength } : {}),
+        ...(Number.isFinite(proposal.payload.metaMultiplier) ? { metaMultiplier: proposal.payload.metaMultiplier } : {}),
+      },
     }
 
     if (recommendation.kind === 'new-proposition') {
@@ -639,10 +693,20 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       if (relation === 'supersedes') {
         const { head } = claimLineage(events, target.id)
         drafts.push({ id: stableId('correction'), actor: 'user', type: 'correction.appended', supersedes: head, payload: {
-          oldValue: String(target.currentText || target.title), newValue: sourceQuote,
-          reason: String(recommendation.reason || '用户确认以新证据修正当前表述'),
-          evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
-          sourceKind: 'engine-reviewed',
+        oldValue: String(target.currentText || target.title), newValue: sourceQuote,
+        reason: String(recommendation.reason || '用户确认以新证据修正当前表述'),
+        evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
+        sourceKind: 'engine-reviewed', text: sourceQuote, sourceLabel,
+        ...(validUrl ? { sourceUrl } : {}),
+        ...(proposal.payload.sourcePublishedAt ? { sourcePublishedAt: proposal.payload.sourcePublishedAt } : {}),
+        ...(proposal.payload.sourceFetchedAt ? { sourceFetchedAt: proposal.payload.sourceFetchedAt } : {}),
+        ...(proposal.payload.ingestedAt ? { ingestedAt: proposal.payload.ingestedAt } : {}),
+        ...(statement.timeWindow ? { applicability: statement.timeWindow } : {}),
+          scores: evidencePayload.scores, evidenceEventId: evidenceId, recommendationId,
+        } })
+        drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {
+          rel: 'supersedes', from: { eventId: evidenceId }, to: { eventId: target.id },
+          sourceKind: 'engine-reviewed', sourceRef, reason: String(recommendation.reason || '用户确认了版本修订关系'),
         } })
       } else {
         drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {
@@ -684,6 +748,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
 /** Declare a user-authored semantic edge; this records a relationship, not verified causality. */
 export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
   if (!REL_TYPES.includes(rel)) throw new Error('请选择有效的关系类型')
+  if (rel === 'supersedes') throw new Error('版本修订关系必须与观点更正事件一并追加')
   if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) throw new Error('请选择两个不同的节点')
   const integrity = verifyChain(themeId)
   if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)

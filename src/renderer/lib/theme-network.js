@@ -1,5 +1,6 @@
 export const NETWORK_NODE_TYPES = ['concept', 'object', 'event', 'viewpoint', 'evidence']
 export const ARGUMENT_RELATIONS = ['supports', 'derives', 'contradicts']
+export const REVISION_RELATIONS = ['supersedes']
 export const ASSOCIATION_RELATIONS = ['belongs-to', 'influences', 'depends-on', 'temporal', 'related']
 
 export const NODE_TYPE_META = {
@@ -14,6 +15,7 @@ export const RELATION_META = {
   supports: { label: '支持', group: 'argument', color: '#61a8ff' },
   derives: { label: '推导', group: 'argument', color: '#c2a0ff' },
   contradicts: { label: '反驳', group: 'argument', color: '#ff9c79' },
+  supersedes: { label: '修订版本', group: 'revision', color: '#d89b49' },
   'belongs-to': { label: '归属', group: 'association', color: '#7d8da3' },
   influences: { label: '影响', group: 'association', color: '#7d8da3' },
   'depends-on': { label: '依赖', group: 'association', color: '#7d8da3' },
@@ -183,7 +185,8 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   for (const edge of links) {
     adjacency.get(edge.from).push(edge.to)
     adjacency.get(edge.to).push(edge.from)
-    if (edge.relationGroup === 'argument' || ARGUMENT_RELATIONS.includes(edge.rel)) {
+    if (edge.relationGroup === 'argument' || ARGUMENT_RELATIONS.includes(edge.rel)
+      || edge.relationGroup === 'revision' || REVISION_RELATIONS.includes(edge.rel)) {
       argSet.add(`${edge.from}→${edge.to}`)
       argSet.add(`${edge.to}→${edge.from}`)
     }
@@ -263,9 +266,10 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       let dy = b.y - a.y
       const distance = Math.hypot(dx, dy) || 1
       const isAssociation = edge.relationGroup === 'association' || ASSOCIATION_RELATIONS.includes(edge.rel)
-      /* 论证边是阅读主干：目标更短、弹簧更强；关联边保持疏松。 */
-      const target = isAssociation ? 235 : 168
-      const strength = edge.pendingReview ? 0.2 : isAssociation ? 0.3 : 0.7
+      const isRevision = edge.relationGroup === 'revision' || REVISION_RELATIONS.includes(edge.rel)
+      /* 论证边和修订链是阅读主干；弱主题关联保持疏松。 */
+      const target = isAssociation ? 235 : isRevision ? 190 : 168
+      const strength = edge.pendingReview ? 0.2 : isAssociation ? 0.3 : isRevision ? 0.48 : 0.7
       const magnitude = Math.max(-28, Math.min(28, (distance - target) * 0.004 * strength)) * cooling
       dx = dx / distance * magnitude; dy = dy / distance * magnitude
       fx.set(edge.from, fx.get(edge.from) + dx); fy.set(edge.from, fy.get(edge.from) + dy)

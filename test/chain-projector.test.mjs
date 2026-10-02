@@ -292,12 +292,13 @@ const engineTarget = ev.appendEvent(engineTheme.id, { id: 'engine-target-support
 const makeEngineProposal = (key, targetId, rel, { quoteVerified = true, kind = 'evidence' } = {}) => ev.appendEvent(engineTheme.id, {
   id: `engine-proposal-${key}`, actor: 'engine', type: 'engine.recommendation.proposed', payload: {
     pendingReview: true, recommendationId: `synthetic:${key}`, inboxId: `synthetic-inbox:${key}`,
-    statement: { subject: '合成公司', attribute: '营收', value: key, timeWindow: '', type: 'hard',
+    statement: { subject: '合成公司', attribute: '营收', value: key, timeWindow: '2026Q2', type: 'hard',
       sourceText: `合成来源摘录：${key}。`, sourceQuoteVerified: quoteVerified },
     recommendation: { kind, title: kind === 'new-proposition' ? `合成新观点 ${key}` : '合成营收观点',
-      propositionId: kind === 'evidence' ? targetId : null, rel, strength: 0.62,
+      propositionId: kind === 'evidence' ? targetId : null, rel, strength: 0.62, matchScore: 0.84, effectiveStrength: 0.51,
       change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' } },
     metaMultiplier: 0.85, sourceLabel: '隔离合成来源', sourceUrl: 'https://example.test/synthetic',
+    sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-21T09:55:00.000Z', ingestedAt: '2026-09-21T10:00:00.000Z',
   },
 })
 const rejectionProposal = makeEngineProposal('reject', engineTarget.id, 'supports')
@@ -364,6 +365,20 @@ ok('五种归因关系均经用户确认：支持/反驳/衍生/取代/相关分
         && event.supersedes === target.id)
       : engineProjection.allEdges.some((edge) => edge.rel === rel && edge.to === target.id))
     && (rel !== 'derives' || engineProjection.allEdges.find((edge) => edge.rel === 'derives' && edge.to === target.id)?.pendingReview === false)))
+const supersedesResult = relationResults.find((result) => result.rel === 'supersedes')
+const supersedesCorrection = engineRows.find((event) => event.type === 'correction.appended' && event.supersedes === supersedesResult?.target.id)
+const supersedesNode = engineProjection.allNodes.find((node) => node.id === supersedesResult?.target.id)
+ok('修订版本边不混入弱关联；原文、适用时间、发布/抓取/摄入与分作用评分随 correction 保留',
+  engineProjection.allEdges.some((edge) => edge.rel === 'supersedes' && edge.to === supersedesResult?.target.id && edge.relationGroup === 'revision')
+  && supersedesCorrection?.payload.text === '合成来源摘录：supersedes。'
+  && supersedesCorrection?.payload.applicability === '2026Q2'
+  && supersedesCorrection?.payload.sourcePublishedAt === '2026-09-18'
+  && supersedesCorrection?.payload.sourceFetchedAt === '2026-09-21T09:55:00.000Z'
+  && supersedesCorrection?.payload.ingestedAt === '2026-09-21T10:00:00.000Z'
+  && supersedesCorrection?.payload.scores?.matchScore === 0.84
+  && supersedesCorrection?.payload.scores?.attributionStrength === 0.62
+  && supersedesCorrection?.payload.scores?.effectiveStrength === 0.51
+  && supersedesNode?.currentText === '合成来源摘录：supersedes。' && supersedesNode?.applicability === '2026Q2')
 
 const unverified = makeEngineProposal('unverified', engineTarget.id, 'supports', { quoteVerified: false })
 let unverifiedRefused = false
@@ -409,12 +424,15 @@ ok('节点类型严格限制为五类，不接纳主题 root', invalidNodeTypeRe
 const concept = pj.createProjectedNode(networkTheme.id, { nodeType: 'concept', title: '合成概念' })
 const objectNode = pj.createProjectedNode(networkTheme.id, { nodeType: 'object', title: '合成对象' })
 const eventNodeNew = pj.createProjectedNode(networkTheme.id, { nodeType: 'event', title: '合成事件' })
-const viewpoint = pj.createProjectedNode(networkTheme.id, { nodeType: 'viewpoint', title: '合成观点', detail: '用户输入的说明，不是证据' })
+const viewpoint = pj.createProjectedNode(networkTheme.id, {
+  nodeType: 'viewpoint', title: '合成观点', detail: '用户输入的说明，不是证据', applicability: '2026Q1',
+})
 const evidence = pj.createProjectedNode(networkTheme.id, { nodeType: 'evidence', title: '合成证据', detail: '仅用于模型类型覆盖测试' })
 const createdProjection = pj.getChainProjection(networkTheme.id)
 ok('真实追加事件生成且只生成五类用户节点，不补造额外事实', createdProjection.nodes.length === 5
   && createdProjection.nodes.map((node) => node.nodeType).sort().join(',') === 'concept,event,evidence,object,viewpoint'
   && createdProjection.nodes.every((node) => node.kind !== 'theme'))
+ok('用户明确输入的观点适用时间进入事件投影', createdProjection.allNodes.find((node) => node.id === viewpoint.id)?.applicability === '2026Q1')
 const relationEvents = [
   pj.declareProjectedRelation(networkTheme.id, concept.id, objectNode.id, 'belongs-to'),
   pj.declareProjectedRelation(networkTheme.id, eventNodeNew.id, concept.id, 'influences'),
@@ -440,11 +458,31 @@ ok('待复核论证确认与驳回都追加决定事件并关闭原关系待办'
   && !reviewedProjection.allEdges.find((edge) => edge.eventId === relationEvents[7].id)?.pendingReview)
 const extraEvidence = pj.appendEvidenceToProjectedNode(networkTheme.id, viewpoint.id, {
   text: '合成证据内容 <img src=x onerror=alert(1)>', sourceLabel: '合成来源', url: 'https://example.invalid/data',
+  sourcePublishedAt: '2026-09-18', applicability: '2026Q2',
 })
 ok('补充证据只保存用户输入，并以明确 supports 关系连到所选节点', extraEvidence.length === 2
   && extraEvidence[0].type === 'evidence.appended' && extraEvidence[0].payload.text.includes('<img')
   && extraEvidence[1].type === 'relation.declared' && extraEvidence[1].payload.rel === 'supports'
   && extraEvidence[1].payload.from.eventId === extraEvidence[0].id && extraEvidence[1].payload.to.eventId === viewpoint.id)
+ok('手工证据分别保留来源发布时间与适用时间，不伪造抓取时间', extraEvidence[0].payload.sourcePublishedAt === '2026-09-18'
+  && extraEvidence[0].payload.applicability === '2026Q2' && !Object.hasOwn(extraEvidence[0].payload, 'sourceFetchedAt'))
+const beforeCorrectionSeq = ev.getEvents(networkTheme.id).length
+const manualCorrectionInput = {
+  newValue: '用户确认修订后的合成观点', reason: '合成来源的适用范围变化', applicability: '2026Q2', requestId: 'fixture-revision-1',
+}
+const manualCorrection = pj.correctProjectedNode(networkTheme.id, viewpoint.id, manualCorrectionInput)
+const afterCorrectionCount = ev.getEvents(networkTheme.id).length
+const repeatedManualCorrection = pj.correctProjectedNode(networkTheme.id, viewpoint.id, manualCorrectionInput)
+const correctedProjection = pj.getChainProjection(networkTheme.id)
+const correctedViewpoint = correctedProjection.allNodes.find((node) => node.id === viewpoint.id)
+const priorViewpoint = pj.getChainProjectionAt(networkTheme.id, beforeCorrectionSeq).allNodes.find((node) => node.id === viewpoint.id)
+ok('观点修订只追加 correction 事件，保留旧文本并更新适用时间', manualCorrection.type === 'correction.appended'
+  && manualCorrection.supersedes === viewpoint.id && correctedViewpoint.currentText === manualCorrectionInput.newValue
+  && correctedViewpoint.applicability === '2026Q2' && priorViewpoint.currentText === '用户输入的说明，不是证据'
+  && priorViewpoint.applicability === '2026Q1')
+ok('相同 requestId 重试返回原更正事件且不追加重复记录', repeatedManualCorrection.replayed === true
+  && ev.getEvents(networkTheme.id).length === afterCorrectionCount
+  && ev.verifyChain(networkTheme.id).ok)
 const beforeRenameSeq = ev.getEvents(networkTheme.id).length
 const renamed = pj.renameProjectedNode(networkTheme.id, concept.id, '合成概念新名', '测试追加式改名')
 const beforeInvalidateSeq = ev.getEvents(networkTheme.id).length

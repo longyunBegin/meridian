@@ -159,6 +159,7 @@ export function renderTheme(mid) {
     if (view === 'reader') {
       viewHost.append(renderReaderView(theme, {
         loadProjection: async () => preloaded?.projection || m.chainProjection(theme.id),
+        loadProjectionAt: async (sequence) => m.chainProjectionAt(theme.id, sequence),
         loadEvents: async () => preloaded?.events
           || (await m.chainEvents(theme.id).catch(() => null))?.events || [],
         onOpenBuilder: (kind, nodeId) => {

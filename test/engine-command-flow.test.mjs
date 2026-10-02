@@ -36,7 +36,11 @@ const inbox = store.addInboxItem({
   title: '合成来源条目',
   extracted: true,
   extractedThemeId: theme.id,
-  provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://example.test/synthetic-report' },
+  createdAt: '2026-07-01T08:30:00.000Z',
+  provenance: {
+    platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://example.test/synthetic-report',
+    publishedAt: '2026-06-30', fetchedAt: '2026-07-01T08:25:00.000Z',
+  },
 })
 await invoke('settings:set', { apiKey: 'synthetic-test-key', baseUrl: 'https://llm.example.test/v1', model: 'synthetic-fixture' })
 
@@ -97,6 +101,10 @@ try {
     })) < 1e-12)
   check('relational 陈述只生成新观点建议，不伪造现存目标观点', relational?.kind === 'new-proposition'
     && !relational.proposition && relational.recommendation.rel === 'related')
+  const knownTimeProposalEvent = proposalEvents.find((event) => event.id === knownTime.proposalEventId)
+  check('建议事件区分来源发布时间、系统摄入时间與来源抓取时间', knownTimeProposalEvent?.payload.sourcePublishedAt === '2026-06-30'
+    && knownTimeProposalEvent?.payload.sourceFetchedAt === '2026-07-01T08:25:00.000Z'
+    && knownTimeProposalEvent?.payload.ingestedAt === '2026-07-01T08:30:00.000Z')
 
   const rejected = await invoke('chain:reviewEngineRecommendation', theme.id, unknownTime.proposalEventId, 'rejected', {})
   const evidenceChange = { direction: 'improving', nature: 'quantitative', themeTag: '成本' }
@@ -111,6 +119,14 @@ try {
   check('确认证据在一个真实追加批次中写入 evidence/relation/confidence/review', acceptedEvidence?.ok === true
     && ['evidence.appended', 'relation.declared', 'confidence.updated', 'signal.reviewed']
       .every((type) => acceptedEvidence.events.some((event) => event.type === type)), JSON.stringify(acceptedEvidence?.events?.map((event) => event.type)))
+  const acceptedEvidencePayload = acceptedEvidence.events.find((event) => event.type === 'evidence.appended')?.payload
+  check('确认后的追加证据保留来源/适用/系统时间以及分开的模型评分', acceptedEvidencePayload?.sourcePublishedAt === '2026-06-30'
+    && acceptedEvidencePayload?.sourceFetchedAt === '2026-07-01T08:25:00.000Z'
+    && acceptedEvidencePayload?.ingestedAt === '2026-07-01T08:30:00.000Z'
+    && acceptedEvidencePayload?.applicability === '2026Q2'
+    && acceptedEvidencePayload?.scores?.matchScore === 0.91
+    && acceptedEvidencePayload?.scores?.attributionStrength === 0.62
+    && Number.isFinite(acceptedEvidencePayload?.scores?.effectiveStrength))
   check('关系陈述必须经用户命名，并由真实事务创建新节点/证据/关系', acceptedRelation?.ok === true
     && acceptedRelation.events.some((event) => event.type === 'node.created' && event.payload.title === '用户确认的供应链交付观点')
     && acceptedRelation.events.some((event) => event.type === 'evidence.appended'))

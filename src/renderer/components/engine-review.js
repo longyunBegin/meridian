@@ -1,10 +1,10 @@
 import { h, toast } from '../lib/dom.js'
 
-export function renderEnginePipeline(item, { themeId, onDone } = {}) {
+export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe' },
-    h('div', { class: 'draft-head' }, h('span', { class: 'draft-title' }, '认知发动机'),
-      h('span', { class: 'draft-sub' }, '抽取 → 分类 → 匹配 → 归因 · 所有建议均由你确认')))
+    h('div', { class: 'draft-head' }, h('span', { class: 'draft-title' }, '摄入 → 抽取 → 映射 → 人工审核'),
+      h('span', { class: 'draft-sub' }, '建议只读预览；确认或驳回后才追加决定事件')))
   const pipeline = item.enginePipeline
   const runButton = (label, callback) => {
     const button = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, label)
@@ -12,7 +12,7 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
     return button
   }
   if (!pipeline || pipeline.status !== 'done') {
-    const hint = h('p', { class: 'chain-note' }, '分析当前收件箱来源，生成仅供审阅的原子陈述与归因建议；未确认前不会写入事实或关系。')
+    const hint = h('p', { class: 'chain-note' }, '从已摄入的外部来源抽取原子陈述、映射候选节点并生成变更预览。此操作生成建议，不修改主题投影。')
     const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
     const button = runButton('生成建议', async () => {
       button.disabled = true
@@ -22,7 +22,7 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
         if (!response?.ok) throw new Error(response?.error || '运行失败')
         item.enginePipeline = response.pipeline
         toast('建议已生成；请逐条审阅后确认或驳回')
-        onDone?.()
+        onDone?.({ kind: 'pipeline', item })
       } catch (cause) {
         error.hidden = false; error.textContent = cause?.message || String(cause); button.disabled = false
       }
@@ -34,7 +34,16 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
   const { statements = [], results = [], diagnostics = [] } = pipeline
   const typeLabel = { hard: '硬事实', soft: '软事实', relational: '关系陈述', meta: '元陈述' }
   const relLabel = { supports: '支持', contradicts: '反驳', derives: '衍生', supersedes: '取代', related: '相关' }
-  wrap.append(h('p', { class: 'engine-step-title' }, `抽取 · ${statements.length} 条原子陈述`))
+  const provenance = item.provenance || {}
+  const sourceLabel = provenance.sourceLabel || provenance.platform || item.source || item.label?.kind || '来源未记录'
+  const sourceDate = provenance.publishedAt || provenance.sourceDate || item.publishedAt || item.sourceDate || null
+  const ingestedAt = item.createdAt || item.capturedAt || provenance.capturedAt || null
+  wrap.append(h('div', { class: 'engine-source-meta' },
+    h('span', {}, `来源 · ${sourceLabel}`),
+    h('span', {}, `来源时间 · ${sourceDate || '未记录'}`),
+    h('span', {}, `系统摄入 · ${ingestedAt || '未记录'}`),
+    provenance.fetchedAt ? h('span', {}, `抓取时间 · ${provenance.fetchedAt}`) : null))
+  wrap.append(h('p', { class: 'engine-step-title' }, `抽取 · ${statements.length} 条原子陈述（待核对）`))
   const statementList = h('ul', { class: 'engine-stmt-list' })
   for (const statement of statements) {
     statementList.append(h('li', { class: 'engine-stmt' },
@@ -53,7 +62,7 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
     wrap.append(h('p', { class: 'chain-note' }, '没有形成可确认的归因建议。原始收件箱来源仍保留；你也可以使用下方手动归因。'))
     return wrap
   }
-  wrap.append(h('p', { class: 'engine-step-title' }, `建议 · ${results.length} 条`))
+  wrap.append(h('p', { class: 'engine-step-title' }, `映射建议 · ${results.length} 条（未确认不进入投影）`))
   const list = h('ul', { class: 'engine-attr-list' })
   const reviewStatuses = []
   const changeOptions = (values, selected, labels) => {
@@ -70,6 +79,8 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
     const attribution = result.attribution || {}
     const statement = result.statement || {}
     const isNew = result.kind === 'new-proposition' || suggestion.kind === 'new-proposition'
+    const targetNode = (projection?.allNodes || projection?.nodes || []).find((node) =>
+      node.id === (suggestion.propositionId || result.proposition?.id))
     const relation = changeOptions(['supports', 'contradicts', 'derives', 'supersedes', 'related'], suggestion.rel || attribution.rel,
       relLabel)
     const direction = changeOptions(['improving', 'declining', 'stable'], suggestion.change?.direction || attribution.change?.direction,
@@ -85,6 +96,31 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
         ? h('p', { class: 'engine-review-warning' }, '原文未注明时间窗口；仅语义/主体作为候选，确认前请核对时间适用性。')
         : null
     const quote = h('blockquote', { class: 'engine-review-quote' }, statement.sourceText || '（缺少来源摘录）')
+    const beforeText = isNew
+      ? '当前投影中尚未创建这条建议命题。'
+      : targetNode
+        ? `${targetNode.title || '未命名节点'}：${targetNode.currentText || targetNode.detail || '当前没有保存说明。'}`
+        : `建议目标「${suggestion.propositionTitle || result.proposition?.title || '未映射'}」尚未定位到当前投影。`
+    const afterPreviewText = h('p', {}, '')
+    const kindLabel = h('span', { class: `engine-rel is-${suggestion.rel || attribution.rel || 'related'}` }, '')
+    const updateAfterPreview = () => {
+      const revisesNode = !isNew && relation.value === 'supersedes'
+      kindLabel.textContent = isNew ? '新观点建议' : revisesNode ? '修订观点建议' : (relLabel[relation.value] || '归因建议')
+      kindLabel.className = `engine-rel is-${relation.value || 'related'}${revisesNode ? ' is-revision' : ''}`
+      afterPreviewText.textContent = isNew
+        ? `若确认，将新增观点「${titleInput?.value || suggestion.title || result.suggestedTitle || '待命名观点'}」并追加已核验来源证据。`
+        : revisesNode
+          ? `若确认，将把「${targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '目标观点'}」的当前表述「${targetNode?.currentText || targetNode?.detail || targetNode?.title || '未记录'}」修订为已核验来源摘录「${sourceQuote}」${statement.timeWindow ? `（适用时间：${statement.timeWindow}）` : '（适用时间未注明）'}；旧版本保留，并追加证据与更正事件。`
+          : `若确认，将向「${targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '目标观点'}」追加证据与「${relLabel[relation.value] || '关系待审核'}」关系；原有记录保留。`
+    }
+    updateAfterPreview()
+    titleInput?.addEventListener('input', updateAfterPreview)
+    relation.addEventListener('change', updateAfterPreview)
+    const preview = h('section', { class: 'engine-before-after', 'aria-label': '变更前后预览' },
+      h('div', { class: 'engine-preview-column is-before' }, h('strong', {}, '确认前 · 当前模型'), h('p', {}, beforeText)),
+      h('div', { class: 'engine-preview-arrow', 'aria-hidden': 'true' }, '→'),
+      h('div', { class: 'engine-preview-column is-after' }, h('strong', {}, '确认后 · 建议投影'), afterPreviewText),
+      h('p', { class: 'engine-preview-note' }, '此处为预览。确认前不会写入事实或关系；决定后以追加事件更新投影。'))
     const status = h('span', { class: 'engine-review-status', role: 'status' })
     const confirm = runButton('确认并追加', async () => {
       confirm.disabled = true; reject.disabled = true
@@ -96,7 +132,7 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
         if (response?.ok === false) throw new Error(response.error || '写入失败')
         result.reviewDecision = 'accepted'
         status.textContent = '已确认 · 事件已追加'
-        card.classList.add('is-done'); onDone?.()
+        card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'accepted' })
       } catch (cause) { toast(`未能确认：${cause?.message || cause}`, 'var(--red)'); confirm.disabled = false; reject.disabled = false }
     })
     const reject = h('button', { type: 'button', class: 'btn btn-sm' }, '驳回建议')
@@ -105,12 +141,12 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
       try {
         const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'rejected', {})
         if (response?.ok === false) throw new Error(response.error || '驳回失败')
-        result.reviewDecision = 'rejected'; status.textContent = '已驳回'; card.classList.add('is-done'); onDone?.()
+        result.reviewDecision = 'rejected'; status.textContent = '已驳回'; card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'rejected' })
       } catch (cause) { toast(`未能驳回：${cause?.message || cause}`, 'var(--red)'); confirm.disabled = false; reject.disabled = false }
     })
     const card = h('li', { class: 'engine-attr' },
       h('div', { class: 'engine-attr-main' },
-        h('span', { class: `engine-rel is-${suggestion.rel || attribution.rel || 'related'}` }, isNew ? '新观点建议' : (relLabel[suggestion.rel || attribution.rel] || '归因建议')),
+        kindLabel,
         h('span', { class: 'engine-attr-prop' }, isNew ? (suggestion.title || result.suggestedTitle || '待命名观点') : (suggestion.propositionTitle || result.proposition?.title || '待选择观点')),
         status),
       h('div', { class: 'engine-attr-reason' }, suggestion.reason || attribution.reason || ''),
@@ -118,7 +154,7 @@ export function renderEnginePipeline(item, { themeId, onDone } = {}) {
         Number.isFinite(suggestion.effectiveStrength) && ['supports', 'contradicts'].includes(suggestion.rel)
           ? h('span', { class: 'engine-attr-strength' }, `置信度更新强度 ${(suggestion.effectiveStrength * 100).toFixed(0)}%`) : null,
         Number.isFinite(suggestion.matchScore) ? h('span', {}, `匹配 ${(suggestion.matchScore * 100).toFixed(0)}%`) : null),
-      quote, warning,
+      quote, warning, preview,
       isNew ? h('label', { class: 'engine-review-field' }, '建议新观点', titleInput) : h('label', { class: 'engine-review-field' }, '关系类型', relation),
       h('div', { class: 'engine-review-controls' },
         h('label', { class: 'engine-review-field' }, '方向', direction),

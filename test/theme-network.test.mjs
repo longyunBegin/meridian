@@ -1,5 +1,5 @@
 import {
-  NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
+  NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, REVISION_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
   networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle,
   buildDensityTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
 } from '../src/renderer/lib/theme-network.js'
@@ -13,8 +13,9 @@ function check(name, condition, detail = '') {
 
 check('节点类型白名单严格为概念、对象、事件、观点、证据', NETWORK_NODE_TYPES.join(',') === 'concept,object,event,viewpoint,evidence'
   && Object.keys(NODE_TYPE_META).sort().join(',') === [...NETWORK_NODE_TYPES].sort().join(','))
-check('八类关系按论证与主题关联清楚分组', ARGUMENT_RELATIONS.length === 3 && ASSOCIATION_RELATIONS.length === 5
+check('九类关系区分有向论证、版本修订与弱主题关联', ARGUMENT_RELATIONS.length === 3 && REVISION_RELATIONS.length === 1 && ASSOCIATION_RELATIONS.length === 5
   && ARGUMENT_RELATIONS.every((rel) => RELATION_META[rel].group === 'argument')
+  && REVISION_RELATIONS.every((rel) => RELATION_META[rel].group === 'revision')
   && ASSOCIATION_RELATIONS.every((rel) => RELATION_META[rel].group === 'association'))
 check('旧 claim/inference 投影均兼容为观点而不是旧节点类型', networkNodeType({ kind: 'claim' }) === 'viewpoint'
   && networkNodeType({ kind: 'inference' }) === 'viewpoint'
@@ -60,7 +61,7 @@ const edges = Array.from({ length: 185 }, (_, index) => ({
   id: `r-${index}`,
   from: nodes[index % nodes.length].id,
   to: nodes[(index * 17 + 5) % nodes.length].id,
-  rel: [...ARGUMENT_RELATIONS, ...ASSOCIATION_RELATIONS][index % 8],
+  rel: [...ARGUMENT_RELATIONS, ...REVISION_RELATIONS, ...ASSOCIATION_RELATIONS][index % 9],
   pendingReview: index % 11 === 0,
 }))
 const first = layoutThemeNetwork(nodes, edges, 1120)

@@ -28,6 +28,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
 const ledgerPageByTheme = new Map()
 let chainSectionCounter = 0
 const SEARCH_RESULTS_PAGE_SIZE = 30
+const builderStateByTheme = new Map()
+const builderInboxStateByTheme = new Map()
 
 /** 节点语义色（对齐概念图）。 */
 const KIND = {
@@ -548,6 +550,20 @@ async function loadConcept(theme, ledgerPane, opts) {
   const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
+  const writeBlocked = proj.integrity?.ok === false
+  if (opts.addNodeBtn) {
+    opts.addNodeBtn.disabled = writeBlocked
+    opts.addNodeBtn.title = writeBlocked ? '事件账本校验异常，不能追加节点' : ''
+    opts.addNodeBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'node', opts)
+  }
+  if (opts.addEvidenceBtn) {
+    const canAttachEvidence = projectedNodes(viewState.projection).some((node) => !node.archived && !node.invalidated
+      && !node.external && networkNodeType(node) !== 'evidence')
+    opts.addEvidenceBtn.disabled = writeBlocked || !canAttachEvidence
+    opts.addEvidenceBtn.title = writeBlocked ? '事件账本校验异常，不能追加证据'
+      : canAttachEvidence ? '' : '请先添加一个非证据节点，再补充证据'
+    opts.addEvidenceBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'evidence', opts)
+  }
   updateThemeStats(opts.themeStats, proj, events)
   let ledgerController = null
   const sectionEl = ledgerPane.closest('.chain-section')
@@ -647,8 +663,9 @@ async function loadConcept(theme, ledgerPane, opts) {
   }
 
   /* ============ Builder：1:1 对齐 demo（侧边栏 + 信号流/节点视图/待处理） ============ */
-  let builderMode = 'stream'  // stream | node | inbox
-  let selectedNodeId = null
+  const savedBuilderState = builderStateByTheme.get(theme.id) || {}
+  let builderMode = savedBuilderState.mode || 'stream'  // stream | node | inbox
+  let selectedNodeId = savedBuilderState.nodeId || null
   /* 判决状态：signalId -> 'accepted' | 'rejected' | 'edited' */
   const verdictState = new Map()
   /* 编辑器草稿：signalId -> { nodeId, direction, nature, themeTag } */
@@ -713,6 +730,7 @@ async function loadConcept(theme, ledgerPane, opts) {
   }
 
   const renderMain = () => {
+    builderStateByTheme.set(theme.id, { mode: builderMode, nodeId: selectedNodeId })
     clear(opts.mainStage)
     if (builderMode === 'node' && selectedNodeId) {
       opts.mainStage.append(renderNodeView(selectedNodeId))
@@ -1017,7 +1035,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     const title = node.title || node.id
     const evolutions = buildNodeEvolution(nodeId)
     const latestEvo = evolutions[evolutions.length - 1]
-    const overallDir = latestEvo?.direction || 'stable'
+    const overallDir = latestEvo?.direction || 'undetermined'
     return h('div', { style: 'display:contents' },
       h('div', { class: 'back-bar' },
         h('button', {
@@ -1029,17 +1047,19 @@ async function loadConcept(theme, ledgerPane, opts) {
           h('span', { class: 'node-title-dot', style: `background:${dirColor(overallDir)}` }),
           h('h1', { class: 'node-title' }, title),
           h('span', { class: 'node-trend', style: `margin-left:auto;color:${dirColor(overallDir)}` },
-            `${natIcon(latestEvo?.nature || 'quantitative')} ${latestEvo?.themeTag || DIRECTION_META[overallDir].label}`)),
+            latestEvo?.directionExplicit
+              ? `${dirIcon(overallDir)} ${DIRECTION_META[overallDir].label} · ${latestEvo.themeTag || ''}`
+              : `· ${latestEvo?.themeTag || '方向未评估'}`)),
         h('div', { class: 'node-current' }, node.currentText || node.title || ''),
         h('div', { class: 'node-stats' },
-          h('span', { class: 'item' }, h('b', {}, String(evolutions.length)), ' 次状态变化'),
+          h('span', { class: 'item' }, h('b', {}, String(evolutions.length)), ' 条相关事件'),
           h('span', { class: 'item' }, `${verifiedEvents.length} 条数据`),
           h('span', { class: 'item' }, '最近更新 ', h('b', {}, evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—')))),
       h('div', { class: 'scroll' },
         h('div', { class: 'scroll-inner' },
           h('div', { class: 'evolution-title' },
-            h('span', {}, '状态演化时间线'),
-            h('span', { class: 'n' }, `从早到晚 · ${evolutions.length} 个状态点`)),
+            h('span', {}, '证据与关系事件'),
+            h('span', { class: 'n' }, `按时间排列 · ${evolutions.length} 条记录`)),
           h('div', { class: 'evolution' },
             ...evolutions.map((evo, i) => {
               const isLatest = i === evolutions.length - 1
@@ -1072,12 +1092,16 @@ async function loadConcept(theme, ledgerPane, opts) {
       evolutions.push({
         at: event?.at || event?.timestamp,
         direction: change.direction || (type === 'confidence.updated'
-          ? ((payload.after ?? 0) > (payload.before ?? 0) ? 'improving' : 'declining')
-          : 'stable'),
+          ? ((payload.newConfidence ?? payload.after ?? 0) > (payload.oldConfidence ?? payload.before ?? 0) ? 'improving'
+            : (payload.newConfidence ?? payload.after ?? 0) < (payload.oldConfidence ?? payload.before ?? 0) ? 'declining' : 'stable')
+          : 'undetermined'),
+        directionExplicit: ['improving', 'declining', 'stable'].includes(change.direction)
+          || (type === 'confidence.updated' && Number.isFinite(Number(payload.newConfidence ?? payload.after))
+            && Number.isFinite(Number(payload.oldConfidence ?? payload.before))),
         nature: change.nature || (type === 'relation.declared' ? 'structural'
           : type === 'evidence.appended' ? 'quantitative' : 'quantitative'),
         themeTag: change.themeTag || payload.themeTag || (type === 'confidence.updated' ? '置信度变化'
-          : type === 'evidence.appended' ? '证据更新' : '关系变化'),
+          : type === 'evidence.appended' ? '证据追加' : '关系事件'),
         text: payload.title || payload.text?.slice(0, 80) || type,
         source: payload.sourceLabel || payload.url || '',
       })
@@ -1085,16 +1109,120 @@ async function loadConcept(theme, ledgerPane, opts) {
     return evolutions.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
   }
 
-  /* 待处理归因：1:1 对齐 demo renderInbox + renderAttr */
+  /* External intake → extraction → mapping → explicit review. Nothing enters
+     the theme projection until a recommendation is explicitly accepted. */
   const renderInboxView = () => {
-    const wrap = h('div', { style: 'display:contents' })
+    const savedQueue = builderInboxStateByTheme.get(theme.id) || {}
+    let queueMode = savedQueue.mode === 'processed' ? 'processed' : 'pending'
+    let selectedEntryId = savedQueue.entryId || null
+    const wrap = h('div', { class: 'builder-intake' })
     const head = h('div', { class: 'inbox-head' },
-      h('div', { class: 'inbox-title' }, h('span', {}, '待处理归因')),
-      h('div', { class: 'inbox-sub' }, '系统从新闻中抽取陈述，建议归入方向。确认后证据进入信号流。'))
-    const scroll = h('div', { class: 'inbox-scroll' },
-      h('div', { class: 'inbox-inner' }, h('p', { class: 'chain-note' }, '正在加载…')))
-    wrap.append(head, scroll)
-    /* 异步加载收件箱 */
+      h('div', { class: 'inbox-title' }, h('span', {}, '外部来源 · 抽取与映射')),
+      h('div', { class: 'inbox-sub' }, '先检查来源与抽取结果，再生成当前主题的映射建议。确认或驳回均追加决定事件；未确认前不改主题事实。'))
+    const flow = h('div', { class: 'builder-flow-steps', 'aria-label': '建设者处理阶段' },
+      ...['① 来源已摄入', '② 抽取原子陈述', '③ 映射到主题', '④ 变更前后预览', '⑤ 确认或驳回', '⑥ 事件追加与投影更新']
+        .map((step, index) => h('span', { class: `builder-flow-step${index === 0 ? ' is-ready' : ''}` }, step)))
+    const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待处理')
+    const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
+    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 新增节点')
+    addNode.addEventListener('click', () => {
+      if (opts.addNodeBtn?.disabled) { toast('当前账本暂不可追加节点', 'var(--text-2)'); return }
+      opts.addNodeBtn?.click()
+    })
+    const queueList = h('div', { class: 'builder-queue-list', role: 'listbox', 'aria-label': '待处理来源与建议', tabindex: '0' },
+      h('p', { class: 'chain-note' }, '正在加载…'))
+    const queue = h('aside', { class: 'builder-intake-queue', 'aria-label': '来源与建议队列' },
+      h('div', { class: 'builder-queue-head' },
+        h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab), addNode),
+      queueList)
+    const detail = h('section', { class: 'builder-intake-review', 'aria-label': '来源与建议审核详情' },
+      h('p', { class: 'chain-note' }, '选择一条来源或建议，查看其证据、映射目标与变更预览。'))
+    const body = h('div', { class: 'builder-intake-body' }, queue, detail)
+    wrap.append(head, flow, body)
+    let currentItems = []
+    const persistQueueState = () => builderInboxStateByTheme.set(theme.id, { mode: queueMode, entryId: selectedEntryId })
+    const resolvedReviews = () => new Map(verifiedEvents
+      .filter((event) => event.type === 'signal.reviewed')
+      .map((event) => [event.payload?.signalEventId, event.payload]))
+    const buildEntries = (items) => {
+      const reviews = resolvedReviews()
+      const entries = []
+      for (const item of items) {
+        const results = item.enginePipeline?.results || []
+        if (results.length) {
+          results.forEach((result, index) => {
+            const proposalId = result.proposalEventId || `${item.id}:${index}`
+            entries.push({
+              id: `proposal:${proposalId}`, kind: 'proposal', item, result,
+              decision: result.reviewDecision || reviews.get(proposalId)?.decision || null,
+            })
+          })
+        } else {
+          entries.push({ id: `source:${item.id}`, kind: 'source', item, result: null, decision: null })
+        }
+      }
+      return entries
+    }
+    const entryTitle = (entry) => {
+      const item = entry.item
+      const sourceTitle = item.title || item.label?.title || item.provenance?.sourceLabel || item.provenance?.url || `来源 ${item.id}`
+      if (entry.kind !== 'proposal') return sourceTitle
+      const recommendation = entry.result.recommendation || {}
+      if (entry.result.kind === 'new-proposition' || recommendation.kind === 'new-proposition') {
+        return recommendation.title || entry.result.suggestedTitle || sourceTitle
+      }
+      const target = recommendation.propositionTitle || entry.result.proposition?.title || sourceTitle
+      return recommendation.rel === 'supersedes' ? `修订 · ${target}` : `${recommendation.rel || '建议'} · ${target}`
+    }
+    const renderQueue = () => {
+      const entries = buildEntries(currentItems)
+      const visible = entries.filter((entry) => queueMode === 'processed' ? Boolean(entry.decision) : !entry.decision)
+      pendingTab.setAttribute('aria-pressed', String(queueMode === 'pending'))
+      processedTab.setAttribute('aria-pressed', String(queueMode === 'processed'))
+      pendingTab.classList.toggle('is-active', queueMode === 'pending')
+      processedTab.classList.toggle('is-active', queueMode === 'processed')
+      pendingTab.textContent = `待处理 · ${entries.filter((entry) => !entry.decision).length}`
+      processedTab.textContent = `已处理 · ${entries.filter((entry) => Boolean(entry.decision)).length}`
+      clear(queueList)
+      if (!visible.length) {
+        queueList.append(h('p', { class: 'builder-queue-empty' }, queueMode === 'processed'
+          ? '这里会保留已确认或已驳回的建议。' : currentItems.length ? '当前没有待处理来源或建议。' : '收件箱中暂无来源。'))
+        selectedEntryId = null
+        persistQueueState()
+        renderSelected(null)
+        return
+      }
+      let selected = visible.find((entry) => entry.id === selectedEntryId) || visible[0]
+      selectedEntryId = selected.id
+      persistQueueState()
+      for (const entry of visible) {
+        const item = entry.item
+        const label = entry.kind === 'proposal'
+          ? entry.result.recommendation?.rel === 'supersedes' ? '修订建议'
+            : entry.result.kind === 'new-proposition' ? '新节点' : '论证建议'
+          : item.enginePipeline?.status === 'done' ? '抽取完成' : item.extracted ? '待映射' : '来源信号'
+        const status = entry.decision === 'rejected' ? '已驳回' : entry.decision ? '已确认' : '待审核'
+        const button = h('button', {
+          type: 'button', class: `builder-queue-item${entry.id === selected.id ? ' is-selected' : ''}`,
+          role: 'option', 'aria-selected': String(entry.id === selected.id), 'data-entry-id': entry.id,
+          onclick: () => { selectedEntryId = entry.id; persistQueueState(); renderQueue() },
+        },
+        h('span', { class: 'builder-queue-item-top' }, h('span', { class: 'builder-queue-kind' }, label),
+          h('span', { class: `builder-queue-status${entry.decision ? ' is-done' : ''}` }, status)),
+        h('strong', { class: 'builder-queue-item-title' }, entryTitle(entry)),
+        h('span', { class: 'builder-queue-item-source' }, item.provenance?.sourceLabel || item.provenance?.platform || item.source || '来源未标注'))
+        queueList.append(button)
+      }
+      renderSelected(selected)
+    }
+    const setQueueMode = (mode) => {
+      queueMode = mode
+      selectedEntryId = null
+      persistQueueState()
+      renderQueue()
+    }
+    pendingTab.addEventListener('click', () => setQueueMode('pending'))
+    processedTab.addEventListener('click', () => setQueueMode('processed'))
     const loadInbox = async () => {
       let items = []
       try {
@@ -1103,67 +1231,103 @@ async function loadConcept(theme, ledgerPane, opts) {
           items = Array.isArray(r) ? r : (r?.items || [])
         }
       } catch { /* 忽略 */ }
-      const inner = scroll.querySelector('.inbox-inner')
-      if (!inner) return
-      clear(inner)
-      if (!items.length) {
-        inner.append(h('div', { class: 'empty' },
-          h('div', { class: 'empty-mark' }, '✓'),
-          '暂无待处理归因', h('br', {}), '已全部确认'))
-        return
-      }
+      currentItems = items
       const titleEl = head.querySelector('.inbox-title')
       if (titleEl && items.length) titleEl.append(h('span', { class: 'live' }))
-      for (const item of items.slice(0, 50)) {
-        inner.append(renderAttr(item))
+      renderQueue()
+    }
+    const renderSelected = (entry) => {
+      clear(detail)
+      if (!entry) {
+        detail.append(h('div', { class: 'builder-review-empty' },
+          h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),
+          h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择待处理项目'),
+          h('p', {}, '确认前保持主题投影不变；每一项决定都保留为可回放事件。')))
+        return
       }
+      detail.append(renderIntakeItem(entry.item, entry))
+    }
+    const renderIntakeItem = (item, entry) => {
+      const provenance = item.provenance || {}
+      const mapped = (item.extractedThemeId || item.themeId) === theme.id
+      const extracted = item.extracted === true
+      const pipelineReady = item.enginePipeline?.status === 'done'
+      const decisionCount = (item.enginePipeline?.results || []).filter((result) => result.reviewDecision).length
+      const title = item.title || item.label?.title || provenance.sourceLabel || provenance.url || `来源 ${item.id}`
+      const card = h('article', { class: 'builder-intake-card', 'data-inbox-id': item.id || '' },
+        h('header', { class: 'builder-intake-card-head' },
+          h('div', {}, h('p', { class: 'builder-intake-kicker' }, `来源已摄入 · ${provenance.platform || item.label?.kind || '未标注来源'}`),
+            h('h2', {}, entry?.kind === 'proposal' ? entryTitle(entry) : title)),
+          h('span', { class: `builder-intake-state${pipelineReady ? ' is-ready' : ''}` }, entry?.decision === 'rejected' ? '建议已驳回'
+            : entry?.decision ? '建议已确认' : pipelineReady ? `建议已生成 · ${decisionCount}/${item.enginePipeline.results?.length || 0} 已决定` : extracted ? '待映射与审核' : '待抽取')),
+        h('dl', { class: 'builder-source-meta' },
+          h('div', {}, h('dt', {}, '来源时间'), h('dd', {}, provenance.publishedAt || provenance.sourceDate || '未记录')),
+          h('div', {}, h('dt', {}, '系统摄入'), h('dd', {}, item.createdAt || item.capturedAt || '未记录')),
+          provenance.fetchedAt ? h('div', {}, h('dt', {}, '抓取时间'), h('dd', {}, provenance.fetchedAt)) : null,
+          provenance.url ? h('div', {}, h('dt', {}, '来源链接'), h('dd', {}, provenance.url)) : null),
+        h('details', { class: 'builder-source-body' },
+          h('summary', {}, '查看已摄入原文'),
+          h('p', {}, String(item.text || '收件箱条目未保存原文。'))))
+      if (item.lemmas?.length) {
+        const extraction = h('section', { class: 'builder-extraction-preview' },
+          h('strong', {}, `抽取候选 · ${item.lemmas.length} 条（尚非事实）`),
+          h('ul', {}, ...item.lemmas.map((lemma) => h('li', {},
+            h('span', { class: 'builder-candidate-type' }, lemma.type || '陈述'),
+            h('span', {}, lemma.title || lemma.value || '未命名陈述'),
+            lemma.timeWindow ? h('span', { class: 'builder-candidate-time' }, `适用时间 · ${lemma.timeWindow}`) : h('span', { class: 'builder-candidate-time is-unknown' }, '适用时间未注明')))))
+        card.append(extraction)
+      }
+      const actions = h('div', { class: 'builder-intake-actions' })
+      if (!extracted) {
+        const extractButton = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '抽取原子陈述')
+        extractButton.addEventListener('click', async () => {
+          extractButton.disabled = true
+          try {
+            const result = await m.inboxExtract?.([item.id], theme.id)
+            if (result?.ok === false) throw new Error(result.error || '抽取未完成')
+            toast('抽取已运行；检查候选后再生成映射建议')
+            await loadInbox()
+          } catch (error) { toast(`抽取失败：${error?.message || error}`, 'var(--red)'); extractButton.disabled = false }
+        })
+        actions.append(extractButton)
+      } else if (!mapped) {
+        const mapButton = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, `映射到「${theme.name || '当前主题'}」`)
+        mapButton.addEventListener('click', async () => {
+          mapButton.disabled = true
+          try {
+            const result = await m.inboxSetTheme?.(item.id, theme.id)
+            if (result?.ok === false) throw new Error(result.error || '映射未完成')
+            toast('已更新收件箱条目的主题映射；尚未写入主题事实')
+            await loadInbox()
+          } catch (error) { toast(`映射失败：${error?.message || error}`, 'var(--red)'); mapButton.disabled = false }
+        })
+        actions.append(mapButton)
+      } else {
+        actions.append(h('span', { class: 'builder-mapped-label' }, `已映射到当前主题 · ${theme.name || ''}`))
+        const engineHost = h('div', { class: 'builder-engine-host' })
+        const reviewItem = entry?.kind === 'proposal'
+          ? { ...item, enginePipeline: { ...item.enginePipeline, results: [entry.result] } }
+          : item
+        engineHost.append(renderEnginePipeline(reviewItem, {
+          themeId: theme.id,
+          projection: viewState.projection,
+          onDone: (change) => {
+            if (change?.kind === 'decision') {
+              queueMode = 'processed'
+              selectedEntryId = `proposal:${change.result?.proposalEventId}`
+            }
+            persistQueueState()
+            opts.onChanged?.()
+          },
+        }))
+        card.append(actions, engineHost)
+        return card
+      }
+      card.append(actions)
+      return card
     }
     loadInbox()
     return wrap
-  }
-
-  /* 归因卡片：对齐 demo renderAttr */
-  const renderAttr = (a) => {
-    const kind = a.kind || a.rel || 'supports'
-    const isS = kind === 'supports'
-    const nodes = projectedNodes(viewState.projection)
-    const targetNode = nodes.find((n) => n.id === (a.target || a.targetId || a.nodeId))
-    const strength = Number(a.strength ?? a.confidence ?? 0.5)
-    return h('div', { class: 'attr', 'data-attr': a.id || '' },
-      h('div', { class: 'attr-top' },
-        h('span', { class: `attr-kind ${isS ? 'supports' : 'contradicts'}` }, isS ? '支持' : '反驳'),
-        targetNode ? h('span', { style: 'font-size:10.5px;color:var(--text-3);' }, `→ ${targetNode.title || targetNode.id}`) : null,
-        h('span', { class: 'spacer' }),
-        h('span', { class: 'strength' },
-          `强度 ${strength.toFixed(2)}`,
-          h('span', { class: 'bar' }, h('i', { style: `width:${Math.round(strength * 100)}%` })))),
-      h('div', { class: 'attr-target' }, a.targetText || a.text || a.title || '未命名陈述'),
-      h('div', { class: 'attr-source' },
-        h('span', { class: 'label' }, '来源'),
-        ` ${a.source || a.sourceLabel || '未知'} · ${a.detail || ''}`),
-      h('div', { class: 'attr-actions' },
-        h('button', {
-          type: 'button', class: 'attr-btn confirm',
-          'data-attr-action': 'confirm', 'data-attr-id': a.id || '',
-          onclick: async () => {
-            try {
-              if (m.inboxResolve && a.id) await m.inboxResolve(a.id, 'confirm')
-              toast('已确认 · 证据进入信号流')
-            } catch (e) { toast('确认失败：' + (e?.message || e), 'var(--red)') }
-            renderMain(); renderSidebar()
-          },
-        }, '确认'),
-        h('button', {
-          type: 'button', class: 'attr-btn reject',
-          'data-attr-action': 'reject', 'data-attr-id': a.id || '',
-          onclick: async () => {
-            try {
-              if (m.inboxResolve && a.id) await m.inboxResolve(a.id, 'reject')
-              toast('已驳回')
-            } catch (e) { toast('驳回失败：' + (e?.message || e), 'var(--red)') }
-            renderMain(); renderSidebar()
-          },
-        }, '驳回')))
   }
 
 
@@ -2048,6 +2212,8 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
   const bodyInput = h('textarea', { class: 'txt cog-entry-textarea', rows: '3', placeholder: isEvidence ? '记录可核对的数字、观察或原文摘录' : '说明（可选）；说明不会自动成为证据。', 'aria-label': isEvidence ? '证据摘要或原文摘录' : '节点说明' })
   const sourceInput = h('input', { class: 'txt', type: 'text', placeholder: '来源名称（可选）', 'aria-label': '来源名称' })
   const urlInput = h('input', { class: 'txt', type: 'url', placeholder: 'https://…（可选）', 'aria-label': '来源链接' })
+  const publishedInput = h('input', { class: 'txt', type: 'text', maxlength: '100', placeholder: '来源发布时间或日期（可选）', 'aria-label': '来源发布时间' })
+  const applicabilityInput = h('input', { class: 'txt', type: 'text', maxlength: '160', placeholder: '如 2026Q2、截至某日（可选）', 'aria-label': '适用时间' })
   const targetSelect = h('select', { class: 'txt', 'aria-label': '要关联到的非证据节点' },
     ...choices.map((node) => h('option', { value: node.id }, `${NODE_TYPE_META[networkNodeType(node)].label} · ${node.title}`)))
   const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
@@ -2075,8 +2241,13 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
     error.hidden = true
     try {
       const result = isEvidence
-        ? await m.chainAddEvidence(theme.id, targetSelect.value, { text, sourceLabel: sourceInput.value.trim(), url: urlInput.value.trim() })
-        : await m.chainCreateNode(theme.id, { nodeType: typeSelect.value, title, detail: text, status: 'pending' })
+        ? await m.chainAddEvidence(theme.id, targetSelect.value, {
+          text, sourceLabel: sourceInput.value.trim(), url: urlInput.value.trim(),
+          sourcePublishedAt: publishedInput.value.trim(), applicability: applicabilityInput.value.trim(),
+        })
+        : await m.chainCreateNode(theme.id, {
+          nodeType: typeSelect.value, title, detail: text, status: 'pending', applicability: applicabilityInput.value.trim(),
+        })
       if (result?.ok === false) throw new Error(result.error || '保存未完成')
       toast(isEvidence ? '已追加证据与明确声明的支持关系' : `已追加${NODE_TYPE_META[typeSelect.value].label}节点`)
       close()
@@ -2095,8 +2266,12 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
     h('label', { class: 'cog-entry-field' }, h('span', {}, isEvidence ? '证据摘要或原文摘录' : '说明（可选）'), bodyInput),
     isEvidence ? h('div', { class: 'cog-entry-field' },
       h('label', { class: 'cog-entry-field' }, h('span', {}, '来源名称（可选）'), sourceInput),
-      h('label', { class: 'cog-entry-field' }, h('span', {}, '来源链接（可选）'), urlInput))
-      : h('p', { class: 'cog-entry-note' }, '只记录你明确输入的节点；说明不会自动转成证据、事实或关系。'),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '来源链接（可选）'), urlInput),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '来源发布时间（可选）'), publishedInput),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '适用时间（可选）'), applicabilityInput))
+      : h('div', {},
+        h('label', { class: 'cog-entry-field' }, h('span', {}, '适用时间（可选）'), applicabilityInput),
+        h('p', { class: 'cog-entry-note' }, '只记录你明确输入的节点；说明不会自动转成证据、事实或关系。适用时间不是系统摄入时间。')),
     error,
     h('div', { class: 'cog-entry-actions' },
       h('button', { type: 'button', class: 'btn', onclick: close }, '取消'),
@@ -2365,12 +2540,16 @@ function renderEvidenceComposer(theme, node, opts) {
   const text = h('textarea', { class: 'txt cog-entry-textarea', rows: '3', required: true, placeholder: '记录可核对的数字、观察或原文摘录', 'aria-label': '证据摘要或原文摘录' })
   const source = h('input', { class: 'txt', placeholder: '来源名称（可选）', 'aria-label': '来源名称' })
   const url = h('input', { class: 'txt', type: 'url', placeholder: 'https://…（可选）', 'aria-label': '来源链接' })
+  const publishedAt = h('input', { class: 'txt', type: 'text', maxlength: '100', placeholder: '来源发布时间（可选）', 'aria-label': '来源发布时间' })
+  const applicability = h('input', { class: 'txt', type: 'text', maxlength: '160', placeholder: '如 2026Q2（可选）', 'aria-label': '证据适用时间' })
   const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
   const form = h('form', { class: 'cog-entry-form' },
     h('p', { class: 'cog-entry-note' }, '这会追加一条证据记录，并由你明确声明它支持此节点；来源真实性不会被自动验证。'),
     h('label', { class: 'cog-entry-field' }, h('span', {}, '证据摘要或原文摘录'), text),
     h('label', { class: 'cog-entry-field' }, h('span', {}, '来源名称（可选）'), source),
     h('label', { class: 'cog-entry-field' }, h('span', {}, '来源链接（可选）'), url),
+    h('label', { class: 'cog-entry-field' }, h('span', {}, '来源发布时间（可选）'), publishedAt),
+    h('label', { class: 'cog-entry-field' }, h('span', {}, '适用时间（可选）'), applicability),
     error,
     h('button', { type: 'submit', class: 'btn btn-primary' }, '追加证据'))
   form.addEventListener('submit', async (event) => {
@@ -2379,7 +2558,10 @@ function renderEvidenceComposer(theme, node, opts) {
     const button = form.querySelector('button[type="submit"]')
     button.disabled = true
     try {
-      const result = await m.chainAddEvidence(theme.id, node.id, { text: text.value.trim(), sourceLabel: source.value.trim(), url: url.value.trim() })
+      const result = await m.chainAddEvidence(theme.id, node.id, {
+        text: text.value.trim(), sourceLabel: source.value.trim(), url: url.value.trim(),
+        sourcePublishedAt: publishedAt.value.trim(), applicability: applicability.value.trim(),
+      })
       if (result?.ok === false) throw new Error(result.error || '保存未完成')
       toast('已追加证据与支持关系')
       closeNodeDetail(); opts.onChanged?.()
@@ -2419,6 +2601,67 @@ function renderNodeLifecycleControls(theme, node, opts) {
       submit.disabled = false
     }
   })
+  let correctionDisclosure = null
+  if (node.nodeType === 'viewpoint') {
+    correctionDisclosure = h('details', { class: 'cog-action-disclosure cog-node-correction' },
+      h('summary', {}, '修订观点说明（追加更正）'))
+    const revisedText = h('textarea', {
+      class: 'txt cog-entry-textarea', rows: '4', required: true, maxlength: '10000',
+      'aria-label': '修订后的观点说明',
+    })
+    revisedText.value = String(node.currentText || node.detail || '')
+    const applicability = h('input', {
+      class: 'txt', type: 'text', maxlength: '160', value: node.applicability || '',
+      placeholder: '适用时间（可选）', 'aria-label': '修订后的适用时间',
+    })
+    const reason = h('textarea', {
+      class: 'txt cog-entry-textarea', rows: '2', required: true, maxlength: '1000',
+      placeholder: '说明为何需要修订', 'aria-label': '观点修订原因',
+    })
+    const correctionAfter = h('p', {}, '')
+    const correctionPreview = h('section', { class: 'engine-before-after', 'aria-label': '观点修订变更前后预览' },
+      h('div', { class: 'engine-preview-column is-before' }, h('strong', {}, '当前版本'), h('p', {}, String(node.currentText || node.detail || node.title || '未记录'))),
+      h('div', { class: 'engine-preview-arrow', 'aria-hidden': 'true' }, '→'),
+      h('div', { class: 'engine-preview-column is-after' }, h('strong', {}, '确认后'), correctionAfter),
+      h('p', { class: 'engine-preview-note' }, '预览不会写入；提交后以更正事件追加新版本，旧版本仍可回放。'))
+    const updateCorrectionPreview = () => {
+      correctionAfter.textContent = `${revisedText.value.trim() || '（待填写修订内容）'}${applicability.value.trim() ? ` · 适用时间：${applicability.value.trim()}` : ' · 适用时间未注明'}`
+    }
+    revisedText.addEventListener('input', updateCorrectionPreview)
+    applicability.addEventListener('input', updateCorrectionPreview)
+    updateCorrectionPreview()
+    const correctionError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+    const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const correctionForm = h('form', { class: 'cog-entry-form' },
+      h('p', { class: 'cog-entry-note' }, '修订会沿当前版本追加 correction.appended；旧文本与适用时间历史仍可回放。'),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '修订后的观点说明'), revisedText),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '适用时间（可选）'), applicability),
+      h('label', { class: 'cog-entry-field' }, h('span', {}, '修订原因（必填）'), reason),
+      correctionPreview,
+      correctionError,
+      h('button', { type: 'submit', class: 'btn btn-primary' }, '预览并追加修订'))
+    correctionForm.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      if (!revisedText.value.trim() || !reason.value.trim()) {
+        correctionError.hidden = false; correctionError.textContent = '请填写修订后的说明和修订原因。'; return
+      }
+      const submit = correctionForm.querySelector('button[type="submit"]')
+      submit.disabled = true; correctionError.hidden = true
+      try {
+        const result = await m.chainCorrectNode(theme.id, node.id, {
+          newValue: revisedText.value.trim(), reason: reason.value.trim(),
+          applicability: applicability.value.trim(), requestId,
+        })
+        if (result?.ok === false) throw new Error(result.error || '修订未完成')
+        toast(result?.event?.replayed ? '该修订已写入；重试已安全复用原事件' : '已追加更正事件；旧版本保留在历史中')
+        closeNodeDetail()
+        opts.onChanged?.()
+      } catch (error) {
+        correctionError.hidden = false; correctionError.textContent = error.message || String(error); submit.disabled = false
+      }
+    })
+    correctionDisclosure.append(correctionForm)
+  }
   const invalidationReason = h('textarea', { class: 'txt cog-entry-textarea', rows: '2', required: true, maxlength: '1000', placeholder: '说明为何该节点不再有效', 'aria-label': '失效原因' })
   const invalidateError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
   const invalidateForm = h('form', { class: 'cog-entry-form' },
@@ -2443,7 +2686,7 @@ function renderNodeLifecycleControls(theme, node, opts) {
       submit.disabled = false
     }
   })
-  disclosure.append(renameForm, invalidateForm)
+  disclosure.append(...[correctionDisclosure, renameForm, invalidateForm].filter(Boolean))
   return h('section', { class: 'chain-dsect cog-action-section' }, disclosure)
 }
 

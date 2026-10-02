@@ -159,6 +159,19 @@ ok('未知类型拒绝', threw)
 threw = false
 try { ev.appendEvent(theme2.id, { type: 'correction.appended', supersedes: 'evt:missing', payload: {} }) } catch { threw = true }
 ok('supersedes 悬空拒绝', threw)
+const revisionTheme = store.addTheme('孤立修订关系校验主题')
+const revisionEvidence = ev.appendEvent(revisionTheme.id, { id: 'revision-evidence', type: 'evidence.appended', payload: { text: '合成修订证据' } })
+const revisionTarget = ev.appendEvent(revisionTheme.id, { id: 'revision-target', type: 'node.created', payload: {
+  nodeType: 'viewpoint', title: '合成待修订观点', sourceRef: 'synthetic:revision-target',
+} })
+let orphanRevisionRejected = false
+try {
+  ev.appendEvent(revisionTheme.id, { type: 'relation.declared', payload: {
+    rel: 'supersedes', from: { eventId: revisionEvidence.id }, to: { eventId: revisionTarget.id },
+  } })
+} catch { orphanRevisionRejected = true }
+ok('版本修订关系必须与同一证据/目标谱系的更正事件配对', orphanRevisionRejected
+  && ev.verifyChain(revisionTheme.id).ok && ev.getEvents(revisionTheme.id).length === 2)
 const e1 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 const e2 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 ok('显式 id 幂等', e2.replayed === true && ev.getEvents(theme2.id).length === 1 && e1.hash === e2.hash)

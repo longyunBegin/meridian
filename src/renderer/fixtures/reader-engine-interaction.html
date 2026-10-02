@@ -51,6 +51,14 @@
     }
     const results = []
     const wait = () => new Promise((resolve) => setTimeout(resolve, 0))
+    const waitFor = async (predicate, timeout = 3000) => {
+      const deadline = Date.now() + timeout
+      while (Date.now() < deadline) {
+        if (predicate()) return true
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      return false
+    }
     const node = (id, title, confidence) => ({
       id, nodeType: 'viewpoint', kind: 'claim', title, detail: '', currentText: title, confidence,
       status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [],
@@ -62,6 +70,8 @@
       const { renderReaderView } = await import('../views/reader.js')
       const item = {
         id: 'synthetic-inbox',
+        createdAt: '2026-09-21T10:00:00.000Z',
+        provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://example.test/synthetic-source', publishedAt: '2026-09-18', fetchedAt: '2026-09-21T09:55:00.000Z' },
         enginePipeline: {
           status: 'done',
           statements: [
@@ -140,15 +150,50 @@
       check('pipeline 返回后正式 renderer 显示对应建议审阅卡', generateHost.querySelectorAll('.engine-attr').length === 3)
 
       let openedNode = null
-      const historyProjection = { nodes: [node('vp-product', '产品判断', 100), node('vp-driver', '驱动判断', 48)], edges: [] }
-      const currentProjection = { nodes: [node('vp-product', '产品判断', 73.65), node('vp-driver', '驱动判断', 48)], edges: [] }
-      const historyEvents = []
-      const currentEvents = [{ id: 'fixture-confidence', seq: 2, at: new Date().toISOString(), type: 'confidence.updated', payload: {
-        nodeId: 'vp-product', oldConfidence: 100, newConfidence: 73.65, strength: 0.527,
-        change: { direction: 'declining', nature: 'epistemic', themeTag: '复核标签' }, reason: '用户确认的合成证据',
-      } }]
+      const product = {
+        ...node('vp-product', '产品判断', 100), detail: '原始说明（历史字段）', currentText: '更新后的产品判断。',
+        eventIds: ['node-product-created', 'correction-product'], provenanceEventIds: ['node-product-created'],
+        applicability: '2026Q2',
+      }
+      const driver = node('vp-driver', '供应链驱动', 48)
+      const evidence = {
+        id: 'ev-evidence', nodeType: 'evidence', kind: 'evidence', title: '隔离来源摘录', currentText: '仅供渲染测试的合成证据摘录。',
+        detail: '', status: 'pending', createdSeq: 1, sourceKind: 'engine-reviewed', sourceRef: 'synthetic-source',
+        eventIds: ['ev-evidence'], provenanceEventIds: ['ev-evidence'],
+      }
+      const support = { id: 'ev-support', eventId: 'ev-support', seq: 2, rel: 'supports', relationGroup: 'argument', from: evidence.id, to: product.id, pendingReview: false, reviewDecision: null }
+      const association = { id: 'ev-association', eventId: 'ev-association', seq: 3, rel: 'influences', relationGroup: 'association', from: driver.id, to: product.id, pendingReview: false, reviewDecision: null }
+      const revision = { id: 'ev-revision', eventId: 'ev-revision', seq: 5, rel: 'supersedes', relationGroup: 'revision', from: evidence.id, to: product.id, pendingReview: false, reviewDecision: null }
+      const historyProjection = {
+        nodes: [product, evidence], allNodes: [product, evidence], edges: [support], allEdges: [support], eventCount: 1,
+        integrity: { ok: true, lastValidSeq: 1 },
+      }
+      const currentProjection = {
+        nodes: [product, evidence, driver], allNodes: [product, evidence, driver], edges: [support, association, revision], allEdges: [support, association, revision], eventCount: 5,
+        integrity: { ok: true, lastValidSeq: 5 },
+      }
+      const currentEvents = [
+        { id: 'ev-evidence', seq: 1, at: '2026-09-20T12:00:00.000Z', type: 'evidence.appended', payload: {
+          text: '仅供渲染测试的合成证据摘录。', sourceLabel: '隔离合成来源', sourceUrl: 'https://example.test/synthetic-source',
+          sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-21T09:55:00.000Z', ingestedAt: '2026-09-21T10:00:00.000Z',
+          applicability: '2026Q2', scores: { matchScore: 0.84, attributionStrength: 0.62, effectiveStrength: 0.527 },
+        } },
+        { id: 'ev-support', seq: 2, at: '2026-09-21T12:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: evidence.id }, to: { eventId: product.id } } },
+        { id: 'ev-association', seq: 3, at: '2026-09-22T12:00:00.000Z', type: 'relation.declared', payload: { rel: 'influences', from: { eventId: driver.id }, to: { eventId: product.id } } },
+        { id: 'correction-product', seq: 4, at: '2026-09-23T08:00:00.000Z', type: 'correction.appended', supersedes: 'node-product-created', payload: {
+          oldValue: '原始说明（历史字段）', newValue: '更新后的产品判断。', text: '修订所依据的合成来源摘录。',
+          sourceKind: 'engine-reviewed', sourceLabel: '隔离修订来源', sourceUrl: 'https://example.test/revision-source',
+          sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-22T09:00:00.000Z', ingestedAt: '2026-09-21T10:00:00.000Z',
+          applicability: '2026Q2', scores: { matchScore: 0.82, attributionStrength: 0.6 },
+        } },
+        { id: 'ev-revision', seq: 5, at: '2026-09-23T08:01:00.000Z', type: 'relation.declared', payload: {
+          rel: 'supersedes', from: { eventId: evidence.id }, to: { eventId: product.id },
+        } },
+      ]
+      const historyEvents = currentEvents.slice(0, 1)
       const renderReader = (projection, events) => renderReaderView({ name: '隔离合成主题' }, {
         loadProjection: async () => projection, loadEvents: async () => events,
+        loadProjectionAt: async (sequence) => sequence <= 1 ? historyProjection : currentProjection,
         onOpenBuilder: (kind, id) => { openedNode = `${kind}:${id}` },
       })
       const historicRoot = renderReader(historyProjection, historyEvents)
@@ -157,15 +202,56 @@
       currentRoot.setAttribute('data-snapshot', 'current')
       document.querySelector('#fixture-root').append(historicRoot, currentRoot)
       await wait()
-      const historyFill = historicRoot.querySelector('.conf-bar-fill')
-      const currentFill = currentRoot.querySelector('.conf-bar-fill')
-      check('读者视图按 0–100 单位渲染历史与当前置信度差异', historyFill?.style.width === '100%'
-        && currentFill?.style.width === '74%' && historicRoot.querySelector('.conf-bar-label')?.textContent.includes('100%')
-        && currentRoot.querySelector('.conf-bar-label')?.textContent.includes('74%'))
-      check('读者视图遵循 demo 的主题 hero、三模块与节点时间线布局', currentRoot.querySelector('.hero-title')?.textContent === '隔离合成主题'
-        && currentRoot.querySelectorAll('.card-head').length === 3 && currentRoot.querySelector('.next-card'))
-      check('最新置信度变化进入最近拐点，节点卡可进入建设者详情', currentRoot.querySelector('.turning-list')?.textContent.includes('置信度')
-        && currentRoot.querySelector('.node-card') && (currentRoot.querySelector('.node-card').click(), openedNode === 'builder:vp-product'))
+      check('读者视图以无中心根的主题网络为主结构，并明确拒绝由支持数推导整体走向', currentRoot.querySelector('.rdr-map-panel')
+        && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('支持关系数量不等于主题整体向好'))
+      check('有方向论证、版本修订与弱主题关联采用三种视觉分层', currentRoot.querySelector('.cog-edge-supports.is-argument')
+        && currentRoot.querySelector('.cog-edge-influences.is-association')
+        && currentRoot.querySelector('.cog-edge-supersedes.is-revision[data-group="revision"]')?.getAttribute('marker-end')?.includes('supersedes'))
+
+      const productNode = currentRoot.querySelector('.cog-node[data-node-id="vp-product"]')
+      productNode.focus(); productNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await wait()
+      check('键盘选择节点后检视器展示其关联证据与完整时间溯源', currentRoot.querySelector('.rdr-inspector-title')?.textContent === '产品判断'
+        && currentRoot.querySelector('.rdr-evidence-card')?.textContent.includes('来源发布时间')
+        && currentRoot.querySelector('.rdr-evidence-card')?.textContent.includes('适用时间'))
+      const sourceCard = currentRoot.querySelector('.rdr-evidence-card')
+      check('来源发布时间、适用时间、抓取/摄入/事件追加时间与模型评分分别显示', sourceCard?.textContent.includes('2026-09-18')
+        && sourceCard.textContent.includes('2026Q2') && sourceCard.textContent.includes('2026-09-21')
+        && sourceCard.textContent.includes('匹配分数') && sourceCard.textContent.includes('归因强度'))
+      const correctionSection = [...currentRoot.querySelectorAll('.rdr-inspector-section')]
+        .find((section) => section.querySelector('h3')?.textContent.includes('节点自身的来源'))
+      check('观点修订后读者可从当前版本回到该次 correction 的原文、适用时间和来源时间',
+        currentRoot.querySelector('.rdr-inspector-summary')?.textContent === '更新后的产品判断。'
+        && correctionSection?.textContent.includes('修订所依据的合成来源摘录')
+        && correctionSection.textContent.includes('隔离修订来源')
+        && correctionSection.textContent.includes('2026-09-23'))
+
+      const search = currentRoot.querySelector('.rdr-search')
+      search.value = '供应链'; search.dispatchEvent(new Event('input', { bubbles: true }))
+      const searchResult = currentRoot.querySelector('.rdr-search-result')
+      check('全量搜索可定位画布未聚焦的主题节点', searchResult?.dataset.nodeId === 'vp-driver')
+      searchResult.click(); await wait()
+      ;[...currentRoot.querySelectorAll('.rdr-node-identity button')].find((button) => button.textContent.includes('在建设者视图定位'))?.click()
+      check('读者可用相同节点 ID 在建设者中定位', openedNode === 'network:vp-driver')
+
+      const slider = currentRoot.querySelector('.rdr-time-slider')
+      slider.value = '0'; slider.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait()
+      const compare = currentRoot.querySelector('.rdr-compare-button')
+      compare.click(); await wait()
+      check('时间线可按事件序号只读回放并与当前投影对比', compare.getAttribute('aria-pressed') === 'true'
+        && currentRoot.querySelector('.rdr-history-caption')?.textContent.includes('第 1 条'))
+      const play = currentRoot.querySelector('.rdr-play-button')
+      const beforePlaybackCaption = currentRoot.querySelector('.rdr-history-caption')?.textContent
+      play.click()
+      const playbackAdvanced = await waitFor(() => currentRoot.querySelector('.rdr-history-caption')?.textContent !== beforePlaybackCaption, 1800)
+      const playbackState = JSON.stringify({ disabled: play.disabled, pressed: play.getAttribute('aria-pressed'), before: beforePlaybackCaption, after: currentRoot.querySelector('.rdr-history-caption')?.textContent })
+      check('播放按校验事件时点推进历史投影', playbackAdvanced, playbackAdvanced ? '' : playbackState)
+      if (play.getAttribute('aria-pressed') === 'true') play.click()
+      check('暂停可中止自动回放且恢复播放标签', play.getAttribute('aria-pressed') === 'false' && play.textContent === '播放')
+      currentRoot.querySelector('.rdr-live-button').click(); await wait()
+      check('返回当前状态可恢复活动主题投影', currentRoot.querySelector('.rdr-live-button').hidden
+        && currentRoot.querySelector('.rdr-inspector-title')?.textContent === '供应链驱动')
 
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'

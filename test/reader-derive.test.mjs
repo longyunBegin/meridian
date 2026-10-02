@@ -42,9 +42,19 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
   const nodes = [vp('v1', '观点 A'), vp('v2', '反向观点 B')]
   const edges = [edge('e1', 'v2', 'v1', 'contradicts')]
   const model = deriveReaderModel({ nodes, edges }, [], { now })
-  check('只统计存活关系，反驳使对应命题承压', model.nodesByDirection.declining.some((node) => node.id === 'v1'))
+  check('反驳关系保留为关系，不自动推断节点趋势', model.nodesByDirection.undetermined.some((node) => node.id === 'v1'))
+  check('没有人工综合解释时不生成主题整体方向结论', model.oneLiner == null)
   const rejected = deriveReaderModel({ nodes, edges: [edge('rejected', 'v2', 'v1', 'contradicts', { reviewDecision: 'rejected' })] }, [], { now })
-  check('已驳回关系不影响读者方向', rejected.nodesByDirection.declining.length === 0)
+  check('已驳回关系不推导节点方向', rejected.nodesByDirection.undetermined.some((node) => node.id === 'v1'))
+}
+{
+  const nodes = [vp('v1', '观点 A'), vp('v2', '观点 B'), vp('v3', '观点 C')]
+  const edges = [
+    edge('s1', 'e1', 'v1', 'supports'), edge('s2', 'e2', 'v1', 'supports'),
+    edge('s3', 'e3', 'v2', 'supports'), edge('c1', 'e4', 'v3', 'contradicts'),
+  ]
+  const model = deriveReaderModel({ nodes, edges }, [], { now })
+  check('支持边占多数也不宣称主题整体向好', model.oneLiner == null && model.directionCounts.improving === 0)
 }
 {
   const events = [ev('old-confidence', 'confidence.updated', { nodeId: 'v1', oldConfidence: 30, newConfidence: 80 }, '2026-08-01T12:00:00.000Z')]

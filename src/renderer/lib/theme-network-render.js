@@ -1,9 +1,10 @@
 import {
-  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType, networkNodeStatus, splitNetworkTitle,
+  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus, splitNetworkTitle,
 } from './theme-network.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const ARGUMENT_TYPES = new Set(['supports', 'derives', 'contradicts'])
+const REVISION_TYPES = new Set(REVISION_RELATIONS)
 const MAX_VISIBLE_EDGES = 72
 
 function svgEl(name, attributes = {}) {
@@ -129,7 +130,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
   })
   svg.style.opacity = '0'
   const defs = svgEl('defs')
-  for (const rel of ['supports', 'derives', 'contradicts']) {
+  for (const rel of ['supports', 'derives', 'contradicts', 'supersedes']) {
     const meta = RELATION_META[rel]
     const marker = svgEl('marker', {
       id: `cog-network-arrow-${rel}`, viewBox: '0 0 10 10', refX: '8.5', refY: '5',
@@ -158,37 +159,39 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const toSize = layout.size.get(edge.to)
     if (!from || !to || !fromSize || !toSize) continue
     const argument = ARGUMENT_TYPES.has(edge.rel)
+    const revision = REVISION_TYPES.has(edge.rel) || edge.relationGroup === 'revision'
+    const directional = argument || revision
     const rel = RELATION_META[edge.rel] || { label: edge.rel || '关系', color: '#8e8e93', group: 'association' }
     const pending = Boolean(edge.pendingReview)
     const rejected = edge.reviewDecision === 'rejected'
     const confirmed = edge.reviewDecision === 'confirmed'
     const future = Boolean(edge._future)
     const color = pending ? '#8e8e93' : rejected ? '#ff8d78' : rel.color
-    const geometry = edgeGeometry(from, to, fromSize, toSize, argument)
+    const geometry = edgeGeometry(from, to, fromSize, toSize, directional)
     const path = svgEl('path', {
       d: geometry.d,
-      class: `cog-edge cog-edge-${edge.rel || 'related'} ${argument ? 'is-argument' : 'is-association'}${pending ? ' is-review' : ''}${rejected ? ' is-rejected' : ''}${confirmed ? ' is-confirmed' : ''}${future ? ' is-future' : ''}`,
+      class: `cog-edge cog-edge-${edge.rel || 'related'} ${argument ? 'is-argument' : revision ? 'is-revision' : 'is-association'}${pending ? ' is-review' : ''}${rejected ? ' is-rejected' : ''}${confirmed ? ' is-confirmed' : ''}${future ? ' is-future' : ''}`,
       'data-from': edge.from, 'data-to': edge.to, 'data-rel': edge.rel || 'related',
-      'data-group': argument ? 'argument' : 'association',
+      'data-group': argument ? 'argument' : revision ? 'revision' : 'association',
       stroke: color,
-      'stroke-width': argument ? (pending ? 2.5 : 2.8) : 1.1,
-      'stroke-opacity': argument ? (future ? 0.38 : 0.9) : (future ? 0.15 : 0.43),
-      'stroke-dasharray': pending || rejected || future ? (argument ? '6 4' : '3 5') : 'none',
-      'marker-end': argument ? `url(#cog-network-arrow-${pending || rejected ? 'review' : edge.rel})` : 'none',
+      'stroke-width': argument ? (pending ? 2.5 : 2.8) : revision ? 2 : 1.1,
+      'stroke-opacity': directional ? (future ? 0.38 : 0.9) : (future ? 0.15 : 0.43),
+      'stroke-dasharray': pending || rejected || future ? (directional ? '6 4' : '3 5') : revision ? '7 3' : argument ? 'none' : '3 5',
+      'marker-end': directional ? `url(#cog-network-arrow-${pending || rejected ? 'review' : edge.rel})` : 'none',
       role: 'img',
       'aria-label': `${rel.label}关系：${projection.allNodes?.find((node) => node.id === edge.from)?.title || edge.from} 指向 ${projection.allNodes?.find((node) => node.id === edge.to)?.title || edge.to}${pending ? '，待用户复核' : rejected ? '，已驳回但原声明保留' : ''}${future ? '，后续新增' : ''}`,
     })
     const title = svgEl('title')
-    title.textContent = `${argument ? '论证关系' : '主题关联'} · ${rel.label}${pending ? ' · 待复核' : confirmed ? ' · 已确认' : rejected ? ' · 已驳回' : ''}${future ? ' · 所选时点之后新增' : ''}`
+    title.textContent = `${argument ? '有向论证' : revision ? '版本修订关系' : '弱主题关联'} · ${rel.label}${pending ? ' · 待复核' : confirmed ? ' · 已确认' : rejected ? ' · 已驳回' : ''}${future ? ' · 所选时点之后新增' : ''}`
     path.append(title)
     edgeLayer.append(path)
-    if (argument) {
+    if (directional) {
       const label = svgEl('g', {
         class: 'cog-edge-label', 'data-rel': edge.rel || '',
         'data-review-status': pending ? 'pending' : rejected ? 'rejected' : confirmed ? 'confirmed' : 'none',
         transform: `translate(${geometry.x.toFixed(1)} ${geometry.y.toFixed(1)})`,
       })
-      const labelText = `${pending ? '待复核 · ' : rejected ? '已驳回 · ' : ''}${rel.label}`
+      const labelText = `${pending ? '待复核 · ' : rejected ? '已驳回 · ' : ''}${revision ? '修订 · ' : ''}${rel.label}`
       const boxWidth = Math.max(44, labelText.length * 11 + 16)
       label.append(svgEl('rect', { x: -boxWidth / 2, y: -10, width: boxWidth, height: 20, rx: 10, fill: '#171d27', stroke: color, 'stroke-opacity': 0.75 }))
       label.append(svgText(labelText, { x: 0, y: 0, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-edge-label-text', fill: color }))

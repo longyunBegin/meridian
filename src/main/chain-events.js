@@ -42,6 +42,7 @@ export const NODE_TYPES = ['concept', 'object', 'event', 'viewpoint', 'evidence'
 export const REL_TYPES = [
   'supports', 'derives', 'contradicts',
   'belongs-to', 'influences', 'depends-on', 'temporal', 'related',
+  'supersedes', // Directed version relation; valid only alongside an appended correction event.
 ]
 
 function legacyNodeType(node) {
@@ -242,6 +243,19 @@ function verifyEvents(events, themeId) {
     }
     if (e.type === 'relation.declared') {
       if (!REL_TYPES.includes(p.rel) || !isObj(p.from) || !isObj(p.to)) return { ok: false, index: i, lastValidSeq: i, reason: '关系类型或端点非法' }
+      if (p.rel === 'supersedes') {
+        const correction = [...ids.values()].find((prior) => prior.type === 'correction.appended'
+          && prior.payload?.evidenceEventId === p.from.eventId)
+        let root = correction?.supersedes || null
+        const visited = new Set()
+        while (root && ids.get(root)?.type === 'correction.appended' && !visited.has(root)) {
+          visited.add(root)
+          root = ids.get(root).supersedes
+        }
+        if (!correction || root !== p.to.eventId) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '版本修订关系必须与同一证据和目标观点的更正事件配对' }
+        }
+      }
       if (p.reviewStatus != null && !['pending-review', 'confirmed', 'rejected'].includes(p.reviewStatus)) return { ok: false, index: i, lastValidSeq: i, reason: '关系复核状态非法' }
       for (const endpoint of [p.from, p.to]) {
         if (endpoint.eventId && !ids.has(endpoint.eventId)) return { ok: false, index: i, lastValidSeq: i, reason: '关系引用了尚不存在的事件' }

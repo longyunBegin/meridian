@@ -1,4 +1,3 @@
-import { linearize } from './chain-linearizer.js'
 import { networkNodeType } from './theme-network.js'
 import { truncateGraphemes } from './theme-network.js'
 
@@ -161,9 +160,14 @@ export function deriveReaderModel(projection = {}, events = [], { now = Date.now
     let direction = 'undetermined'
     if (change) {
       direction = change.net > 5 ? 'improving' : change.net < -5 ? 'declining' : 'stable'
-    } else if (stat.supports > 0 && stat.contradicts === 0) direction = 'improving'
-    else if (stat.contradicts > 0 && stat.supports === 0) direction = 'declining'
-    else if (stat.supports > 0 && stat.contradicts > 0) direction = 'undetermined'
+    } else {
+      const explicitDirection = eventList
+        .filter((event) => eventNodeId(event) === node.id)
+        .sort((a, b) => eventAt(b) - eventAt(a))
+        .map((event) => event?.payload?.change?.direction)
+        .find((value) => ['improving', 'declining', 'stable'].includes(value))
+      if (explicitDirection) direction = explicitDirection
+    }
 
     const latestEvent = stat.latestEv || change?.latest || null
     const latestPayload = latestEvent?.payload || {}
@@ -203,9 +207,7 @@ export function deriveReaderModel(projection = {}, events = [], { now = Date.now
       let eventDirection = payload.change?.direction
       if (!DIRECTION_META[eventDirection]) {
         if (event.type === 'confidence.updated') eventDirection = before == null || after == null || before === after ? 'stable' : after > before ? 'improving' : 'declining'
-        else if (payload.rel === 'contradicts') eventDirection = 'declining'
-        else if (event.type === 'evidence.appended' || payload.rel === 'supports') eventDirection = 'improving'
-        else eventDirection = 'stable'
+        else eventDirection = 'undetermined'
       }
       const text = payload.title || payload.text || (event.type === 'confidence.updated' && before != null && after != null
         ? `置信度 ${Math.round(before)}% → ${Math.round(after)}%` : titleOf(node))
@@ -244,26 +246,9 @@ export function deriveReaderModel(projection = {}, events = [], { now = Date.now
   turningCandidates.sort((a, b) => b.timestamp - a.timestamp)
   model.turningPoints = turningCandidates.slice(0, 5)
 
-  const totalDirections = model.directionCounts.improving + model.directionCounts.declining + model.directionCounts.stable
-  if (totalDirections) {
-    const { improving, declining, stable } = model.directionCounts
-    const tags = [...new Set(['improving', 'declining', 'stable']
-      .flatMap((direction) => model.nodesByDirection[direction].slice(0, 2).map((node) => node.themeTag))
-      .filter(Boolean))].slice(0, 3)
-    let conclusion
-    if (improving > declining && improving > stable) conclusion = `整体向好，${improving} 个方向好转`
-    else if (declining > improving && declining > stable) conclusion = `面临压力，${declining} 个方向承压`
-    else if (stable >= improving && stable >= declining) conclusion = `总体稳定，${stable} 个方向持稳`
-    else conclusion = `多空交织，好转 ${improving}、承压 ${declining}、稳定 ${stable}`
-    if (tags.length) conclusion += `，聚焦${tags.join('、')}`
-    model.oneLiner = { conclusion: `${conclusion}。` }
-  } else {
-    try {
-      const result = linearize(projection)
-      const mainChain = (result.chains || []).find((chain) => chain.kind === 'main')
-      if (mainChain?.steps?.length >= 2) model.oneLiner = { conclusion: titleOf(mainChain.steps.at(-1).nodes[0]) }
-    } catch { /* Sparse or legacy projections may not form a chain. */ }
-  }
+  /* A theme-wide conclusion must be an explicit, evidence-linked synthesis;
+     relationship counts or graph shape are not a substitute for one. */
+  model.oneLiner = null
   if (!model.oneLiner && viewpoints.length === 0) model.status = '暂无观点节点'
   else if (!model.oneLiner && model.directionCounts.undetermined === viewpoints.length) model.status = '方向待观察'
   return model

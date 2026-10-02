@@ -39,7 +39,7 @@ import { estimateStrength } from './engine-confidence.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
-  createProjectedNode, renameProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
+  createProjectedNode, renameProjectedNode, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -628,6 +628,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
   commands.register('chain:createNode', (themeId, payload) => ({ ok: true, event: createProjectedNode(themeId, payload) }))
   commands.register('chain:renameNode', (themeId, nodeId, title, reason) => ({ ok: true, event: renameProjectedNode(themeId, nodeId, title, reason) }))
+  commands.register('chain:correctNode', (themeId, nodeId, input) => ({ ok: true, event: correctProjectedNode(themeId, nodeId, input) }))
   commands.register('chain:invalidateNode', (themeId, nodeId, reason) => ({ ok: true, event: invalidateProjectedNode(themeId, nodeId, reason) }))
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
@@ -793,6 +794,9 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         recommendation, metaMultiplier,
         sourceLabel: String(item.provenance?.sourceLabel || item.provenance?.platform || item.source || '').trim(),
         sourceUrl,
+        sourcePublishedAt: item.provenance?.publishedAt || item.provenance?.sourcePublishedAt || item.provenance?.sourceDate || null,
+        sourceFetchedAt: item.provenance?.fetchedAt || null,
+        ingestedAt: item.createdAt || item.capturedAt || null,
         } })
       }
     }
