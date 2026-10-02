@@ -351,6 +351,12 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), St
 }
 
 fn main() {
+    // E2E 调试：输出内嵌 WebDriver 插件的日志（仅 --features webdriver 构建）
+    #[cfg(feature = "webdriver")]
+    let _tracing = tracing_subscriber::fmt()
+        .with_env_filter("tauri_plugin_wdio_webdriver=debug,info")
+        .try_init()
+        .ok();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())

@@ -20,9 +20,11 @@ uuid = { version = "1", features = ["v4"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+# E2E 调试用：输出内嵌 WebDriver 插件的 tracing 日志（仅 webdriver feature）
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 # E2E 测试专用：cargo build --features webdriver 时在应用内嵌入 W3C WebDriver 服务；
 # 默认构建（及所有 release 构建）绝不包含
-webdriver = ["tauri-plugin-wdio-webdriver"]
+webdriver = ["tauri-plugin-wdio-webdriver", "dep:tracing-subscriber"]
