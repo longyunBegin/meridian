@@ -351,6 +351,7 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), St
 }
 
 fn main() {
+    eprintln!("[e2e-diag] main() start, webdriver feature: {}", cfg!(feature = "webdriver"));
     // E2E 调试：输出内嵌 WebDriver 插件的日志（仅 --features webdriver 构建）
     #[cfg(feature = "webdriver")]
     let _tracing = tracing_subscriber::fmt()
