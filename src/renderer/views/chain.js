@@ -769,12 +769,23 @@ async function loadConcept(theme, ledgerPane, opts) {
         })))
   }
 
-  /* 流头：标题 + 三层统计（对齐 demo renderStreamHead） */
+  /* 流头：标题 + 信号类型统计（对齐 demo renderStreamHead：新增/证实/证伪/重复） */
   const renderStreamHead = (signals) => {
+    /* 信号类型：new=新增, confirm=证实, contradict=证伪, duplicate=重复 */
+    const typeOf = (s) => {
+      const t = s.type || s.payload?.type || 'new'
+      if (t === 'evidence.appended') return 'new'
+      if (t === 'relation.declared') {
+        const rel = s.payload?.rel || 'supports'
+        return rel === 'contradicts' ? 'contradict' : 'confirm'
+      }
+      return t
+    }
     const counts = {
-      improving: signals.filter((s) => s.direction === 'improving').length,
-      declining: signals.filter((s) => s.direction === 'declining').length,
-      stable: signals.filter((s) => s.direction === 'stable').length,
+      new: signals.filter((s) => typeOf(s) === 'new').length,
+      confirm: signals.filter((s) => typeOf(s) === 'confirm').length,
+      contradict: signals.filter((s) => typeOf(s) === 'contradict').length,
+      duplicate: signals.filter((s) => typeOf(s) === 'duplicate').length,
     }
     return h('div', { class: 'stream-head' },
       h('div', {},
@@ -782,14 +793,17 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('div', { class: 'stream-sub' }, '按时间倒序 · 系统已自动分类，你的判决会同步到方向演化')),
       h('div', { class: 'stream-stats' },
         h('span', { class: 's' },
+          h('span', { class: 'd', style: 'background:var(--accent)' }),
+          h('b', {}, String(counts.new)), ' 新增'),
+        h('span', { class: 's' },
           h('span', { class: 'd', style: 'background:var(--green)' }),
-          h('b', {}, String(counts.improving)), ' 好转'),
+          h('b', {}, String(counts.confirm)), ' 证实'),
         h('span', { class: 's' },
           h('span', { class: 'd', style: 'background:var(--red)' }),
-          h('b', {}, String(counts.declining)), ' 恶化'),
+          h('b', {}, String(counts.contradict)), ' 证伪'),
         h('span', { class: 's' },
           h('span', { class: 'd', style: 'background:var(--text-3)' }),
-          h('b', {}, String(counts.stable)), ' 稳定')))
+          h('b', {}, String(counts.duplicate)), ' 重复')))
   }
 
   /* 判决：调用后端 chain:confirmSignal */
@@ -826,6 +840,18 @@ async function loadConcept(theme, ledgerPane, opts) {
     doVerdict(sig, 'corrected', {
       direction: draft.direction, nature: draft.nature, themeTag: String(draft.themeTag).trim(),
     })
+  }
+
+  /* 信号类型标签：对齐 demo TYPE_LABEL */
+  const signalTypeLabel = (sig) => {
+    const t = sig.type || sig.payload?.type || 'new'
+    if (t === 'evidence.appended') return '新增'
+    if (t === 'relation.declared') {
+      const rel = sig.payload?.rel || 'supports'
+      return rel === 'contradicts' ? '证伪' : '证实'
+    }
+    const map = { new: '新增', confirm: '证实', contradict: '证伪', duplicate: '重复', update: '更新' }
+    return map[t] || '新增'
   }
 
   /* 信号卡片：1:1 对齐 demo renderSignal */
@@ -1143,7 +1169,14 @@ async function loadConcept(theme, ledgerPane, opts) {
   /* 渲染入口 */
   renderSidebar()
   renderMain()
-  consumeBuilderJump(theme.id)
+  /* 处理从读者视图跳转过来的节点聚焦请求 */
+  const jump = consumeBuilderJump(theme.id)
+  if (jump?.nodeId) {
+    selectedNodeId = jump.nodeId
+    builderMode = 'node'
+    renderMain()
+    renderSidebar()
+  }
 
 }
 

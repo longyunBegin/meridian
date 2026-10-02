@@ -375,7 +375,7 @@ function renderSkeletonMap(projection, go) {
     if (!bits.length) bits.push('待补充论证')
     meta.textContent = bits.join(' · ')
     g.append(meta)
-    const activate = () => go('network', item.node.id)
+    const activate = () => go('builder', item.node.id)
     g.addEventListener('click', activate)
     g.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
@@ -454,7 +454,7 @@ export function renderReaderView(theme, opts = {}) {
     return h('div', {
       class: 'node-card',
       'data-node': node.id,
-      onclick: () => go('network', node.id),
+      onclick: () => go('builder', node.id),
     },
       h('div', { class: 'node-top' },
         h('span', { class: 'node-dot', style: `background:${dirColor(node.direction)}` }),
@@ -576,7 +576,7 @@ export function renderReaderView(theme, opts = {}) {
             return h('div', {
               class: 'node-quick',
               'data-goto-node': node.id,
-              onclick: () => go('network', node.id),
+              onclick: () => go('builder', node.id),
             },
               h('div', { class: 'node-quick-top' },
                 h('span', { class: 'node-dot', style: `background:${dirColor(node.direction)}` }),
@@ -622,7 +622,7 @@ function renderEmpty(theme, go) {
     h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题'),
     h('p', { class: 'rdr-empty-text' }, '这个主题还在建设中，还没有任何记录。'),
     h('p', { class: 'rdr-empty-sub' }, '主题是一步一步建起来的：先记下第一条观察或证据，网络会随之生长。'),
-    h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '去建设者视图开始记录'))
+    h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('builder') }, '去建设者视图开始记录'))
 }
 
 /** 按成熟度涌现卡片：有数据才渲染。返回元素数组。 */
@@ -636,7 +636,7 @@ function buildCards(model, projection, go, fullMode) {
     cards.push(h('section', { class: 'rdr-card' },
       h('p', { class: 'rdr-card-kicker' }, '关键驱动'),
       h('ul', { class: 'rdr-drivers' }, ...model.drivers.map((d) => h('li', {},
-        h('button', { type: 'button', class: 'rdr-driver', onclick: () => go('network', d.id) },
+        h('button', { type: 'button', class: 'rdr-driver', onclick: () => go('builder', d.id) },
           h('span', { class: 'rdr-driver-name' }, d.title),
           h('span', { class: 'rdr-driver-bar', 'aria-hidden': 'true' },
             h('span', { style: `width:${Math.round((d.refs / max) * 100)}%` })),
@@ -649,7 +649,7 @@ function buildCards(model, projection, go, fullMode) {
     cards.push(h('section', { class: 'rdr-card' },
       h('p', { class: 'rdr-card-kicker' }, '关键演变'),
       h('ul', { class: 'rdr-timeline' }, ...model.evolutions.slice(0, 4).map((v) => h('li', {},
-        h('button', { type: 'button', class: 'rdr-evo', onclick: () => go('network', v.id) },
+        h('button', { type: 'button', class: 'rdr-evo', onclick: () => go('builder', v.id) },
           v.from ? h('span', { class: 'rdr-evo-from' }, short(v.from, 40)) : null,
           v.from ? h('span', { class: 'rdr-evo-arrow', 'aria-hidden': 'true' }, '→') : null,
           h('span', { class: 'rdr-evo-to' }, short(v.to, 40)),
@@ -661,9 +661,9 @@ function buildCards(model, projection, go, fullMode) {
     cards.push(h('section', { class: 'rdr-card' },
       h('p', { class: 'rdr-card-kicker' }, '边界条件'),
       h('ul', { class: 'rdr-list' }, ...model.boundaries.slice(0, 5).map((b) => h('li', {},
-        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('network', b.fromId) }, short(b.from, 36)),
+        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('builder', b.fromId) }, short(b.from, 36)),
         h('span', { class: 'rdr-muted' }, ' 依赖 '),
-        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('network', b.toId) }, short(b.to, 36))))),
+        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('builder', b.toId) }, short(b.to, 36))))),
       viewBtn('network', model.boundaries[0].fromId)))
   }
 
@@ -671,9 +671,9 @@ function buildCards(model, projection, go, fullMode) {
     cards.push(h('section', { class: 'rdr-card is-dispute' },
       h('p', { class: 'rdr-card-kicker' }, '争议焦点'),
       h('ul', { class: 'rdr-list' }, ...model.disputes.slice(0, 5).map((d) => h('li', {},
-        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('network', d.fromId) }, short(d.from, 36)),
+        h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('builder', d.fromId) }, short(d.from, 36)),
         d.to ? h('span', { class: 'rdr-muted' }, ' 反驳 ') : null,
-        d.to ? h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('network', d.toId) }, short(d.to, 36)) : null,
+        d.to ? h('button', { type: 'button', class: 'rdr-inline-link', onclick: () => go('builder', d.toId) }, short(d.to, 36)) : null,
         d.pending ? h('span', { class: 'rdr-flag' }, '待复核') : null,
         d.nodeDisputed ? h('span', { class: 'rdr-flag' }, '有争议') : null))),
       fullMode ? evidenceList(evidenceFor(projection, model.disputes.map((d) => d.fromId).filter(Boolean))) : null,
