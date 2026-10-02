@@ -22,3 +22,7 @@ tauri-plugin-process = "2"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(debug_assertions)'.dependencies]
+# E2E 测试专用（debug only）：在应用内嵌入 W3C WebDriver 服务，供自动化测试驱动；release 构建不包含
+tauri-plugin-wdio-webdriver = "1"

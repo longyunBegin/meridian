@@ -15,3 +15,6 @@ service/backups/
 service/ops/*.log
 service/sync-bridge.config.json
 src/main/sync.config.json
+
+# E2E 测试产物
+test/e2e/shots/

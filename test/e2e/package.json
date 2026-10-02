@@ -1,0 +1,1 @@
+{"dependencies":{"webdriverio":"^9.0.0"},"description":"Meridian E2E 测试驱动（应用内嵌 WebDriver）。纯测试工程，不随产品发布。","name":"meridian-e2e","private":true,"scripts":{"smoke":"node run.mjs specs/smoke.mjs"},"type":"module","version":"0.0.0"}
