@@ -227,7 +227,12 @@ fn launch_sidecar(app: &tauri::AppHandle) -> Result<(Child, BackendEndpoint), St
     if !script.exists() {
         return Err(format!("missing sidecar entry: {}", script.display()));
     }
-    let data_dir = application_data_directory()?;
+    // dev 时允许用 MERIDIAN_DATA_DIR 覆盖数据目录（与真实账本隔离）
+    let data_dir = std::env::var_os("MERIDIAN_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            application_data_directory().expect("could not resolve application data directory")
+        });
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create data directory: {e}"))?;
     let token = Uuid::new_v4().to_string();
     let mut child = Command::new(&node)
