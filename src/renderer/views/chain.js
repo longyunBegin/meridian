@@ -66,7 +66,7 @@ const TYPE_LABEL = {
   'node.renamed': '节点改名',
   'node.invalidated': '节点失效',
   'evidence.appended': '证据追加',
-  'claim.created': '主张创建',
+  'claim.created': '命题创建',
   'inference.created': '推断创建',
   'relation.declared': '关系声明',
   'correction.appended': '更正',
@@ -187,10 +187,22 @@ function updateThemeStats(stats, projection, events) {
 /* ------------------------------------------------------------------ */
 /* 建设者工作台                                                          */
 /* 左：命题列表（有什么） · 中：网络 + 命题详情 · 右：待处理（怎么办）     */
-/* 数据进入 → 选中目标命题 → 选佐证 / 反驳 → 只追加事件（公理1）。         */
+/* 数据进入 → 选中目标命题 → 选支持 / 反驳 → 只追加事件（公理1）。         */
 /* ------------------------------------------------------------------ */
 
-const PROP_STATUS_LABEL = { pending: '待核验', verified: '已核验', disputed: '有争议' }
+export const PROP_STATUS_LABEL = { pending: '待确认', verified: '已确认', disputed: '有争议' }
+
+/* 置信度条：所有视图通用。只读展示，不修改（公理1）。 */
+export function confidenceBar(confidence, { showLabel = true } = {}) {
+  const value = confidence == null || !Number.isFinite(Number(confidence)) ? null : Math.round(Number(confidence))
+  if (value == null) {
+    return h('span', { class: 'conf-bar is-empty' }, showLabel ? h('span', { class: 'conf-bar-label' }, '未评估') : null)
+  }
+  const level = value >= 70 ? 'high' : value >= 40 ? 'mid' : 'low'
+  return h('span', { class: `conf-bar is-${level}`, role: 'img', 'aria-label': `置信度 ${value}%` },
+    h('span', { class: 'conf-bar-track' }, h('span', { class: 'conf-bar-fill', style: `width:${value}%` })),
+    showLabel ? h('span', { class: 'conf-bar-label' }, `${value}%`) : null)
+}
 
 function propositionRecency(node, seqByEventId) {
   let max = Number(node?.createdSeq) || 0
@@ -221,34 +233,52 @@ function evidenceForNode(viewState, nodeId) {
 function viewpointGroups(viewState) {
   const projection = viewState?.projection || {}
   const nodes = projectedNodes(projection)
+  const edges = projection?.allEdges || projection?.edges || []
   const seqByEventId = new Map((viewState.events || []).map((e) => [e.id, e.seq]))
   const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
+  /* 每个命题的反驳数（用于"有争议"分组） */
+  const contradictCount = new Map()
+  const pendingReviewCount = new Map()
+  for (const e of edges) {
+    if (e?.reviewDecision === 'rejected') continue
+    if (e.rel === 'contradicts') contradictCount.set(e.to, (contradictCount.get(e.to) || 0) + 1)
+    if (e.pendingReview && e.reviewDecision == null) pendingReviewCount.set(e.to, (pendingReviewCount.get(e.to) || 0) + 1)
+  }
   const byRecency = (a, b) => propositionRecency(b, seqByEventId) - propositionRecency(a, seqByEventId)
     || String(a.id).localeCompare(String(b.id))
-  return {
-    active: viewpoints.filter((n) => !n.archived).sort(byRecency),
-    archived: viewpoints.filter((n) => n.archived).sort(byRecency),
-  }
+  const active = viewpoints.filter((n) => !n.archived)
+  const pending = active.filter((n) => (n.status || 'pending') === 'pending' || (pendingReviewCount.get(n.id) || 0) > 0)
+  const disputed = active.filter((n) => !pending.includes(n) && ((contradictCount.get(n.id) || 0) > 0 || n.status === 'disputed'))
+  const established = active.filter((n) => !pending.includes(n) && !disputed.includes(n))
+  const archived = viewpoints.filter((n) => n.archived)
+  for (const arr of [pending, disputed, established, archived]) arr.sort(byRecency)
+  return { pending, disputed, established, archived }
 }
 
-/* 左栏：命题列表。 */
+/* 左栏：命题列表（按状态分组：待确认 / 有争议 / 已建立 / 已归档）。 */
 function renderPropList(container, theme, viewState, { selectedId, onSelect } = {}) {
   if (!container) return
   clear(container)
-  const { active, archived } = viewpointGroups(viewState)
+  const { pending, disputed, established, archived } = viewpointGroups(viewState)
+  const total = pending.length + disputed.length + established.length + archived.length
   container.append(
     h('div', { class: 'cog-wb-col-head' },
       h('h3', { class: 'cog-wb-col-title' }, '命题'),
-      h('span', { class: 'cog-wb-count' }, String(active.length + archived.length))))
+      h('span', { class: 'cog-wb-count' }, String(total))))
   const list = h('div', { class: 'cog-wb-prop-list', role: 'listbox', 'aria-label': '命题列表' })
   container.append(list)
-  if (!active.length && !archived.length) {
-    list.append(h('p', { class: 'chain-note' }, '还没有命题。在网络中添加第一个观点后，它会出现在这里。'))
+  if (!total) {
+    list.append(h('p', { class: 'chain-note' }, '还没有命题。点工具栏「＋ 添加节点」创建第一个命题。'))
     return
   }
-  for (const [label, rows] of [['活跃', active], ['已归档', archived]]) {
+  for (const [label, rows, alert] of [
+    ['待确认', pending, true],
+    ['有争议', disputed, true],
+    ['已建立', established, false],
+    ['已归档', archived, false],
+  ]) {
     if (!rows.length) continue
-    list.append(h('p', { class: 'cog-wb-group-label' }, `${label}（${rows.length}）`))
+    list.append(h('p', { class: `cog-wb-group-label${alert ? ' is-alert' : ''}` }, `${label}（${rows.length}）`))
     for (const node of rows) {
       const item = h('button', {
         type: 'button', role: 'option',
@@ -258,14 +288,16 @@ function renderPropList(container, theme, viewState, { selectedId, onSelect } = 
         onclick: () => onSelect?.(node.id),
       },
         h('span', { class: 'cog-wb-prop-dot', 'data-status': node.status || 'pending', 'aria-hidden': 'true' }),
-        h('span', { class: 'cog-wb-prop-title' }, node.title || '未命名命题'),
-        h('span', { class: 'cog-wb-prop-status' }, PROP_STATUS_LABEL[node.status] || '待核验'))
+        h('span', { class: 'cog-wb-prop-main' },
+          h('span', { class: 'cog-wb-prop-title' }, node.title || '未命名命题'),
+          confidenceBar(node.confidence, { showLabel: false })),
+        h('span', { class: 'cog-wb-prop-status' }, PROP_STATUS_LABEL[node.status] || '待确认'))
       list.append(item)
     }
   }
 }
 
-/* 中栏详情：DeepSeek 式 hero + 分色证据流 + 佐证 / 反驳入口。 */
+/* 中栏详情：DeepSeek 式 hero + 分色证据流 + 支持 / 反驳入口。 */
 function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpenAttribution } = {}) {
   if (!container) return
   clear(container)
@@ -278,11 +310,19 @@ function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpen
   }
   const { supports, against } = evidenceForNode(viewState, node.id)
   const settled = node.settledAt || node.settlementEventId
-  const evidenceItem = ({ source, edge }) =>
-    h('li', { class: 'cog-wb-evidence' },
+  const evidenceItem = ({ source, edge }) => {
+    const urlRef = (source.evidenceRefs || []).find((r) => r?.type === 'url' && r?.id)
+    const url = urlRef?.id || null
+    return h('li', { class: 'cog-wb-evidence' },
       h('span', { class: 'cog-wb-evidence-title' }, source.title || source.currentText || '未命名证据'),
-      source.sourceLabel ? h('span', { class: 'cog-wb-evidence-src' }, source.sourceLabel) : null,
-      edge.pendingReview ? h('span', { class: 'cog-flag' }, '待复核') : null)
+      url
+        ? h('a', {
+            class: 'cog-wb-evidence-src is-link', href: url, target: '_blank', rel: 'noopener noreferrer',
+            title: url, onclick: (e) => { e.preventDefault(); e.stopPropagation(); window.open(url, '_blank', 'noopener') },
+          }, source.sourceLabel || urlRef?.title || '原文 ↗')
+        : source.sourceLabel ? h('span', { class: 'cog-wb-evidence-src' }, source.sourceLabel) : null,
+      edge.pendingReview ? h('span', { class: 'cog-flag' }, '待确认') : null)
+  }
   container.append(
     h('div', { class: 'cog-wb-detail-card' },
       h('div', { class: 'cog-wb-detail-head' },
@@ -291,18 +331,19 @@ function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpen
       h('h3', { class: 'cog-wb-detail-title' }, node.title || '未命名命题'),
       node.detail ? h('p', { class: 'cog-wb-detail-text' }, node.detail) : null,
       h('div', { class: 'cog-wb-detail-meta' },
-        h('span', { class: `cog-wb-meta-pill is-${node.status || 'pending'}` }, PROP_STATUS_LABEL[node.status] || '待核验'),
+        h('span', { class: `cog-wb-meta-pill is-${node.status || 'pending'}` }, PROP_STATUS_LABEL[node.status] || '待确认'),
+        confidenceBar(node.confidence),
         h('span', {}, settled ? `已结算 · ${fmtDate(node.settledAt)}` : '未设置结算日'),
         h('span', { class: 'cog-wb-meta-counts' },
           h('b', { class: 'is-support' }, String(supports.length)), ' 支持 · ',
           h('b', { class: 'is-against' }, String(against.length)), ' 反驳')),
       h('div', { class: 'cog-wb-detail-actions' },
-        h('button', { type: 'button', class: 'btn', onclick: () => onOpenAttribution?.('supports') }, '＋ 佐证'),
+        h('button', { type: 'button', class: 'btn', onclick: () => onOpenAttribution?.('supports') }, '＋ 支持'),
         h('button', { type: 'button', class: 'btn', onclick: () => onOpenAttribution?.('contradicts') }, '＋ 反驳')),
       h('div', { class: 'cog-wb-stream' },
         h('h4', { class: 'cog-wb-stream-title' }, `证据流 · ${supports.length + against.length}`),
         !supports.length && !against.length
-          ? h('p', { class: 'chain-note' }, '暂无挂载证据。用上面的「佐证 / 反驳」把新数据挂到这个命题上。')
+          ? h('p', { class: 'chain-note' }, '暂无挂载证据。用上面的「支持 / 反驳」把新数据挂到这个命题上。')
           : h('div', { class: 'cog-wb-evidence-groups' },
             supports.length ? h('div', { class: 'cog-wb-evidence-group is-support' },
               h('p', { class: 'cog-wb-evidence-label' }, `支持（${supports.length}）`),
@@ -312,16 +353,16 @@ function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpen
               h('ul', { class: 'cog-wb-evidence-list' }, ...against.map(evidenceItem))) : null))))
 }
 
-/* 佐证 / 反驳对话框：数据进入时挂到目标节点的入口。
+/* 支持 / 反驳对话框：数据进入时挂到目标节点的入口。
    只追加 evidence.appended + relation.declared，不碰 confidence（公理1）。 */
 function openAttributionDialog(theme, node, presetRel = 'supports', { onChanged } = {}) {
   if (!node) return
   const overlay = h('div', { class: 'cog-modal-overlay' })
-  const dialog = h('div', { class: 'cog-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加佐证或反驳' })
+  const dialog = h('div', { class: 'cog-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加支持或反驳' })
   let rel = presetRel === 'contradicts' ? 'contradicts' : 'supports'
   const relButtons = {}
   const seg = h('div', { class: 'cog-seg', role: 'group', 'aria-label': '关系类型' })
-  for (const [value, label] of [['supports', '佐证'], ['contradicts', '反驳']]) {
+  for (const [value, label] of [['supports', '支持'], ['contradicts', '反驳']]) {
     const btn = h('button', { type: 'button', class: 'cog-seg-btn', 'aria-pressed': String(value === rel) }, label)
     btn.classList.toggle('is-active', value === rel)
     btn.addEventListener('click', () => {
@@ -352,7 +393,7 @@ function openAttributionDialog(theme, node, presetRel = 'supports', { onChanged 
       else if (source) input.sourceLabel = source
       const result = await m.chainAddEvidence(theme.id, node.id, input)
       if (result?.ok === false) throw new Error(result.error || '写入失败')
-      toast(rel === 'supports' ? '已追加佐证' : '已追加反驳')
+      toast(rel === 'supports' ? '已追加支持' : '已追加反驳')
       close()
       onChanged?.()
     } catch (failure) {
@@ -363,7 +404,7 @@ function openAttributionDialog(theme, node, presetRel = 'supports', { onChanged 
   })
   dialog.append(
     h('div', { class: 'cog-modal-head' },
-      h('h3', { class: 'cog-modal-title' }, '添加佐证 / 反驳'),
+      h('h3', { class: 'cog-modal-title' }, '添加支持 / 反驳'),
       h('button', { type: 'button', class: 'cog-modal-close', 'aria-label': '关闭', onclick: close }, '×')),
     h('p', { class: 'cog-modal-target' }, '目标：', h('b', {}, node.title || '未命名命题')),
     seg, textInput, sourceInput, reasonInput, error,
@@ -378,7 +419,7 @@ function openAttributionDialog(theme, node, presetRel = 'supports', { onChanged 
 
 
 /* ------------------------------------------------------------------ */
-/* 建设者 · 归因切面：新信息进来后怎么办（待复核队列 + 健康检查）。      */
+/* 建设者 · 归因切面：新信息进来后怎么办（待确认队列 + 健康检查）。      */
 /* 确认/驳回只追加关系复核事件，绝不修改节点 confidence（公理1）。       */
 /* ------------------------------------------------------------------ */
 
@@ -406,7 +447,7 @@ function renderQueuePanel(container, theme, viewState, { onChanged, onFocusNode 
   container.append(h('p', { class: 'cog-wb-hint' }, '每一条都需要你确认或驳回，并写明理由；决定只追加事件，不改变任何已有判断。'))
 
   if (!pending.length) {
-    queueEl.append(h('p', { class: 'chain-note' }, '没有待复核的关系。新声明的推导关系会自动出现在这里。'))
+    queueEl.append(h('p', { class: 'chain-note' }, '没有待确认的关系。新声明的推导关系会自动出现在这里。'))
   }
   const endpointBtn = (node) => {
     const btn = h('button', { type: 'button', class: 'cog-wb-link' }, node?.title || '未知节点')
@@ -447,17 +488,17 @@ function renderQueuePanel(container, theme, viewState, { onChanged, onFocusNode 
         h('button', { type: 'button', class: 'btn', onclick: (e) => decide('rejected', e.currentTarget) }, '驳回'))))
   }
   if (pending.length > 30) {
-    queueEl.append(h('p', { class: 'chain-note' }, `仅显示前 30 条，其余 ${pending.length - 30} 条请在网络中按「待复核」筛选查看。`))
+    queueEl.append(h('p', { class: 'chain-note' }, `仅显示前 30 条，其余 ${pending.length - 30} 条请在网络中按「待确认」筛选查看。`))
   }
 
-  // 健康检查：受质疑 / 孤立节点 / 待复核统计
+  // 健康检查：受质疑 / 孤立节点 / 待确认统计
   const disputed = nodes.filter((n) => !n.archived && (
     n.status === 'disputed' || edges.some((e) => e.rel === 'contradicts' && e.to === n.id)))
   const linked = new Set()
   for (const e of edges) { linked.add(e.from); linked.add(e.to) }
   const orphaned = nodes.filter((n) => !n.archived && !n.external && !linked.has(n.id))
   const items = [
-    [`${pending.length} 条关系待复核`, pending.length ? 'warn' : 'ok'],
+    [`${pending.length} 条关系待确认`, pending.length ? 'warn' : 'ok'],
     [`${disputed.length} 个节点受质疑`, disputed.length ? 'warn' : 'ok'],
     [`${orphaned.length} 个孤立节点（无任何关系）`, orphaned.length ? 'warn' : 'ok'],
   ]
@@ -589,7 +630,7 @@ const firstAffectedNode = affectedNodeIdForEvent
 
 const EVENT_KIND_LABEL = {
   'evidence.appended': '新增证据',
-  'claim.created': '新增主张',
+  'claim.created': '新增命题',
   'inference.created': '新增推断',
   'relation.declared': '关系声明',
   'correction.appended': '追加更正事件',
@@ -624,7 +665,7 @@ function eventSummary(e, titleOf) {
         const decision = p.reviewDecision === 'confirmed' ? '确认' : '驳回'
         return `人工复核${decision}：${a} —${rel.label || p.rel}→ ${b}${p.decisionReason ? `（${p.decisionReason}）` : ''}`
       }
-      return `${a} —${rel.label || p.rel}→ ${b}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待复核）' : ''}`
+      return `${a} —${rel.label || p.rel}→ ${b}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待确认）' : ''}`
     }
     case 'settlement.recorded':
       return p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
@@ -686,7 +727,7 @@ function eventSourceLabel(e, events) {
     'legacy-node-source': '旧节点来源迁移',
     'segment-changeLog': '主题更新记录',
     'segment-evidenceRef': '主题中已保存的引用',
-    'segment-affects': '旧主题关系（待复核）',
+    'segment-affects': '旧主题关系（待确认）',
     'segment-mergedFrom': '旧主题合并记录',
     segment: '主题观点',
     mount: '收件箱挂载',
@@ -1024,7 +1065,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     h('summary', {}, '网络范围、关系与校验说明'),
     h('div', { class: 'cog-graph-help-body' },
       h('p', {}, '主题只限定网络范围，不是节点或起点；节点仅为概念、对象、事件、观点、证据。搜索与类型/状态筛选帮助在较大主题中定位记录。'),
-      h('p', {}, '支持、推导、反驳是有方向的论证关系；归属、影响、依赖、时间关联、相关是弱关联，不表示论证。待复核关系须由用户明确确认或驳回。'),
+      h('p', {}, '支持、推导、反驳是有方向的论证关系；归属、影响、依赖、时间关联、相关是弱关联，不表示论证。待确认关系须由用户明确确认或驳回。'),
       h('p', {}, '底部时间轴从完整性校验通过的事件前缀重放同一张网络；它只读，节点位置固定。完整性校验只说明事件链一致，不代表记录内容为真。')))
   const graphLegend = renderLegend()
   const graphToolbar = h('div', { class: 'cog-graph-toolbar' },
@@ -1183,7 +1224,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       const to = byId.get(edge.to)
       const sourceEvent = eventById.get(edge.eventId) || eventById.get(edge.provenanceEventIds?.[0])
       const relationName = REL[edge.rel]?.label || edge.rel
-      const reviewState = edge.pendingReview ? ' · 待复核' : edge.reviewDecision === 'rejected' ? ' · 已驳回' : ''
+      const reviewState = edge.pendingReview ? ' · 待确认' : edge.reviewDecision === 'rejected' ? ' · 已驳回' : ''
       const relationText = REL[edge.rel]?.group === 'argument'
         ? `${from?.title || '来源未解析'} → ${to?.title || '来源未解析'}`
         : `${from?.title || '来源未解析'} · ${relationName} · ${to?.title || '来源未解析'}（弱关联）`
@@ -1552,7 +1593,7 @@ function renderLegend() {
     h('section', { class: 'cog-legend-section', 'aria-label': '论证关系' }, h('span', { class: 'cog-legend-section-title' }, '论证 · 有方向箭头'), ...argumentRows),
     h('section', { class: 'cog-legend-section', 'aria-label': '主题关联' }, h('span', { class: 'cog-legend-section-title' }, '主题关联 · 细线无箭头'), ...associationRows),
     h('section', { class: 'cog-legend-section', 'aria-label': '节点状态' }, h('span', { class: 'cog-legend-section-title' }, '节点状态 · 文字 pill'), ...statusRows),
-    h('p', { class: 'cog-legend-foot' }, '只呈现事件中明确记录的节点与关系；主题不作为中心节点。待复核/驳回关系会保留声明方向并显示其状态。'))
+    h('p', { class: 'cog-legend-foot' }, '只呈现事件中明确记录的节点与关系；主题不作为中心节点。待确认/驳回关系会保留声明方向并显示其状态。'))
 }
 
 /* ------------------------------------------------------------------ */
@@ -1957,7 +1998,7 @@ function renderHistoryEvent(e, opts = {}) {
   } else if (e.type === 'relation.declared') {
     summary = p.reviewOf
       ? `人工复核${p.reviewDecision === 'confirmed' ? '确认' : '驳回'} · ${p.decisionReason || '未记录理由'}`
-      : `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待复核）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
+      : `${(REL[p.rel] || {}).label || p.rel}${p.reviewStatus === 'pending-review' || p.rel === 'derives' ? '（待确认）' : ''}${p.mapping ? ` · ${p.mapping}` : ''}`
   } else if (e.type === 'settlement.recorded') {
     summary = p.correct === false ? '判定为错误' : p.correct === true ? '判定为正确' : '已结算'
   } else if (e.type === 'node.archived') {
@@ -2091,6 +2132,99 @@ function openReadingModal(reading) {
 }
 
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* 快速归因：收件箱里配好（命题 + 支持/反驳），一键在主题里自动连好。    */
+/* URL 从条目来源自动带，不用手工填。                                    */
+/* ------------------------------------------------------------------ */
+
+function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
+  const wrap = h('div', { class: 'quick-attr' },
+    h('div', { class: 'draft-head' },
+      h('span', { class: 'draft-title' }, '快速归因'),
+      h('span', { class: 'draft-sub' }, '选命题、选支持/反驳，确认后自动在主题里连好')))
+  if (!themeId) {
+    wrap.append(h('p', { class: 'chain-note' }, '该条目没有可用主题，无法快速归因。'))
+    return wrap
+  }
+  const propSelect = h('select', { class: 'txt', 'aria-label': '目标命题' },
+    h('option', { value: '' }, '正在加载命题…'))
+  let stance = 'supports'
+  const stanceSeg = h('div', { class: 'cog-seg', role: 'group', 'aria-label': '支持或反驳' })
+  const stanceBtns = {}
+  for (const [value, label] of [['supports', '支持'], ['contradicts', '反驳']]) {
+    const btn = h('button', { type: 'button', class: 'cog-seg-btn', 'aria-pressed': String(value === stance) }, label)
+    btn.classList.toggle('is-active', value === stance)
+    btn.addEventListener('click', () => {
+      stance = value
+      for (const [v, b] of Object.entries(stanceBtns)) {
+        b.classList.toggle('is-active', v === stance)
+        b.setAttribute('aria-pressed', String(v === stance))
+      }
+    })
+    stanceBtns[value] = btn
+    stanceSeg.append(btn)
+  }
+  const textInput = h('textarea', {
+    class: 'txt cog-modal-textarea', rows: '3', 'aria-label': '证据内容',
+    placeholder: '证据摘要或原文摘录（必填）',
+  }, (item.text || '').slice(0, 500))
+  const urlInput = h('input', {
+    class: 'txt', type: 'url', 'aria-label': '来源链接',
+    placeholder: '来源链接（自动填入，可改）',
+    value: item.provenance?.url || '',
+  })
+  const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+  const confirmBtn = h('button', { type: 'button', class: 'btn btn-primary' }, '确认并连接')
+  /* 命题列表异步加载 */
+  Promise.resolve(loadExisting?.()).then((list) => {
+    const rows = Array.isArray(list) ? list : []
+    propSelect.innerHTML = ''
+    if (!rows.length) {
+      propSelect.append(h('option', { value: '' }, '该主题暂无命题'))
+      confirmBtn.disabled = true
+      return
+    }
+    propSelect.append(h('option', { value: '' }, '选择目标命题…'))
+    for (const p of rows) propSelect.append(h('option', { value: p.id }, p.name || '未命名命题'))
+  }).catch(() => {
+    propSelect.innerHTML = ''
+    propSelect.append(h('option', { value: '' }, '命题加载失败'))
+    confirmBtn.disabled = true
+  })
+  confirmBtn.addEventListener('click', async () => {
+    const propId = propSelect.value
+    const text = textInput.value.trim()
+    if (!propId) { error.hidden = false; error.textContent = '请选择目标命题。'; propSelect.focus(); return }
+    if (!text) { error.hidden = false; error.textContent = '请填写证据内容。'; textInput.focus(); return }
+    error.hidden = true
+    confirmBtn.disabled = true
+    try {
+      const input = { text, rel: stance }
+      const url = urlInput.value.trim()
+      if (url) input.url = url
+      /* 复用建设者的归因后端：只追加 evidence.appended + relation.declared */
+      const res = await m.chainAddEvidence(themeId, propId, input)
+      if (res?.ok === false) throw new Error(res.error || '写入失败')
+      /* 标记条目已归因 */
+      await m.inboxResolve?.(item.id, 'accept').catch(() => null)
+      toast(stance === 'supports' ? '已连接到命题（支持）' : '已连接到命题（反驳）')
+      onDone?.(res)
+    } catch (e) {
+      error.hidden = false
+      error.textContent = e?.message || String(e)
+      confirmBtn.disabled = false
+    }
+  })
+  wrap.append(
+    h('div', { class: 'quick-attr-row' },
+      h('span', { class: 'draft-label' }, '命题'), propSelect),
+    h('div', { class: 'quick-attr-row' },
+      h('span', { class: 'draft-label' }, '立场'), stanceSeg),
+    textInput, urlInput, error,
+    h('div', { class: 'draft-actions' }, confirmBtn))
+  return wrap
+}
+
 /* 提案草稿：收件箱条目详情内展开。只起草、不拍板；用户点"确认挂载"生效。 */
 /* ------------------------------------------------------------------ */
 
@@ -2125,6 +2259,9 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
     ? h('div', { class: 'chain-draft' })
     : h('section', { class: 'inbox-detail-section' },
       h('h4', { class: 'inbox-section-title' }, '提案草稿 · 认知链挂载'))
+
+  /* 快速归因：选命题 + 支持/反驳，一键在主题里连好（URL 自动带）。 */
+  box.append(renderQuickAttribute(item, { themeId, loadExisting: opts.loadExisting, onDone: opts.onMounted }))
 
   const head = (sub) => h('div', { class: 'draft-head' },
     h('span', { class: 'draft-title' }, '认知链挂载'),
@@ -2187,7 +2324,7 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
     if (!segs.length) checkWrap.append(h('span', { class: 'draft-empty-note' }, '该主题还没有段，可在下方新开。'))
   }
   refreshChecks()
-  // 已有主张改为从认知投影异步加载（不再读旧 chain.segments）
+  // 已有命题改为从认知投影异步加载（不再读旧 chain.segments）
   if (typeof opts.loadExisting === 'function') {
     opts.loadExisting()
       .then((list) => { if (Array.isArray(list) && list.length) { segs = list; refreshChecks() } })

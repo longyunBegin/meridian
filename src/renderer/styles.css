@@ -3286,6 +3286,29 @@ body.tauri-macos .app {
 .rdr-skel-title { font-size: var(--t-body); font-weight: 600; fill: var(--text); }
 .rdr-skel-meta { font-size: var(--t-caption); fill: var(--text-3); }
 .rdr-skel-hint { margin: 8px 4px 0; color: var(--text-3); font-size: var(--t-caption); text-align: center; }
+/* 关键数字 */
+.rdr-numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 24px 0 6px; }
+.rdr-number { padding: 14px 8px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); text-align: center; }
+.rdr-number-value { font-size: var(--t-head); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.rdr-number-label { margin-top: 4px; font-size: var(--t-caption); color: var(--text-3); }
+/* 核心判断 */
+.rdr-section-title { margin: 28px 0 12px; font-size: var(--t-title); font-weight: 700; color: var(--text); }
+.rdr-judgment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rdr-judgment { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.rdr-judgment:hover { border-color: var(--accent); }
+.rdr-judgment-main { flex: 1; min-width: 0; }
+.rdr-judgment-title { display: block; font-size: var(--t-body); font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rdr-judgment-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: var(--t-caption); color: var(--text-3); }
+.rdr-judgment-meta .is-against { color: var(--red, #c25); }
+/* 置信度条（所有视图通用） */
+.conf-bar { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.conf-bar-track { display: inline-block; width: 72px; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.conf-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--text-3); }
+.conf-bar.is-high .conf-bar-fill { background: var(--green, #3fa46f); }
+.conf-bar.is-mid .conf-bar-fill { background: var(--amber, #b98a2f); }
+.conf-bar.is-low .conf-bar-fill { background: var(--red, #c25); }
+.conf-bar-label { font-size: var(--t-caption); color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
+.conf-bar.is-empty .conf-bar-label { color: var(--text-3); }
 .rdr-tail-title { margin: 0 0 6px; font-size: var(--t-body); font-weight: 700; }
 .rdr-tail-sub { margin: 0 0 16px; color: var(--text-3); font-size: var(--t-caption); }
 .rdr-empty { padding: 40px 0; }
@@ -3393,3 +3416,29 @@ body.tauri-macos .app {
   .cog-workbench { grid-template-columns:minmax(0,1fr); }
   .cog-wb-col { position:static; max-height:none; }
 }
+
+/* 快速归因（收件箱 → 主题一键连接） */
+.quick-attr { padding: 12px; margin-bottom: 12px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); }
+.quick-attr-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.quick-attr-row .draft-label { flex: none; min-width: 36px; font-size: var(--t-caption); color: var(--text-3); }
+.quick-attr-row .txt { flex: 1; }
+.quick-attr .txt { width: 100%; margin-bottom: 8px; }
+.quick-attr-row .txt { margin-bottom: 0; }
+.quick-attr .cog-seg { margin-bottom: 0; }
+
+/* 最新变化 */
+.rdr-changes { margin: 6px 0; }
+.rdr-change-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rdr-change { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); }
+.rdr-change-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 6px; }
+.rdr-change-text { font-size: var(--t-body); color: var(--text-2); }
+
+/* 命题列表：状态分组 + 置信度 */
+.cog-wb-prop-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.cog-wb-prop-main .cog-wb-prop-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cog-wb-prop-main .conf-bar-track { width: 56px; height: 4px; }
+.cog-wb-group-label.is-alert { color: var(--amber, #b98a2f); }
+
+/* 证据溯源链接 */
+.cog-wb-evidence-src.is-link { color: var(--accent); text-decoration: none; cursor: pointer; }
+.cog-wb-evidence-src.is-link:hover { text-decoration: underline; }

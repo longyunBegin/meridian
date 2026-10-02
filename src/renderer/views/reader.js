@@ -2,6 +2,7 @@ import { h } from '../lib/dom.js'
 import { linearize } from '../lib/chain-linearizer.js'
 import { networkNodeType, truncateGraphemes } from '../lib/theme-network.js'
 import { compactEventSummary } from '../lib/chain-ui-model.js'
+import { PROP_STATUS_LABEL, confidenceBar } from './chain.js'
 
 /* ------------------------------------------------------------------ */
 /* 主题读者视图：当前投影派生的阅读文章。                                */
@@ -132,6 +133,47 @@ export function deriveReaderModel(projection = {}, events = []) {
   const rows = Array.isArray(events) ? events : []
   model.recent = rows.slice(-5).reverse().map((e) => compactEventSummary(e))
 
+  // 关键数字：命题 / 证据 / 支持 / 反驳 / 待确认
+  const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
+  const evidences = nodes.filter((n) => networkNodeType(n) === 'evidence')
+  let supportCount = 0
+  let contradictCount = 0
+  for (const edge of edges) {
+    if (edge.rel === 'supports') supportCount++
+    else if (edge.rel === 'contradicts') contradictCount++
+  }
+  model.keyNumbers = [
+    { label: '命题', value: viewpoints.length },
+    { label: '证据', value: evidences.length },
+    { label: '支持', value: supportCount },
+    { label: '反驳', value: contradictCount },
+    { label: '待确认', value: model.pending.length },
+  ]
+
+  // 核心判断：关键命题（按支持+反驳排序，带置信度）
+  const propStats = new Map()
+  for (const v of viewpoints) propStats.set(v.id, { supports: 0, contradicts: 0 })
+  for (const edge of edges) {
+    const stat = propStats.get(edge.to)
+    if (!stat) continue
+    if (edge.rel === 'supports' || edge.rel === 'derives') stat.supports++
+    else if (edge.rel === 'contradicts') stat.contradicts++
+  }
+  model.keyJudgments = viewpoints
+    .map((n) => {
+      const stat = propStats.get(n.id) || { supports: 0, contradicts: 0 }
+      return {
+        id: n.id,
+        title: titleOf(n),
+        confidence: n.confidence,
+        status: n.status || 'pending',
+        supports: stat.supports,
+        contradicts: stat.contradicts,
+      }
+    })
+    .sort((a, b) => (b.supports + b.contradicts) - (a.supports + a.contradicts))
+    .slice(0, 5)
+
   if (model.disputes.length) model.status = '存在争议'
   else if (model.pending.length) model.status = '存在待复核关系'
   else if (model.oneLiner) model.status = '相对稳定'
@@ -253,6 +295,48 @@ function renderSkeletonMap(projection, go) {
   return wrap
 }
 
+/* 关键数字：命题 / 证据 / 支持 / 反驳 / 待确认 */
+function renderKeyNumbers(model) {
+  if (!model.keyNumbers?.length) return null
+  return h('section', { class: 'rdr-numbers', 'aria-label': '关键数字' },
+    ...model.keyNumbers.map((item) =>
+      h('div', { class: 'rdr-number' },
+        h('div', { class: 'rdr-number-value' }, String(item.value)),
+        h('div', { class: 'rdr-number-label' }, item.label))))
+}
+
+/* 核心判断：关键命题 + 置信度 + 状态 */
+function renderKeyJudgments(model, go) {
+  if (!model.keyJudgments?.length) return null
+  return h('section', { class: 'rdr-judgments', 'aria-label': '核心判断' },
+    h('h2', { class: 'rdr-section-title' }, '核心判断'),
+    h('ul', { class: 'rdr-judgment-list' },
+      ...model.keyJudgments.map((j) =>
+        h('li', {},
+          h('button', {
+            type: 'button', class: 'rdr-judgment', onclick: () => go('propositions', j.id),
+          },
+            h('span', { class: 'rdr-judgment-main' },
+              h('span', { class: 'rdr-judgment-title' }, j.title),
+              h('span', { class: 'rdr-judgment-meta' },
+                h('span', { class: `cog-wb-meta-pill is-${j.status}` }, PROP_STATUS_LABEL[j.status] || '待核验'),
+                j.supports ? h('span', {}, `${j.supports} 支持`) : null,
+                j.contradicts ? h('span', { class: 'is-against' }, `${j.contradicts} 反驳`) : null)),
+            confidenceBar(j.confidence))))))
+}
+
+/* 最新变化：主题是活的——外部信息 + 时间驱动变化。这里让人一眼看到"变了什么"。 */
+function renderRecentChanges(model) {
+  if (!model.recent?.length) return null
+  return h('section', { class: 'rdr-changes', 'aria-label': '最新变化' },
+    h('h2', { class: 'rdr-section-title' }, '最新变化'),
+    h('ul', { class: 'rdr-change-list' },
+      ...model.recent.slice(0, 5).map((text) =>
+        h('li', { class: 'rdr-change' },
+          h('span', { class: 'rdr-change-dot', 'aria-hidden': 'true' }),
+          h('span', { class: 'rdr-change-text' }, short(text, 90))))))
+}
+
 export function renderReaderView(theme, opts = {}) {
   const article = h('article', { class: 'rdr', 'aria-label': `${theme?.name || '主题'} · 阅读视图` },
     h('p', { class: 'rdr-loading' }, '正在从当前投影生成阅读视图…'))
@@ -311,6 +395,10 @@ export function renderReaderView(theme, opts = {}) {
     }
     paintCards()
 
+    // 实质内容：一句话（hero 已有）+ 关键数字 + 最新变化 + 核心判断 + 主题骨架
+    const numbers = renderKeyNumbers(model)
+    const changes = renderRecentChanges(model)
+    const judgments = renderKeyJudgments(model, go)
     // 主题骨架：一眼建模（关键观点 + 状态 + 支持/反驳数）
     const skeleton = renderSkeletonMap(projection, go)
 
@@ -320,7 +408,7 @@ export function renderReaderView(theme, opts = {}) {
       h('p', { class: 'rdr-tail-sub' }, '以上均来自当前投影；判断的增删改只发生在建设者模式。'),
       h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '深入 →'))
 
-    article.append(hero, skeleton, modeSwitch, cardsHost, tail)
+    article.append(hero, numbers, changes, judgments, skeleton, modeSwitch, cardsHost, tail)
   }
 
   // 异步加载投影（与建设者视图同一数据源）
