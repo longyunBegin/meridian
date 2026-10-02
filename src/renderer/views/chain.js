@@ -30,7 +30,13 @@ let chainSectionCounter = 0
 const SEARCH_RESULTS_PAGE_SIZE = 30
 const builderStateByTheme = new Map()
 const builderInboxStateByTheme = new Map()
-
+/** Fresh builder entry always starts at the workbench; explicit reader node-jumps are applied after mount. */
+export function normalizeBuilderState(saved = {}) {
+  const mode = saved && typeof saved === 'object' ? saved.mode : null
+  if (mode === 'inbox') return { mode: 'inbox', nodeId: null }
+  /* Legacy `stream`, secondary `history`, and stale `node` subviews never displace the primary entry. */
+  return { mode: 'inbox', nodeId: null }
+}
 /** 节点语义色（对齐概念图）。 */
 const KIND = {
   theme: { label: '主题范围', color: '#64748b', bg: '#111827', border: '#475569' },
@@ -128,11 +134,20 @@ export function renderChainSection(theme, opts = {}) {
     ledgerButton?.focus()
   }
   ledgerBackdrop.addEventListener('click', closeLedger)
+  const hiddenByClosedDisclosure = (element) => {
+    let parent = element.parentElement
+    while (parent) {
+      if (parent.tagName === 'DETAILS' && !parent.open
+        && !(element.tagName === 'SUMMARY' && element.parentElement === parent)) return true
+      parent = parent.parentElement
+    }
+    return false
+  }
   ledgerPane.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') { event.preventDefault(); closeLedger(); return }
     if (event.key !== 'Tab') return
     const focusable = [...ledgerPane.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary')]
-      .filter((element) => !element.hidden && getComputedStyle(element).display !== 'none')
+      .filter((element) => !element.hidden && getComputedStyle(element).display !== 'none' && !hiddenByClosedDisclosure(element))
     if (!focusable.length) { event.preventDefault(); ledgerPane.focus(); return }
     if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1).focus() }
     else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0].focus() }
@@ -662,10 +677,10 @@ async function loadConcept(theme, ledgerPane, opts) {
     return [...groups.values()].sort((a, b) => b.items.length - a.items.length)
   }
 
-  /* ============ Builder：1:1 对齐 demo（侧边栏 + 信号流/节点视图/待处理） ============ */
-  const savedBuilderState = builderStateByTheme.get(theme.id) || {}
-  let builderMode = savedBuilderState.mode || 'stream'  // stream | node | inbox
-  let selectedNodeId = savedBuilderState.nodeId || null
+  /* ============ Builder：工作台是主入口；历史信号只作次级入口 ============ */
+  const savedBuilderState = normalizeBuilderState(builderStateByTheme.get(theme.id))
+  let builderMode = savedBuilderState.mode // inbox | node | history; legacy `stream` migrates to inbox
+  let selectedNodeId = savedBuilderState.nodeId
   /* 判决状态：signalId -> 'accepted' | 'rejected' | 'edited' */
   const verdictState = new Map()
   /* 编辑器草稿：signalId -> { nodeId, direction, nature, themeTag } */
@@ -692,23 +707,29 @@ async function loadConcept(theme, ledgerPane, opts) {
       h('div', { class: 'brand' },
         h('div', { class: 'brand-mark' }, 'M'),
         h('div', { class: 'brand-name' }, 'Meridian')),
-      h('div', { class: 'side-nav', id: 'side-nav' },
-        h('div', {
-          class: `side-nav-item${builderMode === 'stream' ? ' active' : ''}`,
-          'data-mode': 'stream',
-          onclick: () => { builderMode = 'stream'; selectedNodeId = null; renderMain(); renderSidebar(); },
-        },
-          h('span', { class: 'icon' }, '≡'),
-          h('span', {}, '信号流'),
-          h('span', { class: 'n' }, String(signals.length))),
-        h('div', {
-          class: `side-nav-item${builderMode === 'inbox' ? ' active' : ''}`,
+      h('nav', { class: 'side-nav', id: 'side-nav', 'aria-label': '建设者工作流' },
+        h('p', { class: 'side-nav-label' }, '工作台'),
+        h('button', {
+          type: 'button',
+          class: `side-nav-item${builderMode !== 'history' ? ' active' : ''}`,
           'data-mode': 'inbox',
+          'aria-current': builderMode !== 'history' ? 'page' : 'false',
           onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
-          h('span', { class: 'icon' }, '◷'),
-          h('span', {}, '待处理'),
-          h('span', { class: 'n' }, String(inboxCount)))),
+          h('span', { class: 'icon', 'aria-hidden': 'true' }, '◷'),
+          h('span', {}, '待处理工作台'),
+          h('span', { class: 'n' }, String(inboxCount))),
+        h('p', { class: 'side-nav-label side-nav-secondary-label' }, '历史与事件'),
+        h('button', {
+          type: 'button',
+          class: `side-nav-item side-nav-history${builderMode === 'history' ? ' active' : ''}`,
+          'data-mode': 'history',
+          'aria-current': builderMode === 'history' ? 'page' : 'false',
+          onclick: () => { builderMode = 'history'; selectedNodeId = null; renderMain(); renderSidebar(); },
+        },
+          h('span', { class: 'icon', 'aria-hidden': 'true' }, '≡'),
+          h('span', {}, '信号与事件'),
+          h('span', { class: 'n' }, String(signals.length)))),
       h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
         h('br', {}),
@@ -734,17 +755,15 @@ async function loadConcept(theme, ledgerPane, opts) {
     clear(opts.mainStage)
     if (builderMode === 'node' && selectedNodeId) {
       opts.mainStage.append(renderNodeView(selectedNodeId))
-    } else if (builderMode === 'inbox') {
-      opts.mainStage.append(renderInboxView())
-    } else {
+    } else if (builderMode === 'history') {
       opts.mainStage.append(renderSignalStream())
-    }
+    } else opts.mainStage.append(renderInboxView())
   }
 
   /* 信号流：密度条 + 流头 + 滚动列表 */
   const renderSignalStream = () => {
     const signals = buildSignals()
-    const wrap = h('div', { style: 'display:contents' })
+    const wrap = h('div', { class: 'builder-history-view', 'data-builder-view': 'history', style: 'display:contents' })
     wrap.append(renderDensity(signals))
     wrap.append(renderStreamHead(signals))
     const scroll = h('div', { class: 'scroll' },
@@ -808,8 +827,8 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     return h('div', { class: 'stream-head' },
       h('div', {},
-        h('div', { class: 'stream-title' }, '信号流'),
-        h('div', { class: 'stream-sub' }, '按时间倒序 · 系统已自动分类，你的判决会同步到方向演化')),
+        h('div', { class: 'stream-title' }, '信号与事件'),
+        h('div', { class: 'stream-sub' }, '次级历史入口 · 按时间倒序查看事件来源；主题事实仍以追加式账本和审核决定为准')),
       h('div', { class: 'stream-stats' },
         h('span', { class: 's' },
           h('span', { class: 'd', style: 'background:var(--accent)' }),
@@ -1040,8 +1059,8 @@ async function loadConcept(theme, ledgerPane, opts) {
       h('div', { class: 'back-bar' },
         h('button', {
           type: 'button', class: 'back-btn', id: 'back-btn',
-          onclick: () => { builderMode = 'stream'; selectedNodeId = null; renderMain(); renderSidebar(); },
-        }, h('span', { class: 'ar' }, '←'), ' 返回信号流')),
+          onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
+        }, h('span', { class: 'ar' }, '←'), ' 返回建设者工作台')),
       h('div', { class: 'node-view-head' },
         h('div', { class: 'node-title-row' },
           h('span', { class: 'node-title-dot', style: `background:${dirColor(overallDir)}` }),
@@ -1124,7 +1143,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         .map((step, index) => h('span', { class: `builder-flow-step${index === 0 ? ' is-ready' : ''}` }, step)))
     const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待处理')
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
-    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 新增节点')
+    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手工添加观点')
     addNode.addEventListener('click', () => {
       if (opts.addNodeBtn?.disabled) { toast('当前账本暂不可追加节点', 'var(--text-2)'); return }
       opts.addNodeBtn?.click()
