@@ -73,8 +73,13 @@ const ATTRIBUTE_SYSTEM = `你是严谨的归因判断助手。输入：一条陈
 - 方向相反 → contradicts
 - 证据更窄/更具体 → derives
 
+三层演化分类（描述这条证据对命题状态的影响）：
+- direction（方向）：improving（好转）/ declining（恶化）/ stable（稳定）
+- nature（变化性质）：quantitative（量变）/ pivot（转向）/ epistemic（认识）/ structural（结构）
+- themeTag（主题标签）：2-6 字开放标签，如"产能瓶颈"、"良率爬坡"、"管理层调整"
+
 只输出 JSON：
-{"rel":"supports","strength":0.62,"reason":"..."}`
+{"rel":"supports","strength":0.62,"reason":"...","change":{"direction":"improving","nature":"quantitative","themeTag":"营收增长"}}`
 
 /**
  * 调用 LLM（通过现有的 llm 接口）。
@@ -167,9 +172,21 @@ export async function attributeRelation(llmCall, statement, proposition) {
   if (!['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(rel)) {
     throw new Error(`LLM 返回了非法关系类型：${rel}`)
   }
+  /* 三层演化分类：校验并 fallback */
+  const ch = result.change || {}
+  const direction = ['improving', 'declining', 'stable'].includes(ch.direction)
+    ? ch.direction
+    : (rel === 'supports' ? 'improving' : rel === 'contradicts' ? 'declining' : 'stable')
+  const nature = ['quantitative', 'pivot', 'epistemic', 'structural'].includes(ch.nature)
+    ? ch.nature
+    : 'quantitative'
+  const themeTag = (typeof ch.themeTag === 'string' && ch.themeTag.trim())
+    ? ch.themeTag.trim().slice(0, 20)
+    : ''
   return {
     rel,
     strength: Math.max(0, Math.min(1, Number(result.strength) || 0)),
     reason: String(result.reason || '').trim(),
+    change: { direction, nature, themeTag },
   }
 }

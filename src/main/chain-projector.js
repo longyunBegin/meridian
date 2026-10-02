@@ -778,6 +778,17 @@ export function mountDraftToEvents(themeId, payload = {}) {
             evidenceRefs: refsForNewEvent, sourceKind: 'mount',
             sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${stableId}`,
           }
+          /* 三层演化数据：如果 payload 带有 change，直接写入事件 */
+          if (payload.change && typeof payload.change === 'object') {
+            const ch = payload.change
+            if (['improving', 'declining', 'stable'].includes(ch.direction)) {
+              evidencePayload.change = {
+                direction: ch.direction,
+                nature: ['quantitative', 'pivot', 'epistemic', 'structural'].includes(ch.nature) ? ch.nature : 'quantitative',
+                themeTag: (typeof ch.themeTag === 'string' ? ch.themeTag : '').slice(0, 20),
+              }
+            }
+          }
           const oldStableEvent = payload.inboxId && fresh.find((event) => event.id === stableId)
           if (oldStableEvent) addReplayDraft(oldStableEvent)
           else drafts.push({ id: stableId, actor: 'user', type: 'evidence.appended', payload: evidencePayload })
