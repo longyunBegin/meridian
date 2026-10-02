@@ -200,7 +200,7 @@ export function deriveReaderModel(projection = {}, events = []) {
   }
 
   /* 排序：上升在前，承压其次，稳定最后；组内按置信度 */
-  for (const dir of ['up', 'down', 'flat']) {
+  for (const dir of ['improving', 'declining', 'stable']) {
     model.nodesByDirection[dir].sort((a, b) => b.confidence - a.confidence)
   }
 
