@@ -43,11 +43,14 @@ export function updateConfidence(old, strength, rel) {
 }
 
 /**
- * 根据证据类型估算强度。
- * 硬事实=1.0，软事实=0.7，有 URL 来源 +0.1（封顶 1.0）。
+ * 估算用于置信度公式的有效强度。
+ * 证据质量 × 用户审核过的关系把握 × 同批 meta 可靠性乘数。
+ * UI 展示同一返回值；relationship strength 本身另作为归因把握展示。
  */
-export function estimateStrength({ isHardFact = false, hasUrl = false } = {}) {
+export function estimateStrength({ isHardFact = false, hasUrl = false, attributionStrength = 1, metaMultiplier = 1 } = {}) {
   let s = isHardFact ? 1.0 : 0.7
   if (hasUrl) s = Math.min(1.0, s + 0.1)
-  return s
+  const attribution = Number.isFinite(attributionStrength) ? Math.max(0, Math.min(1, attributionStrength)) : 1
+  const meta = Number.isFinite(metaMultiplier) ? Math.max(0, Math.min(1, metaMultiplier)) : 1
+  return Math.max(0, Math.min(1, s * attribution * meta))
 }

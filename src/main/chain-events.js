@@ -34,6 +34,7 @@ export const EVENT_TYPES = [
   'node.restored', // 恢复 = 追加新事件，不改写归档历史
   'topic.linked', // 主题关联
   'confidence.updated', // 置信度更新（红区已批准，2026-10-02）：贝叶斯公式机械应用
+  'engine.recommendation.proposed', // 引擎建议卡片；本身不代表事实已确认
   'signal.reviewed', // 信号判决：审阅者对 pendingReview 信号的接受/修正/驳回
 ]
 
@@ -293,6 +294,37 @@ function verifyEvents(events, themeId) {
         if (evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.signalEventId) {
           return { ok: false, index: i, lastValidSeq: i, reason: '信号已被判决' }
         }
+      }
+    }
+    if (e.type === 'engine.recommendation.proposed') {
+      const statement = p.statement || {}
+      const recommendation = p.recommendation || {}
+      const change = recommendation.change || {}
+      if (p.pendingReview !== true || !textId(p.recommendationId) || !textId(p.inboxId)
+        || !isObj(statement) || !textId(statement.subject) || !textId(statement.attribute)
+        || !textId(statement.value) || typeof statement.timeWindow !== 'string'
+        || !['hard', 'soft', 'relational'].includes(statement.type)
+        || !['evidence', 'new-proposition'].includes(recommendation.kind)
+        || !textId(recommendation.title) || !['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(recommendation.rel)
+        || !Number.isFinite(recommendation.strength) || recommendation.strength < 0 || recommendation.strength > 1
+        || !['improving', 'declining', 'stable'].includes(change.direction)
+        || !['quantitative', 'pivot', 'epistemic', 'structural'].includes(change.nature)
+        || !textId(change.themeTag)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '引擎建议事件字段非法' }
+      }
+      if (recommendation.kind === 'evidence' && !textId(recommendation.propositionId)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '证据建议缺少目标命题' }
+      }
+    }
+    if (e.type === 'confidence.updated') {
+      const target = ids.get(p.nodeId || p.claimId)
+      const targetType = target?.type === 'node.created' ? target.payload?.nodeType : target?.type
+      const before = p.oldConfidence ?? p.before
+      const after = p.newConfidence ?? p.after
+      if (!textId(p.nodeId || p.claimId) || !target || !['claim.created', 'inference.created', 'viewpoint'].includes(targetType)
+        || !Number.isFinite(before) || before < 0 || before > 100
+        || !Number.isFinite(after) || after < 0 || after > 100) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '置信度更新目标或 0–100 载荷非法' }
       }
     }
     if (e.type === 'node.archived' || e.type === 'node.restored' || e.type === 'settlement.recorded') {

@@ -3531,6 +3531,15 @@ body.tauri-macos .app {
 .engine-attr-sub { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: var(--t-caption); color: var(--text-2); }
 .engine-attr-strength { margin-left: auto; font-variant-numeric: tabular-nums; }
 .btn-sm { padding: 4px 12px; font-size: var(--t-caption); }
+.engine-review-quote { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--accent); background: var(--hover); color: var(--text-2); font-size: var(--t-caption); line-height: 1.5; }
+.engine-review-warning { margin: 6px 0; color: var(--orange); font-size: var(--t-caption); }
+.engine-review-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.engine-review-field { display: inline-grid; gap: 4px; min-width: 96px; color: var(--text-3); font-size: var(--t-caption); }
+.engine-review-select, .engine-review-tag, .engine-review-title { min-height: 28px; padding: 4px 7px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface-solid); color: var(--text); font-size: var(--t-caption); }
+.engine-review-title { width: min(100%, 420px); }
+.engine-review-status { margin-left: auto; color: var(--green); font-size: var(--t-caption); }
+.engine-diagnostics { margin: 0; padding: 0 0 0 18px; color: var(--text-2); font-size: var(--t-caption); }
+.engine-stmt-time.is-unknown { color: var(--orange); }
 
 /* 读者视图：三问结构 — 方向 + 状态 + 拐点 */
 .rdr-dir-counts { display:flex; gap:16px; margin-top:12px; }
@@ -3559,7 +3568,7 @@ body.tauri-macos .app {
 .rdr-latest-label { font-weight:600; }
 .rdr-latest-src { color:var(--text-3); }
 .rdr-turn-list { display:flex; flex-direction:column; gap:10px; }
-.rdr-turn-card { display:block; width:100%; text-align:left; background:var(--surface-1); border:1px solid var(--border); border-radius:var(--r); } padding:14px 16px; cursor:pointer; transition:border-color .15s; }
+.rdr-turn-card { display:block; width:100%; text-align:left; background:var(--surface-1); border:1px solid var(--border); border-radius:var(--r); padding:14px 16px; cursor:pointer; transition:border-color .15s; }
 .rdr-turn-card:hover { border-color:var(--text-3); }
 .rdr-turn-top { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
 .rdr-turn-date { font-size:.75rem; color:var(--text-3); }

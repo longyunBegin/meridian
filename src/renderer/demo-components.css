@@ -80,6 +80,7 @@
 }
 .meridian-theme .node-card:last-child {margin-bottom:0;}
 .meridian-theme .node-card:hover {background:rgba(29,29,31,.05);}
+.meridian-theme .node-confidence {display:flex;justify-content:flex-end;margin:0 0 2px;}
 .meridian-theme .node-top {display:flex;align-items:center;gap:10px;}
 .meridian-theme .node-dot {width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
 .meridian-theme .node-name {font-size:14px;font-weight:600;letter-spacing:-.008em;color:var(--text);flex:1;}

@@ -34,13 +34,14 @@ import {
   getInboxItem, setInboxChainDraft, setInboxEnginePipeline, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
-import { extractStatements, classifyStatements, matchPropositions, attributeRelation } from './engine-pipeline.js'
+import { runEnginePipeline } from './engine-pipeline.js'
+import { estimateStrength } from './engine-confidence.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
-  createProjectedNode, renameProjectedNode, invalidateProjectedNode,
+  createProjectedNode, renameProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
 } from './chain-projector.js'
-import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent } from './chain-events.js'
+import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
@@ -645,6 +646,8 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     const event = appendChainEvent(themeId, { type: 'signal.reviewed', payload, actor: 'user' })
     return { ok: true, event }
   })
+  commands.register('chain:reviewEngineRecommendation', (themeId, eventId, decision, input = {}) =>
+    reviewEngineRecommendation(themeId, eventId, decision, input))
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {
@@ -694,64 +697,113 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     setInboxChainDraft(inboxId, res.draft)
     return { ok: true, draft: res.draft }
   })
-  /* 认知发动机：四步流水线（抽取→分类→匹配→归因）。第五步更新是红区，不在此实现。 */
+  /* 引擎只生成可审核建议；事实和关系由 chain:reviewEngineRecommendation 在用户确认后原子追加。 */
   commands.register('engine:runPipeline', async (inboxId) => {
     const item = getInboxItem(inboxId)
     if (!item) return { ok: false, error: '收件箱条目不存在' }
     const themeId = item.extractedThemeId || item.themeId || null
     if (!themeId) return { ok: false, error: '条目没有关联主题' }
-    const s = settings()
-    if (!s.apiKey) return { ok: false, error: '未配置 LLM API key', reason: 'no-key' }
-    const llmCall = async (system, user) => {
-      const ctl = new AbortController()
-      const t = setTimeout(() => ctl.abort(new Error('TimeoutError')), 20000)
+    let pipeline = item.enginePipeline?.status === 'done' ? item.enginePipeline : null
+    if (!pipeline) {
+      const s = settings()
+      if (!s.apiKey) return { ok: false, error: '未配置 LLM API key', reason: 'no-key' }
+      const llmCall = async (system, user) => {
+        const ctl = new AbortController()
+        const timer = setTimeout(() => ctl.abort(new Error('TimeoutError')), 20000)
+        try {
+          const res = await fetch(`${String(s.baseUrl || '').replace(/\/$/, '')}/chat/completions`, {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${s.apiKey}` },
+            signal: ctl.signal,
+            body: JSON.stringify({ model: s.model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+          })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const data = await res.json()
+          return data.choices?.[0]?.message?.content || ''
+        } finally { clearTimeout(timer) }
+      }
       try {
-        const res = await fetch(`${String(s.baseUrl || '').replace(/\/$/, '')}/chat/completions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${s.apiKey}` },
-          signal: ctl.signal,
-          body: JSON.stringify({ model: s.model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+        const theme = load().themes.find((candidate) => candidate.id === themeId)
+        const projection = getChainProjection(themeId)
+        const propositions = projection.nodes.filter((node) => node.nodeType === 'viewpoint' && !node.archived && !node.invalidated)
+          .map((node) => ({ id: node.id, title: node.title, status: node.status }))
+        pipeline = await runEnginePipeline(llmCall, {
+          themeName: theme?.name || '未命名主题', title: item.title, text: item.text,
+          source: item.provenance?.platform || '未知', inboxId: String(item.id), propositions,
         })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        return data.choices?.[0]?.message?.content || ''
-      } finally { clearTimeout(t) }
+        pipeline.ranAt = new Date().toISOString()
+      } catch (error) { return { ok: false, error: error?.message || String(error) } }
+    }
+
+    const priorEvents = getChainEvents(themeId)
+    const oldById = new Map(priorEvents.filter((event) => event.type === 'engine.recommendation.proposed')
+      .map((event) => [event.payload?.recommendationId, event]))
+    const reviewsByEvent = new Map(priorEvents.filter((event) => event.type === 'signal.reviewed')
+      .map((event) => [event.payload?.signalEventId, event.payload?.decision]))
+    const scheduledIds = new Set(oldById.keys())
+    const sourceText = String(item.text || '').replace(/\s+/g, ' ').trim()
+    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim()
+    const drafts = []
+    const results = []
+    for (const result of pipeline.results || []) {
+      const statement = result.statement || {}
+      const attribution = result.attribution || {}
+      const proposition = result.proposition || null
+      const kind = result.kind === 'new-proposition' || statement.type === 'relational' ? 'new-proposition' : 'evidence'
+      const rel = ['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(attribution.rel) ? attribution.rel : 'related'
+      const suggestedTitle = result.suggestedTitle || (kind === 'new-proposition'
+        ? `${statement.subject || ''} ${statement.attribute || ''}：${statement.value || ''}` : proposition?.title)
+      const title = String(suggestedTitle || '').trim()
+      if (!title) continue
+      const recommendationId = `engine:${hashText(JSON.stringify([String(item.id), statement.subject, statement.attribute,
+        statement.value, statement.timeWindow || '', kind, proposition?.id || '', rel]))}`
+      const prior = oldById.get(recommendationId)
+      const eventId = prior?.id || `evt:engine-proposal:${hashText(recommendationId)}`
+      const quote = String(statement.sourceText || '').trim()
+      const normalizedStatement = {
+        subject: String(statement.subject || '').trim(), attribute: String(statement.attribute || '').trim(),
+        value: String(statement.value || '').trim(), timeWindow: String(statement.timeWindow || ''),
+        type: ['hard', 'soft', 'relational'].includes(statement.type) ? statement.type : 'soft', sourceText: quote,
+        sourceQuoteVerified: statement.sourceQuoteVerified === true || Boolean(quote && sourceText.includes(normalize(quote))),
+      }
+      const change = {
+        direction: ['improving', 'declining', 'stable'].includes(attribution.change?.direction) ? attribution.change.direction
+          : rel === 'supports' ? 'improving' : rel === 'contradicts' ? 'declining' : 'stable',
+        nature: ['quantitative', 'pivot', 'epistemic', 'structural'].includes(attribution.change?.nature) ? attribution.change.nature : 'quantitative',
+        themeTag: String(attribution.change?.themeTag || normalizedStatement.attribute || '待复核').trim().slice(0, 20),
+      }
+      const strength = Number.isFinite(attribution.strength) ? Math.max(0, Math.min(1, attribution.strength)) : 0
+      const metaMultiplier = Number.isFinite(result.metaMultiplier) ? Math.max(0, Math.min(1, result.metaMultiplier)) : 1
+      const sourceUrl = String(item.provenance?.url || item.url || '').trim()
+      const effectiveStrength = kind === 'evidence'
+        ? estimateStrength({ isHardFact: normalizedStatement.type === 'hard', hasUrl: isUrl(sourceUrl), attributionStrength: strength, metaMultiplier })
+        : null
+      const recommendation = {
+        kind, title, propositionId: proposition?.id || null, propositionTitle: proposition?.title || '', rel,
+        strength, effectiveStrength, reason: String(attribution.reason || ''), change,
+        matchScore: Number.isFinite(result.match?.score) ? result.match.score : null,
+        timeWindowKnown: Boolean(normalizedStatement.timeWindow), requiresTemporalReview: result.requiresTemporalReview === true,
+      }
+      results.push({ ...result, kind, proposalEventId: eventId, reviewDecision: reviewsByEvent.get(eventId) || null,
+        recommendation: prior?.payload?.recommendation || recommendation,
+        statement: prior?.payload?.statement || normalizedStatement, proposition })
+      if (!scheduledIds.has(recommendationId)) {
+        scheduledIds.add(recommendationId)
+        drafts.push({ id: eventId, actor: 'engine', type: 'engine.recommendation.proposed', payload: {
+        pendingReview: true, recommendationId, inboxId: String(item.id), statement: normalizedStatement,
+        recommendation, metaMultiplier,
+        sourceLabel: String(item.provenance?.sourceLabel || item.provenance?.platform || item.source || '').trim(),
+        sourceUrl,
+        } })
+      }
     }
     try {
-      const theme = load().themes.find((t) => t.id === themeId)
-      const themeName = theme?.name || '未命名主题'
-      /* Step 1+2: 抽取 + 分类 */
-      let statements = await extractStatements(llmCall, {
-        themeName, title: item.title, text: item.text, source: item.provenance?.platform || '未知',
-      })
-      statements = await classifyStatements(llmCall, statements)
-      /* 取命题列表 */
-      const proj = getChainProjection(themeId)
-      const propositions = (proj.nodes || [])
-        .filter((n) => (n.kind === 'claim' || n.kind === 'inference') && !n.archived)
-        .map((n) => ({ id: n.id, title: n.title, status: n.status }))
-      /* Step 3+4: 匹配 + 归因（每个陈述） */
-      const results = []
-      for (const stmt of statements) {
-        if (stmt.type === 'meta') continue /* 元陈述不直接归因 */
-        const matches = await matchPropositions(llmCall, stmt, propositions)
-        for (const m of matches) {
-          const prop = propositions.find((p) => p.id === m.propositionId)
-          if (!prop) continue
-          try {
-            const attr = await attributeRelation(llmCall, stmt, prop)
-            results.push({ statement: stmt, match: m, attribution: attr, proposition: prop })
-          } catch (e) { /* 跳过归因失败的 */ }
-        }
-      }
-      /* 存到条目上 */
-      const pipeline = { statements, results, ranAt: new Date().toISOString(), status: 'done' }
+      if (drafts.length) appendChainEvents(themeId, drafts)
+      pipeline = { ...pipeline, results, status: 'done', ranAt: pipeline.ranAt || new Date().toISOString() }
       setInboxEnginePipeline(inboxId, pipeline)
       return { ok: true, pipeline }
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) }
-    }
+    } catch (error) { return { ok: false, error: error?.message || String(error) } }
   })
+
   commands.register('chain:readingMap', (themeId) => ({ ok: true, map: getReadingMap(themeId) }))
   commands.register('chain:setReadingMap', (themeId, map) => ({ ok: true, map: setReadingMap(themeId, map) }))
 

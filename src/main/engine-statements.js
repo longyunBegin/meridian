@@ -47,7 +47,7 @@ export function validateStatement(stmt) {
   if (!String(stmt.subject || '').trim()) errors.push('缺少主体')
   if (!String(stmt.attribute || '').trim()) errors.push('缺少属性')
   if (!String(stmt.value || '').trim()) errors.push('缺少值')
-  if (!String(stmt.timeWindow || '').trim()) errors.push('缺少时间窗口')
+  /* 时间窗口可以未知；匹配阶段必须显式标记并交给用户复核，不得丢弃。 */
   if (!STATEMENT_TYPES.includes(stmt.type)) errors.push(`类型必须是 ${STATEMENT_TYPES.join('/')} 之一`)
   return errors
 }

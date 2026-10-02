@@ -284,6 +284,106 @@ let duplicateRelationRejected = false
 try { pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts') } catch { duplicateRelationRejected = true }
 ok('重复关系不会静默膨胀图谱', duplicateRelationRejected)
 
+console.log('\n— 认知建议审阅闭环：隔离合成账本 —')
+const engineTheme = store.addTheme('隔离引擎审阅闭环')
+const engineTarget = ev.appendEvent(engineTheme.id, { id: 'engine-target-support', type: 'claim.created', payload: {
+  title: '合成营收观点', coreInfo: '初始说明', status: 'pending', confidence: 60, sourceRef: 'synthetic:engine-target',
+} })
+const makeEngineProposal = (key, targetId, rel, { quoteVerified = true, kind = 'evidence' } = {}) => ev.appendEvent(engineTheme.id, {
+  id: `engine-proposal-${key}`, actor: 'engine', type: 'engine.recommendation.proposed', payload: {
+    pendingReview: true, recommendationId: `synthetic:${key}`, inboxId: `synthetic-inbox:${key}`,
+    statement: { subject: '合成公司', attribute: '营收', value: key, timeWindow: '', type: 'hard',
+      sourceText: `合成来源摘录：${key}。`, sourceQuoteVerified: quoteVerified },
+    recommendation: { kind, title: kind === 'new-proposition' ? `合成新观点 ${key}` : '合成营收观点',
+      propositionId: kind === 'evidence' ? targetId : null, rel, strength: 0.62,
+      change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' } },
+    metaMultiplier: 0.85, sourceLabel: '隔离合成来源', sourceUrl: 'https://example.test/synthetic',
+  },
+})
+const rejectionProposal = makeEngineProposal('reject', engineTarget.id, 'supports')
+const beforeRejectCount = ev.getEvents(engineTheme.id).length
+const rejectedReview = pj.reviewEngineRecommendation(engineTheme.id, rejectionProposal.id, 'rejected', {})
+const afterRejectEvents = ev.getEvents(engineTheme.id)
+ok('驳回只追加 signal.reviewed，不生成证据/关系/置信度事实', rejectedReview.ok
+  && afterRejectEvents.length === beforeRejectCount + 1
+  && afterRejectEvents.at(-1).type === 'signal.reviewed'
+  && !afterRejectEvents.some((event) => event.type === 'evidence.appended' || event.type === 'confidence.updated'))
+const repeatedReject = pj.reviewEngineRecommendation(engineTheme.id, rejectionProposal.id, 'rejected', {})
+ok('重复驳回幂等，不重复追加决定事件', repeatedReject.replayed && ev.getEvents(engineTheme.id).length === beforeRejectCount + 1)
+let conflictingDecisionRejected = false
+try { pj.reviewEngineRecommendation(engineTheme.id, rejectionProposal.id, 'accepted', { change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' } }) }
+catch { conflictingDecisionRejected = true }
+ok('已驳回建议不能被重放改成接受', conflictingDecisionRejected)
+
+const supportProposal = makeEngineProposal('support', engineTarget.id, 'supports')
+const beforeConfirmSeq = ev.getEvents(engineTheme.id).length
+const supportReview = pj.reviewEngineRecommendation(engineTheme.id, supportProposal.id, 'accepted', {
+  change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' },
+})
+const afterSupportEvents = ev.getEvents(engineTheme.id)
+const supportEvidence = afterSupportEvents.find((event) => event.type === 'evidence.appended' && event.payload.recommendationId === 'synthetic:support')
+const supportConfidence = afterSupportEvents.find((event) => event.type === 'confidence.updated' && event.payload.evidenceEventId === supportEvidence?.id)
+const expectedStrength = 0.62 * 0.85 /* hard fact + URL is capped at 1; relation × meta */
+ok('用户确认后按追加事件批次记录证据、supports 关系、实际强度和决定', supportReview.ok
+  && afterSupportEvents.some((event) => event.type === 'relation.declared' && event.payload.from?.eventId === supportEvidence?.id)
+  && supportConfidence?.payload.strength === expectedStrength && afterSupportEvents.at(-1).type === 'signal.reviewed')
+const currentEngineProjection = pj.getChainProjection(engineTheme.id)
+const currentTarget = currentEngineProjection.nodes.find((node) => node.id === engineTarget.id)
+ok('confidence.updated 投影更新 0–100 当前置信度并记录来源历史', supportConfidence?.payload.oldConfidence === 60
+  && supportConfidence?.payload.newConfidence === currentTarget?.confidence
+  && currentTarget?.confidenceHistory?.at(-1)?.eventId === supportConfidence.id)
+const replayBeforeConfirm = pj.getChainProjectionAt(engineTheme.id, beforeConfirmSeq)
+ok('回放到确认前仍只有建议、无确认边或置信度变化', replayBeforeConfirm.allNodes.find((node) => node.id === engineTarget.id)?.confidence === 60
+  && !replayBeforeConfirm.allEdges.some((edge) => edge.from === supportEvidence?.id))
+const beforeDuplicateAccept = ev.getEvents(engineTheme.id).length
+const duplicateAccept = pj.reviewEngineRecommendation(engineTheme.id, supportProposal.id, 'accepted', {
+  change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' },
+})
+ok('确认命令重试返回既有决定，不重复证据、关系或 confidence.updated', duplicateAccept.replayed
+  && ev.getEvents(engineTheme.id).length === beforeDuplicateAccept)
+
+const relationTypes = ['contradicts', 'derives', 'supersedes', 'related']
+const relationResults = []
+for (const rel of relationTypes) {
+  const target = ev.appendEvent(engineTheme.id, { id: `engine-target-${rel}`, type: 'claim.created', payload: {
+    title: `合成 ${rel} 观点`, coreInfo: '当前合成结论', confidence: 50, sourceRef: `synthetic:target:${rel}`,
+  } })
+  const proposal = makeEngineProposal(rel, target.id, rel)
+  const review = pj.reviewEngineRecommendation(engineTheme.id, proposal.id, 'accepted', {
+    change: { direction: rel === 'contradicts' ? 'declining' : 'stable', nature: 'structural', themeTag: rel },
+  })
+  relationResults.push({ rel, target, proposal, review })
+}
+const engineRows = ev.getEvents(engineTheme.id)
+const engineProjection = pj.getChainProjection(engineTheme.id)
+ok('五种归因关系均经用户确认：支持/反驳/衍生/取代/相关分别映射到账本语义',
+  relationResults.every(({ rel, target, proposal, review }) => review.ok
+    && engineRows.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === proposal.id)
+    && (rel === 'supersedes'
+      ? engineRows.some((event) => event.type === 'correction.appended' && event.payload.sourceKind === 'engine-reviewed'
+        && event.supersedes === target.id)
+      : engineProjection.allEdges.some((edge) => edge.rel === rel && edge.to === target.id))
+    && (rel !== 'derives' || engineProjection.allEdges.find((edge) => edge.rel === 'derives' && edge.to === target.id)?.pendingReview === false)))
+
+const unverified = makeEngineProposal('unverified', engineTarget.id, 'supports', { quoteVerified: false })
+let unverifiedRefused = false
+try { pj.reviewEngineRecommendation(engineTheme.id, unverified.id, 'accepted', { change: { direction: 'stable', nature: 'quantitative', themeTag: '营收' } }) }
+catch { unverifiedRefused = true }
+ok('未经来源核验的模型摘录不能作为证据确认', unverifiedRefused
+  && !ev.getEvents(engineTheme.id).some((event) => event.type === 'evidence.appended' && event.payload.recommendationId === 'synthetic:unverified'))
+
+const relationalProposal = makeEngineProposal('relational', null, 'related', { kind: 'new-proposition' })
+const beforeRelationalAccept = ev.getEvents(engineTheme.id).length
+const relationalReview = pj.reviewEngineRecommendation(engineTheme.id, relationalProposal.id, 'accepted', {
+  title: '用户确认的合成关系命题', change: { direction: 'stable', nature: 'structural', themeTag: '供需关系' },
+})
+const afterRelationalProjection = pj.getChainProjection(engineTheme.id)
+ok('relational 流程由用户确认后追加观点、可核验来源和支持边，不自动预写事实', relationalReview.ok
+  && ev.getEvents(engineTheme.id).length > beforeRelationalAccept
+  && afterRelationalProjection.nodes.some((node) => node.title === '用户确认的合成关系命题')
+  && afterRelationalProjection.allEdges.some((edge) => edge.rel === 'supports' && edge.to === relationalReview.events?.[0]?.id))
+ok('引擎建议闭环完成后全事件链可验证', ev.verifyChain(engineTheme.id).ok)
+
 console.log('\n— 投影归档 / 恢复 —')
 const eventNode = pj.getChainProjection(theme3.id).nodes.find((n) => n.title === '新主张')
 const archiveEvent = pj.archiveProjectedNode(theme3.id, eventNode.sourceRef, '证据已过时')

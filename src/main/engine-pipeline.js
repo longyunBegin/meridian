@@ -1,192 +1,132 @@
-/**
- * 认知发动机 · 四步流水线（抽取→分类→匹配→归因）。
- *
- * 第五步"更新"（置信度公式）是红区，需书面评审，本模块不实现。
- * 前四步走 LLM，每一步输出结构化 JSON，存到收件箱条目上。
- *
- * 流程：
- * 1. extract: 新闻 → 原子陈述[]
- * 2. classify: 陈述 → 类型标注
- * 3. match: 陈述 × 命题 → 三维匹配
- * 4. attribute: 陈述 × 命题 → 五种关系
- *
- * 人机分工：
- * - 系统做前四步，给出建议
- * - 人做确认（归因确认在 UI 层）
- */
-import { createStatement, validateStatement } from './engine-statements.js'
+import { createStatement } from './engine-statements.js'
 
-/* Prompt 模板（从 docs/engine-prompts.md 加载，内联以避免文件依赖） */
-const EXTRACT_SYSTEM = `你是严谨的信息抽取助手。用户在跟踪某个主题的认知变化。
-你的任务：把一篇新闻拆成"原子陈述"——最小可验证单元。
+const EXTRACT_SYSTEM = `抽取新闻中可核验的原子陈述。保留原文数字和单位；不得推断或补充。每条包含 subject、attribute、value、time_window、quote；没有明确时间时 time_window 必须为空字符串。quote 不超过40字。只输出 JSON：{"statements":[{"subject":"...","attribute":"...","value":"...","time_window":"...","quote":"..."}]}`
+const CLASSIFY_SYSTEM = `将每条陈述分类为 hard、soft、relational 或 meta。hard=可直接核验事实；soft=观点/估计；relational=关系陈述，建议新命题；meta=关于信息本身的提示。不能确定时用 soft。只输出 JSON：{"types":[{"index":0,"type":"hard"}]}`
+const MATCH_SYSTEM = `判断陈述与命题的语义、主体、时间是否匹配，字段必须为严格布尔值。如果陈述没有时间窗口，temporal=false 表示无法核实；不要因此丢弃语义及主体匹配的候选，而应标为需人工复核。如果时间明确且不匹配，则不返回该候选。score 必须为 0 到 1 的数字。只输出 JSON：{"matches":[{"proposition_index":0,"semantic":true,"subject":true,"temporal":true,"score":0.85,"reason":"..."}]}`
+const ATTRIBUTE_SYSTEM = `判断陈述与命题的关系：supports、contradicts、derives、supersedes、related。返回 0 到 1 的 strength、reason，以及建议 change：direction=improving/declining/stable，nature=quantitative/pivot/epistemic/structural，themeTag=简洁标签。输出仅为待用户审阅的建议；任何分数都不能自动接受或追加事件。只输出 JSON：{"rel":"supports","strength":0.62,"reason":"...","change":{"direction":"improving","nature":"quantitative","themeTag":"营收增长"}}`
+const TYPES = new Set(['hard', 'soft', 'relational', 'meta'])
+const RELS = new Set(['supports', 'contradicts', 'derives', 'supersedes', 'related'])
+const DIRECTIONS = new Set(['improving', 'declining', 'stable'])
+const NATURES = new Set(['quantitative', 'pivot', 'epistemic', 'structural'])
 
-拆分标准（只有一条）：任何两个数字、事件、判断，如果可以被独立验证或反驳，就必须拆开。
-
-每个陈述必须包含四个属性：
-- subject（主体）：这条陈述说的是谁/什么
-- attribute（属性）：主体的哪个方面
-- value（值）：具体数值或内容
-- time_window（时间窗口）：如 "2026Q2"、"2026H2"、"2027年前"；没有明确时间的填 ""
-
-硬规则：
-1. 只写新闻确实陈述的内容，禁止补充外部知识，禁止评价，禁止推断
-2. 数字必须原样保留（单位、精度都不改）
-3. 每条陈述附上原文片段（quote），不超过 40 字
-
-只输出 JSON，不要 markdown 代码块，不要任何解释：
-{"statements":[{"subject":"...","attribute":"...","value":"...","time_window":"...","quote":"..."}]}`
-
-const CLASSIFY_SYSTEM = `你是严谨的信息分类助手。输入是一批原子陈述，你的任务：给每条陈述定类型。
-
-四种类型：
-- hard（硬事实）：可直接验证的数值、事件、日期。权重最高，可直接归因。
-- soft（软事实）：观点、预测、估计。不能直接验证，权重取决于来源可靠性。
-- relational（关系陈述）："A 导致 B"、"A 与 B 相关"。不直接支持/反驳命题，而是催生新命题。
-- meta（元陈述）：关于信息本身的说明。不改变命题置信度，但改变其他证据的权重。
-
-只输出 JSON：
-{"types":[{"index":0,"type":"hard","reason":"..."}]}`
-
-const MATCH_SYSTEM = `你是严谨的语义匹配助手。输入：一条原子陈述 + 主题的命题列表。
-你的任务：判断这条陈述与哪些命题相关。
-
-三个维度（都过才有资格进入归因）：
-- semantic（语义）：陈述和命题说的是不是同一件事？不要求字面相似，要判断是否在因果链或时间链上。
-- subject（主体）：陈述里的主体和命题里的主体是否一致？
-- temporal（时间）：陈述的时间窗口是否落在命题的时间范围内？
-
-只输出 JSON：
-{"matches":[{"proposition_index":0,"semantic":true,"subject":true,"temporal":true,"score":0.85,"reason":"..."}]}`
-
-const ATTRIBUTE_SYSTEM = `你是严谨的归因判断助手。输入：一条陈述 + 一个命题。
-你的任务：判断这条陈述与命题的关系类型。
-
-五种关系：
-- supports（支持）：证据增加了命题成立的可能性
-- contradicts（反驳）：证据降低了命题成立的可能性
-- derives（衍生）：证据比命题更窄/更具体，催生子命题
-- supersedes（取代）：证据表明原命题假设错了，需要重写
-- related（相关）：有关联但不明确，不进置信度计算
-
-判断标准：
-- 证据与命题预测方向一致 → supports
-- 方向相反 → contradicts
-- 证据更窄/更具体 → derives
-
-三层演化分类（描述这条证据对命题状态的影响）：
-- direction（方向）：improving（好转）/ declining（恶化）/ stable（稳定）
-- nature（变化性质）：quantitative（量变）/ pivot（转向）/ epistemic（认识）/ structural（结构）
-- themeTag（主题标签）：2-6 字开放标签，如"产能瓶颈"、"良率爬坡"、"管理层调整"
-
-只输出 JSON：
-{"rel":"supports","strength":0.62,"reason":"...","change":{"direction":"improving","nature":"quantitative","themeTag":"营收增长"}}`
-
-/**
- * 调用 LLM（通过现有的 llm 接口）。
- * @param {string} system System prompt
- * @param {string} user User prompt
- * @returns {Promise<object>} 解析后的 JSON
- */
 async function callLLM(llmCall, system, user) {
+  if (typeof llmCall !== 'function') throw new Error('缺少 LLM 调用函数')
   const text = await llmCall(system, user)
-  const m = String(text || '').match(/\{[\s\S]*\}/)
-  if (!m) throw new Error('LLM 未返回有效 JSON')
-  try {
-    return JSON.parse(m[0])
-  } catch {
-    throw new Error('LLM 返回的 JSON 解析失败')
-  }
+  const match = String(text || '').match(/\{[\s\S]*\}/)
+  if (!match) throw new Error('LLM 未返回有效 JSON')
+  try { return JSON.parse(match[0]) } catch { throw new Error('LLM 返回的 JSON 解析失败') }
 }
 
-/**
- * Step 1: 抽取原子陈述。
- */
-export async function extractStatements(llmCall, { themeName, title, text, source }) {
-  const user = `主题：${themeName}\n\n新闻标题：${title || '（无）'}\n\n新闻正文：\n"""\n${(text || '').slice(0, 4000)}\n"""\n\n信息来源：${source || '未知'}`
+export async function extractStatements(llmCall, { themeName, title, text, source, inboxId = null }) {
+  const user = `主题：${themeName}\n标题：${title || '（无）'}\n正文：\n"""\n${String(text || '').slice(0, 4000)}\n"""\n来源：${source || '未知'}`
   const result = await callLLM(llmCall, EXTRACT_SYSTEM, user)
+  const normalizedSource = String(text || '').replace(/\s+/g, ' ').trim()
   const statements = []
-  for (const s of result.statements || []) {
+  for (const raw of Array.isArray(result.statements) ? result.statements : []) {
     try {
-      statements.push(createStatement({
-        subject: s.subject,
-        attribute: s.attribute,
-        value: s.value,
-        timeWindow: s.time_window,
-        type: 'hard', // 先默认，分类步骤会修正
-        sourceText: s.quote || '',
-      }))
-    } catch (e) {
-      // 跳过无效陈述，继续处理其他的
-      console.warn('跳过无效陈述:', e.message)
-    }
+      const quote = String(raw.quote || '').trim()
+      const statement = createStatement({ subject: raw.subject, attribute: raw.attribute, value: raw.value,
+        timeWindow: raw.time_window, type: 'soft', sourceText: quote, inboxId })
+      statement.sourceQuoteVerified = Boolean(quote && normalizedSource.includes(quote.replace(/\s+/g, ' ').trim()))
+      statements.push(statement)
+    } catch { /* keep malformed extraction out of the review queue */ }
   }
   return statements
 }
 
-/**
- * Step 2: 分类陈述类型。
- */
 export async function classifyStatements(llmCall, statements) {
   if (!statements.length) return statements
-  const user = `陈述列表：\n${statements.map((s, i) =>
-    `${i}. [${s.subject}] ${s.attribute} = ${s.value}（${s.timeWindow}）`
-  ).join('\n')}`
+  const user = statements.map((s, i) => `${i}. [${s.subject}] ${s.attribute}=${s.value}（${s.timeWindow || '时间未注明'}）`).join('\n')
   const result = await callLLM(llmCall, CLASSIFY_SYSTEM, user)
-  const typeByIndex = new Map((result.types || []).map((t) => [t.index, t.type]))
-  return statements.map((s, i) => {
-    const type = typeByIndex.get(i)
-    if (type && ['hard', 'soft', 'relational', 'meta'].includes(type)) {
-      return { ...s, type }
-    }
-    return s
-  })
+  const byIndex = new Map()
+  for (const item of Array.isArray(result.types) ? result.types : []) {
+    if (Number.isSafeInteger(item?.index) && item.index >= 0 && item.index < statements.length && TYPES.has(item.type)) byIndex.set(item.index, item.type)
+  }
+  return statements.map((s, i) => byIndex.has(i)
+    ? { ...s, type: byIndex.get(i), classificationMissing: false }
+    : { ...s, type: 'soft', classificationMissing: true })
 }
 
-/**
- * Step 3: 匹配命题。
- */
 export async function matchPropositions(llmCall, statement, propositions) {
   if (!propositions.length) return []
-  const user = `陈述：[${statement.subject}] ${statement.attribute} = ${statement.value}（${statement.timeWindow}）\n\n命题列表：\n${propositions.map((p, i) =>
-    `${i}. ${p.title}（状态：${p.status || '未知'}）`
-  ).join('\n')}`
+  const user = `陈述：[${statement.subject}] ${statement.attribute}=${statement.value}（${statement.timeWindow || '时间未注明'}）\n命题：\n${propositions.map((p, i) => `${i}. ${p.title}（${p.status || '未知'}）`).join('\n')}`
   const result = await callLLM(llmCall, MATCH_SYSTEM, user)
-  return (result.matches || [])
-    .filter((m) => m.semantic && m.subject && m.temporal)
-    .map((m) => ({
-      propositionId: propositions[m.proposition_index]?.id || null,
-      propositionTitle: propositions[m.proposition_index]?.title || '',
-      score: Math.max(0, Math.min(1, Number(m.score) || 0)),
-      reason: m.reason || '',
-    }))
-    .filter((m) => m.propositionId)
+  const timeKnown = Boolean(String(statement.timeWindow || '').trim())
+  const matches = []
+  for (const item of Array.isArray(result.matches) ? result.matches : []) {
+    const index = item?.proposition_index
+    if (!Number.isSafeInteger(index) || index < 0 || index >= propositions.length) continue
+    /* Never coerce strings such as "false" to truthy flags. */
+    if (item.semantic !== true || item.subject !== true) continue
+    if (timeKnown && item.temporal !== true) continue
+    const proposition = propositions[index]
+    const score = Number.isFinite(item.score) ? Math.max(0, Math.min(1, item.score)) : 0
+    matches.push({ propositionId: proposition.id, propositionTitle: proposition.title, score,
+      reason: String(item.reason || ''), timeWindowKnown: timeKnown,
+      requiresTemporalReview: !timeKnown, temporalMatched: item.temporal === true })
+  }
+  return matches
 }
 
-/**
- * Step 4: 判断归因关系。
- */
 export async function attributeRelation(llmCall, statement, proposition) {
-  const user = `陈述：[${statement.subject}] ${statement.attribute} = ${statement.value}（${statement.timeWindow}，类型：${statement.type}）\n\n命题：${proposition.title}`
+  const user = `陈述：[${statement.subject}] ${statement.attribute}=${statement.value}（${statement.timeWindow || '时间未注明'}，${statement.type}）\n命题：${proposition.title}`
   const result = await callLLM(llmCall, ATTRIBUTE_SYSTEM, user)
-  const rel = result.rel
-  if (!['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(rel)) {
-    throw new Error(`LLM 返回了非法关系类型：${rel}`)
+  if (!RELS.has(result.rel)) throw new Error(`LLM 返回了非法关系类型：${result.rel}`)
+  if (!Number.isFinite(result.strength) || result.strength < 0 || result.strength > 1) throw new Error('LLM 返回的 strength 必须是 0 到 1 的数字')
+  const change = result.change || {}
+  const direction = DIRECTIONS.has(change.direction) ? change.direction : result.rel === 'supports' ? 'improving' : result.rel === 'contradicts' ? 'declining' : 'stable'
+  const nature = NATURES.has(change.nature) ? change.nature : 'quantitative'
+  const themeTag = String(change.themeTag || statement.attribute || '').trim().slice(0, 20)
+  return { rel: result.rel, strength: result.strength, reason: String(result.reason || '').trim(),
+    change: { direction, nature, themeTag } }
+}
+
+export function statementTitle(statement) {
+  const subject = String(statement?.subject || '').trim()
+  const attribute = String(statement?.attribute || '').trim()
+  const value = String(statement?.value || '').trim()
+  const time = String(statement?.timeWindow || '').trim()
+  return [subject, `${attribute}：${value}${time ? `（${time}）` : ''}`].filter(Boolean).join(' ')
+}
+
+/** Injectable end-to-end pipeline. It produces recommendations and diagnostics only. */
+export async function runEnginePipeline(llmCall, { themeName, title, text, source, inboxId, propositions = [] }) {
+  const extracted = await extractStatements(llmCall, { themeName, title, text, source, inboxId })
+  const statements = await classifyStatements(llmCall, extracted)
+  const metaCount = statements.filter((s) => s.type === 'meta').length
+  const metaMultiplier = Math.pow(0.85, metaCount)
+  const results = []
+  const diagnostics = []
+  for (const statement of statements) {
+    if (statement.type === 'meta') continue
+    if (statement.classificationMissing) {
+      diagnostics.push({ statement, reason: '分类响应缺失；已保守标为软事实，需人工检查' })
+      continue
+    }
+    if (statement.type === 'relational') {
+      results.push({ kind: 'new-proposition', statement, match: null, proposition: null,
+        suggestedTitle: statementTitle(statement), attribution: { rel: 'related', strength: 1,
+          reason: '关系陈述仅用于提出新命题，不自动建立既成关系。',
+          change: { direction: 'stable', nature: 'structural', themeTag: statement.attribute.slice(0, 20) } },
+        metaCount, metaMultiplier, requiresTemporalReview: !statement.timeWindow })
+      continue
+    }
+    const matches = await matchPropositions(llmCall, statement, propositions)
+    if (!matches.length) {
+      diagnostics.push({ statement, reason: statement.timeWindow ? '未找到满足语义、主体和时间约束的命题' : '没有时间窗口；未静默丢弃，当前没有语义/主体匹配候选' })
+      continue
+    }
+    for (const match of matches) {
+      const proposition = propositions.find((p) => p.id === match.propositionId)
+      if (!proposition) continue
+      try {
+        const attribution = await attributeRelation(llmCall, statement, proposition)
+        results.push({ kind: 'evidence', statement, match, attribution, proposition,
+          metaCount, metaMultiplier, requiresTemporalReview: match.requiresTemporalReview })
+      } catch (error) {
+        diagnostics.push({ statement, proposition, reason: error?.message || '归因建议无效' })
+      }
+    }
   }
-  /* 三层演化分类：校验并 fallback */
-  const ch = result.change || {}
-  const direction = ['improving', 'declining', 'stable'].includes(ch.direction)
-    ? ch.direction
-    : (rel === 'supports' ? 'improving' : rel === 'contradicts' ? 'declining' : 'stable')
-  const nature = ['quantitative', 'pivot', 'epistemic', 'structural'].includes(ch.nature)
-    ? ch.nature
-    : 'quantitative'
-  const themeTag = (typeof ch.themeTag === 'string' && ch.themeTag.trim())
-    ? ch.themeTag.trim().slice(0, 20)
-    : ''
-  return {
-    rel,
-    strength: Math.max(0, Math.min(1, Number(result.strength) || 0)),
-    reason: String(result.reason || '').trim(),
-    change: { direction, nature, themeTag },
-  }
+  return { statements, results, diagnostics, metaCount, metaMultiplier, status: 'done' }
 }

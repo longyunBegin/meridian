@@ -1,335 +1,23 @@
 import { h } from '../lib/dom.js'
-import { linearize } from '../lib/chain-linearizer.js'
 import { networkNodeType, truncateGraphemes } from '../lib/theme-network.js'
-import { compactEventSummary } from '../lib/chain-ui-model.js'
-import { PROP_STATUS_LABEL, confidenceBar } from './chain.js'
+import { deriveReaderModel, DIRECTION_META, NATURE_META, estimateReadSeconds } from '../lib/reader-model.js'
 
-/* ------------------------------------------------------------------ */
-/* 主题读者视图：当前投影派生的阅读文章。                                */
-/*                                                                    */
-/* 非模板原则：卡片按数据成熟度涌现，每种卡片有最低数据门槛；            */
-/* 不达标就不渲染，绝不硬凑。成熟度信号只用于降级逻辑，不展示为分数。    */
-/* ------------------------------------------------------------------ */
-
-const ARG_RELS = new Set(['supports', 'derives'])
-
-const REL_LABEL = {
-  supports: '支持', derives: '推导', contradicts: '反驳',
-  'belongs-to': '归属', influences: '影响', 'depends-on': '依赖',
-  temporal: '时间关联', related: '相关',
-}
-
-/* 三层模型映射表（从九种枚举改成三层模型）
-   维度一 direction：状态量（好转/恶化/稳定）→ 决定颜色
-   维度二 nature：变化性质（量变/质变/认识/结构）→ 决定图标
-   维度三 themeTag：主题标签（开放字符串） */
-export const DIRECTION_META = {
-  improving: { label: '好转', color: 'var(--green)', icon: '↑' },
-  declining: { label: '恶化', color: 'var(--red)', icon: '↓' },
-  stable: { label: '稳定', color: 'var(--text-3)', icon: '→' },
-}
-export const NATURE_META = {
-  quantitative: { label: '量变', icon: '·' },
-  pivot: { label: '质变', icon: '⇄' },
-  epistemic: { label: '认识', icon: '◉' },
-  structural: { label: '结构', icon: '⑂' },
-}
-
-/* 从事件类型推导变化性质 */
-function natureFromEvent(event) {
-  const type = event?.type || ''
-  if (type === 'confidence.updated') return 'quantitative'
-  if (type === 'evidence.appended') {
-    const rel = event?.payload?.rel || ''
-    return rel === 'contradicts' ? 'epistemic' : 'quantitative'
-  }
-  if (type === 'relation.declared') return 'structural'
-  if (type === 'claim.created') return 'epistemic'
-  return 'quantitative'
-}
-
-/* 从事件内容推导主题标签（开放，系统建议） */
-function themeTagFromEvent(event) {
-  const payload = event?.payload || {}
-  if (payload.themeTag) return payload.themeTag
-  const type = event?.type || ''
-  if (type === 'confidence.updated') return '置信度变化'
-  if (type === 'evidence.appended') {
-    const rel = payload.rel || ''
-    return rel === 'contradicts' ? '假设挑战' : '证据支持'
-  }
-  if (type === 'relation.declared') return '关系建立'
-  if (type === 'claim.created') return '新命题'
-  return '数据更新'
-}
-
-const titleOf = (node) => String(node?.title || node?.currentText || '未命名').trim() || '未命名'
-
-/* 提炼判断：从原始文本中提取认知，而非搬运 */
-function distillJudgment(rawText, { direction, nature, themeTag } = {}) {
-  let text = String(rawText || '').trim()
-  if (!text) return '状态待更新'
-  /* 1. 如果文本过长（>60字），提取关键句 */
-  if (text.length > 60) {
-    /* 尝试找到包含数字或关键动词的句子 */
-    const sentences = text.split(/[。；;]/).filter(Boolean)
-    /* 优先选择包含百分比、数字、"增长"、"下降"、"提升"等关键词的句子 */
-    const key = sentences.find(s => /\d+%|\d+\.?\d*亿|增长|下降|提升|突破|创/.test(s))
-    if (key) text = key.trim() + '。'
-    else text = sentences[0].trim() + '。'
-  }
-  /* 2. 如果过长仍截断，保留核心 */
-  if (text.length > 80) text = text.slice(0, 77) + '…'
-  return text
+const PROP_STATUS_LABEL = { pending: '待确认', verified: '已确认', disputed: '有争议' }
+const confidenceBar = (confidence, { showLabel = true } = {}) => {
+  const value = confidence == null || !Number.isFinite(Number(confidence)) ? null : Math.max(0, Math.min(100, Math.round(Number(confidence))))
+  if (value == null) return h('span', { class: 'conf-bar is-empty' }, showLabel ? h('span', { class: 'conf-bar-label' }, '未评估') : null)
+  const level = value >= 70 ? 'high' : value >= 40 ? 'mid' : 'low'
+  return h('span', { class: `conf-bar is-${level}`, role: 'img', 'aria-label': `置信度 ${value}%` },
+    h('span', { class: 'conf-bar-track' }, h('span', { class: 'conf-bar-fill', style: `width:${value}%` })),
+    showLabel ? h('span', { class: 'conf-bar-label' }, `${value}%`) : null)
 }
 const short = (value, limit = 90) => truncateGraphemes(String(value || ''), limit)
-
-function liveEdges(projection) {
-  const edges = projection?.allEdges || projection?.edges || []
-  return (Array.isArray(edges) ? edges : []).filter((e) => e && e.reviewDecision !== 'rejected')
-}
-
-function liveNodes(projection) {
-  const nodes = projection?.allNodes || projection?.nodes || []
-  return (Array.isArray(nodes) ? nodes : []).filter((n) => n && !n.archived)
-}
-
-/**
- * 从当前投影派生读者模型。纯函数：projection/events → model。
- * 阈值（产品约定）：
- * - 一句话：主链长度 ≥ 2（至少一次推导），否则不生成
- * - 关键驱动：被论证边引用的概念/对象 ≥ 2 个
- * - 关键演变：有改名/更正记录的节点 ≥ 1 个
- * - 边界条件：depends-on 边 ≥ 1 条
- * - 争议焦点：contradicts 边或 disputed 节点 ≥ 1
- * - 下一步：待复核关系或近期变化 ≥ 1
- */
-export function deriveReaderModel(projection = {}, events = []) {
-  const nodes = liveNodes(projection)
-  const edges = liveEdges(projection)
-  const byId = new Map(nodes.map((n) => [n.id, n]))
-  const model = {
-    empty: nodes.length === 0,
-    nodeCount: nodes.length,
-    eventCount: Array.isArray(events) ? events.length : 0,
-    oneLiner: null, drivers: [], evolutions: [], boundaries: [],
-    disputes: [], pending: [], recent: [],
-    status: '尚未开始',
-    /* 三问模型：方向 + 状态 + 拐点 */
-    directionCounts: { improving: 0, declining: 0, stable: 0 },
-    nodesByDirection: { improving: [], declining: [], stable: [] },
-    turningPoints: [],
-  }
-  if (model.empty) return model
-
-  /* ---- 方向推导：基于最近30天置信度变化 ---- */
-  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
-  const confChanges = new Map() // nodeId -> { net: number, latest: event }
-  for (const event of (Array.isArray(events) ? events : [])) {
-    if (event?.type !== 'confidence.updated') continue
-    const payload = event?.payload || {}
-    const nodeId = payload.nodeId || payload.claimId
-    if (!nodeId || !byId.has(nodeId)) continue
-    const at = new Date(event?.at || event?.timestamp || 0).getTime()
-    if (at < thirtyDaysAgo) continue
-    const before = payload.before ?? payload.oldConfidence ?? 0
-    const after = payload.after ?? payload.newConfidence ?? 0
-    const delta = after - before
-    if (!confChanges.has(nodeId)) confChanges.set(nodeId, { net: 0, latest: null, latestAt: 0 })
-    const entry = confChanges.get(nodeId)
-    entry.net += delta
-    if (at > entry.latestAt) { entry.latest = event; entry.latestAt = at }
-  }
-
-  /* ---- 节点方向与状态 ---- */
-  const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
-  /* 证据统计 */
-  const evStats = new Map()
-  for (const v of viewpoints) evStats.set(v.id, { supports: 0, contradicts: 0, latestEv: null, latestAt: 0 })
-  for (const edge of edges) {
-    const stat = evStats.get(edge.to)
-    if (!stat) continue
-    if (edge.rel === 'supports' || edge.rel === 'derives') stat.supports++
-    else if (edge.rel === 'contradicts') stat.contradicts++
-  }
-  /* 最新证据 */
-  for (const event of (Array.isArray(events) ? events : [])) {
-    if (event?.type !== 'evidence.appended') continue
-    const payload = event?.payload || {}
-    const nodeId = payload.nodeId || payload.targetId
-    const stat = evStats.get(nodeId)
-    if (!stat) continue
-    const at = new Date(event?.at || event?.timestamp || 0).getTime()
-    if (at > stat.latestAt) {
-      stat.latestEv = event
-      stat.latestAt = at
-    }
-  }
-
-  for (const node of viewpoints) {
-    const change = confChanges.get(node.id)
-    const stat = evStats.get(node.id) || { supports: 0, contradicts: 0 }
-    /* 方向：净变化 >5% 上升，<-5% 承压，否则稳定 */
-    let direction = 'stable'
-    if (change) {
-      if (change.net > 0.05) direction = 'improving'
-      else if (change.net < -0.05) direction = 'declining'
-    }
-    /* 有反驳无支持 → 恶化 */
-    if (direction === 'stable' && stat.contradicts > 0 && stat.supports === 0) direction = 'declining'
-
-    /* 一句话状态：提炼判断，而非原始数据搬运 */
-    const conf = Math.round((node.confidence ?? 0.5) * 100)
-    /* 从最新事件提取关键信息，生成判断性描述 */
-    let state = ''
-    const latestPayload = latestEvent?.payload || {}
-    const rawText = latestPayload.title || latestPayload.text || titleOf(node)
-    /* 提炼：提取关键数字和动词，去除冗长修饰 */
-    const distilled = distillJudgment(rawText, { direction, nature, themeTag })
-    state = distilled
-    /* 证据信息作为辅助，不主导 */
-    if (stat.supports > 0 || stat.contradicts > 0) {
-      state += `（${stat.supports} 支持/${stat.contradicts} 反驳，置信度 ${conf}%）`
-    }
-
-    /* 最近关键变化 */
-    let latest = null, latestSrc = null
-    if (stat.latestEv) {
-      const p = stat.latestEv.payload || {}
-      latest = p.title || p.text?.slice(0, 30) || '新证据'
-      latestSrc = p.sourceLabel || p.url || '来源'
-    } else if (change?.latest) {
-      const p = change.latest.payload || {}
-      latest = `置信度 ${Math.round((p.before ?? 0) * 100)}% → ${Math.round((p.after ?? 0) * 100)}%`
-      latestSrc = '自动更新'
-    }
-
-    /* 三层模型：从最新事件推导 nature 和 themeTag */
-    const latestEvent = stat.latestEv || change?.latest || null
-    const nature = latestEvent ? natureFromEvent(latestEvent) : 'quantitative'
-    const themeTag = latestEvent ? themeTagFromEvent(latestEvent) : '暂无标签'
-    /* 演化时间线：该节点相关的事件（供 mini-evo 用） */
-    const evolution = []
-    for (const event of (Array.isArray(events) ? events : [])) {
-      const p = event?.payload || {}
-      const eid = p.nodeId || p.claimId || p.targetId
-      if (eid !== node.id) continue
-      const etype = event?.type || ''
-      if (!['confidence.updated', 'evidence.appended', 'relation.declared', 'claim.created'].includes(etype)) continue
-      const ch = p.change || {}
-      let edir = ch.direction || null
-      if (!edir) {
-        if (etype === 'confidence.updated') {
-          const before = p.before ?? p.oldConfidence ?? 0
-          const after = p.after ?? p.newConfidence ?? 0
-          edir = after > before ? 'improving' : after < before ? 'declining' : 'stable'
-        } else if (etype === 'evidence.appended') {
-          edir = (p.rel === 'contradicts') ? 'declining' : 'improving'
-        } else {
-          edir = 'stable'
-        }
-      }
-      evolution.push({
-        date: new Date(event?.at || event?.timestamp || 0).toISOString().slice(0, 10),
-        direction: edir,
-        nature: ch.nature || natureFromEvent(event),
-        themeTag: ch.themeTag || themeTagFromEvent(event),
-      })
-      if (evolution.length >= 12) break
-    }
-    evolution.sort((a, b) => a.date < b.date ? -1 : 1)
-    model.nodesByDirection[direction].push({
-      id: node.id,
-      title: titleOf(node),
-      direction,
-      nature,
-      themeTag,
-      state,
-      latest,
-      latestSrc,
-      confidence: conf,
-      evolution,
-    })
-    model.directionCounts[direction]++
-  }
-
-  /* 排序：上升在前，承压其次，稳定最后；组内按置信度 */
-  for (const dir of ['improving', 'declining', 'stable']) {
-    model.nodesByDirection[dir].sort((a, b) => b.confidence - a.confidence)
-  }
-
-  /* ---- 拐点：最近30天显著改变方向的事件 ---- */
-  const turningCandidates = []
-  for (const [nodeId, change] of confChanges) {
-    /* 单次变化幅度 >10% 视为拐点（三层模型） */
-    if (Math.abs(change.net) < 0.1) continue
-    const node = byId.get(nodeId)
-    if (!node) continue
-    const dir = change.net > 0 ? 'improving' : 'declining'
-    const latestEv = change.latest
-    turningCandidates.push({
-      date: new Date(change.latestAt).toISOString().slice(0, 10),
-      timestamp: change.latestAt,
-      direction: dir,
-      nature: latestEv ? natureFromEvent(latestEv) : 'quantitative',
-      themeTag: latestEv ? themeTagFromEvent(latestEv) : '置信度变化',
-      text: `${titleOf(node)}：置信度变化 ${Math.round(change.net * 100)}%`,
-      nodeIds: [nodeId],
-      nodeTitles: [titleOf(node)],
-    })
-  }
-  /* 按时间倒序，最多取 5 个 */
-  turningCandidates.sort((a, b) => b.timestamp - a.timestamp)
-  model.turningPoints = turningCandidates.slice(0, 5)
-
-  /* 一句话（保留原有逻辑，用于顶部） */
-  let mainChain = null
-  try {
-    const result = linearize(projection)
-    mainChain = (result.chains || []).find((c) => c.kind === 'main') || null
-  } catch { mainChain = null }
-  /* 一句话定调：主题级综合判断，而非单节点标题 */
-  if (model.directionCounts.improving + model.directionCounts.declining + model.directionCounts.stable > 0) {
-    const { improving, declining, stable } = model.directionCounts
-    const total = improving + declining + stable
-    /* 收集主要 themeTag */
-    const tags = []
-    for (const dir of ['improving', 'declining', 'stable']) {
-      for (const n of model.nodesByDirection[dir].slice(0, 2)) {
-        if (n.themeTag) tags.push(n.themeTag)
-      }
-    }
-    const uniqTags = [...new Set(tags)].slice(0, 3)
-    /* 生成定调句 */
-    let conclusion = ''
-    if (improving > declining && improving > stable) {
-      conclusion = `整体向好，${improving} 个方向好转`
-    } else if (declining > improving && declining > stable) {
-      conclusion = `面临压力，${declining} 个方向承压`
-    } else if (stable >= improving && stable >= declining) {
-      conclusion = `总体稳定，${stable} 个方向持稳`
-    } else {
-      conclusion = `多空交织，好转 ${improving}、承压 ${declining}、稳定 ${stable}`
-    }
-    if (uniqTags.length) conclusion += `，聚焦${uniqTags.join('、')}`
-    conclusion += '。'
-    model.oneLiner = { conclusion }
-  } else if (mainChain && mainChain.steps.length >= 2) {
-    const lastStep = mainChain.steps[mainChain.steps.length - 1]
-    const conclusion = lastStep.nodes[0]
-    model.oneLiner = { conclusion: titleOf(conclusion) }
-  }
-
-  return model
-}
+const titleOf = (node) => String(node?.title || node?.currentText || '未命名')
+const liveNodes = (projection) => (projection?.allNodes || projection?.nodes || []).filter((node) => node && !node.archived)
+const liveEdges = (projection) => (projection?.allEdges || projection?.edges || []).filter((edge) => edge && edge.reviewDecision !== 'rejected')
 
 /* ------------------------------------------------------------------ */
-/* 渲染：三问结构 */const estimateReadSeconds = (model) => {
-  if (model.empty) return 0
-  const cards = [model.drivers, model.evolutions, model.boundaries, model.disputes, model.pending.length || model.recent.length ? [1] : []]
-    .filter((list) => list.length).length
-  return 25 + (model.oneLiner ? 20 : 0) + cards * 40
-}
+/* 渲染：与 demo 对齐的三段式阅读结构。 */
 
 /** 证据：通过 supports 边指向目标节点的 evidence 节点。 */
 function evidenceFor(projection, nodeIds) {
@@ -489,9 +177,9 @@ export function renderReaderView(theme, opts = {}) {
   const go = (kind, nodeId) => opts.onOpenBuilder?.(kind, nodeId)
 
   /* 三层 → 颜色/图标：颜色由 direction，图标由 nature */
-  const dirColor = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).color
-  const dirIcon = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).icon
-  const dirLabel = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).label
+  const dirColor = (d) => (DIRECTION_META[d] || DIRECTION_META.undetermined).color
+  const dirIcon = (d) => (DIRECTION_META[d] || DIRECTION_META.undetermined).icon
+  const dirLabel = (d) => (DIRECTION_META[d] || DIRECTION_META.undetermined).label
   const natIcon = (n) => (NATURE_META[n] || NATURE_META.quantitative).icon
 
   /* 节点卡片：1:1 对齐 demo renderNodeCard */
@@ -501,9 +189,10 @@ export function renderReaderView(theme, opts = {}) {
       nature: node.nature || 'quantitative', themeTag: node.themeTag || '',
     }]
     return h('div', {
-      class: 'node-card',
+      class: 'node-card', role: 'button', tabindex: '0', 'aria-label': `查看${node.title}的演化详情`,
       'data-node': node.id,
       onclick: () => go('builder', node.id),
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go('builder', node.id) } },
     },
       h('div', { class: 'node-top' },
         h('span', { class: 'node-dot', style: `background:${dirColor(node.direction)}` }),
@@ -512,6 +201,7 @@ export function renderReaderView(theme, opts = {}) {
         h('span', { class: 'node-trend', style: `color:${dirColor(node.direction)}` },
           `${natIcon(node.nature)} ${node.themeTag || dirLabel(node.direction)}`)),
       h('div', { class: 'node-state' }, node.state),
+      node.confidence == null ? null : h('div', { class: 'node-confidence' }, confidenceBar(node.confidence)),
       h('div', {},
         h('div', { class: 'mini-evo' },
           h('div', { class: 'mini-evo-track' },
@@ -539,7 +229,7 @@ export function renderReaderView(theme, opts = {}) {
     const inner = h('div', { class: 'reader-inner' })
 
     /* Hero */
-    const { improving, declining, stable } = model.directionCounts
+    const { improving, declining, stable, undetermined } = model.directionCounts
     inner.append(
       h('div', { class: 'hero' },
         h('div', { class: 'hero-kicker' }, `主题 · ${theme?.name || ''}`),
@@ -555,13 +245,16 @@ export function renderReaderView(theme, opts = {}) {
             h('span', { class: 'label' }, '恶化', h('b', {}, String(declining)))),
           h('div', { class: 'trend-group' },
             h('span', { class: 'icon', style: 'background:rgba(29,29,31,.06);color:var(--text-3)' }, '→'),
-            h('span', { class: 'label' }, '稳定', h('b', {}, String(stable)))))))
+            h('span', { class: 'label' }, '稳定', h('b', {}, String(stable)))),
+          h('div', { class: 'trend-group' },
+            h('span', { class: 'icon', style: 'background:rgba(29,29,31,.04);color:var(--text-3)' }, '·'),
+            h('span', { class: 'label' }, '待观察', h('b', {}, String(undetermined)))))))
 
     /* 阅读时间 */
     inner.append(
       h('div', { class: 'read-time' },
         h('span', {}, '◷'),
-        h('span', {}, '阅读时间约 ', h('b', {}, '45 秒'), ' · 共 3 个模块'),
+        h('span', {}, '阅读时间约 ', h('b', {}, `${estimateReadSeconds(model)} 秒`), ' · 共 3 个模块'),
         h('span', { class: 'spacer' }),
         h('span', { class: 'hint' }, '向下滑动继续')))
 
@@ -570,6 +263,7 @@ export function renderReaderView(theme, opts = {}) {
       ...model.nodesByDirection.improving,
       ...model.nodesByDirection.declining,
       ...model.nodesByDirection.stable,
+      ...model.nodesByDirection.undetermined,
     ]
     const card1 = h('div', { class: 'card' },
       h('div', { class: 'card-head' },

@@ -259,7 +259,7 @@ export function projectEvents(events) {
       relationGroup: ['supports', 'derives', 'contradicts'].includes(p.rel) ? 'argument' : 'association',
       from,
       to,
-      pendingReview: p.reviewStatus === 'pending-review' || p.rel === 'derives',
+      pendingReview: p.reviewStatus ? p.reviewStatus === 'pending-review' : p.rel === 'derives',
       reviewDecision: null,
       reviewReason: '',
       reviewEventId: null,
@@ -318,17 +318,6 @@ export function projectEvents(events) {
         node.resolved = p.resolved ?? null
         node.settledAt = p.date || null
         node.settlementEventId = e.id
-      } else if (e.type === 'confidence.updated') {
-        /* 置信度更新（红区已批准）：记录历史，更新当前值 */
-        node.confidenceHistory ||= []
-        node.confidenceHistory.push({
-          eventId: e.id, seq: e.seq, at: e.at,
-          oldConfidence: p.oldConfidence ?? null,
-          newConfidence: p.newConfidence ?? null,
-          reason: p.reason || '',
-          evidenceEventId: p.evidenceEventId || null,
-        })
-        if (Number.isFinite(p.newConfidence)) node.confidence = p.newConfidence
       } else if (e.type === 'node.archived') {
         node.archived = true
         node.archiveReason = p.reason || ''
@@ -342,6 +331,25 @@ export function projectEvents(events) {
         node.restoreEventIds.push(e.id)
       }
     }
+  }
+
+  /* Confidence changes address a node id, not sourceRef; replay them independently. */
+  for (const e of events) {
+    if (e.type !== 'confidence.updated') continue
+    const p = e.payload || {}
+    const node = nodes.get(p.nodeId || p.claimId)
+    if (!node || node.nodeType !== 'viewpoint') continue
+    const oldConfidence = p.oldConfidence ?? p.before ?? null
+    const newConfidence = p.newConfidence ?? p.after ?? null
+    node.confidenceHistory ||= []
+    node.confidenceHistory.push({
+      eventId: e.id, seq: e.seq, at: e.at, oldConfidence, newConfidence,
+      reason: p.reason || '', evidenceEventId: p.evidenceEventId || null,
+      strength: p.strength ?? null,
+    })
+    if (Number.isFinite(newConfidence)) node.confidence = newConfidence
+    if (!node.eventIds.includes(e.id)) node.eventIds.push(e.id)
+    if (!node.provenanceEventIds.includes(e.id)) node.provenanceEventIds.push(e.id)
   }
 
   return { nodes: [...nodes.values()], edges, reviewedSignals }
@@ -556,6 +564,121 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
     }
   }
   return appendEventBatch(themeId, events)
+}
+
+/** Persist one engine recommendation decision and its consequences as one append-only batch. */
+export function reviewEngineRecommendation(themeId, recommendationEventId, decision, input = {}) {
+  if (!['accepted', 'corrected', 'rejected'].includes(decision)) throw new Error('请选择接受、修正或驳回')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const events = getEvents(themeId)
+  const proposal = events.find((event) => event.id === recommendationEventId && event.type === 'engine.recommendation.proposed')
+  if (!proposal) throw new Error('找不到待审核的引擎建议')
+  const priorReview = events.find((event) => event.type === 'signal.reviewed' && event.payload?.signalEventId === proposal.id)
+  const recommendation = proposal.payload.recommendation
+  const change = decision === 'rejected' ? null : (input.change || recommendation.change)
+  const targetNodeId = input.targetNodeId || recommendation.propositionId || null
+  const relation = input.rel || recommendation.rel
+  const reviewIntent = { decision, change, targetNodeId, rel: relation, title: String(input.title || '').trim() }
+  if (priorReview) {
+    const priorIntent = {
+      decision: priorReview.payload.decision,
+      change: priorReview.payload.change || null,
+      targetNodeId: priorReview.payload.targetNodeId || null,
+      rel: priorReview.payload.rel || null,
+      title: priorReview.payload.title || '',
+    }
+    if (JSON.stringify(priorIntent) === JSON.stringify(reviewIntent)) return { ok: true, replayed: true, events: [], review: priorReview }
+    throw new Error('该建议已有决定；不能通过重放改变已确认内容')
+  }
+
+  const statement = proposal.payload.statement
+  const sourceQuote = String(statement.sourceText || '').trim()
+  const sourceQuoteVerified = statement.sourceQuoteVerified === true
+  const recommendationId = proposal.payload.recommendationId
+  const stableId = (kind) => `evt:engine:${kind}:${digest({ themeId, recommendationId }).slice(0, 24)}`
+  const drafts = []
+
+  if (decision !== 'rejected') {
+    if (!change || !['improving', 'declining', 'stable'].includes(change.direction)
+      || !['quantitative', 'pivot', 'epistemic', 'structural'].includes(change.nature)
+      || !String(change.themeTag || '').trim()) throw new Error('请审核方向、性质和标签')
+    if (!sourceQuote || !sourceQuoteVerified) throw new Error('原文摘录无法与来源核验，不能将它作为证据追加')
+    const sourceUrl = String(proposal.payload.sourceUrl || '').trim()
+    const validUrl = (() => { try { return /^https?:$/.test(new URL(sourceUrl).protocol) } catch { return false } })()
+    const evidenceId = stableId('evidence')
+    const sourceRef = `engine-recommendation:${recommendationId}`
+    const sourceLabel = String(proposal.payload.sourceLabel || '').trim()
+    const evidencePayload = {
+      text: sourceQuote, sourceLabel, sourceKind: 'engine-reviewed', sourceRef,
+      evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
+      change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) },
+      recommendationId,
+    }
+
+    if (recommendation.kind === 'new-proposition') {
+      const title = String(input.title || recommendation.title || '').trim()
+      if (!title || title.length > 180) throw new Error('新命题标题必须为 1–180 个字符')
+      const nodeId = stableId('node')
+      drafts.push({ id: nodeId, actor: 'user', type: 'node.created', payload: {
+        nodeType: 'viewpoint', title, detail: sourceQuote, status: 'pending',
+        sourceKind: 'engine-reviewed', sourceRef,
+      } })
+      drafts.push({ id: evidenceId, actor: 'user', type: 'evidence.appended', payload: evidencePayload })
+      drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {
+        rel: 'supports', from: { eventId: evidenceId }, to: { eventId: nodeId },
+        sourceKind: 'engine-reviewed', sourceRef, reason: '用户确认创建建议命题并关联可核验原文',
+      } })
+    } else {
+      if (!['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(relation)) throw new Error('关系类型无效')
+      const projection = projectEvents(events)
+      const target = projection.nodes.find((node) => node.id === targetNodeId && !node.external
+        && !node.archived && !node.invalidated && node.nodeType !== 'evidence')
+      if (!target) throw new Error('请选择当前有效的目标观点')
+      drafts.push({ id: evidenceId, actor: 'user', type: 'evidence.appended', payload: evidencePayload })
+      if (relation === 'supersedes') {
+        const { head } = claimLineage(events, target.id)
+        drafts.push({ id: stableId('correction'), actor: 'user', type: 'correction.appended', supersedes: head, payload: {
+          oldValue: String(target.currentText || target.title), newValue: sourceQuote,
+          reason: String(recommendation.reason || '用户确认以新证据修正当前表述'),
+          evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
+          sourceKind: 'engine-reviewed',
+        } })
+      } else {
+        drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {
+          rel: relation, from: { eventId: evidenceId }, to: { eventId: target.id },
+          ...(relation === 'derives' ? { reviewStatus: 'confirmed' } : {}),
+          sourceKind: 'engine-reviewed', sourceRef, reason: String(recommendation.reason || ''),
+        } })
+      }
+      if ((relation === 'supports' || relation === 'contradicts') && target.confidence != null && Number.isFinite(Number(target.confidence))) {
+        const oldPercent = Number(target.confidence)
+        const effectiveStrength = estimateStrength({
+          isHardFact: statement.type === 'hard', hasUrl: validUrl,
+          attributionStrength: Number(recommendation.strength), metaMultiplier: Number(proposal.payload.metaMultiplier ?? 1),
+        })
+        const newFraction = updateConfidence(oldPercent / 100, effectiveStrength, relation)
+        const newPercent = newFraction == null ? oldPercent : Math.round(newFraction * 100)
+        if (newPercent !== oldPercent) drafts.push({ id: stableId('confidence'), actor: 'user', type: 'confidence.updated', payload: {
+          nodeId: target.id, oldConfidence: oldPercent, newConfidence: newPercent,
+          strength: effectiveStrength, attributionStrength: recommendation.strength,
+          reason: `${relation === 'supports' ? '支持' : '反驳'}证据：${sourceQuote.slice(0, 50)}`,
+          evidenceEventId: evidenceId,
+        } })
+      }
+    }
+  }
+
+  const reviewPayload = {
+    signalEventId: proposal.id, decision,
+    ...(change ? { change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) } } : {}),
+    ...(targetNodeId ? { targetNodeId } : {}),
+    ...(relation ? { rel: relation } : {}),
+    ...(String(input.title || '').trim() ? { title: String(input.title).trim() } : {}),
+  }
+  drafts.push({ id: stableId('review'), actor: 'user', type: 'signal.reviewed', payload: reviewPayload })
+  const appended = appendEventBatch(themeId, drafts)
+  return { ok: true, replayed: false, events: appended.filter((event) => !event.replayed), review: appended.at(-1) }
 }
 
 /** Declare a user-authored semantic edge; this records a relationship, not verified causality. */
