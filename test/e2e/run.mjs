@@ -16,6 +16,9 @@ const REPO = process.env.MERIDIAN_REPO || path.resolve(__dirname, '../..');
 const APP = process.env.MERIDIAN_APP || path.join(REPO, 'src-tauri/target/debug/meridian');
 const PORT = Number(process.env.TAURI_WEBDRIVER_PORT || 4445);
 const DATA_DIR = process.env.MERIDIAN_DATA_DIR || '/tmp/meridian-e2e-data';
+// 可选：首次运行时从指定账本播种测试数据（默认播种真实账本的副本；留空则从零开始）
+// 例：MERIDIAN_SEED_FROM="$HOME/Library/Application Support/脉络/meridian.json"
+const SEED_FROM = process.env.MERIDIAN_SEED_FROM;
 
 const specFile = process.argv[2];
 if (!specFile) {
@@ -31,6 +34,10 @@ const runId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const shotsDir = path.join(__dirname, 'shots', runId);
 fs.mkdirSync(shotsDir, { recursive: true });
 fs.mkdirSync(DATA_DIR, { recursive: true });
+if (SEED_FROM && !fs.existsSync(path.join(DATA_DIR, 'meridian.json'))) {
+  console.log(`[e2e] 播种测试账本: ${SEED_FROM} → ${DATA_DIR}/meridian.json`);
+  fs.copyFileSync(SEED_FROM, path.join(DATA_DIR, 'meridian.json'));
+}
 const logFile = path.join(shotsDir, 'app.log');
 const logStream = fs.createWriteStream(logFile);
 
