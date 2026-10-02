@@ -27,12 +27,19 @@ export default async function ({ port, shotsDir }) {
       $x(`button[contains(@class,'theme-view-tab') and contains(.,'建设者视图')]`),
     );
     await builderTab.click();
-    const attentionSec = await waitVisible(browser, 'section.builder-attention', 30000);
-    note('建设者视图已加载（.builder-attention 可见）');
+    // 等建设者容器出现（注意：.builder-attention 为空时零高度，用 exist 而非 displayed）
+    const focus = await browser.$('.theme-view-host .builder-focus');
+    await focus.waitForExist({ timeout: 30000 });
+    note('建设者视图已加载（.builder-focus 存在）');
+    const tabActive = await builderTab.getAttribute('aria-selected');
+    note('建设者 tab aria-selected=' + tabActive);
     await screenshot(browser, shotsDir, '11-builder-view');
 
     // ---- 3. 需要关注区 ----
     note('步骤3：检查"需要关注"区');
+    const attentionSec = await browser.$('section.builder-attention');
+    const attentionHTML = await attentionSec.getHTML();
+    note('attention 区 HTML 长度=' + attentionHTML.length);
     const titleEl = await browser.$('section.builder-attention h2.builder-section-title');
     const hasTitle = await titleEl.isExisting();
     const cards = await browser.$$('section.builder-attention button.builder-attention-card');
