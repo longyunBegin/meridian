@@ -175,7 +175,8 @@ export function renderChainSection(theme, opts = {}) {
       clear(ledgerPane)
       clear(sidebar)
       clear(mainStage)
-      loadConcept(theme, ledgerPane, viewOpts).catch((e) => {
+      // 路由预载只适用于首次挂载；追加事件后刷新必须读取新的校验账本与投影。
+      loadConcept(theme, ledgerPane, { ...viewOpts, initialProjection: null, initialEvents: null }).catch((e) => {
         clear(mainStage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
       })
     },
@@ -695,7 +696,6 @@ async function loadConcept(theme, ledgerPane, opts) {
 
   const renderSidebar = () => {
     clear(opts.sidebar)
-    const signals = buildSignals()
     /* 待处理数量：收件箱待归因 */
     let inboxCount = 0
     try {
@@ -711,25 +711,14 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('p', { class: 'side-nav-label' }, '工作台'),
         h('button', {
           type: 'button',
-          class: `side-nav-item${builderMode !== 'history' ? ' active' : ''}`,
+          class: 'side-nav-item active',
           'data-mode': 'inbox',
-          'aria-current': builderMode !== 'history' ? 'page' : 'false',
+          'aria-current': 'page',
           onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
           h('span', { class: 'icon', 'aria-hidden': 'true' }, '◷'),
           h('span', {}, '待处理工作台'),
-          h('span', { class: 'n' }, String(inboxCount))),
-        h('p', { class: 'side-nav-label side-nav-secondary-label' }, '历史与事件'),
-        h('button', {
-          type: 'button',
-          class: `side-nav-item side-nav-history${builderMode === 'history' ? ' active' : ''}`,
-          'data-mode': 'history',
-          'aria-current': builderMode === 'history' ? 'page' : 'false',
-          onclick: () => { builderMode = 'history'; selectedNodeId = null; renderMain(); renderSidebar(); },
-        },
-          h('span', { class: 'icon', 'aria-hidden': 'true' }, '≡'),
-          h('span', {}, '信号与事件'),
-          h('span', { class: 'n' }, String(signals.length)))),
+          h('span', { class: 'n' }, String(inboxCount)))),
       h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
         h('br', {}),
@@ -1360,6 +1349,16 @@ async function loadConcept(theme, ledgerPane, opts) {
     builderMode = 'node'
     renderMain()
     renderSidebar()
+  }
+
+  const eventJump = consumeChainEventJump(theme.id)
+  if (eventJump?.eventId) {
+    if (verifiedEvents.some((event) => event?.id === eventJump.eventId)) {
+      opts.openLedger?.()
+      ledgerController?.showEvent(eventJump.eventId)
+    } else {
+      toast('来源事件不在账本校验有效前缀中，无法定位。', 'var(--red)')
+    }
   }
 
 }

@@ -2,7 +2,7 @@ import { h, toast, confirmToast } from '../lib/dom.js'
 import { state, refresh } from '../app.js'
 import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
 import { renderReaderView } from './reader.js'
-import { requestBuilderPane, requestBuilderNodeFocus } from '../lib/chain-ui-model.js'
+import { requestBuilderPane, requestBuilderNodeFocus, requestChainEventJump } from '../lib/chain-ui-model.js'
 
 const m = window.meridian
 const themeViewKey = (themeId) => `meridian:theme-view:${themeId}`
@@ -162,9 +162,10 @@ export function renderTheme(mid) {
         loadProjectionAt: async (sequence) => m.chainProjectionAt(theme.id, sequence),
         loadEvents: async () => preloaded?.events
           || (await m.chainEvents(theme.id).catch(() => null))?.events || [],
-        onOpenBuilder: (kind, nodeId) => {
+        onOpenBuilder: (kind, nodeId, eventId) => {
           if (kind && kind !== 'network') requestBuilderPane(theme.id, kind)
           if (nodeId) requestBuilderNodeFocus(theme.id, nodeId)
+          if (eventId) requestChainEventJump(theme.id, eventId)
           mount('builder')
         },
       }))

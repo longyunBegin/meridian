@@ -62,9 +62,18 @@ export function splitNetworkTitle(value, maxPerLine = 14, maxLines = 2) {
     lines.push(parts.slice(i, i + maxPerLine).join(''))
   }
   if (parts.length > maxPerLine * maxLines && lines.length) {
-    lines[lines.length - 1] = truncateGraphemes(lines.at(-1), maxPerLine, '…')
+    const lastLineStart = (lines.length - 1) * maxPerLine
+    lines[lines.length - 1] = `${parts.slice(lastLineStart, lastLineStart + Math.max(0, maxPerLine - 1)).join('')}…`
   }
   return lines.length ? lines : ['未命名']
+}
+
+export function nodeTitleCharsPerLine(cardWidth, fontSize = 11, horizontalPadding = 24) {
+  const width = Number(cardWidth)
+  const size = Number(fontSize)
+  const padding = Number(horizontalPadding)
+  if (!Number.isFinite(width) || !Number.isFinite(size) || size <= 0) return 1
+  return Math.max(1, Math.floor((width - (Number.isFinite(padding) ? Math.max(0, padding) : 0)) / size))
 }
 
 function dateKeyFor(event) {

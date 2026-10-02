@@ -1,5 +1,5 @@
 import {
-  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus, splitNetworkTitle,
+  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus, splitNetworkTitle, nodeTitleCharsPerLine,
 } from './theme-network.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -266,7 +266,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
       group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: nodeStatusTextColor(status) }))
     }
-    const titleLines = splitNetworkTitle(node.title || '未命名节点', 14, 2)
+    const titleLines = splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w), 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {
       x: -dimensions.w / 2 + 12,
       y: titleLines.length === 1 ? 5 : -1 + index * 15,

@@ -183,7 +183,8 @@
     check('稍后操作进入 cancelled，并明确未安装、未重启', updateDialog.dataset.updateState === 'cancelled'
       && updateDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
     await new Promise((resolve) => setTimeout(resolve, 230))
-    check('取消只释放合成 updater 资源，不重复调用安装', closeCalls === 1 && installCalls === 1 && !updateDialog.isConnected)
+    check('取消只释放合成 updater 资源，不重复调用安装', closeCalls === 1 && installCalls === 1 && !updateDialog.isConnected,
+      `close=${closeCalls}; install=${installCalls}; connected=${updateDialog.isConnected}`)
 
     const makeDismissOnlyUpdate = (onClose) => ({
       version: '0.2.0-fixture', currentVersion: '0.1.9-fixture', body: '本地合成关闭测试。',
@@ -197,7 +198,8 @@
     check('右上角 X 将更新提示标为稍后处理，不触发下载或安装', xDialog.dataset.updateState === 'cancelled'
       && xDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
     await new Promise((resolve) => setTimeout(resolve, 230))
-    check('X 仅释放提示资源并关闭卡片', xCloseCalls === 1 && !xDialog.isConnected)
+    check('X 仅释放提示资源并关闭卡片', xCloseCalls === 1 && !xDialog.isConnected,
+      `close=${xCloseCalls}; connected=${xDialog.isConnected}`)
 
     let escapeCloseCalls = 0
     const escapeDialog = presentUpdate(makeDismissOnlyUpdate(() => escapeCloseCalls++))
@@ -205,7 +207,8 @@
     check('Escape 执行与稍后相同的可访问关闭操作', escapeDialog.dataset.updateState === 'cancelled'
       && escapeDialog.querySelector('.update-status-line').textContent.includes('更新未安装，也未重新启动'))
     await new Promise((resolve) => setTimeout(resolve, 230))
-    check('Escape 仅释放提示资源，不触发更新动作', escapeCloseCalls === 1 && !escapeDialog.isConnected)
+    check('Escape 仅释放提示资源，不触发更新动作', escapeCloseCalls === 1 && !escapeDialog.isConnected,
+      `close=${escapeCloseCalls}; connected=${escapeDialog.isConnected}`)
 
     const refreshedSearch = populated.querySelector('.event-archive-search')
     if (refreshedSearch) {

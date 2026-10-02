@@ -132,6 +132,7 @@ export function presentUpdate(update, { focus = false } = {}) {
   let mainButton
   let laterButton
   let closeButton
+  let released = false
   const status = h('p', { class: 'update-status-line', role: 'status', 'aria-live': 'polite' }, '')
   const fill = h('span', { class: 'update-progress-fill' })
   const progress = h('div', {
@@ -217,6 +218,16 @@ export function presentUpdate(update, { focus = false } = {}) {
     h('div', { class: 'update-dialog-actions' }, mainButton, laterButton),
   )
 
+  const releaseUpdate = () => {
+    if (released) return
+    released = true
+    if (updateDialog === dialog) updateDialog = null
+    dialog.remove()
+    if (!installed) {
+      try { void Promise.resolve(update.close()).catch(() => {}) } catch {}
+    }
+  }
+
   async function runPrimaryAction() {
     const action = mainButton.dataset.action
     if (!canPerformUpdateAction(phase, action, { retryInstall })) return
@@ -289,7 +300,9 @@ export function presentUpdate(update, { focus = false } = {}) {
     closeButton.disabled = true
     laterButton.disabled = true
     mainButton.disabled = true
-    setTimeout(() => dialog.close(), 180)
+    setTimeout(() => {
+      try { if (dialog.open) dialog.close() } finally { releaseUpdate() }
+    }, 180)
   }
 
   updateDialog = dialog
@@ -303,11 +316,7 @@ export function presentUpdate(update, { focus = false } = {}) {
       requestClose()
     }
   })
-  dialog.addEventListener('close', () => {
-    if (updateDialog === dialog) updateDialog = null
-    dialog.remove()
-    if (!installed) void update.close().catch(() => {})
-  }, { once: true })
+  dialog.addEventListener('close', releaseUpdate, { once: true })
   document.body.append(dialog)
   setPhase('available')
   dialog.show()

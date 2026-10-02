@@ -191,6 +191,8 @@
       && stat(comparison, 'evidence') === '20'
       && comparison.querySelector('[data-cog-counts]')?.textContent.includes('关系子图（含外部引用）：观点 24 · 证据 27'))
 
+    status.dataset.finished = 'true'
+    status.dataset.fixture = [...status.querySelectorAll('[data-result="fail"]')].length ? 'fail' : 'pass'
     window.__GRAPH_REGRESSION__ = { events, allNodes, allEdges, allNodesProjection, scopedProjection, emptyProjection }
   </script>
 </body>

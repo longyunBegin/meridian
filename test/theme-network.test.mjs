@@ -1,6 +1,6 @@
 import {
   NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, REVISION_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
-  networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle,
+  networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle, nodeTitleCharsPerLine,
   buildDensityTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
 } from '../src/renderer/lib/theme-network.js'
 
@@ -29,6 +29,12 @@ const familyText = `${family.repeat(3)}abcdef`
 check('通用截断按完整 grapheme 计算长度', truncateGraphemes(familyText, 5) === `${family.repeat(3)}a…`)
 check('节点标题分行不会拆分复杂 emoji', splitNetworkTitle(`${family.repeat(18)}后缀`, 14, 2).join('').includes(family.repeat(14)))
 check('空标题使用有意义占位文本', splitNetworkTitle('')[0] === '未命名')
+const longEvidenceTitle = '合成来源记载的内容超过卡片安全显示宽度需要换行截断'
+const evidenceTitleLines = splitNetworkTitle(longEvidenceTitle, nodeTitleCharsPerLine(144), 2)
+check('SVG 节点标题按卡片内宽计算行长，长中文证据标题在两行内截断',
+  nodeTitleCharsPerLine(144) === 10 && nodeTitleCharsPerLine(156) === 12
+  && evidenceTitleLines.length === 2 && evidenceTitleLines.every((line) => Array.from(line).length <= 10)
+  && evidenceTitleLines.at(-1).endsWith('…'))
 
 const events = [
   { id: 'e1', seq: 1, type: 'node.created', at: '2026-09-01T08:00:00Z', payload: { nodeType: 'concept' } },

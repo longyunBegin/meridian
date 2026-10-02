@@ -62,6 +62,8 @@ ok('新节点、追加证据、关系及生命周期按钮均使用事件命令'
   && chain.includes('m.chainRenameNode(') && chain.includes('m.chainInvalidateNode('))
 ok('通用内容通过 DOM textContent 呈现，不使用 HTML 字符串注入', renderer.includes('element.textContent = String(value ?? \'\')')
   && !renderer.includes('innerHTML') && chain.includes('textContent ='))
+ok('SVG 节点标题按实际卡片宽度分行，不以固定字数溢出边框', network.includes('export function nodeTitleCharsPerLine')
+  && renderer.includes('nodeTitleCharsPerLine(dimensions.w)'))
 ok('网络控件按已校验事件前缀生成日期/密度刻度并置于主画布底部', chain.includes('const verifiedTimelineEvents = handlers.verifiedEvents || []')
   && chain.includes('buildDensityTimeline(verifiedTimelineEvents)') && chain.includes("class: 'cog-time-controls'")
   && chain.includes("class: 'cog-graph-time-wrap'") && chain.includes("class: 'cog-graph-legend-wrap'"))

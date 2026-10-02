@@ -143,7 +143,7 @@ function verification(key) {
   return h('div', { class: 'reading-actions' }, button, result)
 }
 
-function judgments(items) {
+function judgments(items, closeDialog = () => {}) {
   const box = h('section', { class: 'reading-judgments' }, h('h3', {}, '关联判断'), note('读数可能帮助你裁定这些判断；不会自动结算。'))
   const list = h('div')
   let offset = 0
@@ -159,7 +159,7 @@ function judgments(items) {
           try {
             const node = n.themeId ? n : await m.getNode(n.id)
             if (!node) throw new Error('missing-judgment')
-            document.querySelector('.reading-dialog')?.close()
+            closeDialog()
             selectTheme(node.themeId)
             await refresh()
             selectNode(node.id)
@@ -218,17 +218,28 @@ export function openObservation(r, { proof = false } = {}) {
   document.querySelector('.reading-dialog')?.close()
   const opener = document.activeElement
   const body = h('div', { class: 'reading-dialog-body' })
-  const dialog = h('dialog', { class: 'reading-dialog', 'aria-labelledby': 'reading-detail-title', onclose: () => { dialog.remove(); if (opener?.isConnected) opener.focus() } },
-    h('header', { class: 'reading-dialog-head' }, h('h2', { id: 'reading-detail-title' }, r.title || '读数详情'), h('button', { class: 'btn', onclick: () => dialog.close(), 'aria-label': '关闭读数详情' }, '关闭')), body)
+  let dialog
+  let released = false
+  const releaseDialog = () => {
+    if (released) return
+    released = true
+    dialog.remove()
+    if (opener?.isConnected) opener.focus()
+  }
+  const closeDialog = () => {
+    try { if (dialog.open) dialog.close() } finally { releaseDialog() }
+  }
+  dialog = h('dialog', { class: 'reading-dialog', 'aria-labelledby': 'reading-detail-title', onclose: releaseDialog },
+    h('header', { class: 'reading-dialog-head' }, h('h2', { id: 'reading-detail-title' }, r.title || '读数详情'), h('button', { class: 'btn', onclick: closeDialog, 'aria-label': '关闭读数详情' }, '关闭')), body)
   body.append(note(periodLabel(r)))
   if (isConflicted(r)) body.append(note('有不同数值，尚无唯一当前值。请到「待裁决冲突」比较后裁决。'))
-  if (r.pending || !r.indicatorId) body.append(assignment(r, () => dialog.close(), proof))
+  if (r.pending || !r.indicatorId) body.append(assignment(r, closeDialog, proof))
   if (proof) body.append(h('h3', {}, '本条作证'), readingProof(r))
   const related = h('div')
   const evidence = proof && !r.indicatorId ? note('这条作证待归位，归位后可查看关联判断。') : pager(
     async (page) => {
       const result = await m.readingEvidence({ ...(proof ? { indicatorId: r.indicatorId } : { observationId: r.id }), ...page })
-      clear(related).append(judgments(result.judgments || []))
+      clear(related).append(judgments(result.judgments || [], closeDialog))
       return result
     },
     (box, items) => items.length ? box.append(...items.map(readingProof)) : box.append(note('尚无作证记录。')), 10)

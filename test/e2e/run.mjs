@@ -2,41 +2,51 @@
 // 用法: node run.mjs <spec 文件路径>
 // 环境变量:
 //   MERIDIAN_REPO     仓库根目录（默认本文件向上两级）
-//   MERIDIAN_APP      App 二进制路径（默认 $MERIDIAN_REPO/src-tauri/target/debug/meridian）
+//   MERIDIAN_APP      App 二进制路径（自动探测平台 debug 输出）
 //   TAURI_WEBDRIVER_PORT  内嵌 WebDriver 端口（默认 4445）
-//   MERIDIAN_DATA_DIR 测试账本目录（默认 /tmp/meridian-e2e-data，与真实账本隔离）
+//   MERIDIAN_DATA_DIR 测试账本目录（默认每次新建唯一空目录；拒绝复用已有目录）
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = process.env.MERIDIAN_REPO || path.resolve(__dirname, '../..');
-const APP = process.env.MERIDIAN_APP || path.join(REPO, 'src-tauri/target/debug/meridian');
 const PORT = Number(process.env.TAURI_WEBDRIVER_PORT || 4445);
-const DATA_DIR = process.env.MERIDIAN_DATA_DIR || '/tmp/meridian-e2e-data';
-// 可选：首次运行时从指定账本播种测试数据（默认播种真实账本的副本；留空则从零开始）
-// 例：MERIDIAN_SEED_FROM="$HOME/Library/Application Support/脉络/meridian.json"
-const SEED_FROM = process.env.MERIDIAN_SEED_FROM;
+const runId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const appCandidates = process.env.MERIDIAN_APP
+  ? [path.resolve(process.env.MERIDIAN_APP)]
+  : [
+      path.join(REPO, 'src-tauri/target/debug/meridian'),
+      path.join(REPO, 'src-tauri/target/x86_64-unknown-linux-gnu/debug/meridian'),
+      path.join(REPO, 'src-tauri/target/aarch64-apple-darwin/debug/meridian'),
+      path.join(REPO, 'src-tauri/target/aarch64-apple-ios/debug/meridian'),
+    ];
+const APP = appCandidates.find((candidate) => {
+  try { return fs.statSync(candidate).isFile() } catch { return false }
+});
+const DATA_DIR = process.env.MERIDIAN_DATA_DIR
+  ? path.resolve(process.env.MERIDIAN_DATA_DIR)
+  : path.join(os.tmpdir(), `meridian-e2e-${runId}-${process.pid}`);
 
 const specFile = process.argv[2];
 if (!specFile) {
   console.error('用法: node run.mjs <spec 文件路径>');
   process.exit(2);
 }
-if (!fs.existsSync(APP)) {
-  console.error(`[e2e] App 二进制不存在: ${APP}（先在 src-tauri 下 cargo build）`);
+if (!APP) {
+  console.error(`[e2e] 找不到 App 二进制，已检查: ${appCandidates.join(', ')}（先构建带 webdriver feature 的 debug App）`);
   process.exit(2);
 }
-
-const runId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const shotsDir = path.join(__dirname, 'shots', runId);
 fs.mkdirSync(shotsDir, { recursive: true });
-fs.mkdirSync(DATA_DIR, { recursive: true });
-if (SEED_FROM && !fs.existsSync(path.join(DATA_DIR, 'meridian.json'))) {
-  console.log(`[e2e] 播种测试账本: ${SEED_FROM} → ${DATA_DIR}/meridian.json`);
-  fs.copyFileSync(SEED_FROM, path.join(DATA_DIR, 'meridian.json'));
+try {
+  fs.mkdirSync(DATA_DIR, { recursive: false });
+} catch (error) {
+  console.error(`[e2e] 拒绝复用已有数据目录；每次运行必须使用全新空目录: ${DATA_DIR}`);
+  process.exit(2);
 }
 const logFile = path.join(shotsDir, 'app.log');
 const logStream = fs.createWriteStream(logFile);
@@ -50,6 +60,7 @@ const app = spawn(APP, [], {
     ...process.env,
     TAURI_WEBDRIVER_PORT: String(PORT),
     MERIDIAN_DATA_DIR: DATA_DIR,
+    MERIDIAN_USER_DATA_DIR: DATA_DIR,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -60,7 +71,7 @@ app.on('error', (e) => console.error('[e2e] App 启动失败:', e.message));
 async function waitForDriver(timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (app.exitCode !== null && app.signalCode !== null) {
+    if (app.exitCode !== null || app.signalCode !== null) {
       throw new Error(`App 进程已退出(${app.signalCode || app.exitCode})，见 ${logFile}`);
     }
     try {
