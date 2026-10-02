@@ -731,8 +731,82 @@ async function loadConcept(theme, ledgerPane, opts) {
 
   /* 校正单条信号 */
   const correctSignal = (sig, kind) => {
-    /* TODO: 打开校正对话框（改节点/改方向/改强度） */
-    toast(`校正信号：${kind}（待实现）`)
+    /* 三层模型修正对话框：状态量 / 变化性质 / 主题标签 */
+    const dirMeta = DIRECTION_META
+    const natMeta = NATURE_META
+    let newDir = sig.direction || 'stable'
+    let newNat = sig.nature || 'quantitative'
+    let newTag = sig.themeTag || ''
+
+    const overlay = h('div', { class: 'builder-correct-overlay' },
+      h('div', { class: 'builder-correct-dialog' },
+        h('h3', {}, '修正信号'),
+        h('p', { class: 'builder-correct-text' }, sig.text),
+
+        /* 第一组：状态量 */
+        h('div', { class: 'builder-correct-group' },
+          h('label', { class: 'builder-correct-label' }, '状态量'),
+          h('div', { class: 'builder-correct-opts' },
+            Object.entries(dirMeta).map(([k, m]) =>
+              h('button', {
+                type: 'button',
+                class: `builder-correct-opt${k === newDir ? ' is-sel' : ''}`,
+                style: k === newDir ? `border-color:${m.color};color:${m.color}` : '',
+                onclick: (e) => {
+                  newDir = k
+                  overlay.querySelectorAll('.builder-correct-opts')[0]
+                    .querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
+                  e.currentTarget.classList.add('is-sel')
+                },
+              }, `${m.icon} ${m.label}`)))),
+
+        /* 第二组：变化性质 */
+        h('div', { class: 'builder-correct-group' },
+          h('label', { class: 'builder-correct-label' }, '变化性质'),
+          h('div', { class: 'builder-correct-opts' },
+            Object.entries(natMeta).map(([k, m]) =>
+              h('button', {
+                type: 'button',
+                class: `builder-correct-opt${k === newNat ? ' is-sel' : ''}`,
+                onclick: (e) => {
+                  newNat = k
+                  overlay.querySelectorAll('.builder-correct-opts')[1]
+                    .querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
+                  e.currentTarget.classList.add('is-sel')
+                },
+              }, `${m.icon} ${m.label}`)))),
+
+        /* 第三组：主题标签 */
+        h('div', { class: 'builder-correct-group' },
+          h('label', { class: 'builder-correct-label' }, '主题标签'),
+          h('input', {
+            type: 'text', class: 'builder-correct-input',
+            value: newTag, placeholder: '输入或修改标签',
+            oninput: (e) => { newTag = e.target.value },
+          })),
+
+        h('div', { class: 'builder-correct-actions' },
+          h('button', {
+            type: 'button', class: 'btn',
+            onclick: () => overlay.remove(),
+          }, '取消'),
+          h('button', {
+            type: 'button', class: 'btn btn-primary',
+            onclick: async () => {
+              try {
+                await m.chainConfirmSignal?.(theme.id, sig.id, {
+                  decision: 'correct',
+                  change: { direction: newDir, nature: newNat, themeTag: newTag },
+                })
+                toast('已修正')
+                overlay.remove()
+                opts.onChanged?.()
+              } catch (e) {
+                toast('修正失败：' + (e.message || e), 'var(--danger)')
+              }
+            },
+          }, '确认修正'))))
+    document.body.append(overlay)
   }
 
   const rejectSignal = async (sig) => {
