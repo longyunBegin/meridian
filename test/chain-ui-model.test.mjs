@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks'
 import {
-  LEDGER_PAGE_SIZE, FLOATING_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT,
-  paginate, countFloating, floatingStatusKey, selectGraphWindow, affectedNodeIdForEvent,
+  LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT,
+  paginate, selectGraphWindow, affectedNodeIdForEvent,
   requestChainEventJump, consumeChainEventJump, verifiedLedgerPrefix, eventsThroughSequence,
-  compactEventSummary, searchGraphNodes, independentMediaEvidence,
+  compactEventSummary, searchGraphNodes,
 } from '../src/renderer/lib/chain-ui-model.js'
 
 let pass = 0
@@ -12,31 +12,6 @@ function ok(name, condition, extra = '') {
   condition ? pass++ : fail++
   console.log(`${condition ? '  ok  ' : ' FAIL '} ${name}${extra ? `  ${extra}` : ''}`)
 }
-
-const floating = Array.from({ length: 537 }, (_, i) => ({
-  id: `float-${i}`, kind: ['claim', 'inference', 'evidence'][i % 3],
-  status: ['pending', 'confirmed', 'stale'][i % 3], title: `浮动节点 ${i}`,
-}))
-const count = countFloating(floating)
-let reached = []
-for (let page = 1; page <= Math.ceil(floating.length / FLOATING_PAGE_SIZE); page++) {
-  reached.push(...paginate(floating, page, FLOATING_PAGE_SIZE).items.map((node) => node.id))
-}
-ok('537 个待归置节点可跨页全部访问且无重复', reached.length === 537 && new Set(reached).size === 537
-  && reached.every((id, i) => id === `float-${i}`))
-ok('待归置索引提供主题下按类型计数', count.total === 537 && count.byKind.claim === 179 && count.byKind.inference === 179 && count.byKind.evidence === 179)
-ok('待归置索引提供按状态计数', count.byStatus.pending === 179 && count.byStatus.confirmed === 179 && count.byStatus.stale === 179)
-const specialStates = countFloating([
-  { kind: 'claim', status: 'pending', archived: true },
-  { kind: 'claim', status: 'pending', correct: false },
-  { kind: 'claim', status: 'pending', superseded: true },
-  { kind: 'claim', status: 'pending', resolved: true },
-  { kind: 'claim', status: 'pending', correct: true },
-])
-ok('归档、证伪、更正、结案节点具有独立可筛选状态计数', specialStates.byStatus.archived === 1
-  && specialStates.byStatus.disproved === 1 && specialStates.byStatus.superseded === 1
-  && specialStates.byStatus.resolved === 1 && specialStates.byStatus.confirmed === 1
-  && floatingStatusKey({ archived: true, correct: false }) === 'archived')
 
 const ledger = Array.from({ length: 1637 }, (_, i) => ({ id: `event-${i + 1}`, seq: i + 1 }))
 const ledgerRows = []
@@ -47,24 +22,24 @@ ok('窗口化 chronological ledger 的每条事件均可依序访问', ledgerRow
   && ledgerRows.every((event, i) => event.seq === i + 1))
 
 const nodes = Array.from({ length: 537 }, (_, i) => ({
-  id: `n-${i}`, kind: i % 4 === 0 ? 'evidence' : 'claim', title: `节点 ${i}`, createdSeq: i + 1,
+  id: `n-${i}`, nodeType: ['concept', 'object', 'event', 'viewpoint', 'evidence'][i % 5], title: `节点 ${i}`, createdSeq: i + 1,
 }))
 const edges = Array.from({ length: 2400 }, (_, i) => ({
   id: `r-${i}`, from: `n-${i % nodes.length}`, to: `n-${(i + 1) % nodes.length}`,
-  rel: i % 3 === 0 ? 'derives' : 'supports', seq: i + 1,
+  rel: ['supports', 'derives', 'contradicts', 'belongs-to', 'influences', 'depends-on', 'temporal', 'related'][i % 8], seq: i + 1,
 }))
 const started = performance.now()
 const frame = selectGraphWindow({ nodes, allNodes: nodes, edges }, {
-  maxNodes: GRAPH_FRAME_NODE_LIMIT - 1, maxEdges: GRAPH_FRAME_EDGE_LIMIT - 24,
+  maxNodes: GRAPH_FRAME_NODE_LIMIT, maxEdges: GRAPH_FRAME_EDGE_LIMIT,
 })
 const focusFrame = selectGraphWindow({ nodes, allNodes: nodes, edges }, {
-  focusNodeId: 'n-200', maxNodes: GRAPH_FRAME_NODE_LIMIT - 1, maxEdges: GRAPH_FRAME_EDGE_LIMIT - 24,
+  focusNodeId: 'n-200', maxNodes: GRAPH_FRAME_NODE_LIMIT, maxEdges: GRAPH_FRAME_EDGE_LIMIT,
 })
 const elapsed = performance.now() - started
-ok('含主题根节点/提示线后的单帧 SVG 不超过 60 节点/72 线', frame.nodes.length + 1 <= GRAPH_FRAME_NODE_LIMIT
-  && focusFrame.nodes.length + 1 <= GRAPH_FRAME_NODE_LIMIT
-  && frame.edges.length + 24 <= GRAPH_FRAME_EDGE_LIMIT
-  && focusFrame.edges.length + 24 <= GRAPH_FRAME_EDGE_LIMIT)
+ok('无主题根/提示线的单帧主题网络不超过 60 节点/72 关系', frame.nodes.length <= GRAPH_FRAME_NODE_LIMIT
+  && focusFrame.nodes.length <= GRAPH_FRAME_NODE_LIMIT
+  && frame.edges.length <= GRAPH_FRAME_EDGE_LIMIT
+  && focusFrame.edges.length <= GRAPH_FRAME_EDGE_LIMIT)
 ok('搜索/事件聚焦节点保留在有界子图中', focusFrame.focusNodeId === 'n-200' && focusFrame.nodes.some((node) => node.id === 'n-200'))
 ok('537 节点与 2400 边两次选择在保护预算内完成', elapsed < 2000, `${Math.round(elapsed)} ms`)
 
@@ -116,21 +91,19 @@ ok('681 条事件仍可分页逐条访问且没有被折叠/分页移除', visit
 const searchNodes = [
   { id: 's1', kind: 'claim', title: '需求增长', currentText: '年报预计订单上升' },
   { id: 's2', kind: 'evidence', title: '独立媒体报道', currentText: '港口装运数据' },
+  { id: 's3', nodeType: 'concept', title: '现名', originalTitle: '旧名', nameHistory: [{ previousTitle: '旧名' }] },
 ]
 ok('图谱搜索支持正文筛选并可用空查询清空', searchGraphNodes(searchNodes, '年报').length === 1
   && searchGraphNodes(searchNodes, '年报')[0].id === 's1' && searchGraphNodes(searchNodes, '').length === 0)
+ok('改名后的旧名仍可从图谱搜索找到节点', searchGraphNodes(searchNodes, '旧名').some((node) => node.id === 's3'))
+const family = '👩‍👩‍👧‍👦'
+const longUnicodeSummary = compactEventSummary({ seq: 9, type: 'node.created', payload: { title: family.repeat(43) } })
+ok('紧凑事件摘要按 grapheme 截断，不拆分复杂 emoji', longUnicodeSummary.endsWith(`${family.repeat(41)}…`))
 
-const mediaNodes = Array.from({ length: 30 }, (_, i) => ({
-  id: `media-${i + 1}`, kind: 'evidence', title: `独立媒体报道 ${i + 1}`, sourceKind: '独立媒体',
-}))
-const mediaEvents = mediaNodes.map((node, i) => ({
-  id: node.id, seq: i + 1, type: 'evidence.appended', at: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T12:00:00Z`,
-  payload: { sourceKind: '独立媒体', sourceLabel: `媒体来源 ${i + 1}`, text: `独立报道标题 ${i + 1}` },
-}))
-const mediaGroupRows = independentMediaEvidence([...mediaNodes, { id: 'primary', kind: 'evidence', sourceKind: '一手数据' }], mediaEvents)
-ok('30 条独立媒体仅分组展示；每条来源节点和来源事件仍独立保留', mediaGroupRows.length === 30
-  && new Set(mediaGroupRows.map(({ node }) => node.id)).size === 30
-  && mediaGroupRows.every(({ event }, i) => event?.payload?.sourceLabel === `媒体来源 ${i + 1}`))
+const largeNodes = Array.from({ length: 5000 }, (_, i) => ({ id: `large-${i}`, nodeType: 'concept', title: `大型主题节点 ${i}`, createdSeq: i + 1 }))
+const largeFrame = selectGraphWindow({ nodes: largeNodes, allNodes: largeNodes, edges: [] })
+ok('五千节点主题可限定单帧数量并保持完整投影可搜索', largeFrame.nodes.length <= GRAPH_FRAME_NODE_LIMIT
+  && largeFrame.totalNodes === 5000 && largeFrame.truncated)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

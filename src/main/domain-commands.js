@@ -37,6 +37,7 @@ import { generateChainDraft } from './chain-draft.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
+  createProjectedNode, renameProjectedNode, invalidateProjectedNode,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, verifyChain as verifyThemeChain } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -623,6 +624,9 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:getArchive', (themeId) => getArchivedProjectionNodes(themeId))
   commands.register('chain:getEvents', (themeId) => ({ ok: true, events: getChainEvents(themeId) }))
   commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
+  commands.register('chain:createNode', (themeId, payload) => ({ ok: true, event: createProjectedNode(themeId, payload) }))
+  commands.register('chain:renameNode', (themeId, nodeId, title, reason) => ({ ok: true, event: renameProjectedNode(themeId, nodeId, title, reason) }))
+  commands.register('chain:invalidateNode', (themeId, nodeId, reason) => ({ ok: true, event: invalidateProjectedNode(themeId, nodeId, reason) }))
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
   commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))

@@ -100,13 +100,18 @@ ok('旧段重复 evidence ref 按 type/id 去重且保留首次来源顺序', mi
   && migratedEvidenceEdges[0].payload.from.ref.id === 'L-ev1'
   && migratedEvidenceEdges[1].payload.from.ref.id === 'inbox-9'
   && migratedEvidenceEdges[0].id.endsWith(':0') && migratedEvidenceEdges[1].id.endsWith(':2'))
-const claims = events.filter((e) => e.type === 'claim.created')
+const claims = events.filter((e) => e.type === 'node.created' || e.type === 'claim.created')
 const lemmaClaim = claims.find((e) => e.payload.sourceRef === 'lemma:' + store.load().nodes.find((n) => n.title === '命题甲').id)
 ok('confidence 原样携带', lemmaClaim && lemmaClaim.payload.confidence === 70)
 const migratedSource = events.find((e) => e.type === 'evidence.appended' && e.payload.sourceKind === 'legacy-node-source')
 ok('旧节点来源保留完整元数据并连到原命题', migratedSource?.payload.legacySource?.url === 'https://example.com/lemma-source'
   && events.some((e) => e.type === 'relation.declared' && e.payload.rel === 'supports'
     && e.payload.from.eventId === migratedSource.id && e.payload.to.eventId === lemmaClaim.id))
+const ambiguousLegacyNode = events.find((event) => event.type === 'node.created' && event.payload.legacyTypeHint === 'observation')
+ok('无法一一映射的旧类型保留 hint、诚实迁入观点并标注历史边界', ambiguousLegacyNode?.payload.nodeType === 'viewpoint'
+  && ambiguousLegacyNode.payload.migrationBoundary.includes('无法从迁移记录反推'))
+ok('迁移不删除或改写旧主题链与原节点记录', store.load().themes.find((row) => row.id === theme.id)?.chain?.segments?.length === 2
+  && store.load().nodes.some((node) => node.id === deadLemma.id && node.deletedAt === '2026-09-01'))
 ok('证伪结算保留', events.some((e) => e.type === 'settlement.recorded' && e.payload.correct === false))
 ok('墓碑事件存在', events.some((e) => e.type === 'node.archived'))
 ok('迁移 actor 标记', events.every((e) => e.actor === 'migration'))
@@ -158,6 +163,35 @@ const e1 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended
 const e2 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 ok('显式 id 幂等', e2.replayed === true && ev.getEvents(theme2.id).length === 1 && e1.hash === e2.hash)
 
+const schemaTheme = store.addTheme('新网络事件 schema 测试')
+for (const [label, payload] of [
+  ['未知节点类型', { nodeType: 'theme', title: '不得入图', sourceRef: 'schema:1' }],
+  ['缺失 sourceRef', { nodeType: 'concept', title: '缺 sourceRef' }],
+  ['缺失标题', { nodeType: 'concept', sourceRef: 'schema:2' }],
+]) {
+  let rejected = false
+  try { ev.appendEvent(schemaTheme.id, { type: 'node.created', payload }) } catch { rejected = true }
+  ok(`节点创建 payload 校验拒绝${label}`, rejected && ev.getEvents(schemaTheme.id).length === 0)
+}
+const schemaNode = ev.appendEvent(schemaTheme.id, {
+  id: 'schema-node', type: 'node.created', payload: { nodeType: 'concept', title: '校验节点', sourceRef: 'schema:node' },
+})
+let badRenameRejected = false
+try {
+  ev.appendEvent(schemaTheme.id, { type: 'node.renamed', payload: {
+    nodeId: 'wrong-node', sourceRef: 'schema:node', previousTitle: '校验节点', newTitle: '被拒绝', reason: '',
+  } })
+} catch { badRenameRejected = true }
+let badInvalidationRejected = false
+try {
+  ev.appendEvent(schemaTheme.id, { type: 'node.invalidated', payload: {
+    nodeId: schemaNode.id, sourceRef: 'schema:node', title: '校验节点', reason: ' ',
+  } })
+} catch { badInvalidationRejected = true }
+ok('改名必须绑定到 sourceRef 所指的节点 ID', badRenameRejected && ev.getEvents(schemaTheme.id).length === 1)
+ok('失效必须携带非空原因且失败不会污染有效前缀', badInvalidationRejected && ev.verifyChain(schemaTheme.id).ok
+  && ev.getEvents(schemaTheme.id).length === 1)
+
 console.log('\n— dry-run 不写账本 —')
 const theme3 = store.addTheme('dry-run 主题')
 chain.mountToChain(theme3.id, { mountId: 'd1', segmentNames: ['段D'], reason: 'r' })
@@ -189,6 +223,22 @@ ok('缺 ID 旧段迁移保留同一 sourceRef 与事件 ID，重跑不重复创�
   && missingFirstEvents[0].payload.sourceRef === `segment:${normalizedMissing1.id}`
   && missingFirstEvents[1].id === `evt:log:${normalizedMissing1.changeLog[0].id}`
   && missingFirstEvents[1].payload.sourceRef === `segment:${normalizedMissing1.id}#log:${normalizedMissing1.changeLog[0].id}`)
+
+console.log('\n— 旧节点类型映射到五类标准节点 —')
+const canonicalLegacyTheme = store.addTheme('旧节点标准类型迁移主题')
+const canonicalLegacyNodes = [
+  ['concept', '旧概念'], ['object', '旧对象'], ['event', '旧事件'],
+  ['viewpoint', '旧观点'], ['evidence', '旧证据'],
+].map(([type, title]) => store.addNode({ themeId: canonicalLegacyTheme.id, kind: 'lemma', type, title }))
+const canonicalMigration = ev.migrateThemeToEvents(canonicalLegacyTheme.id)
+const canonicalEvents = ev.getEvents(canonicalLegacyTheme.id)
+const canonicalProjection = canonicalEvents.filter((event) => event.type === 'node.created').map((event) => event.payload.nodeType).sort()
+ok('五种已有标准节点类型在迁移中逐一保留且不压成观点', canonicalMigration.created === 5
+  && canonicalProjection.join(',') === 'concept,event,evidence,object,viewpoint')
+ok('标准类型旧节点记录仍保留在原数据存储中', canonicalLegacyNodes.every((node) => store.load().nodes.some((saved) => saved.id === node.id)))
+const canonicalRerun = ev.migrateThemeToEvents(canonicalLegacyTheme.id)
+ok('标准节点迁移可重复执行且无重复追加', canonicalRerun.created === 0
+  && canonicalRerun.skipped === 5 && ev.verifyChain(canonicalLegacyTheme.id).ok)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

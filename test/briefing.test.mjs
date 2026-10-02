@@ -15,7 +15,7 @@ mkdirSync(TMP, { recursive: true })
 // 最小账本夹具：1 条待审批、1 条 24h 内新命题、1 个冲突、2 个主题
 const fixture = {
   themes: [
-    { id: 't1', name: '光互连' },
+    { id: 't1', name: '光互连👩‍👩‍👧‍👦ABCDEFGHIJK' },
     { id: 't2', name: 'Sivers Semiconductors' },
   ],
   inbox: [
@@ -34,7 +34,10 @@ const ledgerPath = join(TMP, 'ledger.json')
 writeFileSync(ledgerPath, JSON.stringify(fixture))
 const watchPath = join(TMP, 'watch.json')
 writeFileSync(watchPath, JSON.stringify([
-  { theme: '光互连', hits: [{ title: '命中标题', source: 'LightCounting', url: 'https://example.com/1', why: '直接相关' }] },
+  { theme: '光互连', hits: [
+    { title: '命中标题', source: 'LightCounting', url: 'https://example.com/1', why: '直接相关' },
+    { title: `\"><img src=x onerror='alert(1)'>`, source: "<script>alert('x')</script>", url: 'javascript:alert(1)', why: '<svg onload=alert(1)>' },
+  ] },
 ]))
 const outPath = join(TMP, 'briefing.html')
 execFileSync('node', [
@@ -54,6 +57,11 @@ ok('已处理条目不出现', !html.includes('已处理条目'))
 ok('24h 内命题填入', html.includes('测试命题：硅光成本下降'))
 ok('旧命题不出现', !html.includes('不应出现在简报'))
 ok('追踪命中填入', html.includes('命中标题') && html.includes('https://example.com/1'))
+ok('HTML 文本中的标签和引号均转义，不生成注入节点', html.includes('&lt;img src=x onerror=&#39;alert(1)&#39;&gt;')
+  && !html.includes('<img src=x') && !html.includes('<script>alert') && !html.includes('<svg onload'))
+ok('危险 javascript URL 不进入 href，安全 HTTPS URL 保留', !/href="javascript:/i.test(html)
+  && html.includes('href="https://example.com/1"'))
+ok('通用主题名截断保留完整 emoji grapheme cluster', html.includes('光互连👩‍👩‍👧‍👦ABCDEFG…'))
 ok('冲突填入', html.includes('测试冲突'))
 ok('Logo SVG 内联', html.includes('<svg'))
 ok('四色分区都在', ['#ff9500', '#0071e3', '#00b8b8', '#ff3b30'].every((c) => html.includes(c)))

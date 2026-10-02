@@ -68,7 +68,7 @@ ok('反驳边存在', !!contradicts && contradicts.from === 'e-e2' && contradict
 
 console.log('\n— chainScope —')
 const scope = pj.chainScope(proj)
-ok('C（孤立非段主张）被收进 floating', !scope.nodes.some((n) => n.id === 'e-c') && scope.floating.some((n) => n.id === 'e-c'))
+ok('C（孤立主题节点）仍属于同一张无根网络，不被移入第二张浮动图', scope.nodes.some((n) => n.id === 'e-c') && scope.floating.length === 0)
 ok('A（段骨干）保留', scope.nodes.some((n) => n.id === 'e-a'))
 ok('B（有边）保留', scope.nodes.some((n) => n.id === 'e-b'))
 
@@ -279,6 +279,97 @@ ok('重放恢复后节点重新进入当前图', !restoredNode.archived && resto
 let restoreTwiceRejected = false
 try { pj.restoreProjectedNode(theme3.id, eventNode.sourceRef, '重复恢复') } catch { restoreTwiceRejected = true }
 ok('重复恢复拒绝', restoreTwiceRejected)
+
+console.log('\n— 五类主题网络与完整节点生命周期 —')
+const networkTheme = store.addTheme('合成网络全流程')
+const emptyNetwork = pj.getChainProjection(networkTheme.id)
+ok('新主题起始投影真实为空且不自动生成主题根或观点', emptyNetwork.integrity.ok
+  && emptyNetwork.nodes.length === 0 && emptyNetwork.eventCount === 0)
+let invalidNodeTypeRejected = false
+try { pj.createProjectedNode(networkTheme.id, { nodeType: 'topic', title: '不得作为图节点的主题' }) } catch { invalidNodeTypeRejected = true }
+ok('节点类型严格限制为五类，不接纳主题 root', invalidNodeTypeRejected && ev.getEvents(networkTheme.id).length === 0)
+const concept = pj.createProjectedNode(networkTheme.id, { nodeType: 'concept', title: '合成概念' })
+const objectNode = pj.createProjectedNode(networkTheme.id, { nodeType: 'object', title: '合成对象' })
+const eventNodeNew = pj.createProjectedNode(networkTheme.id, { nodeType: 'event', title: '合成事件' })
+const viewpoint = pj.createProjectedNode(networkTheme.id, { nodeType: 'viewpoint', title: '合成观点', detail: '用户输入的说明，不是证据' })
+const evidence = pj.createProjectedNode(networkTheme.id, { nodeType: 'evidence', title: '合成证据', detail: '仅用于模型类型覆盖测试' })
+const createdProjection = pj.getChainProjection(networkTheme.id)
+ok('真实追加事件生成且只生成五类用户节点，不补造额外事实', createdProjection.nodes.length === 5
+  && createdProjection.nodes.map((node) => node.nodeType).sort().join(',') === 'concept,event,evidence,object,viewpoint'
+  && createdProjection.nodes.every((node) => node.kind !== 'theme'))
+const relationEvents = [
+  pj.declareProjectedRelation(networkTheme.id, concept.id, objectNode.id, 'belongs-to'),
+  pj.declareProjectedRelation(networkTheme.id, eventNodeNew.id, concept.id, 'influences'),
+  pj.declareProjectedRelation(networkTheme.id, viewpoint.id, objectNode.id, 'depends-on'),
+  pj.declareProjectedRelation(networkTheme.id, eventNodeNew.id, viewpoint.id, 'temporal'),
+  pj.declareProjectedRelation(networkTheme.id, concept.id, eventNodeNew.id, 'related'),
+  pj.declareProjectedRelation(networkTheme.id, evidence.id, viewpoint.id, 'supports'),
+  pj.declareProjectedRelation(networkTheme.id, concept.id, viewpoint.id, 'derives'),
+  pj.declareProjectedRelation(networkTheme.id, objectNode.id, eventNodeNew.id, 'derives'),
+  pj.declareProjectedRelation(networkTheme.id, objectNode.id, viewpoint.id, 'contradicts'),
+]
+ok('五种弱主题关联与三种有向论证关系均可追加并投影', relationEvents.length === 9
+  && relationEvents.map((event) => event.payload.rel).join(',') === 'belongs-to,influences,depends-on,temporal,related,supports,derives,derives,contradicts'
+  && pj.getChainProjection(networkTheme.id).allEdges.length === 9)
+const accepted = pj.reviewProjectedRelation(networkTheme.id, relationEvents[6].id, 'confirmed', '已确认合成前提链')
+const rejected = pj.reviewProjectedRelation(networkTheme.id, relationEvents[7].id, 'rejected', '证据不足，驳回该推导')
+const reviewedProjection = pj.getChainProjection(networkTheme.id)
+ok('待复核论证确认与驳回都追加决定事件并关闭原关系待办', accepted.payload.reviewOf === relationEvents[6].id
+  && rejected.payload.reviewOf === relationEvents[7].id
+  && reviewedProjection.allEdges.find((edge) => edge.eventId === relationEvents[6].id)?.reviewDecision === 'confirmed'
+  && reviewedProjection.allEdges.find((edge) => edge.eventId === relationEvents[7].id)?.reviewDecision === 'rejected'
+  && !reviewedProjection.allEdges.find((edge) => edge.eventId === relationEvents[6].id)?.pendingReview
+  && !reviewedProjection.allEdges.find((edge) => edge.eventId === relationEvents[7].id)?.pendingReview)
+const extraEvidence = pj.appendEvidenceToProjectedNode(networkTheme.id, viewpoint.id, {
+  text: '合成证据内容 <img src=x onerror=alert(1)>', sourceLabel: '合成来源', url: 'https://example.invalid/data',
+})
+ok('补充证据只保存用户输入，并以明确 supports 关系连到所选节点', extraEvidence.length === 2
+  && extraEvidence[0].type === 'evidence.appended' && extraEvidence[0].payload.text.includes('<img')
+  && extraEvidence[1].type === 'relation.declared' && extraEvidence[1].payload.rel === 'supports'
+  && extraEvidence[1].payload.from.eventId === extraEvidence[0].id && extraEvidence[1].payload.to.eventId === viewpoint.id)
+const beforeRenameSeq = ev.getEvents(networkTheme.id).length
+const renamed = pj.renameProjectedNode(networkTheme.id, concept.id, '合成概念新名', '测试追加式改名')
+const beforeInvalidateSeq = ev.getEvents(networkTheme.id).length
+const invalidation = pj.invalidateProjectedNode(networkTheme.id, eventNodeNew.id, '合成样本不再适用')
+const currentNetwork = pj.getChainProjection(networkTheme.id)
+const renamedNode = currentNetwork.allNodes.find((node) => node.id === concept.id)
+const invalidatedNode = currentNetwork.allNodes.find((node) => node.id === eventNodeNew.id)
+ok('改名和失效分别追加事件；旧名历史和失效节点仍留在投影', renamed.type === 'node.renamed'
+  && renamed.payload.previousTitle === '合成概念' && invalidation.type === 'node.invalidated'
+  && renamedNode.title === '合成概念新名' && renamedNode.nameHistory?.[0]?.previousTitle === '合成概念'
+  && invalidatedNode.invalidated && invalidatedNode.invalidationReason === '合成样本不再适用')
+const historyBeforeRename = pj.getChainProjectionAt(networkTheme.id, beforeRenameSeq)
+const historyBeforeInvalidate = pj.getChainProjectionAt(networkTheme.id, beforeInvalidateSeq)
+ok('改名/失效前后历史投影按时点准确保留名称与状态', historyBeforeRename.allNodes.find((node) => node.id === concept.id)?.title === '合成概念'
+  && !historyBeforeRename.allNodes.find((node) => node.id === eventNodeNew.id)?.invalidated
+  && historyBeforeInvalidate.allNodes.find((node) => node.id === concept.id)?.title === '合成概念新名'
+  && !historyBeforeInvalidate.allNodes.find((node) => node.id === eventNodeNew.id)?.invalidated
+  && currentNetwork.allNodes.find((node) => node.id === eventNodeNew.id)?.invalidated)
+const beforeReadOnlyReplay = JSON.stringify(ev.getEvents(networkTheme.id))
+pj.getChainProjectionAt(networkTheme.id, 2)
+ok('滑动历史只读回放不会写入或修改事件链', JSON.stringify(ev.getEvents(networkTheme.id)) === beforeReadOnlyReplay)
+let invalidationWithoutReasonRejected = false
+try { pj.invalidateProjectedNode(networkTheme.id, objectNode.id, '   ') } catch { invalidationWithoutReasonRejected = true }
+ok('失效标记要求明确原因', invalidationWithoutReasonRejected && ev.verifyChain(networkTheme.id).ok)
+ok('生命周期结束后全账本哈希链仍有效且原声明/决定都保留', ev.verifyChain(networkTheme.id).ok
+  && ev.getEvents(networkTheme.id).some((event) => event.id === relationEvents[7].id)
+  && ev.getEvents(networkTheme.id).some((event) => event.id === rejected.id))
+
+const sharedRefTheme = store.addTheme('合成重复来源引用')
+const sharedRefFirst = ev.appendEvent(sharedRefTheme.id, {
+  type: 'node.created', payload: { nodeType: 'concept', title: '第一个旧节点', sourceRef: 'legacy:shared-ref' },
+})
+const sharedRefSecond = ev.appendEvent(sharedRefTheme.id, {
+  type: 'node.created', payload: { nodeType: 'object', title: '第二个旧节点', sourceRef: 'legacy:shared-ref' },
+})
+pj.renameProjectedNode(sharedRefTheme.id, sharedRefSecond.id, '第二个旧节点新名', '共享来源引用回归')
+pj.invalidateProjectedNode(sharedRefTheme.id, sharedRefSecond.id, '共享来源引用失效回归')
+const sharedRefNodes = pj.getChainProjection(sharedRefTheme.id).allNodes
+ok('共享 legacy sourceRef 下改名/失效仍只作用于 payload 指定的 nodeId', sharedRefNodes.find((node) => node.id === sharedRefFirst.id)?.title === '第一个旧节点'
+  && !sharedRefNodes.find((node) => node.id === sharedRefFirst.id)?.invalidated
+  && sharedRefNodes.find((node) => node.id === sharedRefSecond.id)?.title === '第二个旧节点新名'
+  && sharedRefNodes.find((node) => node.id === sharedRefSecond.id)?.invalidated
+  && ev.verifyChain(sharedRefTheme.id).ok)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

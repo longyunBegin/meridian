@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>主题认知网络合成交互夹具</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    body { margin: 0; padding: 18px; background: #0c1118; color: #e7edf6; }
+    .fixture-status { margin: 0 0 16px; padding: 10px 14px; border: 1px solid #46556a; border-radius: 10px; background: #151b25; font: 13px/1.5 ui-monospace, monospace; }
+    .fixture-status[data-state="fail"] { border-color: #e57e76; color: #ffd2cd; }
+    .fixture-status[data-state="pass"] { border-color: #48bb91; color: #baf2d6; }
+    .app { min-height: 680px; grid-template-columns: 190px minmax(0,1fr) 220px; }
+  </style>
+</head>
+<body>
+  <pre class="fixture-status" id="fixture-status" role="status" aria-live="polite">正在准备独立合成账本…</pre>
+  <div class="app" data-view="new-theme">
+    <aside class="sidebar">
+      <div class="brand">Synthetic</div>
+      <nav class="nav" id="nav"></nav>
+      <div class="side-label">主题<span id="theme-add-slot"></span></div>
+      <div class="theme-list" id="themes"></div>
+      <div class="vault-list" id="vaults"></div>
+      <div class="side-foot" id="sidefoot"></div>
+    </aside>
+    <main class="mid" id="mid"></main>
+    <aside class="inspect" id="inspect"></aside>
+  </div>
+  <script type="module">
+    const fixture = {
+      theme: null,
+      events: [],
+      nodeCounter: 0,
+      injectInvalidTail: false,
+      calls: [],
+      xssExecuted: false,
+    }
+    window.__networkFixture = fixture
+    window.__MERIDIAN_TEST_SKIP_BOOT__ = true
+    const byId = (id) => document.getElementById(id)
+    const results = []
+    const assert = (label, condition) => {
+      results.push({ label, pass: Boolean(condition) })
+      drawStatus()
+      if (!condition) throw new Error(`未通过：${label}`)
+    }
+    const drawStatus = () => {
+      const pass = results.filter((row) => row.pass).length
+      const fail = results.filter((row) => !row.pass).length
+      const badge = byId('fixture-status')
+      badge.dataset.state = fail ? 'fail' : pass ? 'pass' : 'running'
+      badge.textContent = `合成网络夹具：${pass} 通过 / ${fail} 失败\n${results.map((row) => `${row.pass ? '✓' : '✗'} ${row.label}`).join('\n')}`
+    }
+    const wait = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms))
+    const waitFor = async (predicate, label, timeout = 7000) => {
+      const start = Date.now()
+      while (Date.now() - start < timeout) {
+        if (predicate()) return
+        await wait(25)
+      }
+      throw new Error(`等待超时：${label}`)
+    }
+    const dispatch = (element, type) => element.dispatchEvent(new Event(type, { bubbles: true }))
+    const setValue = (element, value, event = 'input') => {
+      element.value = value
+      dispatch(element, event)
+    }
+    const dateForSeq = (seq) => new Date(Date.UTC(2026, 8, 1 + seq)).toISOString()
+    const append = (type, payload, id = `evt:${type}:${fixture.events.length + 1}`) => {
+      const seq = fixture.events.length + 1
+      const event = {
+        id, seq, type, at: dateForSeq(seq), actor: 'user', payload,
+        prevHash: fixture.events.at(-1)?.hash || 'GENESIS', hash: `synthetic-hash-${seq}`,
+      }
+      fixture.events.push(event)
+      return event
+    }
+    const integrity = () => ({
+      ok: !fixture.injectInvalidTail,
+      count: fixture.events.length + (fixture.injectInvalidTail ? 1 : 0),
+      lastValidSeq: fixture.events.length,
+      reason: fixture.injectInvalidTail ? 'synthetic damaged suffix' : null,
+    })
+    const projectionAt = (events, selectedSeq = null) => {
+      const nodes = new Map()
+      const edges = []
+      const byId = new Map(events.map((event) => [event.id, event]))
+      for (const event of events) {
+        const payload = event.payload || {}
+        if (event.type === 'node.created') {
+          const nodeType = payload.nodeType
+          nodes.set(event.id, {
+            id: event.id, kind: nodeType === 'viewpoint' ? 'claim' : nodeType, nodeType,
+            title: payload.title, currentText: payload.detail || payload.title, detail: payload.detail || '',
+            status: payload.status || 'pending', correct: null, archived: false, superseded: false,
+            createdSeq: event.seq, sourceKind: payload.sourceKind || 'user-authored', sourceRef: payload.sourceRef,
+            eventIds: [event.id], provenanceEventIds: [event.id], nameHistory: [], external: false,
+          })
+        } else if (event.type === 'evidence.appended') {
+          nodes.set(event.id, {
+            id: event.id, kind: 'evidence', nodeType: 'evidence', title: String(payload.text || '证据').slice(0, 28),
+            currentText: payload.text || '', status: 'pending', correct: null, archived: false, superseded: false,
+            createdSeq: event.seq, sourceKind: payload.sourceKind || 'manual-evidence', sourceRef: payload.sourceRef,
+            eventIds: [event.id], provenanceEventIds: [event.id], nameHistory: [], external: false,
+          })
+        } else if (event.type === 'node.renamed' || event.type === 'node.invalidated') {
+          const node = [...nodes.values()].find((row) => row.sourceRef === payload.sourceRef)
+          if (!node) continue
+          if (event.type === 'node.renamed') {
+            node.nameHistory.push({ eventId: event.id, seq: event.seq, previousTitle: payload.previousTitle, title: payload.newTitle })
+            node.originalTitle ??= payload.previousTitle
+            node.title = payload.newTitle
+          } else {
+            node.invalidated = true
+            node.invalidationReason = payload.reason
+          }
+          node.eventIds.push(event.id)
+          node.provenanceEventIds.push(event.id)
+        } else if (event.type === 'relation.declared' && !payload.reviewOf) {
+          edges.push({
+            id: event.id, eventId: event.id, rel: payload.rel,
+            relationGroup: ['supports', 'derives', 'contradicts'].includes(payload.rel) ? 'argument' : 'association',
+            from: payload.from?.eventId, to: payload.to?.eventId,
+            pendingReview: payload.reviewStatus === 'pending-review' || payload.rel === 'derives',
+            reviewDecision: null, reviewReason: '', seq: event.seq,
+          })
+        }
+      }
+      for (const event of events) {
+        if (event.type !== 'relation.declared' || !event.payload?.reviewOf) continue
+        const edge = edges.find((row) => row.eventId === event.payload.reviewOf)
+        if (!edge) continue
+        edge.pendingReview = false
+        edge.reviewDecision = event.payload.reviewDecision
+        edge.reviewReason = event.payload.decisionReason || ''
+        edge.reviewEventId = event.id
+      }
+      for (const node of nodes.values()) {
+        node.evidenceCount = edges.filter((edge) => edge.rel === 'supports' && (edge.from === node.id || edge.to === node.id)
+          && (nodes.get(edge.from)?.nodeType === 'evidence' || nodes.get(edge.to)?.nodeType === 'evidence')).length
+      }
+      const selected = selectedSeq == null ? events : events.filter((event) => event.seq <= selectedSeq)
+      const state = integrity()
+      return {
+        nodes: [...nodes.values()], allNodes: [...nodes.values()], edges, allEdges: edges,
+        eventCount: events.length, integrity: { ...state, ok: !fixture.injectInvalidTail },
+        selectedSeq, selectedAt: selectedSeq == null ? null : selected.find((event) => event.seq === selectedSeq)?.at || null,
+      }
+    }
+    const allEventsForRead = () => {
+      if (!fixture.injectInvalidTail) return [...fixture.events]
+      const seq = fixture.events.length + 1
+      return [...fixture.events, {
+        id: 'synthetic-corrupt-tail', seq, type: 'invalid.untrusted', at: dateForSeq(seq), actor: 'unknown',
+        payload: { note: '故意构造的无效尾部，不用于历史或状态投影' }, hash: '', prevHash: fixture.events.at(-1)?.hash || 'GENESIS',
+      }]
+    }
+    const liveProjection = () => projectionAt(fixture.events)
+
+    window.meridian = {
+      addTheme: async (name) => {
+        fixture.calls.push('theme:add')
+        fixture.theme = { id: 'synthetic-theme-1', name: String(name), tags: [] }
+        return { ...fixture.theme }
+      },
+      themes: async () => fixture.theme ? [{ ...fixture.theme }] : [],
+      nodes: async () => [],
+      latestReadings: async () => ({ items: [] }),
+      stats: async () => ({ cold: 0, dead: 0, verdicts: 0, readings: 0 }),
+      conflicts: async () => [],
+      chainProjection: async () => liveProjection(),
+      chainEvents: async () => ({ events: allEventsForRead(), integrity: integrity() }),
+      chainProjectionAt: async (_themeId, seq) => projectionAt(fixture.events.filter((event) => event.seq <= seq), seq),
+      chainVerify: async () => ({ integrity: integrity() }),
+      chainCreateNode: async (_themeId, input) => {
+        fixture.calls.push('node.created')
+        const id = `evt:node:${++fixture.nodeCounter}`
+        return { ok: true, event: append('node.created', {
+          nodeType: input.nodeType, title: input.title, detail: input.detail || '', status: input.status || 'pending',
+          sourceKind: 'user-authored', sourceRef: `theme-node:${id}`,
+        }, id) }
+      },
+      chainAddEvidence: async (_themeId, targetNodeId, input) => {
+        fixture.calls.push('evidence.appended')
+        const evidenceId = `evt:evidence:${fixture.events.length + 1}`
+        const sourceRef = `manual-evidence:${evidenceId}`
+        append('evidence.appended', { text: input.text, sourceLabel: input.sourceLabel || '', sourceKind: 'manual-evidence', sourceRef, evidenceRefs: [] }, evidenceId)
+        append('relation.declared', {
+          rel: 'supports', from: { eventId: evidenceId }, to: { eventId: targetNodeId }, sourceKind: 'manual-evidence', sourceRef,
+        })
+        return { ok: true }
+      },
+      chainDeclareRelation: async (_themeId, from, to, rel) => {
+        fixture.calls.push(`relation:${rel}`)
+        return { ok: true, event: append('relation.declared', {
+          rel, from: { eventId: from }, to: { eventId: to },
+          ...(rel === 'derives' ? { reviewStatus: 'pending-review' } : {}),
+          sourceKind: ['supports', 'derives', 'contradicts'].includes(rel) ? 'user-declared-argument' : 'user-declared-association',
+          sourceRef: `relation:${from}:${to}:${fixture.events.length + 1}`,
+        }) }
+      },
+      chainReviewRelation: async (_themeId, relationId, decision, reason) => {
+        fixture.calls.push(`review:${decision}`)
+        const original = fixture.events.find((event) => event.id === relationId)
+        if (!original) return { ok: false, error: 'synthetic relation not found' }
+        return { ok: true, event: append('relation.declared', {
+          rel: original.payload.rel, from: structuredClone(original.payload.from), to: structuredClone(original.payload.to),
+          reviewStatus: 'pending-review', reviewOf: original.id, reviewDecision: decision, decisionReason: reason,
+          sourceKind: 'relation-review', sourceRef: original.payload.sourceRef,
+        }) }
+      },
+      chainRenameNode: async (_themeId, nodeId, title, reason) => {
+        fixture.calls.push('node.renamed')
+        const node = liveProjection().nodes.find((row) => row.id === nodeId)
+        return { ok: true, event: append('node.renamed', {
+          nodeId, sourceRef: node.sourceRef, previousTitle: node.title, newTitle: title, reason,
+        }) }
+      },
+      chainInvalidateNode: async (_themeId, nodeId, reason) => {
+        fixture.calls.push('node.invalidated')
+        const node = liveProjection().nodes.find((row) => row.id === nodeId)
+        return { ok: true, event: append('node.invalidated', {
+          nodeId, sourceRef: node.sourceRef, title: node.title, reason, invalidatedAt: dateForSeq(fixture.events.length + 1),
+        }) }
+      },
+    }
+
+    const app = await import('../app.js')
+    const waitForThemeGraph = () => waitFor(() => document.querySelector('.chain-section .cog-graph-toolbar')
+      && document.querySelector('.cog-network-empty'), '真实新主题空态')
+    const createNode = async ({ type, title, detail = '' }, first = false) => {
+      const before = fixture.events.length
+      const launcher = first
+        ? document.querySelector('.cog-network-empty button')
+        : [...document.querySelectorAll('.cog-graph-actions button')].find((button) => button.textContent.includes('添加节点'))
+      if (!launcher) throw new Error('找不到真实添加节点入口')
+      launcher.click()
+      await waitFor(() => document.querySelector('.cog-entry-dialog'), '节点创建对话框')
+      const dialog = document.querySelector('.cog-entry-dialog')
+      const typeSelect = dialog.querySelector('[aria-label="节点类型"]')
+      typeSelect.value = type
+      dispatch(typeSelect, 'change')
+      setValue(dialog.querySelector('[aria-label="节点名称"]'), title)
+      setValue(dialog.querySelector('[aria-label="节点说明"]'), detail)
+      dialog.querySelector('form').requestSubmit()
+      await waitFor(() => fixture.events.length > before, '节点创建事件')
+      const created = fixture.events.slice(before).find((event) => event.type === 'node.created')
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="${created.id}"]`), '网络节点重绘')
+      return created.id
+    }
+    const selectGraphNode = async (id) => {
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="${id}"]`), `键盘节点 ${id}`)
+      const node = document.querySelector(`.cog-node[data-node-id="${id}"]`)
+      node.focus()
+      node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await waitFor(() => node.classList.contains('is-selected'), `节点 ${id} 选中`)
+      return node
+    }
+    const openNodeDetail = async (id) => {
+      await selectGraphNode(id)
+      const button = [...document.querySelectorAll('.cog-point-inspector-actions button')]
+        .find((candidate) => candidate.textContent.includes('完整详情与操作'))
+      if (!button) throw new Error('找不到完整节点详情入口')
+      button.click()
+      await waitFor(() => document.querySelector('.chain-drawer'), '节点详情抽屉')
+      return document.querySelector('.chain-drawer')
+    }
+    const addRelation = async (nodeId, targetId, rel) => {
+      const before = fixture.events.length
+      const drawer = await openNodeDetail(nodeId)
+      const details = [...drawer.querySelectorAll('details')].find((row) => row.querySelector('summary')?.textContent.includes('添加论证或主题关联'))
+      if (!details) throw new Error('找不到关系录入面板')
+      details.querySelector('summary').click()
+      const target = details.querySelector('[aria-label="关系的另一个节点"]')
+      const relation = details.querySelector('[aria-label="关系类型"]')
+      target.value = targetId
+      dispatch(target, 'change')
+      relation.value = rel
+      dispatch(relation, 'change')
+      details.querySelector('form').requestSubmit()
+      await waitFor(() => fixture.events.length > before, `关系 ${rel} 追加`)
+      await waitFor(() => !document.querySelector('.chain-drawer'), '关系抽屉关闭')
+      await waitFor(() => document.querySelector(`.cog-edge[data-rel="${rel}"]`), `关系 ${rel} 绘制`)
+      return fixture.events.slice(before).find((event) => event.type === 'relation.declared' && !event.payload.reviewOf).id
+    }
+    const reviewRelation = async (relationId, decision) => {
+      const opener = document.querySelector('.cog-ledger-open')
+      if (document.querySelector('.cog-ledger-pane').hidden) opener.click()
+      await waitFor(() => !document.querySelector('.cog-ledger-pane').hidden, '账本抽屉开启')
+      let card = document.querySelector(`.cog-ev[data-event-id="${relationId}"]`)
+      if (!card) throw new Error(`账本中缺少关系事件 ${relationId}`)
+      card.querySelector('.cog-ev-summary').click()
+      let controls = card.querySelector('.cog-review-controls')
+      if (!controls) throw new Error('该论证关系没有人工复核控制')
+      controls.querySelector('summary').click()
+      setValue(controls.querySelector('[aria-label="关系复核理由"]'), `合成夹具：${decision} 理由`, 'input')
+      const decisionButton = [...controls.querySelectorAll('button')].find((button) => button.textContent.includes(decision === 'confirmed' ? '确认关系' : '驳回关系'))
+      if (!decisionButton) throw new Error('找不到复核决定按钮')
+      decisionButton.click()
+      await waitFor(() => fixture.events.some((event) => event.payload?.reviewOf === relationId
+        && event.payload?.reviewDecision === decision), `追加 ${decision} 复核事件`)
+      await waitFor(() => document.querySelector(`.cog-ev[data-event-id="${relationId}"] .cog-review-status`), '关系复核状态更新')
+    }
+    const addEvidence = async (nodeId) => {
+      await selectGraphNode(nodeId)
+      const button = [...document.querySelectorAll('.cog-point-inspector-actions button')]
+        .find((candidate) => candidate.textContent.includes('补充证据'))
+      if (!button) throw new Error('找不到补充证据入口')
+      const before = fixture.events.length
+      button.click()
+      await waitFor(() => document.querySelector('.cog-entry-dialog'), '证据输入框')
+      const dialog = document.querySelector('.cog-entry-dialog')
+      setValue(dialog.querySelector('[aria-label="证据摘要或原文摘录"]'), '仅供合成测试的观察记录；来源未核验。')
+      dialog.querySelector('form').requestSubmit()
+      await waitFor(() => fixture.events.length >= before + 2, '证据及明确支持关系事件')
+      await waitFor(() => !document.querySelector('.cog-entry-dialog'), '证据表单关闭')
+    }
+    const renameNode = async (nodeId, newTitle) => {
+      await selectGraphNode(nodeId)
+      const lifecycle = document.querySelector('.cog-point-inspector .cog-node-lifecycle')
+      if (!lifecycle) throw new Error('找不到追加式节点生命周期操作')
+      if (!lifecycle.open) lifecycle.querySelector('summary').click()
+      const form = lifecycle.querySelector('form')
+      const before = fixture.events.length
+      setValue(form.querySelector('[aria-label="新节点名称"]'), newTitle)
+      form.requestSubmit()
+      await waitFor(() => fixture.events.some((event) => event.type === 'node.renamed'), '改名事件追加')
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="${nodeId}"] .cog-node-title`)
+        && document.querySelector(`.cog-node[data-node-id="${nodeId}"] title`)?.textContent.includes('旧名：'), '旧名留存')
+      return before
+    }
+    const invalidateNode = async (nodeId) => {
+      await selectGraphNode(nodeId)
+      const lifecycle = document.querySelector('.cog-point-inspector .cog-node-lifecycle')
+      if (!lifecycle.open) lifecycle.querySelector('summary').click()
+      const form = lifecycle.querySelectorAll('form')[1]
+      const before = fixture.events.length
+      setValue(form.querySelector('[aria-label="失效原因"]'), '合成夹具中的追加式失效测试。')
+      form.requestSubmit()
+      await waitFor(() => fixture.events.some((event) => event.type === 'node.invalidated'), '失效事件追加')
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="${nodeId}"].is-invalidated`), '失效 ghost 重绘')
+      return before
+    }
+
+    async function run() {
+      byId('mid').append(app.renderThemeCreator())
+      const themeInput = byId('theme-name')
+      setValue(themeInput, '合成主题：网络交互测试')
+      const createThemeButton = [...document.querySelectorAll('.theme-creator button')].find((button) => button.textContent.includes('创建主题'))
+      createThemeButton.click()
+      await waitForThemeGraph()
+      assert('实际主题创建组件只创建范围元数据；首次进入为真实空态', fixture.calls.includes('theme:add')
+        && fixture.events.length === 0 && document.querySelector('.cog-network-empty')?.textContent.includes('真实空主题'))
+      assert('主题网络工作区与导航外围均使用深色表面', getComputedStyle(document.querySelector('.app')).backgroundColor === 'rgb(12, 17, 24)'
+        && getComputedStyle(document.querySelector('.sidebar')).backgroundColor === 'rgb(14, 20, 28)'
+        && getComputedStyle(document.querySelector('.mid')).backgroundColor === 'rgb(12, 17, 24)')
+      assert('真实空态含明确“添加第一条观察/观点”入口', document.querySelector('.cog-network-empty button')?.textContent.includes('添加第一条观察/观点'))
+
+      const viewpointId = await createNode({ type: 'viewpoint', title: '第一条用户观察', detail: '内容由测试者显式输入。' }, true)
+      const maliciousTitle = '<img src=x onerror=window.__networkFixture.xssExecuted=true>'
+      const conceptId = await createNode({ type: 'concept', title: maliciousTitle, detail: 'HTML 片段仅作为纯文本输入。' })
+      const objectId = await createNode({ type: 'object', title: '合成对象记录', detail: '不代表真实对象或事实。' })
+      assert('用户显式创建的观点/概念/对象均进入同一张网络', [viewpointId, conceptId, objectId]
+        .every((id) => document.querySelector(`.cog-node[data-node-id="${id}"]`)) && fixture.events.filter((event) => event.type === 'node.created').length === 3)
+      assert('恶意 HTML 标题只作为 SVG 文本，未创建节点或执行事件处理器', document.querySelectorAll('.cog-network-svg img').length === 0
+        && fixture.xssExecuted === false && document.querySelector(`.cog-node[data-node-id="${conceptId}"] .cog-node-title`)?.textContent.includes('<img'))
+      await selectGraphNode(viewpointId)
+      assert('键盘 Enter 可选中真实节点，role/tabindex/aria-label 完整', (() => {
+        const node = document.querySelector(`.cog-node[data-node-id="${viewpointId}"]`)
+        return node?.getAttribute('role') === 'button' && node.getAttribute('tabindex') === '0'
+          && node.getAttribute('aria-label')?.includes('按 Enter') && node.classList.contains('is-selected')
+      })())
+
+      await addEvidence(conceptId)
+      assert('证据通过用户明确提交并追加支持关系，不自动推断事实', fixture.events.some((event) => event.type === 'evidence.appended')
+        && fixture.events.some((event) => event.type === 'relation.declared' && event.payload.rel === 'supports'))
+      const associationId = await addRelation(conceptId, objectId, 'related')
+      assert('弱主题关联按相关关系显式记录，边无论证箭头', Boolean(associationId)
+        && document.querySelector(`.cog-edge[data-rel="related"]`)?.getAttribute('marker-end') === 'none')
+      const confirmId = await addRelation(viewpointId, conceptId, 'derives')
+      const rejectId = await addRelation(objectId, viewpointId, 'derives')
+      assert('新论证关系进入待复核闭环且原方向保留', [confirmId, rejectId].every((id) => document.querySelector(`.cog-edge[data-rel="derives"]`)
+        && fixture.events.find((event) => event.id === id)?.payload.reviewStatus === 'pending-review'))
+      await reviewRelation(confirmId, 'confirmed')
+      await reviewRelation(rejectId, 'rejected')
+      assert('确认与驳回各追加新的决定事件，声明事件仍在账本中', ['confirmed', 'rejected'].every((decision) => fixture.events.some((event) => event.payload?.reviewDecision === decision))
+        && fixture.events.some((event) => event.id === confirmId) && fixture.events.some((event) => event.id === rejectId))
+
+      const oldTitle = maliciousTitle
+      await renameNode(conceptId, '已更正名称：合成概念')
+      assert('改名追加事件、当前名更新，旧名仍可查/可检查', fixture.events.some((event) => event.type === 'node.renamed')
+        && document.querySelector(`.cog-node[data-node-id="${conceptId}"] title`)?.textContent.includes(oldTitle))
+      const search = document.querySelector('[aria-label="搜索所有节点、旧名或说明"]')
+      setValue(search, oldTitle)
+      await waitFor(() => document.querySelector('.cog-search-result')?.textContent.includes('已更正名称：合成概念'), '旧名搜索')
+      assert('搜索按历史旧名找回改名节点', document.querySelector('.cog-search-result')?.textContent.includes('已更正名称：合成概念'))
+      document.querySelector('.cog-search-clear')?.click()
+      await invalidateNode(conceptId)
+      assert('失效通过独立追加事件记录，节点留在原位置并以 ghost 标示', fixture.events.some((event) => event.type === 'node.invalidated')
+        && document.querySelector(`.cog-node[data-node-id="${conceptId}"].is-invalidated`))
+
+      const beforeReplayPosition = document.querySelector(`.cog-node[data-node-id="${viewpointId}"]`)?.getAttribute('transform')
+      const firstTick = document.querySelector('.cog-time-tick[data-seq="1"]')
+      if (!firstTick) throw new Error('找不到底部历史日期刻度')
+      firstTick.click()
+      await waitFor(() => document.querySelector('[data-replay-status]')?.textContent.includes('只读'), '只读历史回放')
+      assert('按历史日期回放同一张网络并报告只读状态', document.querySelector('[data-replay-status]')?.textContent.includes('只读')
+        && document.querySelector('.cog-time-summary')?.textContent.includes('2026-09'))
+      const compare = document.querySelector('.cog-time-compare')
+      compare.click()
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="${conceptId}"].is-not-yet-created`), '与当前对比 ghost')
+      assert('历史/当前对比揭示后续节点并固定已存在节点坐标', Boolean(document.querySelector(`.cog-node[data-node-id="${conceptId}"].is-not-yet-created`))
+        && document.querySelector(`.cog-node[data-node-id="${viewpointId}"]`)?.getAttribute('transform') === beforeReplayPosition)
+      document.querySelector('.cog-live-button').click()
+      await waitFor(() => document.querySelector('[data-replay-status]').hidden, '返回当前网络')
+
+      for (let i = 0; i < 100; i++) {
+        const id = `evt:node:bulk-${String(i).padStart(3, '0')}`
+        append('node.created', {
+          nodeType: ['concept', 'object', 'event', 'viewpoint', 'evidence'][i % 5],
+          title: `大型主题合成节点 ${String(i).padStart(3, '0')}`,
+          detail: '仅为界面密度和搜索测试生成的合成数据。', status: 'pending',
+          sourceKind: 'synthetic-fixture', sourceRef: `theme-node:${id}`,
+        }, id)
+      }
+      await app.refresh()
+      await waitFor(() => document.querySelectorAll('.cog-network-svg .cog-node').length > 0, '大主题网络重绘')
+      await wait(150)
+      assert('百节点主题画布限定单帧密度，仍保留完整搜索入口', document.querySelectorAll('.cog-network-svg .cog-node').length <= 60
+        && document.querySelector('.cog-frame-note')?.textContent.includes('用搜索、类型或状态筛选'))
+      setValue(document.querySelector('[aria-label="搜索所有节点、旧名或说明"]'), '大型主题合成节点 099')
+      await waitFor(() => document.querySelector('.cog-search-result')?.textContent.includes('大型主题合成节点 099'), '大主题全量搜索')
+      document.querySelector('.cog-search-result').click()
+      await waitFor(() => document.querySelector(`.cog-node[data-node-id="evt:node:bulk-099"]`), '搜索命中画布定位')
+      assert('画布外节点可全局搜索并定位至有界网络帧', Boolean(document.querySelector(`.cog-node[data-node-id="evt:node:bulk-099"]`)))
+
+      fixture.injectInvalidTail = true
+      await app.refresh()
+      await waitFor(() => document.querySelector('[data-ledger-status]')?.textContent.includes('校验异常'), '损坏账本状态')
+      const ticks = [...document.querySelectorAll('.cog-time-tick')]
+      const invalidSeq = fixture.events.length + 1
+      assert('历史日期刻度只来自校验有效前缀且损坏尾部不进入回放', ticks.every((tick) => Number(tick.dataset.seq) <= fixture.events.length)
+        && !ticks.some((tick) => Number(tick.dataset.seq) === invalidSeq))
+      assert('账本异常时写入按钮被禁用', [...document.querySelectorAll('.cog-graph-actions button')]
+        .find((button) => button.textContent.includes('添加节点'))?.disabled === true)
+      assert('完整性 UI 文案不把事件链一致性宣称为内容真值', document.querySelector('.cog-graph-help-body')?.textContent.includes('不代表记录内容为真'))
+    }
+
+    run().then(() => {
+      byId('fixture-status').dataset.state = 'pass'
+      document.body.dataset.fixture = 'pass'
+      drawStatus()
+    }).catch((error) => {
+      results.push({ label: `异常：${error?.message || error}`, pass: false })
+      byId('fixture-status').dataset.state = 'fail'
+      document.body.dataset.fixture = 'fail'
+      drawStatus()
+      console.error(error)
+    })
+  </script>
+</body>
+</html>

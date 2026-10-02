@@ -775,7 +775,7 @@ function renderNewTheme() {
   state.scaffoldFailed = false
   page.append(h('div', { class: 'page-head' },
     h('h1', {}, '新建主题'),
-    h('p', {}, '创建后从空白认知图开始。主题本身就是图根；添加观点后，再按需补充证据和明确的关系。'),
+    h('p', {}, '创建后从空白认知网络开始。主题仅用于限定范围；添加真实节点后，可按需记录证据与明确关系。'),
   ), creator)
   return page
 }

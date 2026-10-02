@@ -1,5 +1,6 @@
+import { truncateGraphemes } from './theme-network.js'
+
 export const LEDGER_PAGE_SIZE = 40
-export const FLOATING_PAGE_SIZE = 40
 export const GRAPH_FRAME_NODE_LIMIT = 60
 export const GRAPH_FRAME_EDGE_LIMIT = 72
 
@@ -74,28 +75,10 @@ export function paginate(items, page = 1, pageSize = 40) {
   }
 }
 
-export function floatingStatusKey(node) {
-  if (node?.archived) return 'archived'
-  if (node?.correct === false) return 'disproved'
-  if (node?.superseded) return 'superseded'
-  if (node?.resolved === true) return 'resolved'
-  if (node?.correct === true) return 'confirmed'
-  return String(node?.status || 'pending')
-}
-
-export function countFloating(nodes = []) {
-  const byKind = Object.create(null)
-  const byStatus = Object.create(null)
-  for (const node of nodes) {
-    const kind = String(node?.kind || 'unknown')
-    const status = floatingStatusKey(node)
-    byKind[kind] = (byKind[kind] || 0) + 1
-    byStatus[status] = (byStatus[status] || 0) + 1
-  }
-  return { total: nodes.length, byKind, byStatus }
-}
-
 const EVENT_KIND_SUMMARY = {
+  'node.created': '新增节点',
+  'node.renamed': '改名',
+  'node.invalidated': '失效',
   'evidence.appended': '新增证据',
   'claim.created': '新增主张',
   'inference.created': '新增推断',
@@ -113,8 +96,7 @@ const SOURCE_KIND_SUMMARY = {
 }
 
 function shortSummary(value, limit = 42) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim()
-  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text
+  return truncateGraphemes(value || '', limit)
 }
 
 /** A single-line event disclosure label with a useful discriminator, not duplicated boilerplate. */
@@ -149,27 +131,13 @@ export function searchGraphNodes(nodes = [], query = '') {
   if (!needle) return []
   const rows = Array.isArray(nodes) ? nodes : []
   return rows.map((node, index) => ({ node, index, title: String(node?.title || '').toLocaleLowerCase() }))
-    .filter(({ node }) => [node?.title, node?.currentText, node?.sourceRef, node?.sourceKind, node?.kind]
+    .filter(({ node }) => [node?.title, node?.originalTitle, ...(node?.nameHistory || []).map((entry) => entry?.previousTitle),
+      node?.currentText, node?.detail, node?.sourceRef, node?.sourceKind, node?.nodeType, node?.kind]
       .some((value) => String(value || '').toLocaleLowerCase().includes(needle)))
     .sort((a, b) => Number(b.title === needle) - Number(a.title === needle)
       || Number(b.title.startsWith(needle)) - Number(a.title.startsWith(needle))
       || a.index - b.index)
     .map(({ node }) => node)
-}
-
-/** Group only explicitly identified independent-media evidence; each source remains a distinct row/node. */
-export function independentMediaEvidence(nodes = [], events = []) {
-  const byId = new Map((Array.isArray(events) ? events : []).filter(Boolean).map((event) => [event.id, event]))
-  const isIndependent = (value) => /^(?:独立媒体|independent[ _-]?media)$/i.test(String(value || '').trim())
-  return (Array.isArray(nodes) ? nodes : [])
-    .filter((node) => node?.kind === 'evidence')
-    .map((node) => ({ node, event: byId.get(node.id) || null }))
-    .filter(({ node, event }) => {
-      const payload = event?.payload || {}
-      return [node.sourceKind, payload.sourceKind, payload.sourceLabel,
-        payload.legacySource?.kind, payload.legacySource?.label]
-        .some(isIndependent)
-    })
 }
 
 /**

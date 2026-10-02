@@ -1,7 +1,6 @@
 import { h, toast, confirmToast } from '../lib/dom.js'
 import { state, refresh } from '../app.js'
 import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
-import { renderChainReader } from './chain-reader.js'
 
 const m = window.meridian
 
@@ -114,11 +113,7 @@ function renderSkeletonPrompt(theme) {
   return box
 }
 
-/**
- * 主题页：主题名 + 认知链 + 主题设置。
- * 2026-10-01 树/图视图删除，主题页只剩认知链为主要展示。
- * 链式阅读为默认视图；图谱延迟挂载（避免隐藏状态下量不到画布宽度）。
- */
+/** The theme is scope metadata; the single rootless network is the primary view. */
 export function renderTheme(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
   const head = h('div', { class: 'mid-head hairline-b' },
@@ -128,30 +123,9 @@ export function renderTheme(mid) {
     onEvidence: openEvidenceDetail,
     onOpen: (node, callbacks = {}) => openNodeDetail(theme, node, { ...callbacks, onEvidence: openEvidenceDetail }),
   }
-  const readerPane = h('div', { class: 'theme-view-pane', role: 'tabpanel', 'aria-label': '链式阅读' },
-    renderChainReader(theme, { onOpen: (node) => openOpts.onOpen(node) }))
-  const graphPane = h('div', { class: 'theme-view-pane', role: 'tabpanel', 'aria-label': '认知图谱', hidden: true })
-  let graphMounted = false
-  const readerTab = h('button', { type: 'button', role: 'tab', class: 'theme-view-tab is-active', 'aria-selected': 'true' }, '链式')
-  const graphTab = h('button', { type: 'button', role: 'tab', class: 'theme-view-tab', 'aria-selected': 'false' }, '图谱')
-  const setTab = (which) => {
-    const isReader = which === 'reader'
-    readerTab.classList.toggle('is-active', isReader)
-    graphTab.classList.toggle('is-active', !isReader)
-    readerTab.setAttribute('aria-selected', String(isReader))
-    graphTab.setAttribute('aria-selected', String(!isReader))
-    readerPane.hidden = !isReader
-    graphPane.hidden = isReader
-    if (!isReader && !graphMounted) {
-      graphMounted = true
-      graphPane.append(renderChainSection(theme, openOpts))
-    }
-  }
-  readerTab.onclick = () => setTab('reader')
-  graphTab.onclick = () => setTab('graph')
-  const viewTabs = h('div', { class: 'theme-view-tabs', role: 'tablist', 'aria-label': '主题视图' }, readerTab, graphTab)
-  // 主题头固定，下方内容区独立滚动。
   const body = h('div', { class: 'theme-body' })
-  for (const el of [renderThemeMetadata(theme), viewTabs, readerPane, graphPane, renderThemeOpsSection(theme)]) if (el) body.append(el)
+  for (const el of [renderThemeMetadata(theme), renderChainSection(theme, openOpts), renderThemeOpsSection(theme)]) {
+    if (el) body.append(el)
+  }
   mid.append(head, body)
 }

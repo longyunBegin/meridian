@@ -31,6 +31,24 @@ const esc = (s) =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+const truncateGraphemes = (value, limit) => {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  const parts = typeof Intl?.Segmenter === 'function'
+    ? [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(text)].map((part) => part.segment)
+    : Array.from(text)
+  return parts.length > limit ? `${parts.slice(0, Math.max(0, limit - 1)).join('')}…` : text
+}
+
+const safeExternalUrl = (value) => {
+  try {
+    const url = new URL(String(value ?? '').trim())
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
+}
 
 const FONT = `-apple-system,'SF Pro Text','PingFang SC','Helvetica Neue','Microsoft YaHei',sans-serif`
 const row = (inner) =>
@@ -85,7 +103,7 @@ const fresh = nodes
 const newRows = fresh.length
   ? fresh.slice(0, 8).map((n) =>
       row(titleLine(n.title) +
-        metaLine(badge(themeName(n.themeId).slice(0, 12), 'rgba(0,113,227,0.12)', '#0071e3') +
+        metaLine(badge(truncateGraphemes(themeName(n.themeId), 12), 'rgba(0,113,227,0.12)', '#0071e3') +
           `<span>置信度 ${n.confidence ?? '—'}</span>`) +
         confBar(n.confidence)),
     ).join('') +
@@ -103,11 +121,12 @@ const watchHits = watch.flatMap((w) => (w.hits || []).map((h) => ({ ...h, theme:
 const watchBlocks = watchHits.length
   ? watch.map((w) =>
       row(`<div style="font-family:${FONT};font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:6px;">${esc(w.theme)}</div>` +
-        (w.hits || []).map((h) =>
-          `<div style="font-family:${FONT};font-size:13px;line-height:1.6;color:#1d1d1f;margin:6px 0 2px 0;">· ${h.url ? `<a href="${esc(h.url)}" style="color:#0071e3;text-decoration:none;">${esc(h.title)}</a>` : esc(h.title)}</div>` +
+        (w.hits || []).map((h) => {
+          const href = safeExternalUrl(h.url)
+          return `<div style="font-family:${FONT};font-size:13px;line-height:1.6;color:#1d1d1f;margin:6px 0 2px 0;">· ${href ? `<a href="${esc(href)}" style="color:#0071e3;text-decoration:none;">${esc(h.title)}</a>` : esc(h.title)}</div>` +
           (h.why ? `<div style="font-family:${FONT};font-size:12px;color:rgba(29,31,33,0.5);margin:0 0 6px 14px;">${esc(h.why)}</div>` : '') +
-          (h.source ? metaLine(`<span style="margin-left:14px;">${esc(h.source)}</span>`) : ''),
-        ).join('')),
+          (h.source ? metaLine(`<span style="margin-left:14px;">${esc(h.source)}</span>`) : '')
+        }).join('')),
     ).join('')
   : emptyState('今日两次追踪都没有强相关命中，不打扰')
 

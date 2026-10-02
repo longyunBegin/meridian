@@ -13,7 +13,7 @@
  * 端点解析：{eventId} → 对应节点；{ref} → 已有节点或外部证据节点；
  * {name} → 按标题找主张节点，找不到则为外部节点。
  */
-import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, verifyChain } from './chain-events.js'
+import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, verifyChain, NODE_TYPES, REL_TYPES } from './chain-events.js'
 import { digest } from './reading-store.js'
 import { randomUUID } from 'node:crypto'
 
@@ -41,9 +41,18 @@ function uniqueEvidenceRefs(refs) {
   return [...ordered.values()]
 }
 
+function graphemes(value) {
+  const text = String(value || '')
+  if (typeof Intl?.Segmenter === 'function') {
+    return [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(text)].map((part) => part.segment)
+  }
+  return Array.from(text)
+}
+
 function shortTitle(s, n = 28) {
   const t = String(s || '').replace(/\s+/g, ' ').trim()
-  return t.length > n ? t.slice(0, n - 1) + '…' : t
+  const parts = graphemes(t)
+  return parts.length > n ? parts.slice(0, n - 1).join('') + '…' : t
 }
 
 /**
@@ -86,13 +95,20 @@ export function projectEvents(events) {
     return nodes.get(node.id)
   }
 
-  // 主张 / 推断节点
+  // Legacy claim/inference records remain readable as viewpoints; generic node.created
+  // events project only the five canonical network types.
   for (const e of events) {
-    if (e.type !== 'claim.created' && e.type !== 'inference.created') continue
+    const genericType = e.type === 'node.created' ? e.payload?.nodeType : null
+    if (e.type !== 'claim.created' && e.type !== 'inference.created'
+      && !(e.type === 'node.created' && NODE_TYPES.includes(genericType))) continue
     const p = e.payload || {}
+    const nodeType = genericType || 'viewpoint'
+    const kind = nodeType === 'viewpoint'
+      ? (e.type === 'inference.created' ? 'inference' : 'claim') : nodeType
     const node = addNode({
       id: e.id,
-      kind: e.type === 'inference.created' ? 'inference' : 'claim',
+      kind,
+      nodeType,
       title: p.title || '未命名',
       status: p.status || 'pending',
       confidence: p.confidence ?? null,
@@ -101,9 +117,10 @@ export function projectEvents(events) {
       archived: false,
       superseded: false,
       createdSeq: e.seq,
-      currentText: p.coreInfo || p.title || '',
+      currentText: p.detail ?? p.coreInfo ?? p.title ?? '',
+      detail: p.detail ?? p.coreInfo ?? '',
       sourceKind: p.sourceKind || null,
-      sourceRef: p.sourceRef || null,
+      sourceRef: p.sourceRef || `event:${e.id}`,
       eventIds: [e.id],
       provenanceEventIds: [e.id],
       external: false,
@@ -118,6 +135,7 @@ export function projectEvents(events) {
     const node = addNode({
       id: e.id,
       kind: 'evidence',
+      nodeType: 'evidence',
       title: shortTitle(p.text || p.reason || '证据'),
       status: 'pending',
       confidence: null,
@@ -136,9 +154,10 @@ export function projectEvents(events) {
     nodeOfEvent.set(e.id, node.id)
   }
 
-  // 更正链：沿 supersedes 找到每条主张的最新版本
+  // 更正链：沿 supersedes 找到旧主张或新 viewpoint 节点的最新版本
   for (const e of events) {
-    if (e.type !== 'claim.created' && e.type !== 'inference.created') continue
+    if (e.type !== 'claim.created' && e.type !== 'inference.created'
+      && !(e.type === 'node.created' && e.payload?.nodeType === 'viewpoint')) continue
     const nodeId = nodeOfEvent.get(e.id)
     const node = nodes.get(nodeId)
     const { head, lineage } = claimLineage(events, e.id)
@@ -153,11 +172,36 @@ export function projectEvents(events) {
     }
   }
 
+  // Renames and invalidations alter only projections at/after their event; the
+  // append-only event list remains the authoritative name and validity history.
+  for (const e of events) {
+    if (e.type !== 'node.renamed' && e.type !== 'node.invalidated') continue
+    const p = e.payload || {}
+    for (const node of nodes.values()) {
+      if (node.external || node.id !== p.nodeId || node.sourceRef !== p.sourceRef) continue
+      node.provenanceEventIds ||= [...node.eventIds]
+      if (!node.provenanceEventIds.includes(e.id)) node.provenanceEventIds.push(e.id)
+      if (!node.eventIds.includes(e.id)) node.eventIds.push(e.id)
+      if (e.type === 'node.renamed') {
+        node.nameHistory ||= []
+        node.nameHistory.push({ eventId: e.id, seq: e.seq, at: e.at, previousTitle: p.previousTitle, title: p.newTitle })
+        node.originalTitle ??= p.previousTitle
+        node.title = p.newTitle
+        node.renamedAt = e.at || null
+      } else {
+        node.invalidated = true
+        node.invalidationReason = p.reason || ''
+        node.invalidatedAt = p.invalidatedAt || e.at || null
+      }
+    }
+  }
+
   // 外部证据节点（relation 端点引用了账本外对象时）
   const externalNode = (key, title, eventId) => {
     const node = addNode({
       id: key,
       kind: 'evidence',
+      nodeType: 'evidence',
       title: shortTitle(title || '来源未解析'),
       status: 'pending',
       confidence: null,
@@ -191,7 +235,7 @@ export function projectEvents(events) {
     }
     if (ep.name) {
       for (const n of nodes.values()) {
-        if ((n.kind === 'claim' || n.kind === 'inference') && !n.external && n.title === ep.name) return n.id
+        if ((n.nodeType === 'viewpoint' || n.kind === 'claim' || n.kind === 'inference') && !n.external && n.title === ep.name) return n.id
       }
       return externalNode(`ext:name:${ep.name}`, ep.name, eventId).id
     }
@@ -204,13 +248,14 @@ export function projectEvents(events) {
     if (e.type !== 'relation.declared') continue
     const p = e.payload || {}
     if (p.reviewOf) continue
-    if (!['supports', 'derives', 'contradicts'].includes(p.rel)) continue
+    if (!REL_TYPES.includes(p.rel)) continue
     const from = resolveEndpoint(p.from, e.id)
     const to = resolveEndpoint(p.to, e.id)
     if (!from || !to || from === to) continue
     edges.push({
       id: e.id,
       rel: p.rel,
+      relationGroup: ['supports', 'derives', 'contradicts'].includes(p.rel) ? 'argument' : 'association',
       from,
       to,
       pendingReview: p.reviewStatus === 'pending-review' || p.rel === 'derives',
@@ -283,22 +328,11 @@ export function projectEvents(events) {
 }
 
 /**
- * 链视图范围：只渲染"连通的认知"——
- * 有边的节点 + 段骨干（sourceKind=segment，即使孤立）+ 推断节点。
- * 其余（无边的 lemma 等）收进 floating，不进图。
+ * 主题视图范围：所有事件投影节点都属于同一认知网络；关系筛选和搜索负责密度。
+ * 主题本身仅为范围元数据，不虚构一个根节点。
  */
 export function chainScope(projection) {
-  const connected = new Set()
-  for (const e of projection.edges) {
-    connected.add(e.from)
-    connected.add(e.to)
-  }
-  const inScope = (n) => connected.has(n.id) || n.sourceKind === 'segment' || n.kind === 'inference'
-  const nodes = projection.nodes.filter(inScope)
-  const ids = new Set(nodes.map((n) => n.id))
-  const edges = projection.edges.filter((e) => ids.has(e.from) && ids.has(e.to))
-  const floating = projection.nodes.filter((n) => !ids.has(n.id))
-  return { nodes, edges, floating }
+  return { nodes: projection.nodes, edges: projection.edges, floating: [] }
 }
 
 /** 主题投影（含幂等懒迁移：兼容空账本及旧节点来源尚未事件化的部分升级数据）。 */
@@ -371,15 +405,84 @@ export function restoreProjectedNode(themeId, sourceRef, reason = '') {
   return restoreProjectedNodes(themeId, [sourceRef], reason)[0]
 }
 
-/** Append user-authored evidence and an explicit supports relation to a live claim. */
+/** Create one user-authored node; no content is synthesized from the topic name. */
+export function createProjectedNode(themeId, input = {}) {
+  const nodeType = String(input.nodeType || '').trim()
+  const title = String(input.title || '').trim()
+  const detail = String(input.detail || '').trim()
+  if (!NODE_TYPES.includes(nodeType)) throw new Error('请选择概念、对象、事件、观点或证据类型')
+  if (!title || title.length > 180) throw new Error('标题必须为 1–180 个字符')
+  if (detail.length > 10000) throw new Error('说明不能超过 10000 个字符')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const id = `evt:node:${randomUUID()}`
+  return appendEvent(themeId, {
+    id,
+    actor: 'user',
+    type: 'node.created',
+    payload: {
+      nodeType, title, detail,
+      status: ['pending', 'verified', 'disputed'].includes(input.status) ? input.status : 'pending',
+      sourceKind: 'user-authored',
+      sourceRef: `theme-node:${id}`,
+    },
+  })
+}
+
+/** Rename a live node by appending both old and new display names. */
+export function renameProjectedNode(themeId, nodeId, newTitle, reason = '') {
+  const title = String(newTitle || '').trim()
+  if (!title || title.length > 180) throw new Error('新名称必须为 1–180 个字符')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能改名')
+  if (node.title === title) throw new Error('新名称与当前名称相同')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.renamed',
+    payload: {
+      nodeId: node.id,
+      sourceRef: node.sourceRef,
+      previousTitle: node.title,
+      newTitle: title,
+      reason: String(reason || '').trim(),
+    },
+  })
+}
+
+/** Mark a node invalid by appending an event; it remains visible as a historical ghost. */
+export function invalidateProjectedNode(themeId, nodeId, reason = '') {
+  const invalidationReason = String(reason || '').trim()
+  if (!invalidationReason) throw new Error('请填写失效原因')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived || node.invalidated) throw new Error('该节点已失效或归档')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.invalidated',
+    payload: {
+      nodeId: node.id,
+      sourceRef: node.sourceRef,
+      title: node.title,
+      reason: invalidationReason,
+      invalidatedAt: new Date().toISOString(),
+    },
+  })
+}
+
+/** Append user-authored evidence and an explicit supports relation to a live non-evidence node. */
 export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {}) {
   const text = String(input.text || '').trim()
   if (!text) throw new Error('请填写证据摘要或原文摘录')
   const integrity = verifyChain(themeId)
   if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const target = projectEvents(getEvents(themeId)).nodes.find((node) => node.id === targetNodeId
-    && !node.external && !node.archived && ['claim', 'inference'].includes(node.kind))
-  if (!target) throw new Error('请选择一个未归档的观点或问题')
+    && !node.external && !node.archived && !node.invalidated && node.nodeType !== 'evidence')
+  if (!target) throw new Error('请选择一个未归档、未失效的非证据节点')
 
   const evidenceId = `evt:evidence:${randomUUID()}`
   const sourceRef = `manual-evidence:${evidenceId}`
@@ -410,13 +513,13 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
 
 /** Declare a user-authored semantic edge; this records a relationship, not verified causality. */
 export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
-  if (!['supports', 'derives', 'contradicts'].includes(rel)) throw new Error('请选择有效的关系类型')
+  if (!REL_TYPES.includes(rel)) throw new Error('请选择有效的关系类型')
   if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) throw new Error('请选择两个不同的节点')
   const integrity = verifyChain(themeId)
   if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const nodes = projectEvents(getEvents(themeId)).nodes
-  const from = nodes.find((node) => node.id === fromNodeId && !node.external && !node.archived)
-  const to = nodes.find((node) => node.id === toNodeId && !node.external && !node.archived)
+  const from = nodes.find((node) => node.id === fromNodeId && !node.external && !node.archived && !node.invalidated)
+  const to = nodes.find((node) => node.id === toNodeId && !node.external && !node.archived && !node.invalidated)
   if (!from || !to) throw new Error('关系端点必须是当前未归档的图谱节点')
   const projection = projectEvents(getEvents(themeId))
   if (projection.edges.some((edge) => edge.rel === rel && edge.from === fromNodeId && edge.to === toNodeId
@@ -431,7 +534,7 @@ export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
       from: { eventId: fromNodeId },
       to: { eventId: toNodeId },
       ...(rel === 'derives' ? { reviewStatus: 'pending-review' } : {}),
-      sourceKind: 'user-declared-relation',
+      sourceKind: ['supports', 'derives', 'contradicts'].includes(rel) ? 'user-declared-argument' : 'user-declared-association',
       sourceRef: `relation:${fromNodeId}:${toNodeId}`,
     },
   })

@@ -22,6 +22,9 @@ export const CHAIN_EVENTS_VERSION = 1
 
 export const EVENT_TYPES = [
   'evidence.appended', // 新证据挂载
+  'node.created', // 通用网络节点：五种稳定类型
+  'node.renamed', // 改名只追加事件，保留旧名
+  'node.invalidated', // 失效只追加事件，历史节点保留
   'claim.created', // 主张创建（用户 authored）
   'inference.created', // 推断创建（LLM 提议 + 用户确认）
   'relation.declared', // 语义关系声明：supports / derives / contradicts
@@ -32,11 +35,27 @@ export const EVENT_TYPES = [
   'topic.linked', // 主题关联
 ]
 
-export const REL_TYPES = ['supports', 'derives', 'contradicts']
+export const NODE_TYPES = ['concept', 'object', 'event', 'viewpoint', 'evidence']
+export const REL_TYPES = [
+  'supports', 'derives', 'contradicts',
+  'belongs-to', 'influences', 'depends-on', 'temporal', 'related',
+]
+
+function legacyNodeType(node) {
+  const legacyType = String(node?.type || '').trim()
+  return NODE_TYPES.includes(legacyType) ? legacyType : 'viewpoint'
+}
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null))
 const textId = (v) => typeof v === 'string' && v.length > 0
+const displayTitle = (value, limit = 28) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const parts = typeof Intl?.Segmenter === 'function'
+    ? [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(text)].map((part) => part.segment)
+    : Array.from(text)
+  return parts.length > limit ? parts.slice(0, limit - 1).join('') + '…' : text
+}
 
 function legacySourceIdentity(node, source) {
   const fingerprint = digest({
@@ -150,6 +169,9 @@ function verifyEvents(events, themeId) {
   const correctionRoot = new Map()
   const correctionHead = new Map()
   const archiveState = new Map()
+  const titleBySourceRef = new Map()
+  const nodeIdBySourceRef = new Map()
+  const invalidatedSourceRefs = new Set()
   const reviewedRelations = new Set()
   for (let i = 0; i < events.length; i++) {
     const e = normEvent(events[i])
@@ -165,9 +187,47 @@ function verifyEvents(events, themeId) {
 
     const p = e.payload
     if ((e.type === 'claim.created' || e.type === 'inference.created') && !textId(p.title)) return { ok: false, index: i, lastValidSeq: i, reason: '主张/推断缺少标题' }
+    if (e.type === 'node.created') {
+      if (!textId(p.title) || !NODE_TYPES.includes(p.nodeType) || !textId(p.sourceRef)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '节点创建缺少有效类型、标题或 sourceRef' }
+      }
+      if (p.detail != null && typeof p.detail !== 'string') {
+        return { ok: false, index: i, lastValidSeq: i, reason: '节点说明必须为文本' }
+      }
+      titleBySourceRef.set(p.sourceRef, p.title)
+      nodeIdBySourceRef.set(p.sourceRef, e.id)
+    }
+    if (e.type === 'claim.created' || e.type === 'inference.created' || e.type === 'evidence.appended') {
+      const sourceRef = p.sourceRef || `event:${e.id}`
+      const title = e.type === 'evidence.appended'
+        ? (p.title || displayTitle(p.text || p.reason || '证据')) : (p.title || p.coreInfo || '未命名')
+      if (!titleBySourceRef.has(sourceRef)) {
+        titleBySourceRef.set(sourceRef, title)
+        nodeIdBySourceRef.set(sourceRef, e.id)
+      }
+    }
+    if (e.type === 'node.renamed') {
+      const previous = titleBySourceRef.get(p.sourceRef)
+      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
+        || !textId(p.sourceRef) || !textId(p.previousTitle) || !textId(p.newTitle) || !previous
+        || p.previousTitle !== previous || p.newTitle === previous || typeof p.reason !== 'string'
+        || invalidatedSourceRefs.has(p.sourceRef)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '改名事件目标、旧名或新名非法' }
+      }
+      titleBySourceRef.set(p.sourceRef, p.newTitle)
+    }
+    if (e.type === 'node.invalidated') {
+      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
+        || !textId(p.sourceRef) || !titleBySourceRef.has(p.sourceRef) || invalidatedSourceRefs.has(p.sourceRef)
+        || typeof p.reason !== 'string' || !p.reason.trim()) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '失效事件目标不存在或已失效' }
+      }
+      invalidatedSourceRefs.add(p.sourceRef)
+    }
     if (e.type === 'correction.appended') {
       const target = ids.get(e.supersedes)
-      if (!textId(e.supersedes) || !target || !['claim.created', 'inference.created', 'correction.appended'].includes(target.type)) {
+      const genericViewpoint = target?.type === 'node.created' && target.payload?.nodeType === 'viewpoint'
+      if (!textId(e.supersedes) || !target || (!genericViewpoint && !['claim.created', 'inference.created', 'correction.appended'].includes(target.type))) {
         return { ok: false, index: i, lastValidSeq: i, reason: '更正目标不存在或不是主张版本' }
       }
       if (corrected.has(e.supersedes)) return { ok: false, index: i, lastValidSeq: i, reason: '更正形成分叉版本' }
@@ -179,6 +239,7 @@ function verifyEvents(events, themeId) {
     }
     if (e.type === 'relation.declared') {
       if (!REL_TYPES.includes(p.rel) || !isObj(p.from) || !isObj(p.to)) return { ok: false, index: i, lastValidSeq: i, reason: '关系类型或端点非法' }
+      if (p.reviewStatus != null && !['pending-review', 'confirmed', 'rejected'].includes(p.reviewStatus)) return { ok: false, index: i, lastValidSeq: i, reason: '关系复核状态非法' }
       for (const endpoint of [p.from, p.to]) {
         if (endpoint.eventId && !ids.has(endpoint.eventId)) return { ok: false, index: i, lastValidSeq: i, reason: '关系引用了尚不存在的事件' }
         if (!endpoint.eventId && !endpoint.ref && !textId(endpoint.name)) return { ok: false, index: i, lastValidSeq: i, reason: '关系端点缺少来源' }
@@ -294,13 +355,13 @@ export function verifyChain(themeId) {
  * 返回 { created, skipped, events, report }。
  *
  * 映射（提案 §6 + 用户决策）：
- * - chain segment → claim.created（evt:seg:<segId>）
+ * - chain segment → node.created/viewpoint（evt:seg:<segId>）
  * - segment.changeLog：有 oldValue/newValue → correction.appended（supersedes 指向上同一段的上一个事件），
  *   否则 → evidence.appended；原 hash 存 payload.provenance
  * - segment.affects → relation.declared derives，标注 affects→derives（待复核）
  * - segment.mergedFrom → relation.declared derives
  * - segment.evidenceRefs → relation.declared supports（证据→主张）
- * - branch / lemma 节点 → claim.created；旧 sources → evidence.appended + supports；
+ * - branch / lemma 节点 → node.created/五种标准类型；无法精确映射时保留为 viewpoint，旧 sources → evidence.appended + supports；
  *   dead → 追加 node.archived；settlement → settlement.recorded
  * - parentId 旧树层级：丢弃（payload 记录 parentIdDiscarded 备查，不建关系）
  * - confidence 原样携带，永不改动
@@ -319,7 +380,7 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
   if (!existingCheck.ok) throw new Error(`事件账本校验失败（第 ${existingCheck.index + 1} 条）：${existingCheck.reason}`)
   const workEvents = existingEvents.map((e) => copy(e))
   const workById = new Map(workEvents.map((event) => [event?.id, event]))
-  const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, nodeSources: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0 }
+  const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, nodeSources: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0, ambiguousLegacyTypes: 0 }
   let created = 0
   let skipped = 0
 
@@ -342,16 +403,17 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     const segEvent = put({
       id: `evt:seg:${seg.id}`,
       at: seg.createdAt || seg.updatedAt || null,
-      type: 'claim.created',
+      type: 'node.created',
       payload: {
-        nodeKind: 'claim',
-        title: seg.name,
-        claimType: 'segment',
+        nodeType: 'viewpoint',
+        title: seg.name || '未命名旧观点',
+        detail: seg.coreInfo || '',
         confidence: null,
         status: seg.status || 'pending',
         sourceKind: 'segment',
         sourceRef: `segment:${seg.id}`,
-        coreInfo: seg.coreInfo || '',
+        legacyTypeHint: 'segment',
+        migrationBoundary: '迁移仅能保留当前快照与可读取的 changeLog；无法恢复原始来源未记录的逐步历史。',
         layerNote: `旧分层 layer=${seg.layer}（投影不再使用分层）`,
         falsifier: seg.falsifier || '',
         convergeCondition: seg.convergeCondition || '',
@@ -484,23 +546,28 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     })
   }
 
-  // branch / lemma 节点 → claim.created（parentId 丢弃，只记录备查）
+  // branch / lemma 节点 → canonical node.created（parentId 保留作迁移元数据，不绘制隐含层级边）
   const sorted = [...nodes].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')))
   for (const node of sorted) {
     const isBranch = node.kind === 'branch'
+    const mappedType = legacyNodeType(node)
+    if (!NODE_TYPES.includes(String(node.type || '').trim())) report.ambiguousLegacyTypes++
     put({
       id: `evt:node:${node.id}`,
       at: node.createdAt || node.updatedAt || null,
-      type: 'claim.created',
+      type: 'node.created',
       payload: {
-        nodeKind: 'claim',
-        title: node.title || '',
-        claimType: node.type || '',
+        nodeType: mappedType,
+        title: node.title || '未命名旧节点',
+        detail: String(node.description || node.coreInfo || ''),
         confidence: node.confidence ?? null,
         status: node.status || 'live',
         sourceKind: isBranch ? 'branch' : 'lemma',
         sourceRef: `${node.kind}:${node.id}`,
+        legacyKind: node.kind,
+        legacyTypeHint: node.type || null,
         parentIdDiscarded: node.parentId || null,
+        migrationBoundary: '旧数据只有当前快照；无法从迁移记录反推未保存的中间状态或原始内容真伪。',
         scaffold: isBranch ? copy(node.scaffold || null) : undefined,
         tags: copy(node.tags || []),
         tickers: copy(node.tickers || []),
