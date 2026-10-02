@@ -1,8 +1,11 @@
 import { h, toast, confirmToast } from '../lib/dom.js'
 import { state, refresh } from '../app.js'
 import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
+import { renderReaderView } from './reader.js'
+import { requestBuilderPane, requestBuilderNodeFocus } from '../lib/chain-ui-model.js'
 
 const m = window.meridian
+const themeViewKey = (themeId) => `meridian:theme-view:${themeId}`
 
 /** 主题操作区：主题名 / 主题标签 / 删除主题（原嵌在标签库段内，标签库删除后独立成段）。 */
 function renderThemeOpsSection(theme) {
@@ -113,19 +116,85 @@ function renderSkeletonPrompt(theme) {
   return box
 }
 
-/** The theme is scope metadata; the single rootless network is the primary view. */
+/**
+ * 主题页：顶层只有两个视图——读者视图（当前结论是什么、如何推导）与
+ * 建设者视图（认知如何一步一步演化）。记住用户上次的选择；新主题
+ * （0 节点）首次打开直接进建设者视图，因为没什么可读的。
+ */
 export function renderTheme(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
   const head = h('div', { class: 'mid-head hairline-b' },
     h('h1', {}, theme ? theme.name : ''),
   )
+  const readerTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '读者视图')
+  const builderTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '建设者视图')
+  const viewSwitch = h('div', { class: 'theme-view-switch', role: 'tablist', 'aria-label': '主题视图' }, readerTab, builderTab)
+  head.append(viewSwitch)
+
   const openOpts = {
     onEvidence: openEvidenceDetail,
     onOpen: (node, callbacks = {}) => openNodeDetail(theme, node, { ...callbacks, onEvidence: openEvidenceDetail }),
   }
   const body = h('div', { class: 'theme-body' })
-  for (const el of [renderThemeMetadata(theme), renderChainSection(theme, openOpts), renderThemeOpsSection(theme)]) {
-    if (el) body.append(el)
-  }
+  const metaEl = renderThemeMetadata(theme)
+  const viewHost = h('div', { class: 'theme-view-host' })
+  const opsEl = renderThemeOpsSection(theme)
+  for (const el of [metaEl, viewHost, opsEl]) if (el) body.append(el)
   mid.append(head, body)
+
+  const paintTabs = (view) => {
+    const isReader = view === 'reader'
+    readerTab.classList.toggle('is-active', isReader)
+    builderTab.classList.toggle('is-active', !isReader)
+    readerTab.setAttribute('aria-selected', String(isReader))
+    builderTab.setAttribute('aria-selected', String(!isReader))
+    readerTab.tabIndex = isReader ? 0 : -1
+    builderTab.tabIndex = isReader ? -1 : 0
+  }
+
+  const mount = (view, preloaded = null) => {
+    paintTabs(view)
+    viewHost.innerHTML = ''
+    try { localStorage.setItem(themeViewKey(theme.id), view) } catch { /* 忽略存储失败 */ }
+    if (view === 'reader') {
+      viewHost.append(renderReaderView(theme, {
+        loadProjection: async () => preloaded?.projection || m.chainProjection(theme.id),
+        loadEvents: async () => preloaded?.events
+          || (await m.chainEvents(theme.id).catch(() => null))?.events || [],
+        onOpenBuilder: (kind, nodeId) => {
+          if (kind && kind !== 'network') requestBuilderPane(theme.id, kind)
+          if (nodeId) requestBuilderNodeFocus(theme.id, nodeId)
+          mount('builder')
+        },
+      }))
+    } else {
+      viewHost.append(renderChainSection(theme, {
+        ...openOpts,
+        initialProjection: preloaded?.projection || null,
+        initialEvents: preloaded?.events || null,
+      }))
+    }
+  }
+  readerTab.addEventListener('click', () => mount('reader'))
+  builderTab.addEventListener('click', () => mount('builder'))
+  viewSwitch.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+    event.preventDefault()
+    mount(readerTab.classList.contains('is-active') ? 'builder' : 'reader')
+  })
+
+  const saved = (() => { try { return localStorage.getItem(themeViewKey(theme.id)) } catch { return null } })()
+  if (saved === 'reader' || saved === 'builder') {
+    mount(saved)
+  } else {
+    paintTabs('builder')
+    viewHost.append(h('p', { class: 'chain-note' }, '正在判断主题成熟度…'))
+    Promise.all([
+      m.chainProjection(theme.id).catch(() => null),
+      m.chainEvents(theme.id).catch(() => null),
+    ]).then(([proj, evRes]) => {
+      const count = proj?.allNodes?.length || proj?.nodes?.length || 0
+      mount(count === 0 ? 'builder' : 'reader', { projection: proj, events: evRes?.events || [] })
+    }).catch(() => mount('builder'))
+  }
 }

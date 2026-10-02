@@ -165,27 +165,7 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   const pos = new Map()
   if (!rows.length) return { pos, size, width, height: 360 }
 
-  const marginX = 112
-  const gapX = 188
-  const gapY = 116
-  const columns = Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
   const count = rows.length
-  const rowCount = Math.ceil(count / columns)
-  const height = Math.max(420, 96 + rowCount * gapY)
-  const sorted = [...rows].sort((a, b) => hashId(a.id) - hashId(b.id) || String(a.id).localeCompare(String(b.id)))
-  for (let i = 0; i < sorted.length; i++) {
-    const node = sorted[i]
-    const hash = hashId(node.id)
-    const col = i % columns
-    const row = Math.floor(i / columns)
-    const jitterX = ((hash & 31) - 15) * 0.55
-    const jitterY = (((hash >>> 5) & 31) - 15) * 0.45
-    pos.set(node.id, {
-      x: Math.max(84, Math.min(width - 84, marginX + col * gapX + jitterX)),
-      y: Math.max(56, Math.min(height - 48, 62 + row * gapY + jitterY)),
-    })
-  }
-
   const byId = new Map(rows.map((node) => [node.id, node]))
   const links = (Array.isArray(edges) ? edges : [])
     .filter((edge) => byId.has(edge?.from) && byId.has(edge?.to) && edge.from !== edge.to)
@@ -194,7 +174,57 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       || String(a.rel).localeCompare(String(b.rel))
       || (Number(a.seq) || 0) - (Number(b.seq) || 0)
       || String(a.id).localeCompare(String(b.id)))
-  const iterations = Math.max(24, Math.min(52, Math.round(5200 / Math.max(1, Math.sqrt(count)))))
+
+  /* DFS 初始排序：从度数最高的节点出发深度优先遍历——链式论证在
+     DFS 序列中保持连续；论证边邻居优先于弱关联邻居。相连节点在序列
+     中相邻，再蛇形填网格，相邻即相近。 */
+  const adjacency = new Map(rows.map((node) => [node.id, []]))
+  const argSet = new Set()
+  for (const edge of links) {
+    adjacency.get(edge.from).push(edge.to)
+    adjacency.get(edge.to).push(edge.from)
+    if (edge.relationGroup === 'argument' || ARGUMENT_RELATIONS.includes(edge.rel)) {
+      argSet.add(`${edge.from}→${edge.to}`)
+      argSet.add(`${edge.to}→${edge.from}`)
+    }
+  }
+  for (const [id, list] of adjacency) {
+    list.sort((a, b) => (argSet.has(`${b}→${id}`) - argSet.has(`${a}→${id}`))
+      || String(a).localeCompare(String(b)))
+  }
+  const degree = (id) => adjacency.get(id).length
+  const startId = [...adjacency.keys()].sort((a, b) => degree(b) - degree(a) || String(a).localeCompare(String(b)))[0]
+  const dfsOrder = []
+  const seen = new Set()
+  const stack = [startId]
+  while (stack.length) {
+    const id = stack.pop()
+    if (seen.has(id)) continue
+    seen.add(id)
+    dfsOrder.push(id)
+    const neighbors = adjacency.get(id).filter((next) => !seen.has(next))
+    for (let k = neighbors.length - 1; k >= 0; k--) stack.push(neighbors[k])
+  }
+  for (const node of rows) {
+    if (!seen.has(node.id)) { seen.add(node.id); dfsOrder.push(node.id) }
+  }
+  const marginX = 112
+  const gapX = 188
+  const gapY = 116
+  const columns = Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
+  const rowCount = Math.ceil(count / columns)
+  const height = Math.max(420, 96 + rowCount * gapY)
+  /* 蛇形填网格：偶数行左→右、奇数行右→左，DFS 相邻节点永不跨行跳变。 */
+  dfsOrder.forEach((id, i) => {
+    const row = Math.floor(i / columns)
+    const colInRow = i % columns
+    const col = row % 2 === 0 ? colInRow : columns - 1 - colInRow
+    pos.set(id, {
+      x: Math.max(84, Math.min(width - 84, marginX + col * gapX)),
+      y: Math.max(56, Math.min(height - 48, 62 + row * gapY)),
+    })
+  })
+  const iterations = Math.max(24, Math.min(80, Math.round(5200 / Math.max(1, Math.sqrt(count)))))
   for (let iteration = 0; iteration < iterations; iteration++) {
     const cooling = 1 - iteration / iterations
     const fx = new Map(rows.map((node) => [node.id, 0]))
@@ -232,9 +262,11 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       let dx = b.x - a.x
       let dy = b.y - a.y
       const distance = Math.hypot(dx, dy) || 1
-      const target = edge.relationGroup === 'association' || ASSOCIATION_RELATIONS.includes(edge.rel) ? 270 : 215
-      const strength = edge.pendingReview ? 0.18 : 0.3
-      const magnitude = Math.max(-18, Math.min(18, (distance - target) * 0.004 * strength)) * cooling
+      const isAssociation = edge.relationGroup === 'association' || ASSOCIATION_RELATIONS.includes(edge.rel)
+      /* 论证边是阅读主干：目标更短、弹簧更强；关联边保持疏松。 */
+      const target = isAssociation ? 235 : 168
+      const strength = edge.pendingReview ? 0.2 : isAssociation ? 0.3 : 0.7
+      const magnitude = Math.max(-28, Math.min(28, (distance - target) * 0.004 * strength)) * cooling
       dx = dx / distance * magnitude; dy = dy / distance * magnitude
       fx.set(edge.from, fx.get(edge.from) + dx); fy.set(edge.from, fy.get(edge.from) + dy)
       fx.set(edge.to, fx.get(edge.to) - dx); fy.set(edge.to, fy.get(edge.to) - dy)
@@ -243,13 +275,13 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       const point = pos.get(node.id)
       const pullX = (width / 2 - point.x) * 0.0008
       const pullY = (height / 2 - point.y) * 0.0008
-      point.x = Math.max(84, Math.min(width - 84, point.x + Math.max(-7, Math.min(7, fx.get(node.id) + pullX))))
-      point.y = Math.max(48, Math.min(height - 40, point.y + Math.max(-7, Math.min(7, fy.get(node.id) + pullY))))
+      point.x = Math.max(84, Math.min(width - 84, point.x + Math.max(-12, Math.min(12, fx.get(node.id) + pullX))))
+      point.y = Math.max(48, Math.min(height - 40, point.y + Math.max(-12, Math.min(12, fy.get(node.id) + pullY))))
     }
   }
 
   // Final deterministic collision pass; this affects the initial layout only, never replay.
-  for (let pass = 0; pass < 12; pass++) {
+  for (let pass = 0; pass < 24; pass++) {
     let moved = false
     for (let i = 0; i < rows.length; i++) {
       const a = rows[i]

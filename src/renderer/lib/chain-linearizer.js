@@ -2,10 +2,16 @@
  * 链线性化器（纯函数，无 DOM 依赖）
  *
  * 输入：chain-projector 产出的只读投影 { nodes, edges }
- *   - node: { id, kind: 'claim'|'inference'|'evidence'|..., title, createdSeq, archived, external }
+ *   - node: { id, kind: 'claim'|'inference'|'evidence'|..., nodeType: 'concept'|'object'|'event'|'viewpoint'|'evidence', title, createdSeq, archived, external }
  *   - edge: { id, rel: 'supports'|'derives'|'contradicts', from, to, pendingReview, reviewDecision }
  * 输出：{ chains: Chain[], unplaced: Unplaced[], clashes: Clash[] }
  *
+ * 主干 = viewpoint 节点（兼容旧 claim/inference kind，经 networkNodeType 归一）。
+ */
+
+import { networkNodeType } from './theme-network.js'
+
+/**
  * Chain = { id, kind: 'main'|'stance-candidate', stance: null,
  *           title, steps: Step[] }
  * Step  = { nodes: Node[]（同级）, evidence: Node[]（收起挂载）,
@@ -23,8 +29,8 @@
 const REL_WEIGHT = { derives: 2, supports: 1 }
 const CONNECTOR_WORD = { derives: '推导', supports: '支撑' }
 
-const isBackbone = (n) => !!n && (n.kind === 'claim' || n.kind === 'inference')
-const isEvidence = (n) => !!n && n.kind === 'evidence'
+const isBackbone = (n) => !!n && networkNodeType(n) === 'viewpoint'
+const isEvidence = (n) => !!n && networkNodeType(n) === 'evidence'
 const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0 }
 
 function cmpArr(a, b) {

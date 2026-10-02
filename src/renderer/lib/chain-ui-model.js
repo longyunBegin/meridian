@@ -33,6 +33,26 @@ export function consumeChainEventJump(themeId) {
   return request
 }
 
+/* 读者视图 → 建设者视图的跳转请求：目标子页签 + 聚焦节点。 */
+let pendingBuilderJump = null
+
+export function requestBuilderPane(themeId, pane) {
+  if (!['network', 'propositions', 'attribution'].includes(pane)) return
+  pendingBuilderJump = { ...(pendingBuilderJump || {}), themeId, pane }
+}
+
+export function requestBuilderNodeFocus(themeId, nodeId) {
+  if (!nodeId) return
+  pendingBuilderJump = { ...(pendingBuilderJump || {}), themeId, nodeId }
+}
+
+export function consumeBuilderJump(themeId) {
+  if (pendingBuilderJump?.themeId !== themeId) return null
+  const request = pendingBuilderJump
+  pendingBuilderJump = null
+  return request
+}
+
 export function affectedNodeIdForEvent(event, projection, allEvents = []) {
   const nodes = projection?.allNodes || projection?.nodes || []
   const ids = new Set()

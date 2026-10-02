@@ -2445,7 +2445,7 @@ ok('S4: 树文件已删除', !existsSync2(join(ROOT2, 'src/renderer/views/lattic
 ok('S4: 主题页有独立滚动容器', themeSrcER.includes('theme-body'))
 ok('S4: 滚动容器样式存在', stylesSrcS45.includes('.theme-body'))
 ok('S4: 未选中命题时收起检视栏', appSrcER.includes('dataset.inspect') && stylesSrcS45.includes('.app[data-inspect="off"]'))
-ok('S4: 链列表证据可点击', /renderChainSection\(theme,\s*openOpts\)/.test(themeSrcER) && /onEvidence:\s*openEvidenceDetail/.test(themeSrcER))
+ok('S4: 链列表证据可点击', /renderChainSection\(theme,/.test(themeSrcER) && /\.\.\.openOpts/.test(themeSrcER) && /onEvidence:\s*openEvidenceDetail/.test(themeSrcER))
 ok('S4: 命题证据可点进右栏', /ref\.type === 'lemma'[\s\S]*?selectNode\(ref\.id\)/.test(chainSrcER))
 ok('S4: 主题网络节点有类型编码、文字状态 pill、键盘无障碍及有向论证边', networkRendererSrcER.includes('cog-node')
   && networkRendererSrcER.includes('data-node-type') && networkRendererSrcER.includes('data-status')

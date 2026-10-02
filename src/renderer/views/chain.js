@@ -13,7 +13,7 @@
 import { h, clear, mount, toast } from '../lib/dom.js'
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
-import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
+import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType,
   networkNodeStatus, splitNetworkTitle, buildDensityTimeline, timelineChangeSummary,
@@ -117,36 +117,41 @@ export function renderChainSection(theme, opts = {}) {
       ['points', 'evidence'].includes(key) ? h('span', { class: 'cog-theme-stat-range' }, '全主题本地记录 · 不含外部引用') : null,
       h('strong', { class: 'cog-theme-stat-value', 'data-theme-stat-value': key, 'aria-live': key === 'integrity' ? 'polite' : 'off' }, '—'))))
   const chainPanelId = `${drawerId}-chain-panel`
-  const overviewPanelId = `${drawerId}-overview-panel`
-  const chainTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-chain-tab`, 'aria-controls': chainPanelId, 'aria-selected': 'true', tabindex: '0' }, '网络')
-  const overviewTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-overview-tab`, 'aria-controls': overviewPanelId, 'aria-selected': 'false', tabindex: '-1' }, '概览')
-  const tabs = h('div', { class: 'cog-theme-tabs', role: 'tablist', 'aria-label': '主题视图' }, chainTab, overviewTab)
-  const chainPanel = h('div', { class: 'cog-chain-panel', id: chainPanelId, role: 'tabpanel', 'aria-labelledby': chainTab.id, tabindex: '0' }, graphPane)
-  const overviewContent = h('div', { class: 'cog-overview-content' })
-  const overviewPanel = h('section', { class: 'cog-overview-panel', id: overviewPanelId, role: 'tabpanel', 'aria-labelledby': overviewTab.id, tabindex: '0', hidden: true },
-    h('h2', { class: 'cog-overview-title' }, '主题概览'),
-    h('p', { class: 'cog-overview-caption' }, '以下内容仅汇总此主题当前投影与已校验事件；账本校验状态不等于观点已证实。'),
-    overviewContent)
-  const activateTab = (tab, focus = false) => {
-    const isChain = tab === chainTab
-    chainTab.setAttribute('aria-selected', String(isChain))
-    overviewTab.setAttribute('aria-selected', String(!isChain))
-    chainTab.tabIndex = isChain ? 0 : -1
-    overviewTab.tabIndex = isChain ? -1 : 0
-    chainPanel.hidden = !isChain
-    overviewPanel.hidden = isChain
-    if (focus) tab.focus()
+  const propositionsPanelId = `${drawerId}-propositions-panel`
+  const attributionPanelId = `${drawerId}-attribution-panel`
+  const panes = ['network', 'propositions', 'attribution']
+  const networkTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-chain-tab`, 'aria-controls': chainPanelId, 'aria-selected': 'true', tabindex: '0' }, '网络')
+  const propositionsTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-propositions-tab`, 'aria-controls': propositionsPanelId, 'aria-selected': 'false', tabindex: '-1' }, '命题')
+  const attributionTab = h('button', { type: 'button', class: 'cog-theme-tab', role: 'tab', id: `${drawerId}-attribution-tab`, 'aria-controls': attributionPanelId, 'aria-selected': 'false', tabindex: '-1' }, '归因')
+  const tabByPane = { network: networkTab, propositions: propositionsTab, attribution: attributionTab }
+  const tabs = h('div', { class: 'cog-theme-tabs', role: 'tablist', 'aria-label': '建设者切面' }, networkTab, propositionsTab, attributionTab)
+  const chainPanel = h('div', { class: 'cog-chain-panel', id: chainPanelId, role: 'tabpanel', 'aria-labelledby': networkTab.id, tabindex: '0' }, graphPane)
+  const propositionsContent = h('div', { class: 'cog-propositions-content' })
+  const propositionsPanel = h('section', { class: 'cog-propositions-panel', id: propositionsPanelId, role: 'tabpanel', 'aria-labelledby': propositionsTab.id, tabindex: '0', hidden: true }, propositionsContent)
+  const attributionContent = h('div', { class: 'cog-attribution-content' })
+  const attributionPanel = h('section', { class: 'cog-attribution-panel', id: attributionPanelId, role: 'tabpanel', 'aria-labelledby': attributionTab.id, tabindex: '0', hidden: true }, attributionContent)
+  const panelByPane = { network: chainPanel, propositions: propositionsPanel, attribution: attributionPanel }
+  const activatePane = (pane, focus = false) => {
+    const target = panes.includes(pane) ? pane : 'network'
+    for (const key of panes) {
+      const active = key === target
+      tabByPane[key].setAttribute('aria-selected', String(active))
+      tabByPane[key].tabIndex = active ? 0 : -1
+      tabByPane[key].classList.toggle('is-active', active)
+      panelByPane[key].hidden = !active
+    }
+    if (focus) tabByPane[target].focus()
   }
-  chainTab.addEventListener('click', () => activateTab(chainTab))
-  overviewTab.addEventListener('click', () => activateTab(overviewTab))
+  for (const pane of panes) tabByPane[pane].addEventListener('click', () => activatePane(pane))
   tabs.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()
-    const next = event.key === 'Home' || event.key === 'ArrowLeft' ? chainTab
-      : event.key === 'End' || event.key === 'ArrowRight' ? overviewTab : chainTab
-    activateTab(next, true)
+    const order = event.key === 'ArrowLeft' ? -1 : 1
+    const current = panes.findIndex((pane) => tabByPane[pane].getAttribute('aria-selected') === 'true')
+    const next = panes[(current + order + panes.length) % panes.length]
+    activatePane(next, true)
   })
-  concept.append(ledgerBackdrop, ledgerPane, themeStats, tabs, chainPanel, overviewPanel)
+  concept.append(ledgerBackdrop, ledgerPane, themeStats, tabs, chainPanel, propositionsPanel, attributionPanel)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -186,13 +191,15 @@ export function renderChainSection(theme, opts = {}) {
     openLedger,
     ledgerTitleId: drawerTitleId,
     themeStats,
-    overviewContent,
     chainPanel,
-    overviewPanel,
+    activatePane,
+    propositionsContent,
+    attributionContent,
     onChanged: () => {
       clear(ledgerPane)
       clear(stage)
-      clear(overviewContent)
+      clear(propositionsContent)
+      clear(attributionContent)
       loadConcept(theme, ledgerPane, stage, viewOpts).catch((e) => {
         clear(stage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
       })
@@ -221,41 +228,232 @@ function updateThemeStats(stats, projection, events) {
   }
 }
 
-function renderOverviewContent(container, projection, verifiedEvents, onOpenEvent) {
+/* ------------------------------------------------------------------ */
+/* 建设者 · 命题切面：观点如何随时间演化（列表 + hero + 证据流）。        */
+/* ------------------------------------------------------------------ */
+
+const PROP_STATUS_LABEL = { pending: '待核验', verified: '已核验', disputed: '有争议' }
+
+function propositionRecency(node, seqByEventId) {
+  let max = Number(node?.createdSeq) || 0
+  for (const id of node?.eventIds || []) {
+    const seq = seqByEventId.get(id)
+    if (Number.isSafeInteger(seq) && seq > max) max = seq
+  }
+  return max
+}
+
+function renderPropositionsPane(container, theme, viewState, { onFocusNode, onLocate, onChanged } = {}) {
   if (!container) return
   clear(container)
-  const counts = Object.fromEntries(NETWORK_NODE_TYPES.map((type) => [type, 0]))
-  for (const node of projectedNodes(projection)) {
-    const type = networkNodeType(node)
-    if (!node.external && counts[type] !== undefined) counts[type]++
-  }
+  const projection = viewState?.projection || {}
+  const nodes = projectedNodes(projection)
+  const edges = (projection.allEdges || projection.edges || []).filter((e) => e && e.reviewDecision !== 'rejected')
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const seqByEventId = new Map((viewState.events || []).map((e) => [e.id, e.seq]))
+  const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
+  const active = viewpoints.filter((n) => !n.archived)
+    .sort((a, b) => propositionRecency(b, seqByEventId) - propositionRecency(a, seqByEventId) || String(a.id).localeCompare(String(b.id)))
+  const archived = viewpoints.filter((n) => n.archived)
+    .sort((a, b) => propositionRecency(b, seqByEventId) - propositionRecency(a, seqByEventId) || String(a.id).localeCompare(String(b.id)))
+
+  const listEl = h('div', { class: 'cog-prop-list', role: 'listbox', 'aria-label': '命题列表' })
+  const detailEl = h('div', { class: 'cog-prop-detail' })
   container.append(
-    h('div', { class: 'cog-overview-count-line' }, `全主题本地节点（不含外部引用）：${NETWORK_NODE_TYPES.map((type) => `${NODE_TYPE_META[type].label} ${counts[type]}`).join(' · ')}`),
-    h('h3', { class: 'cog-overview-title', style: { marginTop: '18px' } }, '最近记录'),
-  )
-  const recent = verifiedEvents.slice(-8).reverse()
-  if (!recent.length) {
-    container.append(h('p', { class: 'cog-overview-empty' }, '还没有账本事件。主题只限定这张网络的范围，不是一个节点；可从网络空态添加第一条观察/观点。'))
+    h('div', { class: 'cog-prop-layout' }, listEl, detailEl))
+
+  if (!viewpoints.length) {
+    container.append(h('p', { class: 'chain-note' }, '还没有观点类命题。在网络中添加第一个观点后，这里会展示它的证据流与版本演化。'))
     return
   }
-  const list = h('div', { class: 'cog-overview-events', 'aria-label': '最近的已校验账本事件' })
-  for (const event of recent) {
-    const button = h('button', {
-      type: 'button', class: 'cog-overview-event',
-      'aria-label': `在账本中查看第 ${event.seq} 条事件：${compactEventSummary(event)}`,
-      onclick: () => onOpenEvent?.(event),
-    }, h('span', { class: 'cog-overview-event-summary' }, compactEventSummary(event)),
-    h('span', { class: 'cog-overview-event-time' }, fmtAt(event.at)))
-    list.append(button)
+
+  const evidenceForNode = (nodeId) => {
+    const supports = []
+    const against = []
+    for (const edge of edges) {
+      if (edge.to !== nodeId) continue
+      const source = byId.get(edge.from)
+      if (!source || networkNodeType(source) !== 'evidence') continue
+      if (edge.rel === 'supports') supports.push({ edge, source })
+      else if (edge.rel === 'contradicts') against.push({ edge, source })
+    }
+    return { supports, against }
   }
-  container.append(list)
+
+  const renderDetail = (node) => {
+    clear(detailEl)
+    if (!node) {
+      detailEl.append(h('p', { class: 'chain-note' }, '从左侧选择一个命题，查看它的证据流与结算状态。'))
+      return
+    }
+    const { supports, against } = evidenceForNode(node.id)
+    const statusLabel = PROP_STATUS_LABEL[node.status] || '待核验'
+    const settled = node.settledAt || node.settlementEventId
+    detailEl.append(
+      h('div', { class: 'cog-prop-hero' },
+        h('p', { class: 'cog-prop-kicker' }, node.archived ? '已归档命题' : '活跃命题'),
+        h('h3', { class: 'cog-prop-title' }, node.title || '未命名命题'),
+        h('div', { class: 'cog-prop-meta' },
+          h('span', { class: `cog-prop-status is-${node.status || 'pending'}` }, statusLabel),
+          h('span', { class: 'cog-prop-sep', 'aria-hidden': 'true' }, '·'),
+          h('span', {}, settled ? `已结算 · ${fmtDate(node.settledAt)}` : '未设置结算日'),
+          h('span', { class: 'cog-prop-sep', 'aria-hidden': 'true' }, '·'),
+          h('span', {}, `${supports.length} 支持 · ${against.length} 反驳`)),
+        node.detail ? h('p', { class: 'cog-prop-detail-text' }, node.detail) : null,
+        h('div', { class: 'cog-prop-actions' },
+          h('button', { type: 'button', class: 'btn', onclick: () => onLocate?.(node.id) }, '在网络中定位'))),
+      h('div', { class: 'cog-prop-stream' },
+        h('h4', { class: 'cog-prop-stream-title' }, '证据流'),
+        !supports.length && !against.length
+          ? h('p', { class: 'chain-note' }, '暂无挂载证据。')
+          : h('div', { class: 'cog-prop-evidence-groups' },
+            supports.length ? h('div', { class: 'cog-prop-evidence-group is-support' },
+              h('p', { class: 'cog-prop-evidence-label' }, `支持（${supports.length}）`),
+              h('ul', { class: 'cog-prop-evidence-list' }, ...supports.map(({ source, edge }) =>
+                h('li', { class: 'cog-prop-evidence' },
+                  h('span', { class: 'cog-prop-evidence-title' }, source.title || source.currentText || '未命名证据'),
+                  edge.pendingReview ? h('span', { class: 'cog-flag' }, '待复核') : null)))) : null,
+            against.length ? h('div', { class: 'cog-prop-evidence-group is-against' },
+              h('p', { class: 'cog-prop-evidence-label' }, `反驳（${against.length}）`),
+              h('ul', { class: 'cog-prop-evidence-list' }, ...against.map(({ source, edge }) =>
+                h('li', { class: 'cog-prop-evidence' },
+                  h('span', { class: 'cog-prop-evidence-title' }, source.title || source.currentText || '未命名证据'),
+                  edge.pendingReview ? h('span', { class: 'cog-flag' }, '待复核') : null)))) : null)))
+  }
+
+  const groups = [['活跃', active], ['已归档', archived]]
+  let selectedId = active[0]?.id || archived[0]?.id || null
+  for (const [label, rows] of groups) {
+    if (!rows.length) continue
+    listEl.append(h('p', { class: 'cog-prop-group-label' }, `${label}（${rows.length}）`))
+    for (const node of rows) {
+      const item = h('button', {
+        type: 'button', role: 'option',
+        class: `cog-prop-item${node.id === selectedId ? ' is-selected' : ''}`,
+        'aria-selected': String(node.id === selectedId),
+        onclick: () => {
+          selectedId = node.id
+          listEl.querySelectorAll('.cog-prop-item').forEach((el) => {
+            const on = el.dataset.nodeId === selectedId
+            el.classList.toggle('is-selected', on)
+            el.setAttribute('aria-selected', String(on))
+          })
+          renderDetail(node)
+        },
+      }, h('span', { class: 'cog-prop-item-title' }, node.title || '未命名命题'),
+        h('span', { class: `cog-prop-item-status is-${node.status || 'pending'}` }, PROP_STATUS_LABEL[node.status] || '待核验'))
+      item.dataset.nodeId = node.id
+      listEl.append(item)
+    }
+  }
+  renderDetail(byId.get(selectedId) || null)
+}
+
+/* ------------------------------------------------------------------ */
+/* 建设者 · 归因切面：新信息进来后怎么办（待复核队列 + 健康检查）。      */
+/* 确认/驳回只追加关系复核事件，绝不修改节点 confidence（公理1）。       */
+/* ------------------------------------------------------------------ */
+
+const REVIEW_REL_LABEL = {
+  supports: '支持', derives: '推导', contradicts: '反驳',
+  'belongs-to': '归属', influences: '影响', 'depends-on': '依赖',
+  temporal: '时间关联', related: '相关',
+}
+
+function renderAttributionPane(container, theme, viewState, { onChanged } = {}) {
+  if (!container) return
+  clear(container)
+  const projection = viewState?.projection || {}
+  const nodes = projectedNodes(projection)
+  const edges = (projection.allEdges || projection.edges || []).filter((e) => e && e.reviewDecision !== 'rejected')
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const pending = edges.filter((e) => e.pendingReview && e.reviewDecision == null)
+
+  const queueEl = h('div', { class: 'cog-attr-queue' })
+  const healthEl = h('div', { class: 'cog-attr-health' })
+  container.append(
+    h('div', { class: 'cog-attr-layout' },
+      h('section', { class: 'cog-attr-section', 'aria-label': '待复核队列' },
+        h('h3', { class: 'cog-attr-title' }, `待复核（${pending.length}）`),
+        h('p', { class: 'cog-attr-caption' }, '每一条都需要你确认或驳回，并写明理由；决定只追加事件，不改变任何已有判断。'),
+        queueEl),
+      h('section', { class: 'cog-attr-section', 'aria-label': '健康检查' },
+        h('h3', { class: 'cog-attr-title' }, '健康检查'),
+        healthEl)))
+
+  if (!pending.length) {
+    queueEl.append(h('p', { class: 'chain-note' }, '没有待复核的关系。新声明的推导关系会自动出现在这里。'))
+  }
+  for (const edge of pending.slice(0, 30)) {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    const reason = h('input', { class: 'txt cog-attr-reason', placeholder: '写明确认/驳回的理由（必填）', 'aria-label': '复核理由' })
+    const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+    const decide = async (decision, button) => {
+      if (!reason.value.trim()) { error.hidden = false; error.textContent = '请先填写复核理由。'; reason.focus(); return }
+      error.hidden = true
+      button.disabled = true
+      try {
+        const result = await m.chainReviewRelation(theme.id, edge.id, decision, reason.value.trim())
+        if (result?.ok === false) throw new Error(result.error || '决定未写入')
+        toast(decision === 'confirmed' ? '已追加确认决定' : '已追加驳回决定')
+        onChanged?.()
+      } catch (failure) {
+        error.hidden = false
+        error.textContent = failure?.message || String(failure)
+        button.disabled = false
+      }
+    }
+    queueEl.append(h('div', { class: 'cog-attr-card' },
+      h('p', { class: 'cog-attr-rel' },
+        h('span', { class: `cog-attr-rel-tag is-${edge.rel}` }, REVIEW_REL_LABEL[edge.rel] || edge.rel)),
+      h('p', { class: 'cog-attr-endpoints' },
+        h('span', {}, from?.title || '未知节点'),
+        h('span', { class: 'cog-attr-arrow', 'aria-hidden': 'true' }, ' → '),
+        h('span', {}, to?.title || '未知节点')),
+      reason, error,
+      h('div', { class: 'cog-attr-actions' },
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: (e) => decide('confirmed', e.currentTarget) }, '确认'),
+        h('button', { type: 'button', class: 'btn', onclick: (e) => decide('rejected', e.currentTarget) }, '驳回'))))
+  }
+  if (pending.length > 30) {
+    queueEl.append(h('p', { class: 'chain-note' }, `仅显示前 30 条，其余 ${pending.length - 30} 条请在网络中按「待复核」筛选查看。`))
+  }
+
+  // 健康检查：受质疑 / 孤立节点 / 待复核统计
+  const disputed = nodes.filter((n) => !n.archived && (
+    n.status === 'disputed' || edges.some((e) => e.rel === 'contradicts' && e.to === n.id)))
+  const linked = new Set()
+  for (const e of edges) { linked.add(e.from); linked.add(e.to) }
+  const orphaned = nodes.filter((n) => !n.archived && !n.external && !linked.has(n.id))
+  const items = [
+    [`${pending.length} 条关系待复核`, pending.length ? 'warn' : 'ok'],
+    [`${disputed.length} 个节点受质疑`, disputed.length ? 'warn' : 'ok'],
+    [`${orphaned.length} 个孤立节点（无任何关系）`, orphaned.length ? 'warn' : 'ok'],
+  ]
+  healthEl.append(h('ul', { class: 'cog-health-list' }, ...items.map(([label, tone]) =>
+    h('li', { class: `cog-health-item is-${tone}` }, label))))
+  if (disputed.length) {
+    healthEl.append(h('p', { class: 'cog-health-label' }, '受质疑节点'),
+      h('ul', { class: 'cog-health-nodes' }, ...disputed.slice(0, 8).map((n) =>
+        h('li', {}, n.title || '未命名'))))
+  }
+}
+
+function fmtDate(value) {
+  const s = String(value || '')
+  if (!s) return '未设置'
+  const date = new Date(s)
+  return Number.isNaN(date.getTime()) ? s.slice(0, 10) : date.toLocaleDateString('zh-CN')
 }
 
 async function loadConcept(theme, ledgerPane, stage, opts) {
-  const [proj, evRes] = await Promise.all([
-    m.chainProjection(theme.id),
-    m.chainEvents(theme.id).catch(() => null),
-  ])
+  const [proj, evRes] = opts.initialProjection
+    ? [opts.initialProjection, { events: opts.initialEvents || [] }]
+    : await Promise.all([
+      m.chainProjection(theme.id),
+      m.chainEvents(theme.id).catch(() => null),
+    ])
   const events = evRes?.events || []
   const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
   const validPrefixSeq = verifiedEvents.length
@@ -361,13 +559,33 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     verifiedEvents,
   })
   graphController.render(viewState)
-  renderOverviewContent(opts.overviewContent, proj, verifiedEvents, openEvent)
+  renderPropositionsPane(opts.propositionsContent, theme, viewState, {
+    onFocusNode: (nodeId) => graphController.focus(nodeId),
+    onLocate: (nodeId) => {
+      opts.activatePane?.('network')
+      queueMicrotask(() => graphController.focus(nodeId))
+    },
+    onChanged: opts.onChanged,
+  })
+  renderAttributionPane(opts.attributionContent, theme, viewState, {
+    onChanged: opts.onChanged,
+  })
   const pendingLedgerJump = consumeChainEventJump(theme.id)
   if (pendingLedgerJump) {
     const request = pendingLedgerJump
     const target = verifiedEvents.find((event) => event?.id === request.eventId)
     if (target) queueMicrotask(() => openEvent(target))
     else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
+  }
+  const pendingBuilderJump = consumeBuilderJump(theme.id)
+  if (pendingBuilderJump) {
+    if (pendingBuilderJump.pane && pendingBuilderJump.pane !== 'network') {
+      queueMicrotask(() => opts.activatePane?.(pendingBuilderJump.pane))
+    }
+    if (pendingBuilderJump.nodeId) {
+      const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
+      if (exists) queueMicrotask(() => graphController.focus(pendingBuilderJump.nodeId))
+    }
   }
 
 }
@@ -805,7 +1023,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     ...NETWORK_NODE_TYPES.map((type) => h('option', { value: type }, NODE_TYPE_META[type].label)))
   const statusFilter = h('select', { class: 'txt cog-node-filter', 'aria-label': '按节点状态筛选' },
     h('option', { value: 'all' }, '全部状态'),
-    ...Object.entries(NODE_STATUS_LABEL).map(([status, label]) => h('option', { value: status }, label)))
+    ...['pending', 'verified', 'disputed', 'invalidated', 'archived'].map((status) => h('option', { value: status }, NODE_STATUS_LABEL[status])))
   const filterBar = h('div', { class: 'cog-network-filters', role: 'group', 'aria-label': '网络筛选' }, typeFilter, statusFilter)
   const guidanceId = `${opts.ledgerTitleId || 'cog-ledger'}-evidence-guidance`
   const addNode = h('button', { type: 'button', class: 'btn btn-primary', 'aria-describedby': guidanceId, onclick: () => openEntryDialog(theme, proj, 'node', opts) }, '＋ 添加节点')
@@ -823,10 +1041,16 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       h('div', { class: 'cog-graph-title-line' }, h('span', { class: 'cog-ledger-num cog-graph-num' }, '网络'), h('div', { class: 'cog-graph-title' }, '主题认知网络')),
       h('p', { class: 'cog-graph-caption' }, '关系随主题和时间演变；不预设阅读路线、中心节点或结论。')),
     h('div', { class: 'cog-graph-actions' }, addNode, addEvidence, evidenceGuidance))
+  /* 搜索与筛选收进折叠：默认只呈现网络本体，复杂度是用户要来的。 */
+  const searchTools = h('details', { class: 'cog-graph-tools' },
+    h('summary', {}, '搜索与筛选'),
+    h('div', { class: 'cog-graph-tools-body' },
+      h('div', { class: 'cog-search-row' }, nodeSearch, searchButton, clearSearch),
+      filterBar))
   const graphMain = h('div', { class: 'cog-graph-main' },
     h('div', { class: 'cog-focus-bar' }, focusLabel,
-      h('div', { class: 'cog-focus-actions' }, nodeSearch, searchButton, clearSearch, focusDetails, clearFocus)),
-    searchResults, searchPager, searchError, filterBar,
+      h('div', { class: 'cog-focus-actions' }, focusDetails, clearFocus)),
+    searchTools, searchResults, searchPager, searchError,
     graphCanvas, graphLegend, help, timeControls)
   stage.append(graphToolbar, h('div', { class: 'cog-workspace-grid' }, graphMain, pointInspector))
   let currentView = { projection: proj, selectedSeq: null, events: [] }
@@ -1312,19 +1536,21 @@ function renderLegend() {
   const argumentRows = ['supports', 'derives', 'contradicts'].map((key) =>
     h('div', { class: 'cog-legend-row', 'data-legend-rel': key },
       sample(REL[key].color, false, true),
-      h('span', { class: 'cog-legend-copy' }, h('strong', {}, `${key} · ${REL[key].label}`), h('span', {}, '有方向的论证关系'))))
+      h('span', { class: 'cog-legend-copy' }, h('strong', {}, REL[key].label), h('span', {}, '有方向的论证关系'))))
   const associationRows = ['belongs-to', 'influences', 'depends-on', 'temporal', 'related'].map((key) =>
     h('div', { class: 'cog-legend-row is-association', 'data-legend-rel': key },
       sample(REL[key].color, false, false),
-      h('span', { class: 'cog-legend-copy' }, h('strong', {}, `${key} · ${REL[key].label}`), h('span', {}, '主题关联；不表示支持或因果'))))
+      h('span', { class: 'cog-legend-copy' }, h('strong', {}, REL[key].label), h('span', {}, '主题关联；不表示支持或因果'))))
   const nodeRows = NETWORK_NODE_TYPES.map((type) => {
     const meta = NODE_TYPE_META[type]
     return h('span', { class: 'cog-legend-node-type' },
-      h('span', { class: 'cog-type-key-shape', 'data-shape': meta.shape, style: { '--node-type-color': meta.color }, 'aria-hidden': 'true' }, meta.icon),
+      h('span', { class: 'cog-type-key-shape', 'data-shape': meta.shape, style: { '--node-type-color': meta.color }, 'aria-hidden': 'true' }),
       h('span', {}, meta.label))
   })
-  const statusRows = Object.entries(NODE_STATUS_LABEL).map(([status, label]) =>
-    h('span', { class: `cog-legend-status is-${status}` }, label))
+  /* 图例状态只保留用户能理解的 5 个；旧链遗留状态不进图例。 */
+  const LEGEND_STATUSES = ['pending', 'verified', 'disputed', 'invalidated', 'archived']
+  const statusRows = LEGEND_STATUSES.map((status) =>
+    h('span', { class: `cog-legend-status is-${status}` }, NODE_STATUS_LABEL[status]))
   return h('aside', { class: 'cog-graph-legend-corner', 'aria-label': '网络类型、关系和状态图例' },
     h('strong', { class: 'cog-legend-title' }, '类型、关系与状态'),
     h('section', { class: 'cog-legend-section', 'aria-label': '节点类型' }, h('span', { class: 'cog-legend-section-title' }, '节点类型 · 形状与颜色区分'), ...nodeRows),
@@ -1689,7 +1915,7 @@ function renderNodeRelations(proj, nodeById, node, theme, opts) {
   const edges = (proj?.edges || []).filter((e) => e.from === node.id || e.to === node.id)
   if (!edges.length) return [h('p', { class: 'chain-note' }, '暂无语义关系。')]
   const eventsById = new Map((opts.historyContext?.events || []).map((event) => [event.id, event]))
-  return edges.map((e) => {
+  const renderEdge = (e) => {
     const otherId = e.from === node.id ? e.to : e.from
     const other = nodeById.get(otherId)
     const rel = REL[e.rel] || REL.supports
@@ -1710,7 +1936,20 @@ function renderNodeRelations(proj, nodeById, node, theme, opts) {
       e.reviewedBy || e.reviewedAt ? h('p', { class: 'chain-note' }, `决定者：${ACTOR_LABEL[e.reviewedBy] || e.reviewedBy || '未记录'} · 时间：${fmtAt(e.reviewedAt)}`) : null,
       e.pendingReview && declarationEvent ? h('button', { type: 'button', class: 'btn cog-event-focus', onclick: () => opts.onJumpToEvent?.(declarationEvent) }, `前往账本复核 · 第 ${declarationEvent.seq} 条`) : null,
       decisionEvent ? h('button', { type: 'button', class: 'btn cog-event-focus', onclick: () => opts.onJumpToEvent?.(decisionEvent) }, `查看决定事件 · 第 ${decisionEvent.seq} 条`) : null)
-  })
+  }
+  /* 论证关系（强语义：支持/推导/反驳）与主题关联（弱语义）分组展示。 */
+  const argumentEdges = edges.filter((e) => (REL[e.rel] || REL.supports).group === 'argument')
+  const associationEdges = edges.filter((e) => (REL[e.rel] || REL.supports).group !== 'argument')
+  const sections = []
+  if (argumentEdges.length) {
+    sections.push(h('p', { class: 'chain-relations-group-label' }, `论证关系（${argumentEdges.length}）`),
+      ...argumentEdges.map(renderEdge))
+  }
+  if (associationEdges.length) {
+    sections.push(h('p', { class: 'chain-relations-group-label' }, `主题关联（${associationEdges.length}）`),
+      ...associationEdges.map(renderEdge))
+  }
+  return sections
 }
 
 function renderHistoryEvent(e, opts = {}) {

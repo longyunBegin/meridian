@@ -48,7 +48,7 @@ ok('关系复核确认/驳回由新关系事件追加，原声明保持不变', 
 ok('图中没有主题 root、观点阅读路线、旧观点分页器或独立媒体读单', !chain.includes('cog-claim-pager')
   && !chain.includes('primaryGraphNodes') && !chain.includes('renderIndependentMediaGroups')
   && !renderer.includes('cog-edge-topic') && !chain.includes('主题根 · 元数据')
-  && !themeView.includes('renderChainReader') && themeView.includes('renderChainSection(theme, openOpts)')
+  && !themeView.includes('renderChainReader') && /renderChainSection\(theme,/.test(themeView)
   && !appView.includes('主题本身就是图根'))
 ok('真正空主题给出“添加第一条观察/观点”入口且无自动虚构', chain.includes('const trulyEmpty = verifiedTimelineEvents.length === 0 && projection.integrity?.ok === true')
   && chain.includes('真实空主题') && chain.includes('添加第一条观察/观点')

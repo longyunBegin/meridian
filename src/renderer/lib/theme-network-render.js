@@ -55,10 +55,7 @@ function appendTypeGlyph(group, type, centerX, centerY) {
   } else {
     group.append(svgEl('rect', { x: centerX - 10, y: centerY - 10, width: 20, height: 20, rx: 6, fill: meta.color }))
   }
-  group.append(svgText(meta.icon, {
-    x: centerX, y: centerY + 3.5, 'text-anchor': 'middle', 'dominant-baseline': 'central',
-    class: 'cog-node-glyph-text', 'aria-hidden': 'true',
-  }))
+  /* 类型只用形状 + 颜色两重编码：汉字 icon 与类型文字标签已移除（见无障碍 label / 图例）。 */
 }
 
 function nodeStatusColor(status) {
@@ -246,12 +243,15 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const glyphX = -dimensions.w / 2 + 15
     const glyphY = -dimensions.h / 2 + 16
     appendTypeGlyph(group, type, glyphX, glyphY)
-    group.append(svgText(meta.label, { x: glyphX + 15, y: glyphY + 3.5, class: 'cog-node-type-label', 'dominant-baseline': 'central' }))
-    const pillWidth = Math.max(44, Math.min(68, statusLabel.length * 10 + 13))
-    const pillX = dimensions.w / 2 - pillWidth - 7
-    const pillY = -dimensions.h / 2 + 7
-    group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
-    group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill' }))
+    /* 类型文字标签已移除：形状 + 颜色已足够区分，label 只保留在无障碍文本与图例中。 */
+    const showPill = node._notYetCreated || status !== 'pending'
+    if (showPill) {
+      const pillWidth = Math.max(44, Math.min(68, statusLabel.length * 10 + 13))
+      const pillX = dimensions.w / 2 - pillWidth - 7
+      const pillY = -dimensions.h / 2 + 7
+      group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
+      group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill' }))
+    }
     const titleLines = splitNetworkTitle(node.title || '未命名节点', 14, 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {
       x: -dimensions.w / 2 + 12,
