@@ -3387,7 +3387,8 @@ body.tauri-macos .app {
 
 @media (max-width:1100px) {
   .cog-workbench { grid-template-columns:minmax(0,1fr); }
-  .cog-wb-col { position:static; max-height:none; }
+  .cog-wb-col.cog-wb-props, .cog-wb-col.cog-wb-queue, .cog-wb-col.cog-wb-detail { position:static; max-height:none; }
+  .cog-wb-col.cog-wb-detail { padding:20px; }
 }
 
 
@@ -3407,14 +3408,29 @@ body.tauri-macos .app {
   .rdr-title { font-size: var(--t-head); }
 }
 
-/* 建设者布局：三栏工作台（命题列表 | 命题详情 | 待处理），无图 */
-.cog-workbench { display:grid; grid-template-columns:minmax(240px,2.6fr) minmax(0,4.4fr) minmax(260px,3fr); gap:12px; align-items:start; margin-top:12px; }
-.cog-wb-col { min-width:0; max-height:calc(100vh - 120px); overflow-y:auto; border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface-solid); padding:14px; position:sticky; top:76px; }
-.cog-wb-col:empty { padding:0; border:0; background:transparent; }
+/* 建设者布局：中栏是主舞台（文档感），两侧是轻量侧栏 */
+.cog-workbench { display:grid; grid-template-columns:minmax(220px,2.2fr) minmax(0,5.6fr) minmax(240px,2.2fr); gap:20px; align-items:start; margin-top:16px; }
+/* 侧栏：去卡片化，轻量导航 */
+.cog-wb-col.cog-wb-props, .cog-wb-col.cog-wb-queue { background:transparent; border:0; padding:4px 0; position:sticky; top:76px; max-height:calc(100vh - 120px); overflow-y:auto; }
+/* 中栏：主舞台，文档感 */
+.cog-wb-col.cog-wb-detail { min-width:0; background:var(--surface-solid); border:1px solid var(--hairline); border-radius:calc(var(--r) + 4px); padding:28px 32px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+.cog-wb-col:empty { padding:0; border:0; background:transparent; box-shadow:none; }
+/* 中栏标题更大，有呼吸感 */
+.cog-wb-detail-card { padding:0; }
+.cog-wb-detail-kicker { margin:0 0 8px; font-size:var(--t-caption); font-weight:700; letter-spacing:.08em; color:var(--text-3); text-transform:uppercase; }
+.cog-wb-detail-title { margin:0 0 12px; font-size:var(--t-largeTitle); font-weight:700; line-height:1.35; letter-spacing:-.01em; }
+.cog-wb-detail-text { margin:0 0 16px; font-size:var(--t-body); color:var(--text-2); line-height:1.65; }
+.cog-wb-detail-meta { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding:14px 0; margin-bottom:8px; border-top:1px solid var(--hairline-soft); border-bottom:1px solid var(--hairline-soft); }
+/* 证据流分区更清晰 */
+.cog-wb-stream { margin-top:20px; }
+.cog-wb-stream-title { margin:0 0 12px; font-size:var(--t-caption); font-weight:700; letter-spacing:.08em; color:var(--text-3); text-transform:uppercase; }
+.cog-wb-detail-actions { display:flex; gap:8px; margin:16px 0 4px; }
+.cog-wb-detail-actions .btn { padding:8px 20px; font-weight:600; }
 
 @media (max-width:1100px) {
   .cog-workbench { grid-template-columns:minmax(0,1fr); }
-  .cog-wb-col { position:static; max-height:none; }
+  .cog-wb-col.cog-wb-props, .cog-wb-col.cog-wb-queue, .cog-wb-col.cog-wb-detail { position:static; max-height:none; }
+  .cog-wb-col.cog-wb-detail { padding:20px; }
 }
 
 /* 快速归因（收件箱 → 主题一键连接） */
@@ -3442,3 +3458,8 @@ body.tauri-macos .app {
 /* 证据溯源链接 */
 .cog-wb-evidence-src.is-link { color: var(--accent); text-decoration: none; cursor: pointer; }
 .cog-wb-evidence-src.is-link:hover { text-decoration: underline; }
+
+/* 中栏空状态：有引导，不寒酸 */
+.cog-wb-empty { padding: 48px 24px; text-align: center; }
+.cog-wb-empty-title { margin: 0 0 8px; font-size: var(--t-title); font-weight: 700; }
+.cog-wb-empty-sub { margin: 0 0 20px; font-size: var(--t-body); color: var(--text-2); }

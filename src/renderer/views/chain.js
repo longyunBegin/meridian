@@ -298,14 +298,21 @@ function renderPropList(container, theme, viewState, { selectedId, onSelect } = 
 }
 
 /* 中栏详情：DeepSeek 式 hero + 分色证据流 + 支持 / 反驳入口。 */
-function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpenAttribution } = {}) {
+function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpenAttribution, onChanged } = {}) {
   if (!container) return
   clear(container)
   const node = nodeId
     ? projectedNodes(viewState?.projection || {}).find((n) => n.id === nodeId)
     : null
   if (!node) {
-    container.append(h('p', { class: 'chain-note' }, '在图上点一个节点，或从「命题」选一个，这里滑出它的详情与证据流。'))
+    container.append(
+      h('div', { class: 'cog-wb-empty' },
+        h('p', { class: 'cog-wb-empty-title' }, '还没有命题'),
+        h('p', { class: 'cog-wb-empty-sub' }, '命题是主题认知的原子单位。创建第一个命题，开始跟踪这个主题的变化。'),
+        h('button', {
+          type: 'button', class: 'btn btn-primary',
+          onclick: () => openEntryDialog(theme, viewState?.projection, 'node', { onChanged }),
+        }, '＋ 创建第一个命题')))
     return
   }
   const { supports, against } = evidenceForNode(viewState, node.id)
@@ -325,9 +332,7 @@ function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpen
   }
   container.append(
     h('div', { class: 'cog-wb-detail-card' },
-      h('div', { class: 'cog-wb-detail-head' },
-        h('p', { class: 'cog-wb-detail-kicker' }, node.archived ? '已归档命题' : '活跃命题'),
-        h('button', { type: 'button', class: 'cog-wb-detail-close', 'aria-label': '关闭详情', onclick: onClose }, '×')),
+      h('p', { class: 'cog-wb-detail-kicker' }, node.archived ? '已归档命题' : '命题'),
       h('h3', { class: 'cog-wb-detail-title' }, node.title || '未命名命题'),
       node.detail ? h('p', { class: 'cog-wb-detail-text' }, node.detail) : null,
       h('div', { class: 'cog-wb-detail-meta' },
@@ -598,6 +603,13 @@ async function loadConcept(theme, ledgerPane, opts) {
     onChanged: opts.onChanged,
     onFocusNode: (nodeId) => selectProposition(nodeId),
   })
+  /* 中栏永不空置：无跳转时自动选中首个命题（待确认 > 有争议 > 已建立） */
+  const autoSelectFirst = () => {
+    if (selectedPropId) return
+    const { pending, disputed, established } = viewpointGroups(viewState)
+    const first = pending[0] || disputed[0] || established[0]
+    if (first) selectProposition(first.id)
+  }
   /* 工具栏：添加节点 / 补充证据 */
   if (opts.addNodeBtn) {
     opts.addNodeBtn.disabled = false
@@ -618,6 +630,9 @@ async function loadConcept(theme, ledgerPane, opts) {
   if (pendingBuilderJump?.nodeId) {
     const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
     if (exists) queueMicrotask(() => selectProposition(pendingBuilderJump.nodeId))
+    else autoSelectFirst()
+  } else {
+    autoSelectFirst()
   }
 
 }
