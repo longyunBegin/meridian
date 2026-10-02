@@ -19,6 +19,50 @@ const REL_LABEL = {
   temporal: '时间关联', related: '相关',
 }
 
+/* 三层模型映射表（从九种枚举改成三层模型）
+   维度一 direction：状态量（好转/恶化/稳定）→ 决定颜色
+   维度二 nature：变化性质（量变/质变/认识/结构）→ 决定图标
+   维度三 themeTag：主题标签（开放字符串） */
+export const DIRECTION_META = {
+  improving: { label: '好转', color: 'var(--green)', icon: '↑' },
+  declining: { label: '恶化', color: 'var(--red)', icon: '↓' },
+  stable: { label: '稳定', color: 'var(--text-3)', icon: '→' },
+}
+export const NATURE_META = {
+  quantitative: { label: '量变', icon: '·' },
+  pivot: { label: '质变', icon: '⇄' },
+  epistemic: { label: '认识', icon: '◉' },
+  structural: { label: '结构', icon: '⑂' },
+}
+
+/* 从事件类型推导变化性质 */
+function natureFromEvent(event) {
+  const type = event?.type || ''
+  if (type === 'confidence.updated') return 'quantitative'
+  if (type === 'evidence.appended') {
+    const rel = event?.payload?.rel || ''
+    return rel === 'contradicts' ? 'epistemic' : 'quantitative'
+  }
+  if (type === 'relation.declared') return 'structural'
+  if (type === 'claim.created') return 'epistemic'
+  return 'quantitative'
+}
+
+/* 从事件内容推导主题标签（开放，系统建议） */
+function themeTagFromEvent(event) {
+  const payload = event?.payload || {}
+  if (payload.themeTag) return payload.themeTag
+  const type = event?.type || ''
+  if (type === 'confidence.updated') return '置信度变化'
+  if (type === 'evidence.appended') {
+    const rel = payload.rel || ''
+    return rel === 'contradicts' ? '假设挑战' : '证据支持'
+  }
+  if (type === 'relation.declared') return '关系建立'
+  if (type === 'claim.created') return '新命题'
+  return '数据更新'
+}
+
 const titleOf = (node) => String(node?.title || node?.currentText || '未命名').trim() || '未命名'
 const short = (value, limit = 90) => truncateGraphemes(String(value || ''), limit)
 
@@ -54,8 +98,8 @@ export function deriveReaderModel(projection = {}, events = []) {
     disputes: [], pending: [], recent: [],
     status: '尚未开始',
     /* 三问模型：方向 + 状态 + 拐点 */
-    directionCounts: { up: 0, down: 0, flat: 0 },
-    nodesByDirection: { up: [], down: [], flat: [] },
+    directionCounts: { improving: 0, declining: 0, stable: 0 },
+    nodesByDirection: { improving: [], declining: [], stable: [] },
     turningPoints: [],
   }
   if (model.empty) return model
@@ -108,13 +152,13 @@ export function deriveReaderModel(projection = {}, events = []) {
     const change = confChanges.get(node.id)
     const stat = evStats.get(node.id) || { supports: 0, contradicts: 0 }
     /* 方向：净变化 >5% 上升，<-5% 承压，否则稳定 */
-    let direction = 'flat'
+    let direction = 'stable'
     if (change) {
-      if (change.net > 0.05) direction = 'up'
-      else if (change.net < -0.05) direction = 'down'
+      if (change.net > 0.05) direction = 'improving'
+      else if (change.net < -0.05) direction = 'declining'
     }
-    /* 有反驳无支持 → 承压 */
-    if (direction === 'flat' && stat.contradicts > 0 && stat.supports === 0) direction = 'down'
+    /* 有反驳无支持 → 恶化 */
+    if (direction === 'stable' && stat.contradicts > 0 && stat.supports === 0) direction = 'declining'
 
     /* 一句话状态：标题 + 置信度 + 证据对比 */
     const conf = Math.round((node.confidence ?? 0.5) * 100)
@@ -137,10 +181,16 @@ export function deriveReaderModel(projection = {}, events = []) {
       latestSrc = '自动更新'
     }
 
+    /* 三层模型：从最新事件推导 nature 和 themeTag */
+    const latestEvent = stat.latestEv || change?.latest || null
+    const nature = latestEvent ? natureFromEvent(latestEvent) : 'quantitative'
+    const themeTag = latestEvent ? themeTagFromEvent(latestEvent) : '暂无标签'
     model.nodesByDirection[direction].push({
       id: node.id,
       title: titleOf(node),
       direction,
+      nature,
+      themeTag,
       state,
       latest,
       latestSrc,
@@ -157,15 +207,18 @@ export function deriveReaderModel(projection = {}, events = []) {
   /* ---- 拐点：最近30天显著改变方向的事件 ---- */
   const turningCandidates = []
   for (const [nodeId, change] of confChanges) {
-    /* 单次变化幅度 >10% 视为拐点 */
+    /* 单次变化幅度 >10% 视为拐点（三层模型） */
     if (Math.abs(change.net) < 0.1) continue
     const node = byId.get(nodeId)
     if (!node) continue
-    const dir = change.net > 0 ? 'up' : 'down'
+    const dir = change.net > 0 ? 'improving' : 'declining'
+    const latestEv = change.latest
     turningCandidates.push({
       date: new Date(change.latestAt).toISOString().slice(0, 10),
       timestamp: change.latestAt,
-      dir,
+      direction: dir,
+      nature: latestEv ? natureFromEvent(latestEv) : 'quantitative',
+      themeTag: latestEv ? themeTagFromEvent(latestEv) : '置信度变化',
       text: `${titleOf(node)}：置信度变化 ${Math.round(change.net * 100)}%`,
       nodeIds: [nodeId],
       nodeTitles: [titleOf(node)],
@@ -379,13 +432,16 @@ export function renderReaderView(theme, opts = {}) {
     /* 第一问：现在是什么状态 — 节点按方向排序 */
     const stateSection = h('section', { class: 'rdr-section' },
       h('h2', { class: 'rdr-section-title' }, '现在是什么状态'))
-    for (const dir of ['up', 'down', 'flat']) {
+    for (const dir of ['improving', 'declining', 'stable']) {
       const nodes = model.nodesByDirection[dir]
       if (!nodes.length) continue
       const meta = DIR_META[dir]
       const group = h('div', { class: 'rdr-dir-group' },
         h('h3', { class: `rdr-dir-label ${meta.cls}` }, `${meta.icon} ${meta.label} · ${nodes.length}`))
       for (const node of nodes) {
+        /* 三层模型：themeTag 大字（direction 颜色）+ nature 小字 */
+        const natMeta = NATURE_META[node.nature] || NATURE_META.quantitative
+        const dirMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
         group.append(
           h('button', {
             type: 'button', class: 'rdr-node-card',
@@ -394,6 +450,9 @@ export function renderReaderView(theme, opts = {}) {
             h('div', { class: 'rdr-node-top' },
               h('span', { class: `rdr-dir-tag ${meta.cls}` }, `${meta.icon} ${meta.label}`),
               h('span', { class: 'rdr-node-title' }, node.title)),
+            h('div', { class: 'rdr-node-tags' },
+              h('span', { class: 'rdr-theme-tag', style: `color:${dirMeta.color}` }, node.themeTag || ''),
+              h('span', { class: 'rdr-nature-tag' }, `${natMeta.icon} ${natMeta.label}`)),
             h('p', { class: 'rdr-node-state' }, node.state),
             node.latest
               ? h('p', { class: 'rdr-node-latest' },
@@ -413,7 +472,9 @@ export function renderReaderView(theme, opts = {}) {
     } else {
       const list = h('div', { class: 'rdr-turn-list' })
       for (const tp of model.turningPoints) {
-        const meta = DIR_META[tp.dir] || DIR_META.flat
+        /* 三层模型：颜色由 direction，图标由 nature，显示 themeTag */
+        const dirMeta = DIRECTION_META[tp.direction] || DIRECTION_META.stable
+        const natMeta = NATURE_META[tp.nature] || NATURE_META.quantitative
         list.append(
           h('button', {
             type: 'button', class: 'rdr-turn-card',
@@ -421,7 +482,8 @@ export function renderReaderView(theme, opts = {}) {
           },
             h('div', { class: 'rdr-turn-top' },
               h('span', { class: 'rdr-turn-date' }, tp.date),
-              h('span', { class: `rdr-dir-tag ${meta.cls}` }, `${meta.icon} ${meta.label}`)),
+              h('span', { class: 'rdr-turn-tag', style: `color:${dirMeta.color}` }, tp.themeTag || ''),
+              h('span', { class: 'rdr-turn-nature' }, `${natMeta.icon} ${natMeta.label}`)),
             h('p', { class: 'rdr-turn-text' }, tp.text),
             tp.nodeTitles?.length
               ? h('p', { class: 'rdr-turn-nodes' }, '影响：' + tp.nodeTitles.join('、'))

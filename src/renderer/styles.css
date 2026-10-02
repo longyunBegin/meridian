@@ -3591,3 +3591,13 @@ body.tauri-macos .app {
 .builder-node-actions { display:flex; gap:6px; }
 .btn-sm { font-size:.75rem; padding:4px 10px; }
 .btn-danger { color:var(--danger); }
+
+/* 三层模型标签 */
+.rdr-node-tags { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.rdr-theme-tag { font-size:.875rem; font-weight:600; }
+.rdr-nature-tag { font-size:.75rem; color:var(--text-3); }
+.rdr-turn-tag { font-size:.8125rem; font-weight:600; }
+.rdr-turn-nature { font-size:.75rem; color:var(--text-3); }
+
+.builder-signal-tag { font-weight:600; }
+.builder-signal-nature { color:var(--text-3); }

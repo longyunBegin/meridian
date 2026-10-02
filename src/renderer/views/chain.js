@@ -13,6 +13,7 @@
 import { h, clear, mount, toast } from '../lib/dom.js'
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
+import { DIRECTION_META, NATURE_META } from './reader.js'
 import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType,
@@ -600,6 +601,11 @@ async function loadConcept(theme, ledgerPane, opts) {
       const nodeId = payload.nodeId || payload.targetId || payload.to
       const node = nodeId ? nodeById.get(nodeId) : null
       const rel = payload.rel || payload.relation || 'supports'
+      /* 三层模型：从事件推导 direction/nature/themeTag */
+      const change = payload.change || {}
+      const direction = change.direction || (rel === 'contradicts' ? 'declining' : 'improving')
+      const nature = change.nature || (type === 'relation.declared' ? 'structural' : rel === 'contradicts' ? 'epistemic' : 'quantitative')
+      const themeTag = change.themeTag || payload.themeTag || '数据更新'
       signals.push({
         id: event.id,
         event, type, payload,
@@ -607,9 +613,11 @@ async function loadConcept(theme, ledgerPane, opts) {
         suggestedNode: node?.title || '未归属',
         suggestedDir: rel === 'contradicts' ? '反驳' : rel === 'derives' ? '推导' : '支持',
         dirKey: rel,
+        /* 三层 */
+        direction, nature, themeTag,
         text: payload.title || payload.text?.slice(0, 60) || '新数据',
         source: payload.sourceLabel || payload.url || '',
-        confidence: payload.confidence ?? null,
+        confidence: payload.confidence ?? change.confidence ?? null,
         at: event?.at || event?.timestamp,
       })
       if (signals.length >= 50) break
@@ -682,13 +690,18 @@ async function loadConcept(theme, ledgerPane, opts) {
     opts.attentionSec.append(feed)
   }
 
-  /* 单条信号：判决动作 */
+  /* 单条信号：判决动作（三层模型） */
   const renderSignalItem = (sig) => {
+    const dirMeta = DIRECTION_META[sig.direction] || DIRECTION_META.stable
+    const natMeta = NATURE_META[sig.nature] || NATURE_META.quantitative
     const item = h('div', { class: 'builder-signal-item', 'data-signal-id': sig.id },
       h('div', { class: 'builder-signal-text' }, sig.text),
       sig.source ? h('div', { class: 'builder-signal-src' }, sig.source) : null,
       h('div', { class: 'builder-signal-meta' },
-        h('span', {}, `建议：${sig.suggestedNode} · ${sig.suggestedDir}`),
+        h('span', {}, `建议：${sig.suggestedNode}`),
+        /* 三层：themeTag（direction 颜色）+ nature */
+        h('span', { class: 'builder-signal-tag', style: `color:${dirMeta.color}` }, sig.themeTag),
+        h('span', { class: 'builder-signal-nature' }, `${natMeta.icon} ${natMeta.label}`),
         sig.confidence != null ? h('span', {}, `置信度 ${Math.round(sig.confidence * 100)}%`) : null),
       h('div', { class: 'builder-signal-actions' },
         h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'node') }, '改节点'),
