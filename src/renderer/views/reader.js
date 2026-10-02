@@ -406,9 +406,9 @@ export function renderReaderView(theme, opts = {}) {
   const go = (kind, nodeId) => opts.onOpenBuilder?.(kind, nodeId)
 
   const DIR_META = {
-    up: { icon: '↑', label: '上升', cls: 'is-up' },
-    down: { icon: '↓', label: '承压', cls: 'is-down' },
-    flat: { icon: '→', label: '稳定', cls: 'is-flat' },
+    improving: { icon: '↑', label: '好转', cls: 'is-up' },
+    declining: { icon: '↓', label: '恶化', cls: 'is-down' },
+    stable: { icon: '→', label: '稳定', cls: 'is-flat' },
   }
 
   const render = (projection, events) => {
