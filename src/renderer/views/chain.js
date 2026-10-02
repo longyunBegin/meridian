@@ -105,12 +105,11 @@ export function renderChainSection(theme, opts = {}) {
     class: 'cog-ledger-pane cog-ledger-drawer', id: drawerId,
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': drawerTitleId, tabindex: '-1', hidden: true,
   }, h('p', { class: 'chain-note' }, '正在读取事件…'))
-  /* 建设者：单栏聚焦（第一性原理）— 需要关注置顶，详情是主舞台，其他折叠 */
-  const attentionSec = h('section', { class: 'builder-attention', 'aria-label': '需要关注' })
-  const detailSec = h('section', { class: 'builder-detail', 'aria-label': '命题详情' })
-  const othersSec = h('section', { class: 'builder-others', 'aria-label': '其他命题' })
-  const focus = h('div', { class: 'builder-focus' }, attentionSec, detailSec, othersSec)
-  concept.append(ledgerBackdrop, ledgerPane, focus)
+  /* 建设者：参考 demo 设计 — 侧边栏 + 主舞台（信号流/节点视图/待处理） */
+  const sidebar = h('aside', { class: 'builder-sidebar', 'aria-label': '建设者导航' })
+  const mainStage = h('main', { class: 'builder-main', 'aria-label': '建设者主舞台' })
+  const builderLayout = h('div', { class: 'builder' }, sidebar, mainStage)
+  concept.append(ledgerBackdrop, ledgerPane, builderLayout)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -149,9 +148,8 @@ export function renderChainSection(theme, opts = {}) {
     closeLedger,
     openLedger,
     ledgerTitleId: drawerTitleId,
-    attentionSec,
-    detailSec,
-    othersSec,
+    sidebar,
+    mainStage,
     addNodeBtn,
     addEvidenceBtn,
     onChanged: () => {
@@ -645,233 +643,221 @@ async function loadConcept(theme, ledgerPane, opts) {
     return [...groups.values()].sort((a, b) => b.items.length - a.items.length)
   }
 
-  const renderReviewBench = () => {
-    clear(opts.attentionSec)
-    clear(opts.detailSec)
+  /* ============ Demo 式 Builder：侧边栏 + 信号流/节点视图/待处理 ============ */
+  let builderMode = 'stream'  // stream | node | inbox
+  let selectedNodeId = null
+
+  const renderSidebar = () => {
+    clear(opts.sidebar)
     const signals = buildSignals()
-    const groups = groupSignals(signals)
-
-    /* 标题：今日信号 */
-    const todayCount = signals.length
-    opts.attentionSec.append(
-      h('h2', { class: 'builder-section-title' },
-        todayCount ? `待审阅信号 · ${todayCount}` : '待审阅信号'),
-      todayCount
-        ? h('p', { class: 'builder-hint' }, '默认接受：不处理即表示同意。只在不同意时动手。')
-        : h('p', { class: 'builder-empty' }, '暂无待审阅信号。系统会自动处理高置信数据，结果在下方"已自动处理"中。')
+    /* 待处理数量：从收件箱或 pending 事件 */
+    const inboxCount = 0  // TODO: 从收件箱获取
+    opts.sidebar.append(
+      h('div', { class: 'builder-brand' },
+        h('div', { class: 'builder-brand-mark' }, 'M'),
+        h('div', { class: 'builder-brand-name' }, 'Meridian')),
+      h('div', { class: 'builder-side-nav' },
+        h('div', {
+          class: `builder-side-nav-item${builderMode === 'stream' ? ' active' : ''}`,
+          onclick: () => { builderMode = 'stream'; renderMain(); renderSidebar(); },
+        },
+          h('span', { class: 'icon' }, '≡'),
+          h('span', {}, '信号流'),
+          h('span', { class: 'n' }, String(signals.length))),
+        h('div', {
+          class: `builder-side-nav-item${builderMode === 'inbox' ? ' active' : ''}`,
+          onclick: () => { builderMode = 'inbox'; renderMain(); renderSidebar(); },
+        },
+          h('span', { class: 'icon' }, '◷'),
+          h('span', {}, '待处理'),
+          h('span', { class: 'n' }, String(inboxCount)))),
+      h('div', { class: 'builder-side-foot' },
+        h('b', {}, '数据源'), ' · 事件账本',
+        h('br', {}),
+        h('b', {}, '事件'), ` · ${verifiedEvents.length}`)
     )
-
-    if (!groups.length) return
-
-    const feed = h('div', { class: 'builder-feed' })
-    for (const group of groups) {
-      /* 聚类卡片：节点 + 方向 + 数量 + 批量操作 */
-      const groupCard = h('div', { class: 'builder-signal-group' },
-        h('div', { class: 'builder-signal-group-top' },
-          h('span', { class: 'builder-signal-node' }, group.nodeTitle),
-          h('span', { class: `builder-signal-dir is-${group.dirKey}` }, group.dirLabel),
-          h('span', { class: 'builder-signal-count' }, `${group.items.length} 条`)),
-        h('div', { class: 'builder-signal-group-actions' },
-          h('button', {
-            type: 'button', class: 'btn btn-sm',
-            onclick: () => acceptGroup(group),
-          }, `全部接受`),
-          h('button', {
-            type: 'button', class: 'btn btn-sm',
-            onclick: () => toggleGroupExpand(group.key),
-          }, '展开')))
-      const itemsWrap = h('div', { class: 'builder-signal-items', hidden: true, 'data-group': group.key })
-      for (const sig of group.items) {
-        itemsWrap.append(renderSignalItem(sig))
-      }
-      groupCard.append(itemsWrap)
-      feed.append(groupCard)
-    }
-    opts.attentionSec.append(feed)
   }
 
-  /* 单条信号：判决动作（三层模型，内联编辑器参考 demo 设计） */
-  const renderSignalItem = (sig) => {
+  const renderMain = () => {
+    clear(opts.mainStage)
+    if (builderMode === 'node' && selectedNodeId) {
+      opts.mainStage.append(renderNodeView(selectedNodeId))
+    } else if (builderMode === 'inbox') {
+      opts.mainStage.append(renderInboxView())
+    } else {
+      opts.mainStage.append(renderSignalStream())
+    }
+  }
+
+  /* 信号流：密度条 + 信号卡片 */
+  const renderSignalStream = () => {
+    const signals = buildSignals()
+    const wrap = h('div', { class: 'builder-stream' })
+    /* 密度条：按时间分布 */
+    wrap.append(renderDensityBar(signals))
+    /* 流头部 */
+    wrap.append(
+      h('div', { class: 'builder-stream-head' },
+        h('h2', {}, signals.length ? `信号流 · ${signals.length}` : '信号流'),
+        signals.length
+          ? h('p', { class: 'builder-hint' }, '默认接受：不处理即表示同意。只在不同意时动手。')
+          : h('p', { class: 'builder-empty' }, '暂无待审阅信号。'))
+    )
+    /* 信号卡片 */
+    const list = h('div', { class: 'builder-signal-list' })
+    for (const sig of signals) {
+      list.append(renderSignalCard(sig))
+    }
+    wrap.append(list)
+    return wrap
+  }
+
+  /* 密度条：信号按时间分布 */
+  const renderDensityBar = (signals) => {
+    const bar = h('div', { class: 'builder-density' })
+    if (!signals.length) return bar
+    /* 按天分组 */
+    const byDay = new Map()
+    for (const sig of signals) {
+      const day = new Date(sig.at || Date.now()).toISOString().slice(0, 10)
+      byDay.set(day, (byDay.get(day) || 0) + 1)
+    }
+    const max = Math.max(...byDay.values())
+    for (const [day, count] of [...byDay.entries()].sort()) {
+      const dirMeta = DIRECTION_META[signals.find(s =>
+        new Date(s.at || Date.now()).toISOString().slice(0, 10) === day)?.direction] || DIRECTION_META.stable
+      bar.append(
+        h('span', {
+          class: 'builder-density-point',
+          style: `height:${Math.max(4, (count / max) * 24)}px;background:${dirMeta.color}`,
+          title: `${day} · ${count} 条`,
+        })
+      )
+    }
+    return bar
+  }
+
+  /* 信号卡片：参考 demo 设计 */
+  const renderSignalCard = (sig) => {
     const dirMeta = DIRECTION_META[sig.direction] || DIRECTION_META.stable
     const natMeta = NATURE_META[sig.nature] || NATURE_META.quantitative
-    const item = h('div', { class: 'builder-signal-item', 'data-signal-id': sig.id },
-      h('div', { class: 'builder-signal-text' }, sig.text),
-      sig.source ? h('div', { class: 'builder-signal-src' }, sig.source) : null,
-      h('div', { class: 'builder-signal-meta' },
-        h('span', {}, `建议：${sig.suggestedNode}`),
-        /* 三层：themeTag（direction 颜色）+ nature */
-        h('span', { class: 'builder-signal-tag', style: `color:${dirMeta.color}` }, sig.themeTag),
-        h('span', { class: 'builder-signal-nature' }, `${natMeta.icon} ${natMeta.label}`),
-        sig.confidence != null ? h('span', {}, `置信度 ${Math.round(sig.confidence * 100)}%`) : null),
-      /* 判决按钮：接受 / 修正 / 驳回 */
-      h('div', { class: 'builder-signal-actions' },
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => acceptSignal(sig) }, '✓ 接受'),
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => toggleEditor(sig.id) }, '✎ 修正'),
-        h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => rejectSignal(sig) }, '✕ 驳回')),
-      /* 内联修正编辑器：三组独立选择（参考 demo 设计） */
-      renderInlineEditor(sig))
-    return item
-  }
-
-  /* 内联三层修正编辑器 */
-  const renderInlineEditor = (sig) => {
-    const editor = h('div', { class: 'builder-inline-editor', 'data-editor': sig.id, hidden: true })
-
-    /* 状态量 */
-    const dirRow = h('div', { class: 'builder-editor-row' },
-      h('span', { class: 'builder-editor-label' }, '状态量'),
-      h('div', { class: 'builder-editor-opts' }))
-    for (const [k, m] of Object.entries(DIRECTION_META)) {
-      const btn = h('button', {
-        type: 'button',
-        class: `builder-editor-opt${k === sig.direction ? ' is-sel' : ''}`,
-        onclick: (e) => {
-          sig._editDir = k
-          dirRow.querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
-          e.currentTarget.classList.add('is-sel')
+    const card = h('div', { class: 'builder-signal-card', 'data-signal-id': sig.id },
+      h('div', { class: 'builder-signal-top' },
+        h('span', { class: 'builder-signal-type' }, sig.suggestedDir || '信号'),
+        sig.source ? h('span', { class: 'builder-signal-source' }, sig.source) : null,
+        h('span', { class: 'spacer' }),
+        h('span', { class: 'builder-signal-time' }, fmtDate(sig.at))),
+      h('div', { class: 'builder-signal-title' }, sig.text),
+      /* 影响：节点名 + themeTag（三层） */
+      h('div', { class: 'builder-signal-impacts' },
+        h('span', { class: 'lead' }, '影响'),
+        h('button', {
+          type: 'button', class: 'builder-impact-pill',
+          onclick: () => { selectedNodeId = sig.nodeId; builderMode = 'node'; renderMain(); renderSidebar(); },
         },
-      }, `${m.icon} ${m.label}`)
-      dirRow.querySelector('.builder-editor-opts').append(btn)
+          h('span', { class: 'nd', style: `background:${dirMeta.color}` }),
+          sig.suggestedNode || '未归属',
+          h('span', { class: 'ef', style: `color:${dirMeta.color}` }, `${natMeta.icon} ${sig.themeTag || ''}`))),
+      /* 判决 */
+      h('div', { class: 'builder-verdict' },
+        h('span', { class: 'lead' }, '判决'),
+        h('button', { type: 'button', class: 'builder-verdict-btn accept', onclick: () => acceptSignal(sig) }, '✓ 接受'),
+        h('button', { type: 'button', class: 'builder-verdict-btn', onclick: () => toggleEditor(sig.id) }, '✎ 修正'),
+        h('button', { type: 'button', class: 'builder-verdict-btn reject', onclick: () => rejectSignal(sig) }, '✕ 驳回')),
+      /* 内联编辑器 */
+      renderInlineEditor(sig)
+    )
+    return card
+  }
+
+  /* 节点视图：演化时间线（三层） */
+  const renderNodeView = (nodeId) => {
+    const nodes = projectedNodes(viewState.projection)
+    const node = nodes.find(n => n.id === nodeId)
+    if (!node) return h('p', { class: 'chain-note' }, '节点不存在')
+    const title = node.title || node.id
+    /* 从事件构建演化时间线 */
+    const evolutions = buildNodeEvolution(nodeId)
+    const wrap = h('div', { class: 'builder-node-view' },
+      h('div', { class: 'builder-back-bar' },
+        h('button', {
+          type: 'button', class: 'builder-back-btn',
+          onclick: () => { builderMode = 'stream'; selectedNodeId = null; renderMain(); renderSidebar(); },
+        }, h('span', { class: 'ar' }, '←'), ' 返回信号流')),
+      h('div', { class: 'builder-node-head' },
+        h('div', { class: 'builder-node-title-row' },
+          h('h1', { class: 'builder-node-title' }, title)),
+        h('div', { class: 'builder-node-stats' },
+          h('span', { class: 'item' }, h('b', {}, String(evolutions.length)), ' 次状态变化'),
+          h('span', { class: 'item' }, `最近更新 ${evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—'}`))),
+      h('div', { class: 'builder-evolution-title' },
+        h('span', {}, '状态演化时间线'),
+        h('span', { class: 'n' }, `从早到晚 · ${evolutions.length} 个状态点`)),
+      h('div', { class: 'builder-evolution' },
+        ...evolutions.map((evo, i) => {
+          const isLatest = i === evolutions.length - 1
+          const dMeta = DIRECTION_META[evo.direction] || DIRECTION_META.stable
+          const nMeta = NATURE_META[evo.nature] || NATURE_META.quantitative
+          return h('div', { class: `builder-evo-point${isLatest ? ' latest' : ''}` },
+            h('span', { class: 'builder-evo-dot', style: `border-color:${dMeta.color};color:${dMeta.color}` },
+              h('span', {}, nMeta.icon)),
+            h('div', { class: 'builder-evo-head' },
+              h('span', { class: 'builder-evo-date' }, fmtDate(evo.at)),
+              h('span', { class: 'builder-evo-tag', style: `color:${dMeta.color}` }, evo.themeTag || ''),
+              h('span', { class: 'builder-evo-nature' }, nMeta.label),
+              isLatest ? h('span', { class: 'builder-evo-current-flag' }, '当前') : null),
+            h('div', { class: 'builder-evo-state' }, evo.text),
+            evo.source ? h('div', { class: 'builder-evo-reason' },
+              h('div', { class: 'left' }, h('span', { class: 'lead' }, '因为'), evo.source)) : null
+          )
+        }))
+    )
+    return wrap
+  }
+
+  /* 从事件构建节点演化时间线 */
+  const buildNodeEvolution = (nodeId) => {
+    const evolutions = []
+    for (const event of (verifiedEvents || [])) {
+      const payload = event?.payload || {}
+      const eid = payload.nodeId || payload.claimId || payload.targetId
+      if (eid !== nodeId) continue
+      const type = event?.type
+      if (!['confidence.updated', 'evidence.appended', 'relation.declared'].includes(type)) continue
+      const change = payload.change || {}
+      evolutions.push({
+        at: event?.at || event?.timestamp,
+        direction: change.direction || (type === 'confidence.updated'
+          ? ((payload.after ?? 0) > (payload.before ?? 0) ? 'improving' : 'declining')
+          : 'stable'),
+        nature: change.nature || (type === 'relation.declared' ? 'structural'
+          : type === 'evidence.appended' ? 'quantitative' : 'quantitative'),
+        themeTag: change.themeTag || payload.themeTag || (type === 'confidence.updated' ? '置信度变化'
+          : type === 'evidence.appended' ? '证据更新' : '关系变化'),
+        text: payload.title || payload.text?.slice(0, 80) || eventSummary(event, (id) => id)?.slice(0, 80) || type,
+        source: payload.sourceLabel || payload.url || '',
+      })
     }
-
-    /* 变化性质 */
-    const natRow = h('div', { class: 'builder-editor-row' },
-      h('span', { class: 'builder-editor-label' }, '变化性质'),
-      h('div', { class: 'builder-editor-opts' }))
-    for (const [k, m] of Object.entries(NATURE_META)) {
-      const btn = h('button', {
-        type: 'button',
-        class: `builder-editor-opt${k === sig.nature ? ' is-sel' : ''}`,
-        onclick: (e) => {
-          sig._editNat = k
-          natRow.querySelectorAll('button').forEach(b => b.classList.remove('is-sel'))
-          e.currentTarget.classList.add('is-sel')
-        },
-      }, `${m.icon} ${m.label}`)
-      natRow.querySelector('.builder-editor-opts').append(btn)
-    }
-
-    /* 主题标签 */
-    const tagInput = h('input', {
-      type: 'text', class: 'builder-editor-input',
-      value: sig.themeTag || '', placeholder: '输入或修改标签',
-      oninput: (e) => { sig._editTag = e.target.value },
-    })
-    const tagRow = h('div', { class: 'builder-editor-row' },
-      h('span', { class: 'builder-editor-label' }, '主题标签'),
-      tagInput)
-
-    /* 确认/取消 */
-    const actions = h('div', { class: 'builder-editor-actions' },
-      h('button', {
-        type: 'button', class: 'btn btn-sm',
-        onclick: () => toggleEditor(sig.id),
-      }, '取消'),
-      h('button', {
-        type: 'button', class: 'btn btn-sm btn-primary',
-        onclick: () => confirmEdit(sig),
-      }, '确认修正'))
-
-    editor.append(dirRow, natRow, tagRow, actions)
-    return editor
+    return evolutions.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
   }
 
-  const toggleEditor = (sigId) => {
-    const el = document.querySelector(`[data-editor="${sigId}"]`)
-    if (el) el.hidden = !el.hidden
+  /* 待处理收件箱 */
+  const renderInboxView = () => {
+    const wrap = h('div', { class: 'builder-inbox' },
+      h('div', { class: 'builder-inbox-head' },
+        h('div', { class: 'builder-inbox-title' }, h('span', {}, '待处理归因')),
+        h('div', { class: 'builder-inbox-sub' }, '系统从事件中抽取陈述，建议归入节点。确认后进入信号流。')),
+      h('div', { class: 'builder-inbox-list' },
+        h('div', { class: 'empty' },
+          h('div', { class: 'empty-mark' }, '✓'),
+          '暂无待处理归因', h('br', {}), '已全部确认'))
+    )
+    return wrap
   }
 
-  const acceptSignal = async (sig) => {
-    try {
-      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'accept' })
-      toast('已接受')
-      opts.onChanged?.()
-    } catch (e) {
-      toast('接受失败：' + (e.message || e), 'var(--danger)')
-    }
-  }
-
-  const confirmEdit = async (sig) => {
-    const change = {
-      direction: sig._editDir || sig.direction,
-      nature: sig._editNat || sig.nature,
-      themeTag: sig._editTag ?? sig.themeTag,
-    }
-    try {
-      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'correct', change })
-      toast('已修正')
-      opts.onChanged?.()
-    } catch (e) {
-      toast('修正失败：' + (e.message || e), 'var(--danger)')
-    }
-  }
-
-  /* 批量接受一组信号 */
-  const acceptGroup = async (group) => {
-    try {
-      for (const sig of group.items) {
-        await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'accept' })
-      }
-      toast(`已接受 ${group.items.length} 条`)
-      opts.onChanged?.()
-    } catch (e) {
-      toast('批量接受失败：' + (e.message || e), 'var(--danger)')
-    }
-  }
-
-  const toggleGroupExpand = (key) => {
-    const el = opts.attentionSec.querySelector(`[data-group="${key}"]`)
-    if (el) el.hidden = !el.hidden
-  }
-
-  /* 校正单条信号 */
-  const rejectSignal = async (sig) => {
-    try {
-      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'reject' })
-      toast('已驳回')
-      opts.onChanged?.()
-    } catch (e) {
-      toast('驳回失败：' + (e.message || e), 'var(--danger)')
-    }
-  }
-
-  renderReviewBench()
-
-  /* 已自动处理：折叠 */
-  const renderAutoProcessed = () => {
-    clear(opts.detailSec)
-    /* TODO: 从事件账本提取高置信自动处理的记录 */
-    const details = h('details', { class: 'builder-others-details' },
-      h('summary', { class: 'builder-others-summary' }, '已自动处理'),
-      h('p', { class: 'builder-note' }, '系统自动处理的高置信数据会在这里列出。'))
-    opts.detailSec.append(details)
-  }
-  renderAutoProcessed()
-
-  /* 节点结构：合并/拆分/重命名/归档（突出显示） */
-  const renderNodeStructure = () => {
-    const nodes = projectedNodes(viewState.projection).filter((n) => n.kind === 'viewpoint' || n.kind === 'claim')
-    clear(opts.othersSec)
-    if (!nodes.length) return
-    opts.othersSec.append(h('h2', { class: 'builder-section-title' }, `节点结构 · ${nodes.length}`))
-    const list = h('div', { class: 'builder-node-list' })
-    for (const node of nodes) {
-      list.append(h('div', { class: 'builder-node-row' },
-        h('span', { class: 'builder-node-title' }, node.title || '未命名'),
-        h('div', { class: 'builder-node-actions' },
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'merge') }, '合并'),
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'split') }, '拆分'),
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'rename') }, '重命名'),
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'archive') }, '归档'))))
-    }
-    opts.othersSec.append(list)
-  }
-  const structureOp = (node, op) => {
-    /* TODO: 结构操作对话框 */
-    toast(`节点操作：${op}（待实现）`)
-  }
-  renderNodeStructure()
-  /* 跳转：暂不支持信号定位，忽略 */
+  /* 渲染入口 */
+  renderSidebar()
+  renderMain()
   consumeBuilderJump(theme.id)
 
 }

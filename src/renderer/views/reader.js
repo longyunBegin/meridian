@@ -411,93 +411,149 @@ export function renderReaderView(theme, opts = {}) {
     stable: { icon: '→', label: '稳定', cls: 'is-flat' },
   }
 
+  /* 节点卡片：参考 demo，带迷你演化条（三层） */
+  const renderNodeCard = (node) => {
+    const dMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
+    const nMeta = NATURE_META[node.nature] || NATURE_META.quantitative
+    return h('div', {
+      class: 'node-card',
+      onclick: () => go('network', node.id),
+    },
+      h('div', { class: 'node-top' },
+        h('span', { class: 'node-dot', style: `background:${dMeta.color}` }),
+        h('span', { class: 'node-name' }, node.title),
+        h('span', { class: 'node-trend', style: `color:${dMeta.color}` },
+          `${dMeta.icon} ${dMeta.label}`)),
+      h('div', { class: 'node-state' }, node.state),
+      /* 三层标签行 */
+      h('div', { class: 'node-tags' },
+        h('span', { class: 'node-theme-tag', style: `color:${dMeta.color}` }, node.themeTag || ''),
+        h('span', { class: 'node-nature' }, `${nMeta.icon} ${nMeta.label}`)),
+      node.latest
+        ? h('div', { class: 'node-latest' },
+            h('span', { class: 'label' }, '最近：'),
+            node.latest)
+        : null)
+  }
+
   const render = (projection, events) => {
     const model = deriveReaderModel(projection, events)
     article.innerHTML = ''
     if (model.empty) { article.append(renderEmpty(theme, go)); return }
 
-    /* 顶部：一句话 + 方向计数 */
-    const { up, down, flat } = model.directionCounts
-    const hero = h('header', { class: 'rdr-hero' },
-      h('p', { class: 'rdr-kicker' }, `主题 · ${theme?.name || ''}`),
-      h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题'),
-      model.oneLiner
-        ? h('p', { class: 'rdr-oneliner' }, model.oneLiner.conclusion)
-        : h('p', { class: 'rdr-oneliner is-hint' }, '论证链还在生长中，暂不足以提炼一句话结论。'),
-      h('div', { class: 'rdr-dir-counts' },
-        h('span', { class: 'rdr-dir-count is-up' }, '↑ 上升 ', h('b', {}, String(up))),
-        h('span', { class: 'rdr-dir-count is-down' }, '↓ 承压 ', h('b', {}, String(down))),
-        h('span', { class: 'rdr-dir-count is-flat' }, '→ 稳定 ', h('b', {}, String(flat)))))
+    const inner = h('div', { class: 'reader-inner' })
 
-    /* 第一问：现在是什么状态 — 节点按方向排序 */
-    const stateSection = h('section', { class: 'rdr-section' },
-      h('h2', { class: 'rdr-section-title' }, '现在是什么状态'))
-    for (const dir of ['improving', 'declining', 'stable']) {
-      const nodes = model.nodesByDirection[dir]
-      if (!nodes.length) continue
-      const meta = DIR_META[dir]
-      const group = h('div', { class: 'rdr-dir-group' },
-        h('h3', { class: `rdr-dir-label ${meta.cls}` }, `${meta.icon} ${meta.label} · ${nodes.length}`))
-      for (const node of nodes) {
-        /* 三层模型：themeTag 大字（direction 颜色）+ nature 小字 */
-        const natMeta = NATURE_META[node.nature] || NATURE_META.quantitative
-        const dirMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
-        group.append(
-          h('button', {
-            type: 'button', class: 'rdr-node-card',
+    /* Hero：kicker + 标题 + 一句话 + 趋势概览（三层） */
+    const { improving, declining, stable } = model.directionCounts
+    const hero = h('div', { class: 'hero' },
+      h('div', { class: 'hero-kicker' }, `主题 · ${theme?.name || ''}`),
+      h('h1', { class: 'hero-title' }, theme?.name || '未命名主题'),
+      h('p', { class: 'hero-line' },
+        model.oneLiner ? model.oneLiner.conclusion : '论证链还在生长中，暂不足以提炼一句话结论。'),
+      h('div', { class: 'trend-overview' },
+        h('div', { class: 'trend-group' },
+          h('span', { class: 'icon', style: 'background:rgba(48,209,88,.12);color:var(--green)' }, '↑'),
+          h('span', { class: 'label' }, '好转', h('b', {}, String(improving)))),
+        h('div', { class: 'trend-group' },
+          h('span', { class: 'icon', style: 'background:rgba(255,59,48,.1);color:var(--red)' }, '↓'),
+          h('span', { class: 'label' }, '恶化', h('b', {}, String(declining)))),
+        h('div', { class: 'trend-group' },
+          h('span', { class: 'icon', style: 'background:rgba(29,29,31,.06);color:var(--text-3)' }, '→'),
+          h('span', { class: 'label' }, '稳定', h('b', {}, String(stable))))))
+    inner.append(hero)
+
+    /* 阅读时间 */
+    inner.append(
+      h('div', { class: 'read-time' },
+        h('span', {}, '◷'),
+        h('span', {}, '阅读时间约 ', h('b', {}, '45 秒'), ' · 共 3 个模块'),
+        h('span', { class: 'spacer' }),
+        h('span', { class: 'hint' }, '向下滑动继续')))
+
+    /* 卡片 1：当前状态 */
+    const card1 = h('div', { class: 'card' },
+      h('div', { class: 'card-head' },
+        h('span', { class: 'card-num' }, '1'),
+        h('span', { class: 'card-title' }, '当前状态'),
+        h('span', { class: 'card-time' }, '25 秒')))
+    const card1Body = h('div', {})
+    /* 按方向排序：好转 → 恶化 → 稳定 */
+    const allNodes = [
+      ...model.nodesByDirection.improving,
+      ...model.nodesByDirection.declining,
+      ...model.nodesByDirection.stable,
+    ]
+    for (const node of allNodes) {
+      card1Body.append(renderNodeCard(node))
+    }
+    card1.append(card1Body)
+    inner.append(card1)
+
+    /* 卡片 2：最近拐点 */
+    const card2 = h('div', { class: 'card' },
+      h('div', { class: 'card-head' },
+        h('span', { class: 'card-num' }, '2'),
+        h('span', { class: 'card-title' }, '最近拐点'),
+        h('span', { class: 'card-time' }, '15 秒')))
+    const turnList = h('div', { class: 'turning-list' })
+    if (!model.turningPoints.length) {
+      turnList.append(h('p', { class: 'rdr-note' }, '最近 30 天没有显著的方向变化。'))
+    } else {
+      for (const tp of model.turningPoints) {
+        const dMeta = DIRECTION_META[tp.direction] || DIRECTION_META.stable
+        const nMeta = NATURE_META[tp.nature] || NATURE_META.quantitative
+        turnList.append(
+          h('div', { class: 'turning' },
+            h('div', { class: 'turning-date' },
+              h('span', {}, tp.date),
+              h('span', { class: 'turning-type', style: `color:${dMeta.color}` },
+                `${nMeta.icon} ${tp.themeTag || ''}`)),
+            h('div', { class: 'turning-text' }, tp.text),
+            h('div', { class: 'turning-nodes' },
+              ...(tp.nodeTitles || []).map(t =>
+                h('span', { class: 'turning-pill' },
+                  h('span', { class: 'nd', style: `background:${dMeta.color}` }), t)))))
+      }
+    }
+    card2.append(turnList)
+    inner.append(card2)
+
+    /* 卡片 3：深入某一个方向 */
+    const nextCard = h('div', { class: 'next-card' },
+      h('div', { class: 'card-head' },
+        h('span', { class: 'card-num' }, '3'),
+        h('span', { class: 'card-title' }, '深入某一个方向'),
+        h('span', { class: 'card-time' }, '5 秒')),
+      h('div', { class: 'next-body' },
+        '点击任意节点，查看它', h('b', {}, '随时间演化的完整过程'),
+        '——不是简单的上下，而是包括量变、质变、认识更新、结构变化等多种形态。'),
+      h('div', { class: 'node-quick-list' },
+        ...allNodes.map(node => {
+          const dMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
+          return h('div', {
+            class: 'node-quick',
             onclick: () => go('network', node.id),
           },
-            h('div', { class: 'rdr-node-top' },
-              h('span', { class: `rdr-dir-tag ${meta.cls}` }, `${meta.icon} ${meta.label}`),
-              h('span', { class: 'rdr-node-title' }, node.title)),
-            h('div', { class: 'rdr-node-tags' },
-              h('span', { class: 'rdr-theme-tag', style: `color:${dirMeta.color}` }, node.themeTag || ''),
-              h('span', { class: 'rdr-nature-tag' }, `${natMeta.icon} ${natMeta.label}`)),
-            h('p', { class: 'rdr-node-state' }, node.state),
-            node.latest
-              ? h('p', { class: 'rdr-node-latest' },
-                  h('span', { class: 'rdr-latest-label' }, '最近：'),
-                  node.latest,
-                  node.latestSrc ? h('span', { class: 'rdr-latest-src' }, ` · ${node.latestSrc}`) : null)
-              : null))
-      }
-      stateSection.append(group)
-    }
+            h('div', { class: 'node-quick-top' },
+              h('span', { class: 'node-dot', style: `background:${dMeta.color}` }),
+              h('span', { class: 'node-quick-name' }, node.title),
+              h('span', { class: 'node-trend', style: `color:${dMeta.color}` },
+                `${dMeta.icon} ${dMeta.label}`),
+              h('span', { class: 'node-quick-arrow' }, '→')),
+            h('div', { class: 'node-quick-state' }, node.state))
+        })),
+      h('div', { class: 'next-chips' },
+        h('span', { class: 'chip', onclick: () => go('builder') }, '进入建设者视图')))
+    inner.append(nextCard)
 
-    /* 第二问：最近有没有拐点 */
-    const turnSection = h('section', { class: 'rdr-section' },
-      h('h2', { class: 'rdr-section-title' }, '最近有没有拐点'))
-    if (!model.turningPoints.length) {
-      turnSection.append(h('p', { class: 'rdr-note' }, '最近 30 天没有显著的方向变化。'))
-    } else {
-      const list = h('div', { class: 'rdr-turn-list' })
-      for (const tp of model.turningPoints) {
-        /* 三层模型：颜色由 direction，图标由 nature，显示 themeTag */
-        const dirMeta = DIRECTION_META[tp.direction] || DIRECTION_META.stable
-        const natMeta = NATURE_META[tp.nature] || NATURE_META.quantitative
-        list.append(
-          h('button', {
-            type: 'button', class: 'rdr-turn-card',
-            onclick: () => { if (tp.nodeIds[0]) go('network', tp.nodeIds[0]) },
-          },
-            h('div', { class: 'rdr-turn-top' },
-              h('span', { class: 'rdr-turn-date' }, tp.date),
-              h('span', { class: 'rdr-turn-tag', style: `color:${dirMeta.color}` }, tp.themeTag || ''),
-              h('span', { class: 'rdr-turn-nature' }, `${natMeta.icon} ${natMeta.label}`)),
-            h('p', { class: 'rdr-turn-text' }, tp.text),
-            tp.nodeTitles?.length
-              ? h('p', { class: 'rdr-turn-nodes' }, '影响：' + tp.nodeTitles.join('、'))
-              : null))
-      }
-      turnSection.append(list)
-    }
+    /* 尾部 */
+    inner.append(
+      h('div', { class: 'tail' },
+        h('div', { class: 'tail-mark' }, '✓'),
+        '已读完当前核心', h('br', {}),
+        '数据的增删改只发生在建设者模式。'))
 
-    /* 尾声：去建设者深入 */
-    const tail = h('footer', { class: 'rdr-tail' },
-      h('p', { class: 'rdr-tail-sub' }, '想看每一条数据的完整演化？去建设者视图。'),
-      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '进入建设者 →'))
-
-    article.append(hero, stateSection, turnSection, tail)
+    article.append(inner)
   }
 
   // 异步加载投影（与建设者视图同一数据源）
