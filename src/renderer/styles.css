@@ -3430,6 +3430,22 @@ body.tauri-macos .app {
 .builder-others-list { display:flex; flex-direction:column; gap:4px; margin-top:12px; }
 .builder-others-item { display:flex; align-items:center; gap:10px; background:none; border:none; padding:8px 4px; font-size:.875rem; color:var(--text-1); cursor:pointer; text-align:left; border-radius:8px; }
 .builder-others-item:hover { background:var(--surface-1); }
+/* 变化流：自动化结果单页呈现，清晰简洁 */
+.builder-feed { display:flex; flex-direction:column; gap:10px; }
+.builder-feed-card { display:block; width:100%; text-align:left; background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:14px 16px; cursor:pointer; transition:border-color .15s; }
+.builder-feed-card:hover { border-color:var(--text-3); }
+.builder-feed-card.is-selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.builder-feed-top { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.builder-feed-time { font-size:.75rem; color:var(--text-3); }
+.builder-feed-action { font-size:.75rem; font-weight:600; color:var(--accent); }
+.builder-feed-title { font-size:.9375rem; font-weight:600; line-height:1.4; margin:0 0 4px; }
+.builder-feed-conf { display:flex; align-items:center; gap:6px; font-size:.8125rem; color:var(--text-2); margin-top:4px; }
+.builder-feed-arrow { color:var(--text-3); }
+.builder-feed-conf .is-up { color:var(--ok); font-weight:600; }
+.builder-feed-conf .is-down { color:var(--danger); font-weight:600; }
+.builder-feed-src { font-size:.75rem; color:var(--accent); margin-top:4px; display:inline-block; }
+.builder-feed-detail { margin:-4px 0 8px; padding:16px; background:var(--surface-0); border:1px solid var(--border); border-radius:12px; }
+.builder-empty { color:var(--text-2); font-size:.875rem; line-height:1.6; }
 /* 内联归因：原地展开，不弹框 */
 .inline-attr-form { display:flex; flex-direction:column; gap:10px; margin-top:16px; padding:16px; background:var(--surface-1); border:1px solid var(--border); border-radius:12px; animation:cogFadeIn .18s ease-out; }
 .inline-attr-form .txt { width:100%; }

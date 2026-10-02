@@ -527,6 +527,14 @@ function fmtDate(value) {
   return Number.isNaN(date.getTime()) ? s.slice(0, 10) : date.toLocaleDateString('zh-CN')
 }
 
+function fmtDateTime(value) {
+  const s = String(value || '')
+  if (!s) return ''
+  const date = new Date(s)
+  if (Number.isNaN(date.getTime())) return s.slice(0, 16)
+  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 async function loadConcept(theme, ledgerPane, opts) {
   const [proj, evRes] = opts.initialProjection
     ? [opts.initialProjection, { events: opts.initialEvents || [] }]
@@ -573,69 +581,100 @@ async function loadConcept(theme, ledgerPane, opts) {
     initialState: viewState,
     verifiedEvents,
   })
-  /* ---- 单栏聚焦：需要关注置顶，详情是主舞台，其他折叠 ---- */
+  /* ---- 变化流：自动化结果单页呈现，按时间倒序，一处展示 ---- */
   let selectedPropId = null
   const selectProposition = (nodeId) => {
     selectedPropId = nodeId || null
-    /* 更新关注卡片的选中态 */
-    for (const el of opts.attentionSec.querySelectorAll('[data-prop-id]')) {
-      el.classList.toggle('is-selected', el.dataset.propId === selectedPropId)
-    }
-    const node = selectedPropId
-      ? projectedNodes(viewState.projection).find((n) => n.id === selectedPropId)
-      : null
-    renderPropDetail(opts.detailSec, theme, viewState, selectedPropId, {
-      onChanged: opts.onChanged,
-      onOpenAttribution: (rel) => openInlineAttribution(theme, node, rel, opts.detailSec, { onChanged: opts.onChanged }),
-    })
-    if (node) {
-      opts.detailSec.append(renderNodeLifecycleControls(theme, node, {
-        onChanged: opts.onChanged,
-      }))
-      /* 滚动到详情 */
-      opts.detailSec.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
+    renderChangeFeed()
   }
-  /* 需要关注：待确认 + 有争议，卡片式，一键进入 */
-  const renderAttention = () => {
-    const { pending, disputed } = viewpointGroups(viewState)
-    const items = [...pending, ...disputed].slice(0, 5)
+  /* 从事件账本提取变化：证据/置信度/新命题/新关系 */
+  const buildChangeItems = () => {
+    const items = []
+    const nodes = projectedNodes(viewState.projection)
+    const nodeById = new Map(nodes.map((n) => [n.id, n]))
+    for (const event of (verifiedEvents || []).slice().reverse()) {
+      const type = event?.type
+      if (!['evidence.appended', 'confidence.updated', 'claim.created', 'relation.declared'].includes(type)) continue
+      const payload = event?.payload || {}
+      const nodeId = payload.nodeId || payload.claimId || payload.targetId
+      const node = nodeId ? nodeById.get(nodeId) : null
+      items.push({ event, type, payload, node, nodeId })
+      if (items.length >= 30) break
+    }
+    return items
+  }
+  const renderChangeFeed = () => {
     clear(opts.attentionSec)
-    if (!items.length) return
-    opts.attentionSec.append(h('h2', { class: 'builder-section-title' }, `需要关注 · ${pending.length + disputed.length}`))
-    const cards = h('div', { class: 'builder-attention-cards' })
-    for (const node of items) {
-      const { supports, against } = evidenceForNode(viewState, node.id)
+    clear(opts.detailSec)
+    const items = buildChangeItems()
+    /* 标题 */
+    opts.attentionSec.append(h('h2', { class: 'builder-section-title' }, items.length ? `变化 · ${items.length}` : '变化'))
+    if (!items.length) {
+      opts.attentionSec.append(h('p', { class: 'builder-empty' }, '暂无变化。外部信息进入后，自动化的提取与佐证结果会显示在这里。'))
+      return
+    }
+    const feed = h('div', { class: 'builder-feed' })
+    for (const { event, type, payload, node, nodeId } of items) {
+      const time = fmtDateTime(event?.at || event?.timestamp)
+      let actionText = '', confDelta = null, sourceUrl = null
+      if (type === 'evidence.appended') {
+        const rel = payload.rel || payload.relation
+        actionText = rel === 'contradicts' ? '新证据反驳' : '新证据支持'
+        sourceUrl = payload.url || payload.sourceUrl || null
+      } else if (type === 'confidence.updated') {
+        const before = Math.round((payload.before ?? payload.oldConfidence ?? 0) * 100)
+        const after = Math.round((payload.after ?? payload.newConfidence ?? 0) * 100)
+        actionText = '置信度更新'
+        confDelta = { before, after }
+      } else if (type === 'claim.created') {
+        actionText = '新命题'
+      } else if (type === 'relation.declared') {
+        const rel = payload.rel
+        actionText = rel === 'contradicts' ? '建立反驳关系' : rel === 'derives' ? '建立推导关系' : '建立支持关系'
+      }
+      const isSelected = nodeId && nodeId === selectedPropId
       const card = h('button', {
         type: 'button',
-        class: `builder-attention-card is-${node.status || 'pending'}${node.id === selectedPropId ? ' is-selected' : ''}`,
-        'data-prop-id': node.id,
-        onclick: () => selectProposition(node.id),
+        class: `builder-feed-card${isSelected ? ' is-selected' : ''}`,
+        onclick: () => selectProposition(isSelected ? null : nodeId),
       },
-        h('div', { class: 'builder-attention-top' },
-          h('span', { class: `cog-wb-meta-pill is-${node.status || 'pending'}` }, PROP_STATUS_LABEL[node.status] || '待确认'),
-          confidenceBar(node.confidence, { showLabel: false })),
-        h('div', { class: 'builder-attention-title' }, node.title || '未命名命题'),
-        h('div', { class: 'builder-attention-meta' },
-          h('span', { class: 'is-support' }, `${supports.length} 支持`),
-          h('span', {}, '·'),
-          h('span', { class: 'is-against' }, `${against.length} 反驳`)))
-      cards.append(card)
+        h('div', { class: 'builder-feed-top' },
+          h('span', { class: 'builder-feed-time' }, time),
+          h('span', { class: 'builder-feed-action' }, actionText)),
+        h('div', { class: 'builder-feed-title' }, node?.title || payload.title || '未命名命题'),
+        confDelta
+          ? h('div', { class: 'builder-feed-conf' },
+              h('span', {}, `${confDelta.before}%`),
+              h('span', { class: 'builder-feed-arrow' }, '→'),
+              h('span', { class: confDelta.after > confDelta.before ? 'is-up' : 'is-down' }, `${confDelta.after}%`))
+          : null,
+        sourceUrl
+          ? h('span', { class: 'builder-feed-src', onclick: (e) => { e.stopPropagation(); window.open(sourceUrl, '_blank', 'noopener') } }, '来源 ↗')
+          : null)
+      feed.append(card)
+      /* 选中时内联展开详情 */
+      if (isSelected && node) {
+        const detailWrap = h('div', { class: 'builder-feed-detail' })
+        renderPropDetail(detailWrap, theme, viewState, nodeId, {
+          onChanged: opts.onChanged,
+          onOpenAttribution: (rel) => openInlineAttribution(theme, node, rel, detailWrap, { onChanged: opts.onChanged }),
+        })
+        feed.append(detailWrap)
+      }
     }
-    opts.attentionSec.append(cards)
+    opts.attentionSec.append(feed)
   }
-  renderAttention()
-  /* 其他命题：已建立 + 已归档，折叠 */
+  renderChangeFeed()
+  /* 全部命题：折叠 */
   const renderOthers = () => {
-    const { established, archived } = viewpointGroups(viewState)
-    const items = [...established, ...archived]
+    const nodes = projectedNodes(viewState.projection).filter((n) => n.kind === 'viewpoint' || n.kind === 'claim')
     clear(opts.othersSec)
-    if (!items.length) return
+    if (!nodes.length) return
     const details = h('details', { class: 'builder-others-details' },
-      h('summary', { class: 'builder-others-summary' }, `其他命题 · ${items.length}`),
+      h('summary', { class: 'builder-others-summary' }, `全部命题 · ${nodes.length}`),
       h('div', { class: 'builder-others-list' }))
     const list = details.querySelector('.builder-others-list')
-    for (const node of items) {
+    for (const node of nodes) {
       list.append(h('button', {
         type: 'button', class: 'builder-others-item',
         onclick: () => selectProposition(node.id),
@@ -646,13 +685,6 @@ async function loadConcept(theme, ledgerPane, opts) {
     opts.othersSec.append(details)
   }
   renderOthers()
-  /* 自动选中首个需要关注的 */
-  const autoSelectFirst = () => {
-    if (selectedPropId) return
-    const { pending, disputed, established } = viewpointGroups(viewState)
-    const first = pending[0] || disputed[0] || established[0]
-    if (first) selectProposition(first.id)
-  }
   /* 工具栏：添加节点 / 补充证据 */
   if (opts.addNodeBtn) {
     opts.addNodeBtn.disabled = false
@@ -673,9 +705,6 @@ async function loadConcept(theme, ledgerPane, opts) {
   if (pendingBuilderJump?.nodeId) {
     const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
     if (exists) queueMicrotask(() => selectProposition(pendingBuilderJump.nodeId))
-    else autoSelectFirst()
-  } else {
-    autoSelectFirst()
   }
 
 }
