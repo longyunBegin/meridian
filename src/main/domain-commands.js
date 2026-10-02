@@ -40,7 +40,7 @@ import {
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
   createProjectedNode, renameProjectedNode, invalidateProjectedNode,
 } from './chain-projector.js'
-import { getEvents as getChainEvents, verifyChain as verifyThemeChain } from './chain-events.js'
+import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
@@ -633,6 +633,18 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))
   commands.register('chain:declareRelation', (themeId, fromNodeId, toNodeId, rel) => ({ ok: true, event: declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) }))
   commands.register('chain:reviewRelation', (themeId, eventId, decision, reason) => ({ ok: true, event: reviewProjectedRelation(themeId, eventId, decision, reason) }))
+  commands.register('chain:confirmSignal', (themeId, signalEventId, decision, change = null, reason = '') => {
+    const payload = { signalEventId, decision, reason }
+    if (decision !== 'rejected' && change) {
+      payload.change = {
+        direction: change.direction,
+        nature: change.nature,
+        themeTag: change.themeTag,
+      }
+    }
+    const event = appendChainEvent(themeId, { type: 'signal.reviewed', payload, actor: 'user' })
+    return { ok: true, event }
+  })
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {

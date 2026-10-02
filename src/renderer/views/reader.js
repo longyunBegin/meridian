@@ -185,6 +185,36 @@ export function deriveReaderModel(projection = {}, events = []) {
     const latestEvent = stat.latestEv || change?.latest || null
     const nature = latestEvent ? natureFromEvent(latestEvent) : 'quantitative'
     const themeTag = latestEvent ? themeTagFromEvent(latestEvent) : '暂无标签'
+    /* 演化时间线：该节点相关的事件（供 mini-evo 用） */
+    const evolution = []
+    for (const event of (Array.isArray(events) ? events : [])) {
+      const p = event?.payload || {}
+      const eid = p.nodeId || p.claimId || p.targetId
+      if (eid !== node.id) continue
+      const etype = event?.type || ''
+      if (!['confidence.updated', 'evidence.appended', 'relation.declared', 'claim.created'].includes(etype)) continue
+      const ch = p.change || {}
+      let edir = ch.direction || null
+      if (!edir) {
+        if (etype === 'confidence.updated') {
+          const before = p.before ?? p.oldConfidence ?? 0
+          const after = p.after ?? p.newConfidence ?? 0
+          edir = after > before ? 'improving' : after < before ? 'declining' : 'stable'
+        } else if (etype === 'evidence.appended') {
+          edir = (p.rel === 'contradicts') ? 'declining' : 'improving'
+        } else {
+          edir = 'stable'
+        }
+      }
+      evolution.push({
+        date: new Date(event?.at || event?.timestamp || 0).toISOString().slice(0, 10),
+        direction: edir,
+        nature: ch.nature || natureFromEvent(event),
+        themeTag: ch.themeTag || themeTagFromEvent(event),
+      })
+      if (evolution.length >= 12) break
+    }
+    evolution.sort((a, b) => a.date < b.date ? -1 : 1)
     model.nodesByDirection[direction].push({
       id: node.id,
       title: titleOf(node),
@@ -195,6 +225,7 @@ export function deriveReaderModel(projection = {}, events = []) {
       latest,
       latestSrc,
       confidence: conf,
+      evolution,
     })
     model.directionCounts[direction]++
   }
@@ -401,39 +432,54 @@ function renderRecentChanges(model) {
 }
 
 export function renderReaderView(theme, opts = {}) {
-  const article = h('article', { class: 'rdr', 'aria-label': `${theme?.name || '主题'} · 阅读视图` },
+  /* 最外层：demo 样式作用域 */
+  const root = h('div', { class: 'meridian-theme' })
+  const article = h('article', { class: 'reader-main', 'aria-label': `${theme?.name || '主题'} · 阅读视图` },
     h('p', { class: 'rdr-loading' }, '正在从当前投影生成阅读视图…'))
+  root.append(article)
   const go = (kind, nodeId) => opts.onOpenBuilder?.(kind, nodeId)
 
-  const DIR_META = {
-    improving: { icon: '↑', label: '好转', cls: 'is-up' },
-    declining: { icon: '↓', label: '恶化', cls: 'is-down' },
-    stable: { icon: '→', label: '稳定', cls: 'is-flat' },
-  }
+  /* 三层 → 颜色/图标：颜色由 direction，图标由 nature */
+  const dirColor = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).color
+  const dirIcon = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).icon
+  const dirLabel = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).label
+  const natIcon = (n) => (NATURE_META[n] || NATURE_META.quantitative).icon
 
-  /* 节点卡片：参考 demo，带迷你演化条（三层） */
+  /* 节点卡片：1:1 对齐 demo renderNodeCard */
   const renderNodeCard = (node) => {
-    const dMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
-    const nMeta = NATURE_META[node.nature] || NATURE_META.quantitative
+    const evo = Array.isArray(node.evolution) && node.evolution.length ? node.evolution : [{
+      date: '', direction: node.direction || 'stable',
+      nature: node.nature || 'quantitative', themeTag: node.themeTag || '',
+    }]
     return h('div', {
       class: 'node-card',
+      'data-node': node.id,
       onclick: () => go('network', node.id),
     },
       h('div', { class: 'node-top' },
-        h('span', { class: 'node-dot', style: `background:${dMeta.color}` }),
+        h('span', { class: 'node-dot', style: `background:${dirColor(node.direction)}` }),
         h('span', { class: 'node-name' }, node.title),
-        h('span', { class: 'node-trend', style: `color:${dMeta.color}` },
-          `${dMeta.icon} ${dMeta.label}`)),
+        /* trend 标签：themeTag（direction 颜色）+ nature 图标小字 */
+        h('span', { class: 'node-trend', style: `color:${dirColor(node.direction)}` },
+          `${natIcon(node.nature)} ${node.themeTag || dirLabel(node.direction)}`)),
       h('div', { class: 'node-state' }, node.state),
-      /* 三层标签行 */
-      h('div', { class: 'node-tags' },
-        h('span', { class: 'node-theme-tag', style: `color:${dMeta.color}` }, node.themeTag || ''),
-        h('span', { class: 'node-nature' }, `${nMeta.icon} ${nMeta.label}`)),
-      node.latest
-        ? h('div', { class: 'node-latest' },
-            h('span', { class: 'label' }, '最近：'),
-            node.latest)
-        : null)
+      h('div', {},
+        h('div', { class: 'mini-evo' },
+          h('div', { class: 'mini-evo-track' },
+            ...evo.flatMap((e, i) => {
+              const isLast = i === evo.length - 1
+              const cls = ['mini-point', isLast ? 'latest' : ''].filter(Boolean).join(' ')
+              const point = h('span', {
+                class: cls,
+                style: `color:${dirColor(e.direction)}`,
+                title: `${e.date} · ${e.themeTag || ''}`,
+              }, natIcon(e.nature))
+              return i < evo.length - 1 ? [point, h('span', { class: 'spacer' })] : [point]
+            }))),
+        h('div', { class: 'mini-evo-meta' },
+          h('span', {}, (evo[0].date || '').slice(5)),
+          h('span', {}, `${evo.length} 次变化`),
+          h('span', {}, (evo[evo.length - 1].date || '').slice(5)))))
   }
 
   const render = (projection, events) => {
@@ -443,24 +489,24 @@ export function renderReaderView(theme, opts = {}) {
 
     const inner = h('div', { class: 'reader-inner' })
 
-    /* Hero：kicker + 标题 + 一句话 + 趋势概览（三层） */
+    /* Hero */
     const { improving, declining, stable } = model.directionCounts
-    const hero = h('div', { class: 'hero' },
-      h('div', { class: 'hero-kicker' }, `主题 · ${theme?.name || ''}`),
-      h('h1', { class: 'hero-title' }, theme?.name || '未命名主题'),
-      h('p', { class: 'hero-line' },
-        model.oneLiner ? model.oneLiner.conclusion : '论证链还在生长中，暂不足以提炼一句话结论。'),
-      h('div', { class: 'trend-overview' },
-        h('div', { class: 'trend-group' },
-          h('span', { class: 'icon', style: 'background:rgba(48,209,88,.12);color:var(--green)' }, '↑'),
-          h('span', { class: 'label' }, '好转', h('b', {}, String(improving)))),
-        h('div', { class: 'trend-group' },
-          h('span', { class: 'icon', style: 'background:rgba(255,59,48,.1);color:var(--red)' }, '↓'),
-          h('span', { class: 'label' }, '恶化', h('b', {}, String(declining)))),
-        h('div', { class: 'trend-group' },
-          h('span', { class: 'icon', style: 'background:rgba(29,29,31,.06);color:var(--text-3)' }, '→'),
-          h('span', { class: 'label' }, '稳定', h('b', {}, String(stable))))))
-    inner.append(hero)
+    inner.append(
+      h('div', { class: 'hero' },
+        h('div', { class: 'hero-kicker' }, `主题 · ${theme?.name || ''}`),
+        h('h1', { class: 'hero-title' }, theme?.name || '未命名主题'),
+        h('p', { class: 'hero-line' },
+          model.oneLiner ? model.oneLiner.conclusion : '论证链还在生长中，暂不足以提炼一句话结论。'),
+        h('div', { class: 'trend-overview' },
+          h('div', { class: 'trend-group' },
+            h('span', { class: 'icon', style: 'background:rgba(48,209,88,.12);color:var(--green)' }, '↑'),
+            h('span', { class: 'label' }, '好转', h('b', {}, String(improving)))),
+          h('div', { class: 'trend-group' },
+            h('span', { class: 'icon', style: 'background:rgba(255,59,48,.1);color:var(--red)' }, '↓'),
+            h('span', { class: 'label' }, '恶化', h('b', {}, String(declining)))),
+          h('div', { class: 'trend-group' },
+            h('span', { class: 'icon', style: 'background:rgba(29,29,31,.06);color:var(--text-3)' }, '→'),
+            h('span', { class: 'label' }, '稳定', h('b', {}, String(stable)))))))
 
     /* 阅读时间 */
     inner.append(
@@ -471,80 +517,81 @@ export function renderReaderView(theme, opts = {}) {
         h('span', { class: 'hint' }, '向下滑动继续')))
 
     /* 卡片 1：当前状态 */
-    const card1 = h('div', { class: 'card' },
-      h('div', { class: 'card-head' },
-        h('span', { class: 'card-num' }, '1'),
-        h('span', { class: 'card-title' }, '当前状态'),
-        h('span', { class: 'card-time' }, '25 秒')))
-    const card1Body = h('div', {})
-    /* 按方向排序：好转 → 恶化 → 稳定 */
     const allNodes = [
       ...model.nodesByDirection.improving,
       ...model.nodesByDirection.declining,
       ...model.nodesByDirection.stable,
     ]
-    for (const node of allNodes) {
-      card1Body.append(renderNodeCard(node))
-    }
-    card1.append(card1Body)
+    const card1 = h('div', { class: 'card' },
+      h('div', { class: 'card-head' },
+        h('span', { class: 'card-num' }, '1'),
+        h('span', { class: 'card-title' }, '当前状态'),
+        h('span', { class: 'card-time' }, '25 秒')),
+      h('div', {}, ...allNodes.map(renderNodeCard)))
     inner.append(card1)
 
     /* 卡片 2：最近拐点 */
-    const card2 = h('div', { class: 'card' },
-      h('div', { class: 'card-head' },
-        h('span', { class: 'card-num' }, '2'),
-        h('span', { class: 'card-title' }, '最近拐点'),
-        h('span', { class: 'card-time' }, '15 秒')))
     const turnList = h('div', { class: 'turning-list' })
     if (!model.turningPoints.length) {
-      turnList.append(h('p', { class: 'rdr-note' }, '最近 30 天没有显著的方向变化。'))
+      turnList.append(h('div', { class: 'turning' },
+        h('div', { class: 'turning-text' }, '最近 30 天没有显著的方向变化。')))
     } else {
       for (const tp of model.turningPoints) {
-        const dMeta = DIRECTION_META[tp.direction] || DIRECTION_META.stable
-        const nMeta = NATURE_META[tp.nature] || NATURE_META.quantitative
         turnList.append(
           h('div', { class: 'turning' },
             h('div', { class: 'turning-date' },
-              h('span', {}, tp.date),
-              h('span', { class: 'turning-type', style: `color:${dMeta.color}` },
-                `${nMeta.icon} ${tp.themeTag || ''}`)),
+              h('span', {}, tp.date || ''),
+              /* type 标签：themeTag + nature 图标，direction 颜色 */
+              h('span', { class: 'turning-type', style: `color:${dirColor(tp.direction)}` },
+                `${natIcon(tp.nature)} ${tp.themeTag || ''}`)),
             h('div', { class: 'turning-text' }, tp.text),
             h('div', { class: 'turning-nodes' },
               ...(tp.nodeTitles || []).map(t =>
                 h('span', { class: 'turning-pill' },
-                  h('span', { class: 'nd', style: `background:${dMeta.color}` }), t)))))
+                  h('span', { class: 'nd', style: `background:${dirColor(tp.direction)}` }), t)))))
       }
     }
-    card2.append(turnList)
-    inner.append(card2)
+    inner.append(
+      h('div', { class: 'card' },
+        h('div', { class: 'card-head' },
+          h('span', { class: 'card-num' }, '2'),
+          h('span', { class: 'card-title' }, '最近拐点'),
+          h('span', { class: 'card-time' }, '15 秒')),
+        turnList))
 
     /* 卡片 3：深入某一个方向 */
-    const nextCard = h('div', { class: 'next-card' },
-      h('div', { class: 'card-head' },
-        h('span', { class: 'card-num' }, '3'),
-        h('span', { class: 'card-title' }, '深入某一个方向'),
-        h('span', { class: 'card-time' }, '5 秒')),
-      h('div', { class: 'next-body' },
-        '点击任意节点，查看它', h('b', {}, '随时间演化的完整过程'),
-        '——不是简单的上下，而是包括量变、质变、认识更新、结构变化等多种形态。'),
-      h('div', { class: 'node-quick-list' },
-        ...allNodes.map(node => {
-          const dMeta = DIRECTION_META[node.direction] || DIRECTION_META.stable
-          return h('div', {
-            class: 'node-quick',
-            onclick: () => go('network', node.id),
-          },
-            h('div', { class: 'node-quick-top' },
-              h('span', { class: 'node-dot', style: `background:${dMeta.color}` }),
-              h('span', { class: 'node-quick-name' }, node.title),
-              h('span', { class: 'node-trend', style: `color:${dMeta.color}` },
-                `${dMeta.icon} ${dMeta.label}`),
-              h('span', { class: 'node-quick-arrow' }, '→')),
-            h('div', { class: 'node-quick-state' }, node.state))
-        })),
-      h('div', { class: 'next-chips' },
-        h('span', { class: 'chip', onclick: () => go('builder') }, '进入建设者视图')))
-    inner.append(nextCard)
+    inner.append(
+      h('div', { class: 'next-card' },
+        h('div', { class: 'card-head' },
+          h('span', { class: 'card-num' }, '3'),
+          h('span', { class: 'card-title' }, '深入某一个方向'),
+          h('span', { class: 'card-time' }, '5 秒')),
+        h('div', { class: 'next-body' },
+          '点击任意节点，查看它', h('b', {}, '随时间演化的完整过程'),
+          '——不是简单的上下，而是包括量变、质变、认识更新、结构变化等多种形态。'),
+        h('div', { class: 'node-quick-list' },
+          ...allNodes.map((node) => {
+            const evoLen = Array.isArray(node.evolution) ? node.evolution.length : 0
+            const lastDate = evoLen ? (node.evolution[evoLen - 1].date || '') : ''
+            return h('div', {
+              class: 'node-quick',
+              'data-goto-node': node.id,
+              onclick: () => go('network', node.id),
+            },
+              h('div', { class: 'node-quick-top' },
+                h('span', { class: 'node-dot', style: `background:${dirColor(node.direction)}` }),
+                h('span', { class: 'node-quick-name' }, node.title),
+                h('span', { class: 'node-trend', style: `color:${dirColor(node.direction)}` },
+                  `${natIcon(node.nature)} ${node.themeTag || dirLabel(node.direction)}`),
+                h('span', { class: 'node-quick-arrow' }, '→')),
+              h('div', { class: 'node-quick-state' }, node.state),
+              h('div', { class: 'node-quick-meta' },
+                h('span', {}, `${evoLen} 次状态变化`),
+                h('span', {}, '·'),
+                h('span', {}, lastDate ? `最近 ${lastDate}` : '暂无变化记录')))
+          })),
+        h('div', { class: 'next-chips' },
+          h('span', { class: 'chip', 'data-goto': 'builder', onclick: () => go('builder') }, '进入建设者视图'))))
 
     /* 尾部 */
     inner.append(
@@ -566,7 +613,7 @@ export function renderReaderView(theme, opts = {}) {
       article.innerHTML = ''
       article.append(h('p', { class: 'rdr-note' }, '阅读视图加载失败：' + (e?.message || e)))
     })
-  return article
+  return root
 }
 
 function renderEmpty(theme, go) {

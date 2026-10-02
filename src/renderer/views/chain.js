@@ -105,10 +105,11 @@ export function renderChainSection(theme, opts = {}) {
     class: 'cog-ledger-pane cog-ledger-drawer', id: drawerId,
     role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': drawerTitleId, tabindex: '-1', hidden: true,
   }, h('p', { class: 'chain-note' }, '正在读取事件…'))
-  /* 建设者：参考 demo 设计 — 侧边栏 + 主舞台（信号流/节点视图/待处理） */
-  const sidebar = h('aside', { class: 'builder-sidebar', 'aria-label': '建设者导航' })
+  /* 建设者：1:1 对齐 demo — .meridian-theme > .builder > .sidebar + .builder-main */
+  const sidebar = h('aside', { class: 'sidebar', 'aria-label': '建设者导航' })
   const mainStage = h('main', { class: 'builder-main', 'aria-label': '建设者主舞台' })
-  const builderLayout = h('div', { class: 'builder' }, sidebar, mainStage)
+  const builderLayout = h('div', { class: 'meridian-theme' },
+    h('div', { class: 'builder' }, sidebar, mainStage))
   concept.append(ledgerBackdrop, ledgerPane, builderLayout)
   let ledgerButton = null
   const openLedger = () => {
@@ -154,14 +155,15 @@ export function renderChainSection(theme, opts = {}) {
     addEvidenceBtn,
     onChanged: () => {
       clear(ledgerPane)
-      clear(stage)
+      clear(sidebar)
+      clear(mainStage)
       loadConcept(theme, ledgerPane, viewOpts).catch((e) => {
-        clear(stage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
+        clear(mainStage).append(h('p', { class: 'chain-note' }, '投影刷新失败：' + (e.message || e)))
       })
     },
   }
   loadConcept(theme, ledgerPane, viewOpts).catch((e) => {
-    clear(stage).append(h('p', { class: 'chain-note' }, '投影加载失败：' + (e.message || e)))
+    clear(mainStage).append(h('p', { class: 'chain-note' }, '投影加载失败：' + (e.message || e)))
   })
   return wrap
 }
@@ -643,39 +645,70 @@ async function loadConcept(theme, ledgerPane, opts) {
     return [...groups.values()].sort((a, b) => b.items.length - a.items.length)
   }
 
-  /* ============ Demo 式 Builder：侧边栏 + 信号流/节点视图/待处理 ============ */
+  /* ============ Builder：1:1 对齐 demo（侧边栏 + 信号流/节点视图/待处理） ============ */
   let builderMode = 'stream'  // stream | node | inbox
   let selectedNodeId = null
+  /* 判决状态：signalId -> 'accepted' | 'rejected' | 'edited' */
+  const verdictState = new Map()
+  /* 编辑器草稿：signalId -> { nodeId, direction, nature, themeTag } */
+  const editorDraft = new Map()
+
+  const dirColor = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).color
+  const dirIcon = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).icon
+  const natIcon = (n) => (NATURE_META[n] || NATURE_META.quantitative).icon
+  /* 三层 → demo data-type（决定圆点颜色）：improving=confirm(绿), declining=contradict(红), stable=new(蓝) */
+  const sigDataType = (direction) => direction === 'improving' ? 'confirm'
+    : direction === 'declining' ? 'contradict' : 'new'
 
   const renderSidebar = () => {
     clear(opts.sidebar)
     const signals = buildSignals()
-    /* 待处理数量：从收件箱或 pending 事件 */
-    const inboxCount = 0  // TODO: 从收件箱获取
+    /* 待处理数量：收件箱待归因 */
+    let inboxCount = 0
+    try {
+      const inbox = m.inboxList ? m.inboxList() : null
+      if (Array.isArray(inbox)) inboxCount = inbox.length
+      else if (inbox && typeof inbox.then === 'function') { /* 异步，稍后刷新 */ }
+    } catch { /* 忽略 */ }
     opts.sidebar.append(
-      h('div', { class: 'builder-brand' },
-        h('div', { class: 'builder-brand-mark' }, 'M'),
-        h('div', { class: 'builder-brand-name' }, 'Meridian')),
-      h('div', { class: 'builder-side-nav' },
+      h('div', { class: 'brand' },
+        h('div', { class: 'brand-mark' }, 'M'),
+        h('div', { class: 'brand-name' }, 'Meridian')),
+      h('div', { class: 'side-nav', id: 'side-nav' },
         h('div', {
-          class: `builder-side-nav-item${builderMode === 'stream' ? ' active' : ''}`,
-          onclick: () => { builderMode = 'stream'; renderMain(); renderSidebar(); },
+          class: `side-nav-item${builderMode === 'stream' ? ' active' : ''}`,
+          'data-mode': 'stream',
+          onclick: () => { builderMode = 'stream'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
           h('span', { class: 'icon' }, '≡'),
           h('span', {}, '信号流'),
           h('span', { class: 'n' }, String(signals.length))),
         h('div', {
-          class: `builder-side-nav-item${builderMode === 'inbox' ? ' active' : ''}`,
-          onclick: () => { builderMode = 'inbox'; renderMain(); renderSidebar(); },
+          class: `side-nav-item${builderMode === 'inbox' ? ' active' : ''}`,
+          'data-mode': 'inbox',
+          onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
           h('span', { class: 'icon' }, '◷'),
           h('span', {}, '待处理'),
           h('span', { class: 'n' }, String(inboxCount)))),
-      h('div', { class: 'builder-side-foot' },
+      h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
         h('br', {}),
-        h('b', {}, '事件'), ` · ${verifiedEvents.length}`)
+        h('b', {}, '事件'), ` · ${verifiedEvents.length} 条`)
     )
+    /* 异步刷新收件箱计数 */
+    try {
+      if (m.inboxList) {
+        const r = m.inboxList()
+        if (r && typeof r.then === 'function') {
+          r.then((list) => {
+            const n = Array.isArray(list) ? list.length : 0
+            const el = opts.sidebar.querySelector('[data-mode="inbox"] .n')
+            if (el) el.textContent = String(n)
+          }).catch(() => {})
+        }
+      }
+    } catch { /* 忽略 */ }
   }
 
   const renderMain = () => {
@@ -689,130 +722,314 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
   }
 
-  /* 信号流：密度条 + 信号卡片 */
+  /* 信号流：密度条 + 流头 + 滚动列表 */
   const renderSignalStream = () => {
     const signals = buildSignals()
-    const wrap = h('div', { class: 'builder-stream' })
-    /* 密度条：按时间分布 */
-    wrap.append(renderDensityBar(signals))
-    /* 流头部 */
-    wrap.append(
-      h('div', { class: 'builder-stream-head' },
-        h('h2', {}, signals.length ? `信号流 · ${signals.length}` : '信号流'),
-        signals.length
-          ? h('p', { class: 'builder-hint' }, '默认接受：不处理即表示同意。只在不同意时动手。')
-          : h('p', { class: 'builder-empty' }, '暂无待审阅信号。'))
-    )
-    /* 信号卡片 */
-    const list = h('div', { class: 'builder-signal-list' })
-    for (const sig of signals) {
-      list.append(renderSignalCard(sig))
-    }
-    wrap.append(list)
+    const wrap = h('div', { style: 'display:contents' })
+    wrap.append(renderDensity(signals))
+    wrap.append(renderStreamHead(signals))
+    const scroll = h('div', { class: 'scroll' },
+      h('div', { class: 'scroll-inner' },
+        ...signals.map((s, i) => renderSignal(s, i))))
+    wrap.append(scroll)
     return wrap
   }
 
-  /* 密度条：信号按时间分布 */
-  const renderDensityBar = (signals) => {
-    const bar = h('div', { class: 'builder-density' })
-    if (!signals.length) return bar
-    /* 按天分组 */
-    const byDay = new Map()
-    for (const sig of signals) {
-      const day = new Date(sig.at || Date.now()).toISOString().slice(0, 10)
-      byDay.set(day, (byDay.get(day) || 0) + 1)
+  /* 密度条：最近 30 天信号分布（对齐 demo renderDensity） */
+  const renderDensity = (signals) => {
+    const days = []
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const sigByDay = new Map()
+    for (const s of signals) {
+      const d = new Date(s.at || Date.now())
+      if (Number.isNaN(d.getTime())) continue
+      const key = d.toISOString().slice(0, 10)
+      if (!sigByDay.has(key)) sigByDay.set(key, [])
+      sigByDay.get(key).push(s)
     }
-    const max = Math.max(...byDay.values())
-    for (const [day, count] of [...byDay.entries()].sort()) {
-      const dirMeta = DIRECTION_META[signals.find(s =>
-        new Date(s.at || Date.now()).toISOString().slice(0, 10) === day)?.direction] || DIRECTION_META.stable
-      bar.append(
-        h('span', {
-          class: 'builder-density-point',
-          style: `height:${Math.max(4, (count / max) * 24)}px;background:${dirMeta.color}`,
-          title: `${day} · ${count} 条`,
-        })
-      )
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(d.getDate() - i)
+      const str = d.toISOString().slice(0, 10)
+      const daySignals = sigByDay.get(str) || []
+      const hasKey = daySignals.some((s) => s.direction === 'declining' || s.direction === 'improving')
+      days.push({ date: str, count: daySignals.length, hasKey })
     }
-    return bar
+    const max = Math.max(...days.map((d) => d.count), 1)
+    return h('div', { class: 'density' },
+      h('div', { class: 'density-head' },
+        h('span', { class: 'density-title' }, '最近 30 天'),
+        h('span', { class: 'density-range' }, `${days[0].date.slice(5)} — ${days[29].date.slice(5)}`)),
+      h('div', { class: 'density-track' },
+        ...days.map((d) => {
+          const hgt = d.count === 0 ? 2 : Math.max(4, (d.count / max) * 26)
+          const cls = d.count === 0 ? '' : (d.hasKey ? 'has-key' : 'has-signal')
+          return h('div', { class: `density-day ${cls}`, style: `height:${hgt}px`, title: d.date })
+        })))
   }
 
-  /* 信号卡片：参考 demo 设计 */
-  const renderSignalCard = (sig) => {
-    const dirMeta = DIRECTION_META[sig.direction] || DIRECTION_META.stable
-    const natMeta = NATURE_META[sig.nature] || NATURE_META.quantitative
-    const card = h('div', { class: 'builder-signal-card', 'data-signal-id': sig.id },
-      h('div', { class: 'builder-signal-top' },
-        h('span', { class: 'builder-signal-type' }, sig.suggestedDir || '信号'),
-        sig.source ? h('span', { class: 'builder-signal-source' }, sig.source) : null,
-        h('span', { class: 'spacer' }),
-        h('span', { class: 'builder-signal-time' }, fmtDate(sig.at))),
-      h('div', { class: 'builder-signal-title' }, sig.text),
-      /* 影响：节点名 + themeTag（三层） */
-      h('div', { class: 'builder-signal-impacts' },
-        h('span', { class: 'lead' }, '影响'),
+  /* 流头：标题 + 三层统计（对齐 demo renderStreamHead） */
+  const renderStreamHead = (signals) => {
+    const counts = {
+      improving: signals.filter((s) => s.direction === 'improving').length,
+      declining: signals.filter((s) => s.direction === 'declining').length,
+      stable: signals.filter((s) => s.direction === 'stable').length,
+    }
+    return h('div', { class: 'stream-head' },
+      h('div', {},
+        h('div', { class: 'stream-title' }, '信号流'),
+        h('div', { class: 'stream-sub' }, '按时间倒序 · 系统已自动分类，你的判决会同步到方向演化')),
+      h('div', { class: 'stream-stats' },
+        h('span', { class: 's' },
+          h('span', { class: 'd', style: 'background:var(--green)' }),
+          h('b', {}, String(counts.improving)), ' 好转'),
+        h('span', { class: 's' },
+          h('span', { class: 'd', style: 'background:var(--red)' }),
+          h('b', {}, String(counts.declining)), ' 恶化'),
+        h('span', { class: 's' },
+          h('span', { class: 'd', style: 'background:var(--text-3)' }),
+          h('b', {}, String(counts.stable)), ' 稳定')))
+  }
+
+  /* 判决：调用后端 chain:confirmSignal */
+  const doVerdict = async (sig, decision, change = null) => {
+    try {
+      await m.chainConfirmSignal(theme.id, sig.id, decision, change, '')
+      verdictState.set(sig.id, decision === 'accepted' ? 'accepted' : decision === 'rejected' ? 'rejected' : 'edited')
+      toast(decision === 'accepted' ? '已接受 · 证据进入方向演化'
+        : decision === 'rejected' ? '已驳回 · 数据保留在账本' : '已修正 · 三层标签已更新')
+    } catch (e) {
+      toast('判决失败：' + (e?.message || e), 'var(--red)')
+      return
+    }
+    renderMain()
+    renderSidebar()
+  }
+  const acceptSignal = (sig) => doVerdict(sig, 'accepted', {
+    direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
+  })
+  const rejectSignal = (sig) => doVerdict(sig, 'rejected', null)
+  const confirmEdit = (sig) => {
+    const draft = editorDraft.get(sig.id) || {
+      nodeId: sig.nodeId, direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
+    }
+    if (!['improving', 'declining', 'stable'].includes(draft.direction)) {
+      toast('请选择方向', 'var(--red)'); return
+    }
+    if (!['quantitative', 'pivot', 'epistemic', 'structural'].includes(draft.nature)) {
+      toast('请选择变化性质', 'var(--red)'); return
+    }
+    if (!String(draft.themeTag || '').trim()) {
+      toast('请填写主题标签', 'var(--red)'); return
+    }
+    doVerdict(sig, 'corrected', {
+      direction: draft.direction, nature: draft.nature, themeTag: String(draft.themeTag).trim(),
+    })
+  }
+
+  /* 信号卡片：1:1 对齐 demo renderSignal */
+  const renderSignal = (sig, i) => {
+    const statusMap = { pending: '待判决', accepted: '已接受', rejected: '已驳回', edited: '已修正' }
+    const status = verdictState.get(sig.id) || 'pending'
+    const draft = editorDraft.get(sig.id) || {
+      nodeId: sig.nodeId, direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
+    }
+    /* 影响 pill：节点名 + themeTag（direction 颜色）+ nature 图标 */
+    const impactPill = h('button', {
+      type: 'button', class: 'impact-pill', 'data-node': sig.nodeId || '',
+      onclick: (e) => {
+        e.stopPropagation()
+        if (sig.nodeId) { selectedNodeId = sig.nodeId; builderMode = 'node'; renderMain(); renderSidebar(); }
+      },
+    },
+      h('span', { class: 'nd', style: `background:${dirColor(sig.direction)}` }),
+      sig.suggestedNode || '未归属',
+      h('span', { class: 'ef', style: `color:${dirColor(sig.direction)}` },
+        `${natIcon(sig.nature)} ${sig.themeTag || ''}`))
+
+    /* 修正面板：归属下拉 + 三层选择器 */
+    const nodes = projectedNodes(viewState.projection)
+    const editor = h('div', { class: 'verdict-editor', 'data-editor': sig.id },
+      h('div', { class: 'editor-row' },
+        h('span', { class: 'label' }, '归属'),
+        h('select', {
+          'data-edit-node': sig.id,
+          onchange: (e) => {
+            const d = editorDraft.get(sig.id) || { ...draft }
+            d.nodeId = e.target.value
+            editorDraft.set(sig.id, d)
+          },
+        }, ...nodes.slice(0, 50).map((n) =>
+          h('option', {
+            value: n.id,
+            selected: (draft.nodeId || sig.nodeId) === n.id ? true : undefined,
+          }, n.title || n.id)))),
+      h('div', { class: 'editor-row' },
+        h('span', { class: 'label' }, '方向'),
+        h('div', { class: 'dir-toggle' },
+          ...['improving', 'declining', 'stable'].map((d) =>
+            h('button', {
+              type: 'button',
+              class: draft.direction === d ? 'active' : '',
+              'data-dir': sig.id, 'data-dir-val': d,
+              onclick: (e) => {
+                e.stopPropagation()
+                const dd = editorDraft.get(sig.id) || { ...draft }
+                dd.direction = d
+                editorDraft.set(sig.id, dd)
+                renderMain()
+                const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
+                if (ed) ed.classList.add('open')
+              },
+            }, `${dirIcon(d)} ${DIRECTION_META[d].label}`)))),
+      h('div', { class: 'editor-row' },
+        h('span', { class: 'label' }, '性质'),
+        h('div', { class: 'dir-toggle' },
+          ...['quantitative', 'pivot', 'epistemic', 'structural'].map((n) =>
+            h('button', {
+              type: 'button',
+              class: draft.nature === n ? 'active' : '',
+              'data-nature': sig.id, 'data-nature-val': n,
+              onclick: (e) => {
+                e.stopPropagation()
+                const dd = editorDraft.get(sig.id) || { ...draft }
+                dd.nature = n
+                editorDraft.set(sig.id, dd)
+                renderMain()
+                const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
+                if (ed) ed.classList.add('open')
+              },
+            }, `${natIcon(n)} ${NATURE_META[n].label}`)))),
+      h('div', { class: 'editor-row' },
+        h('span', { class: 'label' }, '标签'),
+        h('input', {
+          type: 'text',
+          value: draft.themeTag || '',
+          placeholder: '主题标签，如：产能瓶颈',
+          style: 'flex:1;font:inherit;padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)',
+          oninput: (e) => {
+            const dd = editorDraft.get(sig.id) || { ...draft }
+            dd.themeTag = e.target.value
+            editorDraft.set(sig.id, dd)
+          },
+        })),
+      h('div', { class: 'editor-row' },
+        h('span', { class: 'label' }, ''),
         h('button', {
-          type: 'button', class: 'builder-impact-pill',
-          onclick: () => { selectedNodeId = sig.nodeId; builderMode = 'node'; renderMain(); renderSidebar(); },
-        },
-          h('span', { class: 'nd', style: `background:${dirMeta.color}` }),
-          sig.suggestedNode || '未归属',
-          h('span', { class: 'ef', style: `color:${dirMeta.color}` }, `${natMeta.icon} ${sig.themeTag || ''}`))),
-      /* 判决 */
-      h('div', { class: 'builder-verdict' },
-        h('span', { class: 'lead' }, '判决'),
-        h('button', { type: 'button', class: 'builder-verdict-btn accept', onclick: () => acceptSignal(sig) }, '✓ 接受'),
-        h('button', { type: 'button', class: 'builder-verdict-btn', onclick: () => toggleEditor(sig.id) }, '✎ 修正'),
-        h('button', { type: 'button', class: 'builder-verdict-btn reject', onclick: () => rejectSignal(sig) }, '✕ 驳回')),
-      /* 内联编辑器 */
-      renderInlineEditor(sig)
+          type: 'button', class: 'verdict-btn accept',
+          onclick: () => confirmEdit(sig),
+        }, '✓ 确认修正')))
+
+    const card = h('div', {
+      class: 'signal',
+      'data-type': sigDataType(sig.direction),
+      'data-signal': sig.id,
+      style: `animation-delay:${Math.min(i * 0.04, 0.4)}s`,
+    },
+      h('span', { class: 'signal-dot' }),
+      h('div', { class: 'signal-card' },
+        h('div', { class: 'signal-top' },
+          /* 类型标签：显示 themeTag（三层） */
+          h('span', { class: 'signal-type' }, sig.themeTag || '数据更新'),
+          sig.source ? h('span', { class: 'signal-source' }, sig.source) : null,
+          h('span', { class: 'spacer' }),
+          h('span', { class: 'signal-time' }, fmtDate(sig.at))),
+        h('div', { class: 'signal-title' }, sig.text),
+        sig.payload?.text && sig.payload.text !== sig.text
+          ? h('div', { class: 'signal-excerpt' }, String(sig.payload.text).slice(0, 200))
+          : null,
+        h('div', { class: 'signal-extract' },
+          h('div', { class: 'label' }, '系统提取'),
+          h('div', { class: 'text' },
+            `${dirIcon(sig.direction)}${DIRECTION_META[sig.direction]?.label || ''} · ${natIcon(sig.nature)}${NATURE_META[sig.nature]?.label || ''} · ${sig.themeTag || ''}`,
+            sig.confidence != null ? ` · 置信度 ${Math.round(sig.confidence * 100)}%` : '')),
+        h('div', { class: 'signal-impacts' },
+          h('span', { class: 'lead' }, '影响'),
+          impactPill),
+        h('div', { class: 'verdict' },
+          h('span', { class: 'lead' }, '判决'),
+          h('button', {
+            type: 'button',
+            class: `verdict-btn accept${status === 'accepted' ? ' active' : ''}`,
+            'data-v': sig.id, 'data-act': 'accept',
+            onclick: (e) => { e.stopPropagation(); acceptSignal(sig) },
+          }, '✓ 接受'),
+          h('button', {
+            type: 'button',
+            class: `${status === 'edited' ? 'active' : ''}`,
+            'data-v': sig.id, 'data-act': 'edit',
+            onclick: (e) => {
+              e.stopPropagation()
+              verdictState.set(sig.id, verdictState.get(sig.id) || 'pending')
+              renderMain()
+              const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
+              if (ed) ed.classList.add('open')
+              toast('展开修正选项')
+            },
+          }, '✎ 修正'),
+          h('button', {
+            type: 'button',
+            class: `verdict-btn reject${status === 'rejected' ? ' active' : ''}`,
+            'data-v': sig.id, 'data-act': 'reject',
+            onclick: (e) => { e.stopPropagation(); rejectSignal(sig) },
+          }, '✕ 驳回'),
+          h('span', { class: `verdict-status ${status}` },
+            h('span', { class: 'dot' }),
+            statusMap[status])),
+        editor)
     )
     return card
   }
 
-  /* 节点视图：演化时间线（三层） */
+  /* 节点视图：1:1 对齐 demo renderNodeView */
   const renderNodeView = (nodeId) => {
     const nodes = projectedNodes(viewState.projection)
-    const node = nodes.find(n => n.id === nodeId)
+    const node = nodes.find((n) => n.id === nodeId)
     if (!node) return h('p', { class: 'chain-note' }, '节点不存在')
     const title = node.title || node.id
-    /* 从事件构建演化时间线 */
     const evolutions = buildNodeEvolution(nodeId)
-    const wrap = h('div', { class: 'builder-node-view' },
-      h('div', { class: 'builder-back-bar' },
+    const latestEvo = evolutions[evolutions.length - 1]
+    const overallDir = latestEvo?.direction || 'stable'
+    return h('div', { style: 'display:contents' },
+      h('div', { class: 'back-bar' },
         h('button', {
-          type: 'button', class: 'builder-back-btn',
+          type: 'button', class: 'back-btn', id: 'back-btn',
           onclick: () => { builderMode = 'stream'; selectedNodeId = null; renderMain(); renderSidebar(); },
         }, h('span', { class: 'ar' }, '←'), ' 返回信号流')),
-      h('div', { class: 'builder-node-head' },
-        h('div', { class: 'builder-node-title-row' },
-          h('h1', { class: 'builder-node-title' }, title)),
-        h('div', { class: 'builder-node-stats' },
+      h('div', { class: 'node-view-head' },
+        h('div', { class: 'node-title-row' },
+          h('span', { class: 'node-title-dot', style: `background:${dirColor(overallDir)}` }),
+          h('h1', { class: 'node-title' }, title),
+          h('span', { class: 'node-trend', style: `margin-left:auto;color:${dirColor(overallDir)}` },
+            `${natIcon(latestEvo?.nature || 'quantitative')} ${latestEvo?.themeTag || DIRECTION_META[overallDir].label}`)),
+        h('div', { class: 'node-current' }, node.currentText || node.title || ''),
+        h('div', { class: 'node-stats' },
           h('span', { class: 'item' }, h('b', {}, String(evolutions.length)), ' 次状态变化'),
-          h('span', { class: 'item' }, `最近更新 ${evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—'}`))),
-      h('div', { class: 'builder-evolution-title' },
-        h('span', {}, '状态演化时间线'),
-        h('span', { class: 'n' }, `从早到晚 · ${evolutions.length} 个状态点`)),
-      h('div', { class: 'builder-evolution' },
-        ...evolutions.map((evo, i) => {
-          const isLatest = i === evolutions.length - 1
-          const dMeta = DIRECTION_META[evo.direction] || DIRECTION_META.stable
-          const nMeta = NATURE_META[evo.nature] || NATURE_META.quantitative
-          return h('div', { class: `builder-evo-point${isLatest ? ' latest' : ''}` },
-            h('span', { class: 'builder-evo-dot', style: `border-color:${dMeta.color};color:${dMeta.color}` },
-              h('span', {}, nMeta.icon)),
-            h('div', { class: 'builder-evo-head' },
-              h('span', { class: 'builder-evo-date' }, fmtDate(evo.at)),
-              h('span', { class: 'builder-evo-tag', style: `color:${dMeta.color}` }, evo.themeTag || ''),
-              h('span', { class: 'builder-evo-nature' }, nMeta.label),
-              isLatest ? h('span', { class: 'builder-evo-current-flag' }, '当前') : null),
-            h('div', { class: 'builder-evo-state' }, evo.text),
-            evo.source ? h('div', { class: 'builder-evo-reason' },
-              h('div', { class: 'left' }, h('span', { class: 'lead' }, '因为'), evo.source)) : null
-          )
-        }))
-    )
-    return wrap
+          h('span', { class: 'item' }, `${verifiedEvents.length} 条数据`),
+          h('span', { class: 'item' }, '最近更新 ', h('b', {}, evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—')))),
+      h('div', { class: 'scroll' },
+        h('div', { class: 'scroll-inner' },
+          h('div', { class: 'evolution-title' },
+            h('span', {}, '状态演化时间线'),
+            h('span', { class: 'n' }, `从早到晚 · ${evolutions.length} 个状态点`)),
+          h('div', { class: 'evolution' },
+            ...evolutions.map((evo, i) => {
+              const isLatest = i === evolutions.length - 1
+              return h('div', {
+                class: `evo-point${isLatest ? ' latest' : ''}`,
+                style: `animation-delay:${i * 0.06}s`,
+              },
+                h('span', { class: 'evo-dot' }, h('span', {}, natIcon(evo.nature))),
+                h('div', { class: 'evo-head' },
+                  h('span', { class: 'evo-date' }, fmtDate(evo.at)),
+                  h('span', { class: 'evo-tag', style: `color:${dirColor(evo.direction)}` }, evo.themeTag || ''),
+                  isLatest ? h('span', { class: 'evo-current-flag' }, '当前') : null),
+                h('div', { class: 'evo-state' }, evo.text),
+                evo.source ? h('div', { class: 'evo-reason' },
+                  h('div', { class: 'left' },
+                    h('span', { class: 'lead' }, '因为'), evo.source)) : null)
+            })))))
   }
 
   /* 从事件构建节点演化时间线 */
@@ -834,26 +1051,94 @@ async function loadConcept(theme, ledgerPane, opts) {
           : type === 'evidence.appended' ? 'quantitative' : 'quantitative'),
         themeTag: change.themeTag || payload.themeTag || (type === 'confidence.updated' ? '置信度变化'
           : type === 'evidence.appended' ? '证据更新' : '关系变化'),
-        text: payload.title || payload.text?.slice(0, 80) || eventSummary(event, (id) => id)?.slice(0, 80) || type,
+        text: payload.title || payload.text?.slice(0, 80) || type,
         source: payload.sourceLabel || payload.url || '',
       })
     }
     return evolutions.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0))
   }
 
-  /* 待处理收件箱 */
+  /* 待处理归因：1:1 对齐 demo renderInbox + renderAttr */
   const renderInboxView = () => {
-    const wrap = h('div', { class: 'builder-inbox' },
-      h('div', { class: 'builder-inbox-head' },
-        h('div', { class: 'builder-inbox-title' }, h('span', {}, '待处理归因')),
-        h('div', { class: 'builder-inbox-sub' }, '系统从事件中抽取陈述，建议归入节点。确认后进入信号流。')),
-      h('div', { class: 'builder-inbox-list' },
-        h('div', { class: 'empty' },
+    const wrap = h('div', { style: 'display:contents' })
+    const head = h('div', { class: 'inbox-head' },
+      h('div', { class: 'inbox-title' }, h('span', {}, '待处理归因')),
+      h('div', { class: 'inbox-sub' }, '系统从新闻中抽取陈述，建议归入方向。确认后证据进入信号流。'))
+    const scroll = h('div', { class: 'inbox-scroll' },
+      h('div', { class: 'inbox-inner' }, h('p', { class: 'chain-note' }, '正在加载…')))
+    wrap.append(head, scroll)
+    /* 异步加载收件箱 */
+    const loadInbox = async () => {
+      let items = []
+      try {
+        if (m.inboxList) {
+          const r = await m.inboxList()
+          items = Array.isArray(r) ? r : (r?.items || [])
+        }
+      } catch { /* 忽略 */ }
+      const inner = scroll.querySelector('.inbox-inner')
+      if (!inner) return
+      clear(inner)
+      if (!items.length) {
+        inner.append(h('div', { class: 'empty' },
           h('div', { class: 'empty-mark' }, '✓'),
           '暂无待处理归因', h('br', {}), '已全部确认'))
-    )
+        return
+      }
+      const titleEl = head.querySelector('.inbox-title')
+      if (titleEl && items.length) titleEl.append(h('span', { class: 'live' }))
+      for (const item of items.slice(0, 50)) {
+        inner.append(renderAttr(item))
+      }
+    }
+    loadInbox()
     return wrap
   }
+
+  /* 归因卡片：对齐 demo renderAttr */
+  const renderAttr = (a) => {
+    const kind = a.kind || a.rel || 'supports'
+    const isS = kind === 'supports'
+    const nodes = projectedNodes(viewState.projection)
+    const targetNode = nodes.find((n) => n.id === (a.target || a.targetId || a.nodeId))
+    const strength = Number(a.strength ?? a.confidence ?? 0.5)
+    return h('div', { class: 'attr', 'data-attr': a.id || '' },
+      h('div', { class: 'attr-top' },
+        h('span', { class: `attr-kind ${isS ? 'supports' : 'contradicts'}` }, isS ? '支持' : '反驳'),
+        targetNode ? h('span', { style: 'font-size:10.5px;color:var(--text-3);' }, `→ ${targetNode.title || targetNode.id}`) : null,
+        h('span', { class: 'spacer' }),
+        h('span', { class: 'strength' },
+          `强度 ${strength.toFixed(2)}`,
+          h('span', { class: 'bar' }, h('i', { style: `width:${Math.round(strength * 100)}%` })))),
+      h('div', { class: 'attr-target' }, a.targetText || a.text || a.title || '未命名陈述'),
+      h('div', { class: 'attr-source' },
+        h('span', { class: 'label' }, '来源'),
+        ` ${a.source || a.sourceLabel || '未知'} · ${a.detail || ''}`),
+      h('div', { class: 'attr-actions' },
+        h('button', {
+          type: 'button', class: 'attr-btn confirm',
+          'data-attr-action': 'confirm', 'data-attr-id': a.id || '',
+          onclick: async () => {
+            try {
+              if (m.inboxResolve && a.id) await m.inboxResolve(a.id, 'confirm')
+              toast('已确认 · 证据进入信号流')
+            } catch (e) { toast('确认失败：' + (e?.message || e), 'var(--red)') }
+            renderMain(); renderSidebar()
+          },
+        }, '确认'),
+        h('button', {
+          type: 'button', class: 'attr-btn reject',
+          'data-attr-action': 'reject', 'data-attr-id': a.id || '',
+          onclick: async () => {
+            try {
+              if (m.inboxResolve && a.id) await m.inboxResolve(a.id, 'reject')
+              toast('已驳回')
+            } catch (e) { toast('驳回失败：' + (e?.message || e), 'var(--red)') }
+            renderMain(); renderSidebar()
+          },
+        }, '驳回')))
+  }
+
 
   /* 渲染入口 */
   renderSidebar()

@@ -286,6 +286,14 @@ export function projectEvents(events) {
     edge.provenanceEventIds.push(e.id)
   }
 
+  /* signal.reviewed：标记信号已判决，存储确认的三层 */
+  const reviewedSignals = new Map() // signalEventId -> review event
+  for (const e of events) {
+    if (e.type !== 'signal.reviewed') continue
+    const p = e.payload || {}
+    if (p.signalEventId) reviewedSignals.set(p.signalEventId, e)
+  }
+
   for (const node of nodes.values()) {
     const evidenceIds = edges.filter((edge) => edge.rel === 'supports'
       && edge.reviewDecision !== 'rejected'
@@ -336,7 +344,7 @@ export function projectEvents(events) {
     }
   }
 
-  return { nodes: [...nodes.values()], edges }
+  return { nodes: [...nodes.values()], edges, reviewedSignals }
 }
 
 /**
@@ -377,7 +385,10 @@ function projectionResult(themeId, events, integrity, history = null) {
     floatingCount: scope.floating.length,
     floating: scope.floating,
     ...(history || {}),
-  }
+    reviewedSignals: projection.reviewedSignals
+      ? Object.fromEntries(projection.reviewedSignals)
+      : {},
+}
 }
 
 /** Deterministic, read-only replay. It never migrates legacy data or writes the ledger. */

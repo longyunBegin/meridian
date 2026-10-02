@@ -34,6 +34,7 @@ export const EVENT_TYPES = [
   'node.restored', // 恢复 = 追加新事件，不改写归档历史
   'topic.linked', // 主题关联
   'confidence.updated', // 置信度更新（红区已批准，2026-10-02）：贝叶斯公式机械应用
+  'signal.reviewed', // 信号判决：审阅者对 pendingReview 信号的接受/修正/驳回
 ]
 
 export const NODE_TYPES = ['concept', 'object', 'event', 'viewpoint', 'evidence']
@@ -259,6 +260,39 @@ function verifyEvents(events, themeId) {
         reviewedRelations.add(p.reviewOf)
       } else if (p.reviewDecision != null || p.decisionReason != null) {
         return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定缺少 reviewOf' }
+      }
+    }
+    if (e.type === 'signal.reviewed') {
+      const target = ids.get(p.signalEventId)
+      if (!textId(p.signalEventId) || !target) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '判决目标信号事件不存在' }
+      }
+      if (!['accepted', 'corrected', 'rejected'].includes(p.decision)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '判决决定非法' }
+      }
+      /* 检查目标确实是待审阅信号 */
+      const targetPayload = target.payload || {}
+      if (!targetPayload.pendingReview && !target.pendingReview) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '目标不是待审阅信号' }
+      }
+      /* accepted/corrected 需要三层 change */
+      if (p.decision !== 'rejected') {
+        const ch = p.change || {}
+        if (!['improving', 'declining', 'stable'].includes(ch.direction)) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少有效 direction' }
+        }
+        if (!['quantitative', 'pivot', 'epistemic', 'structural'].includes(ch.nature)) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少有效 nature' }
+        }
+        if (typeof ch.themeTag !== 'string' || !ch.themeTag.trim()) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少 themeTag' }
+        }
+      }
+      /* 防止重复判决同一信号 */
+      for (const [id, evt] of ids) {
+        if (evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.signalEventId) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '信号已被判决' }
+        }
       }
     }
     if (e.type === 'node.archived' || e.type === 'node.restored' || e.type === 'settlement.recorded') {
