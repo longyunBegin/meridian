@@ -53,10 +53,129 @@ export function deriveReaderModel(projection = {}, events = []) {
     oneLiner: null, drivers: [], evolutions: [], boundaries: [],
     disputes: [], pending: [], recent: [],
     status: '尚未开始',
+    /* 三问模型：方向 + 状态 + 拐点 */
+    directionCounts: { up: 0, down: 0, flat: 0 },
+    nodesByDirection: { up: [], down: [], flat: [] },
+    turningPoints: [],
   }
   if (model.empty) return model
 
-  // 一句话：主链结论（链式阅读 = 主链结论先行）
+  /* ---- 方向推导：基于最近30天置信度变化 ---- */
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+  const confChanges = new Map() // nodeId -> { net: number, latest: event }
+  for (const event of (Array.isArray(events) ? events : [])) {
+    if (event?.type !== 'confidence.updated') continue
+    const payload = event?.payload || {}
+    const nodeId = payload.nodeId || payload.claimId
+    if (!nodeId || !byId.has(nodeId)) continue
+    const at = new Date(event?.at || event?.timestamp || 0).getTime()
+    if (at < thirtyDaysAgo) continue
+    const before = payload.before ?? payload.oldConfidence ?? 0
+    const after = payload.after ?? payload.newConfidence ?? 0
+    const delta = after - before
+    if (!confChanges.has(nodeId)) confChanges.set(nodeId, { net: 0, latest: null, latestAt: 0 })
+    const entry = confChanges.get(nodeId)
+    entry.net += delta
+    if (at > entry.latestAt) { entry.latest = event; entry.latestAt = at }
+  }
+
+  /* ---- 节点方向与状态 ---- */
+  const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
+  /* 证据统计 */
+  const evStats = new Map()
+  for (const v of viewpoints) evStats.set(v.id, { supports: 0, contradicts: 0, latestEv: null, latestAt: 0 })
+  for (const edge of edges) {
+    const stat = evStats.get(edge.to)
+    if (!stat) continue
+    if (edge.rel === 'supports' || edge.rel === 'derives') stat.supports++
+    else if (edge.rel === 'contradicts') stat.contradicts++
+  }
+  /* 最新证据 */
+  for (const event of (Array.isArray(events) ? events : [])) {
+    if (event?.type !== 'evidence.appended') continue
+    const payload = event?.payload || {}
+    const nodeId = payload.nodeId || payload.targetId
+    const stat = evStats.get(nodeId)
+    if (!stat) continue
+    const at = new Date(event?.at || event?.timestamp || 0).getTime()
+    if (at > stat.latestAt) {
+      stat.latestEv = event
+      stat.latestAt = at
+    }
+  }
+
+  for (const node of viewpoints) {
+    const change = confChanges.get(node.id)
+    const stat = evStats.get(node.id) || { supports: 0, contradicts: 0 }
+    /* 方向：净变化 >5% 上升，<-5% 承压，否则稳定 */
+    let direction = 'flat'
+    if (change) {
+      if (change.net > 0.05) direction = 'up'
+      else if (change.net < -0.05) direction = 'down'
+    }
+    /* 有反驳无支持 → 承压 */
+    if (direction === 'flat' && stat.contradicts > 0 && stat.supports === 0) direction = 'down'
+
+    /* 一句话状态：标题 + 置信度 + 证据对比 */
+    const conf = Math.round((node.confidence ?? 0.5) * 100)
+    let state = titleOf(node)
+    if (stat.supports > 0 || stat.contradicts > 0) {
+      state += `：${stat.supports} 条支持，${stat.contradicts} 条反驳，置信度 ${conf}%`
+    } else {
+      state += `：置信度 ${conf}%，暂无证据`
+    }
+
+    /* 最近关键变化 */
+    let latest = null, latestSrc = null
+    if (stat.latestEv) {
+      const p = stat.latestEv.payload || {}
+      latest = p.title || p.text?.slice(0, 30) || '新证据'
+      latestSrc = p.sourceLabel || p.url || '来源'
+    } else if (change?.latest) {
+      const p = change.latest.payload || {}
+      latest = `置信度 ${Math.round((p.before ?? 0) * 100)}% → ${Math.round((p.after ?? 0) * 100)}%`
+      latestSrc = '自动更新'
+    }
+
+    model.nodesByDirection[direction].push({
+      id: node.id,
+      title: titleOf(node),
+      direction,
+      state,
+      latest,
+      latestSrc,
+      confidence: conf,
+    })
+    model.directionCounts[direction]++
+  }
+
+  /* 排序：上升在前，承压其次，稳定最后；组内按置信度 */
+  for (const dir of ['up', 'down', 'flat']) {
+    model.nodesByDirection[dir].sort((a, b) => b.confidence - a.confidence)
+  }
+
+  /* ---- 拐点：最近30天显著改变方向的事件 ---- */
+  const turningCandidates = []
+  for (const [nodeId, change] of confChanges) {
+    /* 单次变化幅度 >10% 视为拐点 */
+    if (Math.abs(change.net) < 0.1) continue
+    const node = byId.get(nodeId)
+    if (!node) continue
+    const dir = change.net > 0 ? 'up' : 'down'
+    turningCandidates.push({
+      date: new Date(change.latestAt).toISOString().slice(0, 10),
+      timestamp: change.latestAt,
+      dir,
+      text: `${titleOf(node)}：置信度变化 ${Math.round(change.net * 100)}%`,
+      nodeIds: [nodeId],
+      nodeTitles: [titleOf(node)],
+    })
+  }
+  /* 按时间倒序，最多取 5 个 */
+  turningCandidates.sort((a, b) => b.timestamp - a.timestamp)
+  model.turningPoints = turningCandidates.slice(0, 5)
+
+  /* 一句话（保留原有逻辑，用于顶部） */
   let mainChain = null
   try {
     const result = linearize(projection)
@@ -65,123 +184,14 @@ export function deriveReaderModel(projection = {}, events = []) {
   if (mainChain && mainChain.steps.length >= 2) {
     const lastStep = mainChain.steps[mainChain.steps.length - 1]
     const conclusion = lastStep.nodes[0]
-    const evidenceCount = new Set(mainChain.steps.flatMap((s) => (s.evidence || []).map((e) => e.id))).size
-    model.oneLiner = {
-      conclusion: titleOf(conclusion),
-      conclusionId: conclusion?.id || null,
-      steps: mainChain.steps.length,
-      evidence: evidenceCount,
-      hasPending: mainChain.steps.some((s) => s.pendingReview),
-    }
+    model.oneLiner = { conclusion: titleOf(conclusion) }
   }
 
-  // 关键驱动：被论证边引用的概念/对象（supports/derives 边从驱动指向观点，驱动在 from 端）
-  const refCount = new Map()
-  for (const edge of edges) {
-    if (!ARG_RELS.has(edge.rel)) continue
-    const source = byId.get(edge.from)
-    if (!source) continue
-    const type = networkNodeType(source)
-    if (type !== 'concept' && type !== 'object') continue
-    refCount.set(source.id, (refCount.get(source.id) || 0) + 1)
-  }
-  model.drivers = [...refCount.entries()]
-    .map(([id, count]) => ({ id, title: titleOf(byId.get(id)), refs: count }))
-    .sort((a, b) => b.refs - a.refs || a.title.localeCompare(b.title, 'zh'))
-    .slice(0, 5)
-  if (model.drivers.length < 2) model.drivers = []
-
-  // 关键演变：改名/更正过的节点
-  model.evolutions = nodes
-    .filter((n) => (n.originalTitle && n.originalTitle !== n.title)
-      || (Array.isArray(n.nameHistory) && n.nameHistory.length))
-    .map((n) => ({
-      id: n.id,
-      from: n.originalTitle || n.nameHistory?.[0]?.previousTitle || '',
-      to: titleOf(n),
-      versions: (n.nameHistory?.length || 0) + 1,
-    }))
-
-  // 边界条件：depends-on 边
-  model.boundaries = edges
-    .filter((e) => e.rel === 'depends-on' && byId.has(e.from) && byId.has(e.to))
-    .map((e) => ({ id: e.id, from: titleOf(byId.get(e.from)), fromId: e.from, to: titleOf(byId.get(e.to)), toId: e.to }))
-
-  // 争议焦点：contradicts 边 + disputed 节点
-  const disputeEdges = edges
-    .filter((e) => e.rel === 'contradicts' && byId.has(e.from) && byId.has(e.to))
-    .map((e) => ({
-      id: e.id, from: titleOf(byId.get(e.from)), fromId: e.from,
-      to: titleOf(byId.get(e.to)), toId: e.to,
-      pending: Boolean(e.pendingReview),
-    }))
-  const disputedNodes = nodes
-    .filter((n) => /disputed/i.test(String(n.status || '')))
-    .map((n) => ({ id: `node:${n.id}`, from: titleOf(n), fromId: n.id, to: '', toId: null, pending: false, nodeDisputed: true }))
-  model.disputes = [...disputeEdges, ...disputedNodes]
-
-  // 下一步：待复核关系
-  model.pending = edges
-    .filter((e) => e.pendingReview && e.reviewDecision == null && byId.has(e.from) && byId.has(e.to))
-    .map((e) => ({
-      id: e.id, rel: REL_LABEL[e.rel] || e.rel,
-      from: titleOf(byId.get(e.from)), fromId: e.from,
-      to: titleOf(byId.get(e.to)), toId: e.to,
-    }))
-
-  // 近期变化：最近 5 条事件
-  const rows = Array.isArray(events) ? events : []
-  model.recent = rows.slice(-5).reverse().map((e) => compactEventSummary(e))
-
-  // 关键数字：命题 / 证据 / 支持 / 反驳 / 待确认
-  const viewpoints = nodes.filter((n) => networkNodeType(n) === 'viewpoint')
-  const evidences = nodes.filter((n) => networkNodeType(n) === 'evidence')
-  let supportCount = 0
-  let contradictCount = 0
-  for (const edge of edges) {
-    if (edge.rel === 'supports') supportCount++
-    else if (edge.rel === 'contradicts') contradictCount++
-  }
-  model.keyNumbers = [
-    { label: '命题', value: viewpoints.length },
-    { label: '证据', value: evidences.length },
-    { label: '支持', value: supportCount },
-    { label: '反驳', value: contradictCount },
-    { label: '待确认', value: model.pending.length },
-  ]
-
-  // 核心判断：关键命题（按支持+反驳排序，带置信度）
-  const propStats = new Map()
-  for (const v of viewpoints) propStats.set(v.id, { supports: 0, contradicts: 0 })
-  for (const edge of edges) {
-    const stat = propStats.get(edge.to)
-    if (!stat) continue
-    if (edge.rel === 'supports' || edge.rel === 'derives') stat.supports++
-    else if (edge.rel === 'contradicts') stat.contradicts++
-  }
-  model.keyJudgments = viewpoints
-    .map((n) => {
-      const stat = propStats.get(n.id) || { supports: 0, contradicts: 0 }
-      return {
-        id: n.id,
-        title: titleOf(n),
-        confidence: n.confidence,
-        status: n.status || 'pending',
-        supports: stat.supports,
-        contradicts: stat.contradicts,
-      }
-    })
-    .sort((a, b) => (b.supports + b.contradicts) - (a.supports + a.contradicts))
-    .slice(0, 5)
-
-  if (model.disputes.length) model.status = '存在争议'
-  else if (model.pending.length) model.status = '存在待复核关系'
-  else if (model.oneLiner) model.status = '相对稳定'
-  else model.status = '建设中'
   return model
 }
 
-const estimateReadSeconds = (model) => {
+/* ------------------------------------------------------------------ */
+/* 渲染：三问结构 */const estimateReadSeconds = (model) => {
   if (model.empty) return 0
   const cards = [model.drivers, model.evolutions, model.boundaries, model.disputes, model.pending.length || model.recent.length ? [1] : []]
     .filter((list) => list.length).length
@@ -342,73 +352,90 @@ export function renderReaderView(theme, opts = {}) {
     h('p', { class: 'rdr-loading' }, '正在从当前投影生成阅读视图…'))
   const go = (kind, nodeId) => opts.onOpenBuilder?.(kind, nodeId)
 
+  const DIR_META = {
+    up: { icon: '↑', label: '上升', cls: 'is-up' },
+    down: { icon: '↓', label: '承压', cls: 'is-down' },
+    flat: { icon: '→', label: '稳定', cls: 'is-flat' },
+  }
+
   const render = (projection, events) => {
     const model = deriveReaderModel(projection, events)
     article.innerHTML = ''
     if (model.empty) { article.append(renderEmpty(theme, go)); return }
 
-    const seconds = estimateReadSeconds(model)
-    const readLabel = seconds < 60 ? `约 ${seconds} 秒读完` : `约 ${Math.round(seconds / 60)} 分钟读完`
-
-    // Hero：一句话 = 当前核心判断（无置信度数字）
+    /* 顶部：一句话 + 方向计数 */
+    const { up, down, flat } = model.directionCounts
     const hero = h('header', { class: 'rdr-hero' },
       h('p', { class: 'rdr-kicker' }, `主题 · ${theme?.name || ''}`),
       h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题'),
       model.oneLiner
         ? h('p', { class: 'rdr-oneliner' }, model.oneLiner.conclusion)
         : h('p', { class: 'rdr-oneliner is-hint' }, '论证链还在生长中，暂不足以提炼一句话结论。'),
-      h('div', { class: 'rdr-meta' },
-        h('span', { class: 'rdr-status' }, model.status),
-        h('span', { class: 'rdr-dot-sep', 'aria-hidden': 'true' }, '·'),
-        h('span', {}, readLabel),
-        model.oneLiner ? h('span', { class: 'rdr-dot-sep', 'aria-hidden': 'true' }, '·') : null,
-        model.oneLiner ? h('span', {}, `${model.oneLiner.steps} 步论证 · ${model.oneLiner.evidence} 条证据`) : null,
-        model.oneLiner?.hasPending ? h('span', { class: 'rdr-pending-flag' }, '含待复核环节') : null))
+      h('div', { class: 'rdr-dir-counts' },
+        h('span', { class: 'rdr-dir-count is-up' }, '↑ 上升 ', h('b', {}, String(up))),
+        h('span', { class: 'rdr-dir-count is-down' }, '↓ 承压 ', h('b', {}, String(down))),
+        h('span', { class: 'rdr-dir-count is-flat' }, '→ 稳定 ', h('b', {}, String(flat)))))
 
-    // 速读 / 完整：完整模式在卡片下展开证据
-    let fullMode = false
-    const cardsHost = h('div', { class: 'rdr-cards' })
-    const modeSwitch = h('div', { class: 'rdr-modeswitch', role: 'group', 'aria-label': '阅读模式' },
-      h('button', {
-        type: 'button', class: 'rdr-mode is-active', 'aria-pressed': 'true',
-        onclick: (e) => setMode(false, e.currentTarget),
-      }, '速读'),
-      h('button', {
-        type: 'button', class: 'rdr-mode', 'aria-pressed': 'false',
-        onclick: (e) => setMode(true, e.currentTarget),
-      }, '完整'))
-    const setMode = (full, button) => {
-      fullMode = full
-      modeSwitch.querySelectorAll('.rdr-mode').forEach((b) => {
-        const active = b === button
-        b.classList.toggle('is-active', active)
-        b.setAttribute('aria-pressed', String(active))
-      })
-      paintCards()
-    }
-    const paintCards = () => {
-      cardsHost.innerHTML = ''
-      for (const card of buildCards(model, projection, go, fullMode)) cardsHost.append(card)
-      if (!cardsHost.children.length) {
-        cardsHost.append(h('p', { class: 'rdr-note' }, '已有一些记录，但还不足以形成结构化卡片。去建设者视图继续添砖加瓦吧。'))
+    /* 第一问：现在是什么状态 — 节点按方向排序 */
+    const stateSection = h('section', { class: 'rdr-section' },
+      h('h2', { class: 'rdr-section-title' }, '现在是什么状态'))
+    for (const dir of ['up', 'down', 'flat']) {
+      const nodes = model.nodesByDirection[dir]
+      if (!nodes.length) continue
+      const meta = DIR_META[dir]
+      const group = h('div', { class: 'rdr-dir-group' },
+        h('h3', { class: `rdr-dir-label ${meta.cls}` }, `${meta.icon} ${meta.label} · ${nodes.length}`))
+      for (const node of nodes) {
+        group.append(
+          h('button', {
+            type: 'button', class: 'rdr-node-card',
+            onclick: () => go('network', node.id),
+          },
+            h('div', { class: 'rdr-node-top' },
+              h('span', { class: `rdr-dir-tag ${meta.cls}` }, `${meta.icon} ${meta.label}`),
+              h('span', { class: 'rdr-node-title' }, node.title)),
+            h('p', { class: 'rdr-node-state' }, node.state),
+            node.latest
+              ? h('p', { class: 'rdr-node-latest' },
+                  h('span', { class: 'rdr-latest-label' }, '最近：'),
+                  node.latest,
+                  node.latestSrc ? h('span', { class: 'rdr-latest-src' }, ` · ${node.latestSrc}`) : null)
+              : null))
       }
+      stateSection.append(group)
     }
-    paintCards()
 
-    // 实质内容：一句话（hero 已有）+ 关键数字 + 最新变化 + 核心判断 + 主题骨架
-    const numbers = renderKeyNumbers(model)
-    const changes = renderRecentChanges(model)
-    const judgments = renderKeyJudgments(model, go)
-    // 主题骨架：一眼建模（关键观点 + 状态 + 支持/反驳数）
-    const skeleton = renderSkeletonMap(projection, go)
+    /* 第二问：最近有没有拐点 */
+    const turnSection = h('section', { class: 'rdr-section' },
+      h('h2', { class: 'rdr-section-title' }, '最近有没有拐点'))
+    if (!model.turningPoints.length) {
+      turnSection.append(h('p', { class: 'rdr-note' }, '最近 30 天没有显著的方向变化。'))
+    } else {
+      const list = h('div', { class: 'rdr-turn-list' })
+      for (const tp of model.turningPoints) {
+        const meta = DIR_META[tp.dir] || DIR_META.flat
+        list.append(
+          h('button', {
+            type: 'button', class: 'rdr-turn-card',
+            onclick: () => { if (tp.nodeIds[0]) go('network', tp.nodeIds[0]) },
+          },
+            h('div', { class: 'rdr-turn-top' },
+              h('span', { class: 'rdr-turn-date' }, tp.date),
+              h('span', { class: `rdr-dir-tag ${meta.cls}` }, `${meta.icon} ${meta.label}`)),
+            h('p', { class: 'rdr-turn-text' }, tp.text),
+            tp.nodeTitles?.length
+              ? h('p', { class: 'rdr-turn-nodes' }, '影响：' + tp.nodeTitles.join('、'))
+              : null))
+      }
+      turnSection.append(list)
+    }
 
-    // 尾声：读完的终点感 + 深入建设者
+    /* 尾声：去建设者深入 */
     const tail = h('footer', { class: 'rdr-tail' },
-      h('p', { class: 'rdr-tail-title' }, '已读完当前核心'),
-      h('p', { class: 'rdr-tail-sub' }, '以上均来自当前投影；判断的增删改只发生在建设者模式。'),
-      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '深入 →'))
+      h('p', { class: 'rdr-tail-sub' }, '想看每一条数据的完整演化？去建设者视图。'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '进入建设者 →'))
 
-    article.append(hero, numbers, changes, judgments, skeleton, modeSwitch, cardsHost, tail)
+    article.append(hero, stateSection, turnSection, tail)
   }
 
   // 异步加载投影（与建设者视图同一数据源）
