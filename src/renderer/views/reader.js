@@ -64,6 +64,24 @@ function themeTagFromEvent(event) {
 }
 
 const titleOf = (node) => String(node?.title || node?.currentText || '未命名').trim() || '未命名'
+
+/* 提炼判断：从原始文本中提取认知，而非搬运 */
+function distillJudgment(rawText, { direction, nature, themeTag } = {}) {
+  let text = String(rawText || '').trim()
+  if (!text) return '状态待更新'
+  /* 1. 如果文本过长（>60字），提取关键句 */
+  if (text.length > 60) {
+    /* 尝试找到包含数字或关键动词的句子 */
+    const sentences = text.split(/[。；;]/).filter(Boolean)
+    /* 优先选择包含百分比、数字、"增长"、"下降"、"提升"等关键词的句子 */
+    const key = sentences.find(s => /\d+%|\d+\.?\d*亿|增长|下降|提升|突破|创/.test(s))
+    if (key) text = key.trim() + '。'
+    else text = sentences[0].trim() + '。'
+  }
+  /* 2. 如果过长仍截断，保留核心 */
+  if (text.length > 80) text = text.slice(0, 77) + '…'
+  return text
+}
 const short = (value, limit = 90) => truncateGraphemes(String(value || ''), limit)
 
 function liveEdges(projection) {
@@ -160,13 +178,18 @@ export function deriveReaderModel(projection = {}, events = []) {
     /* 有反驳无支持 → 恶化 */
     if (direction === 'stable' && stat.contradicts > 0 && stat.supports === 0) direction = 'declining'
 
-    /* 一句话状态：标题 + 置信度 + 证据对比 */
+    /* 一句话状态：提炼判断，而非原始数据搬运 */
     const conf = Math.round((node.confidence ?? 0.5) * 100)
-    let state = titleOf(node)
+    /* 从最新事件提取关键信息，生成判断性描述 */
+    let state = ''
+    const latestPayload = latestEvent?.payload || {}
+    const rawText = latestPayload.title || latestPayload.text || titleOf(node)
+    /* 提炼：提取关键数字和动词，去除冗长修饰 */
+    const distilled = distillJudgment(rawText, { direction, nature, themeTag })
+    state = distilled
+    /* 证据信息作为辅助，不主导 */
     if (stat.supports > 0 || stat.contradicts > 0) {
-      state += `：${stat.supports} 条支持，${stat.contradicts} 条反驳，置信度 ${conf}%`
-    } else {
-      state += `：置信度 ${conf}%，暂无证据`
+      state += `（${stat.supports} 支持/${stat.contradicts} 反驳，置信度 ${conf}%）`
     }
 
     /* 最近关键变化 */
@@ -265,7 +288,33 @@ export function deriveReaderModel(projection = {}, events = []) {
     const result = linearize(projection)
     mainChain = (result.chains || []).find((c) => c.kind === 'main') || null
   } catch { mainChain = null }
-  if (mainChain && mainChain.steps.length >= 2) {
+  /* 一句话定调：主题级综合判断，而非单节点标题 */
+  if (model.directionCounts.improving + model.directionCounts.declining + model.directionCounts.stable > 0) {
+    const { improving, declining, stable } = model.directionCounts
+    const total = improving + declining + stable
+    /* 收集主要 themeTag */
+    const tags = []
+    for (const dir of ['improving', 'declining', 'stable']) {
+      for (const n of model.nodesByDirection[dir].slice(0, 2)) {
+        if (n.themeTag) tags.push(n.themeTag)
+      }
+    }
+    const uniqTags = [...new Set(tags)].slice(0, 3)
+    /* 生成定调句 */
+    let conclusion = ''
+    if (improving > declining && improving > stable) {
+      conclusion = `整体向好，${improving} 个方向好转`
+    } else if (declining > improving && declining > stable) {
+      conclusion = `面临压力，${declining} 个方向承压`
+    } else if (stable >= improving && stable >= declining) {
+      conclusion = `总体稳定，${stable} 个方向持稳`
+    } else {
+      conclusion = `多空交织，好转 ${improving}、承压 ${declining}、稳定 ${stable}`
+    }
+    if (uniqTags.length) conclusion += `，聚焦${uniqTags.join('、')}`
+    conclusion += '。'
+    model.oneLiner = { conclusion }
+  } else if (mainChain && mainChain.steps.length >= 2) {
     const lastStep = mainChain.steps[mainChain.steps.length - 1]
     const conclusion = lastStep.nodes[0]
     model.oneLiner = { conclusion: titleOf(conclusion) }
