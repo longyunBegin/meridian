@@ -690,15 +690,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         },
           h('span', { class: 'icon' }, '◷'),
           h('span', {}, '待处理'),
-          h('span', { class: 'n' }, String(inboxCount))),
-        h('div', {
-          class: `side-nav-item${builderMode === 'ledger' ? ' active' : ''}`,
-          'data-mode': 'ledger',
-          onclick: () => { builderMode = 'ledger'; selectedNodeId = null; renderMain(); renderSidebar(); },
-        },
-          h('span', { class: 'icon' }, '▤'),
-          h('span', {}, '账本'),
-          h('span', { class: 'n' }, String(verifiedEvents.length)))),
+          h('span', { class: 'n' }, String(inboxCount)))),
       h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
         h('br', {}),
@@ -725,15 +717,6 @@ async function loadConcept(theme, ledgerPane, opts) {
       opts.mainStage.append(renderNodeView(selectedNodeId))
     } else if (builderMode === 'inbox') {
       opts.mainStage.append(renderInboxView())
-    } else if (builderMode === 'ledger') {
-      /* 账本视图：异步渲染 */
-      const host = h('div', { style: 'display:contents' })
-      opts.mainStage.append(host)
-      import('./ledger.js').then(({ renderLedger }) => {
-        renderLedger(host, theme).catch((err) => {
-          host.append(h('div', { class: 'builder-empty' }, `账本加载失败：${err.message}`))
-        })
-      })
     } else {
       opts.mainStage.append(renderSignalStream())
     }
