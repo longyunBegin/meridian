@@ -581,131 +581,195 @@ async function loadConcept(theme, ledgerPane, opts) {
     initialState: viewState,
     verifiedEvents,
   })
-  /* ---- 变化流：自动化结果单页呈现，按时间倒序，一处展示 ---- */
-  let selectedPropId = null
-  const selectProposition = (nodeId) => {
-    selectedPropId = nodeId || null
-    renderChangeFeed()
-  }
-  /* 从事件账本提取变化：证据/置信度/新命题/新关系 */
-  const buildChangeItems = () => {
-    const items = []
+  /* ---- 审阅工作台：用户是审阅者，不是建设者。系统做90%，用户做10% ---- */
+  /* 核心：信号流（待判决） + 已自动处理 + 节点结构（校正） + 已归档 */
+  let selectedSignalId = null
+
+  /* 从事件账本提取待审阅信号：pendingReview 的证据与关系 */
+  const buildSignals = () => {
+    const signals = []
     const nodes = projectedNodes(viewState.projection)
     const nodeById = new Map(nodes.map((n) => [n.id, n]))
     for (const event of (verifiedEvents || []).slice().reverse()) {
       const type = event?.type
-      if (!['evidence.appended', 'confidence.updated', 'claim.created', 'relation.declared'].includes(type)) continue
       const payload = event?.payload || {}
-      const nodeId = payload.nodeId || payload.claimId || payload.targetId
+      /* 待审阅：pendingReview 标记的证据与关系 */
+      const isPending = payload.pendingReview || event?.pendingReview
+      if (!isPending) continue
+      if (!['evidence.appended', 'relation.declared'].includes(type)) continue
+      const nodeId = payload.nodeId || payload.targetId || payload.to
       const node = nodeId ? nodeById.get(nodeId) : null
-      items.push({ event, type, payload, node, nodeId })
-      if (items.length >= 30) break
+      const rel = payload.rel || payload.relation || 'supports'
+      signals.push({
+        id: event.id,
+        event, type, payload,
+        nodeId, node,
+        suggestedNode: node?.title || '未归属',
+        suggestedDir: rel === 'contradicts' ? '反驳' : rel === 'derives' ? '推导' : '支持',
+        dirKey: rel,
+        text: payload.title || payload.text?.slice(0, 60) || '新数据',
+        source: payload.sourceLabel || payload.url || '',
+        confidence: payload.confidence ?? null,
+        at: event?.at || event?.timestamp,
+      })
+      if (signals.length >= 50) break
     }
-    return items
+    return signals
   }
-  const renderChangeFeed = () => {
+
+  /* 按（节点，方向）聚类，用于批量判决 */
+  const groupSignals = (signals) => {
+    const groups = new Map()
+    for (const s of signals) {
+      const key = `${s.nodeId || 'unassigned'}|${s.dirKey}`
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          nodeId: s.nodeId,
+          nodeTitle: s.suggestedNode,
+          dirKey: s.dirKey,
+          dirLabel: s.suggestedDir,
+          items: [],
+        })
+      }
+      groups.get(key).items.push(s)
+    }
+    return [...groups.values()].sort((a, b) => b.items.length - a.items.length)
+  }
+
+  const renderReviewBench = () => {
     clear(opts.attentionSec)
     clear(opts.detailSec)
-    const items = buildChangeItems()
-    /* 标题 */
-    opts.attentionSec.append(h('h2', { class: 'builder-section-title' }, items.length ? `变化 · ${items.length}` : '变化'))
-    if (!items.length) {
-      opts.attentionSec.append(h('p', { class: 'builder-empty' }, '暂无变化。外部信息进入后，自动化的提取与佐证结果会显示在这里。'))
-      return
-    }
+    const signals = buildSignals()
+    const groups = groupSignals(signals)
+
+    /* 标题：今日信号 */
+    const todayCount = signals.length
+    opts.attentionSec.append(
+      h('h2', { class: 'builder-section-title' },
+        todayCount ? `待审阅信号 · ${todayCount}` : '待审阅信号'),
+      todayCount
+        ? h('p', { class: 'builder-hint' }, '默认接受：不处理即表示同意。只在不同意时动手。')
+        : h('p', { class: 'builder-empty' }, '暂无待审阅信号。系统会自动处理高置信数据，结果在下方"已自动处理"中。')
+    )
+
+    if (!groups.length) return
+
     const feed = h('div', { class: 'builder-feed' })
-    for (const { event, type, payload, node, nodeId } of items) {
-      const time = fmtDateTime(event?.at || event?.timestamp)
-      let actionText = '', confDelta = null, sourceUrl = null
-      if (type === 'evidence.appended') {
-        const rel = payload.rel || payload.relation
-        actionText = rel === 'contradicts' ? '新证据反驳' : '新证据支持'
-        sourceUrl = payload.url || payload.sourceUrl || null
-      } else if (type === 'confidence.updated') {
-        const before = Math.round((payload.before ?? payload.oldConfidence ?? 0) * 100)
-        const after = Math.round((payload.after ?? payload.newConfidence ?? 0) * 100)
-        actionText = '置信度更新'
-        confDelta = { before, after }
-      } else if (type === 'claim.created') {
-        actionText = '新命题'
-      } else if (type === 'relation.declared') {
-        const rel = payload.rel
-        actionText = rel === 'contradicts' ? '建立反驳关系' : rel === 'derives' ? '建立推导关系' : '建立支持关系'
+    for (const group of groups) {
+      /* 聚类卡片：节点 + 方向 + 数量 + 批量操作 */
+      const groupCard = h('div', { class: 'builder-signal-group' },
+        h('div', { class: 'builder-signal-group-top' },
+          h('span', { class: 'builder-signal-node' }, group.nodeTitle),
+          h('span', { class: `builder-signal-dir is-${group.dirKey}` }, group.dirLabel),
+          h('span', { class: 'builder-signal-count' }, `${group.items.length} 条`)),
+        h('div', { class: 'builder-signal-group-actions' },
+          h('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: () => acceptGroup(group),
+          }, `全部接受`),
+          h('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: () => toggleGroupExpand(group.key),
+          }, '展开')))
+      const itemsWrap = h('div', { class: 'builder-signal-items', hidden: true, 'data-group': group.key })
+      for (const sig of group.items) {
+        itemsWrap.append(renderSignalItem(sig))
       }
-      const isSelected = nodeId && nodeId === selectedPropId
-      const card = h('button', {
-        type: 'button',
-        class: `builder-feed-card${isSelected ? ' is-selected' : ''}`,
-        onclick: () => selectProposition(isSelected ? null : nodeId),
-      },
-        h('div', { class: 'builder-feed-top' },
-          h('span', { class: 'builder-feed-time' }, time),
-          h('span', { class: 'builder-feed-action' }, actionText)),
-        h('div', { class: 'builder-feed-title' }, node?.title || payload.title || '未命名命题'),
-        confDelta
-          ? h('div', { class: 'builder-feed-conf' },
-              h('span', {}, `${confDelta.before}%`),
-              h('span', { class: 'builder-feed-arrow' }, '→'),
-              h('span', { class: confDelta.after > confDelta.before ? 'is-up' : 'is-down' }, `${confDelta.after}%`))
-          : null,
-        sourceUrl
-          ? h('span', { class: 'builder-feed-src', onclick: (e) => { e.stopPropagation(); window.open(sourceUrl, '_blank', 'noopener') } }, '来源 ↗')
-          : null)
-      feed.append(card)
-      /* 选中时内联展开详情 */
-      if (isSelected && node) {
-        const detailWrap = h('div', { class: 'builder-feed-detail' })
-        renderPropDetail(detailWrap, theme, viewState, nodeId, {
-          onChanged: opts.onChanged,
-          onOpenAttribution: (rel) => openInlineAttribution(theme, node, rel, detailWrap, { onChanged: opts.onChanged }),
-        })
-        feed.append(detailWrap)
-      }
+      groupCard.append(itemsWrap)
+      feed.append(groupCard)
     }
     opts.attentionSec.append(feed)
   }
-  renderChangeFeed()
-  /* 全部命题：折叠 */
-  const renderOthers = () => {
+
+  /* 单条信号：判决动作 */
+  const renderSignalItem = (sig) => {
+    const item = h('div', { class: 'builder-signal-item', 'data-signal-id': sig.id },
+      h('div', { class: 'builder-signal-text' }, sig.text),
+      sig.source ? h('div', { class: 'builder-signal-src' }, sig.source) : null,
+      h('div', { class: 'builder-signal-meta' },
+        h('span', {}, `建议：${sig.suggestedNode} · ${sig.suggestedDir}`),
+        sig.confidence != null ? h('span', {}, `置信度 ${Math.round(sig.confidence * 100)}%`) : null),
+      h('div', { class: 'builder-signal-actions' },
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'node') }, '改节点'),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'dir') }, '改方向'),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => correctSignal(sig, 'strength') }, '改强度'),
+        h('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: () => rejectSignal(sig) }, '驳回')))
+    return item
+  }
+
+  /* 批量接受一组信号 */
+  const acceptGroup = async (group) => {
+    try {
+      for (const sig of group.items) {
+        await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'accept' })
+      }
+      toast(`已接受 ${group.items.length} 条`)
+      opts.onChanged?.()
+    } catch (e) {
+      toast('批量接受失败：' + (e.message || e), 'var(--danger)')
+    }
+  }
+
+  const toggleGroupExpand = (key) => {
+    const el = opts.attentionSec.querySelector(`[data-group="${key}"]`)
+    if (el) el.hidden = !el.hidden
+  }
+
+  /* 校正单条信号 */
+  const correctSignal = (sig, kind) => {
+    /* TODO: 打开校正对话框（改节点/改方向/改强度） */
+    toast(`校正信号：${kind}（待实现）`)
+  }
+
+  const rejectSignal = async (sig) => {
+    try {
+      await m.chainConfirmSignal?.(theme.id, sig.id, { decision: 'reject' })
+      toast('已驳回')
+      opts.onChanged?.()
+    } catch (e) {
+      toast('驳回失败：' + (e.message || e), 'var(--danger)')
+    }
+  }
+
+  renderReviewBench()
+
+  /* 已自动处理：折叠 */
+  const renderAutoProcessed = () => {
+    clear(opts.detailSec)
+    /* TODO: 从事件账本提取高置信自动处理的记录 */
+    const details = h('details', { class: 'builder-others-details' },
+      h('summary', { class: 'builder-others-summary' }, '已自动处理'),
+      h('p', { class: 'builder-note' }, '系统自动处理的高置信数据会在这里列出。'))
+    opts.detailSec.append(details)
+  }
+  renderAutoProcessed()
+
+  /* 节点结构：合并/拆分/重命名/归档（突出显示） */
+  const renderNodeStructure = () => {
     const nodes = projectedNodes(viewState.projection).filter((n) => n.kind === 'viewpoint' || n.kind === 'claim')
     clear(opts.othersSec)
     if (!nodes.length) return
-    const details = h('details', { class: 'builder-others-details' },
-      h('summary', { class: 'builder-others-summary' }, `全部命题 · ${nodes.length}`),
-      h('div', { class: 'builder-others-list' }))
-    const list = details.querySelector('.builder-others-list')
+    opts.othersSec.append(h('h2', { class: 'builder-section-title' }, `节点结构 · ${nodes.length}`))
+    const list = h('div', { class: 'builder-node-list' })
     for (const node of nodes) {
-      list.append(h('button', {
-        type: 'button', class: 'builder-others-item',
-        onclick: () => selectProposition(node.id),
-      },
-        h('span', { class: 'cog-wb-prop-dot', 'data-status': node.status || 'pending' }),
-        h('span', {}, node.title || '未命名命题')))
+      list.append(h('div', { class: 'builder-node-row' },
+        h('span', { class: 'builder-node-title' }, node.title || '未命名'),
+        h('div', { class: 'builder-node-actions' },
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'merge') }, '合并'),
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'split') }, '拆分'),
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'rename') }, '重命名'),
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: () => structureOp(node, 'archive') }, '归档'))))
     }
-    opts.othersSec.append(details)
+    opts.othersSec.append(list)
   }
-  renderOthers()
-  /* 工具栏：添加节点 / 补充证据 */
-  if (opts.addNodeBtn) {
-    opts.addNodeBtn.disabled = false
-    opts.addNodeBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'node', { onChanged: opts.onChanged })
+  const structureOp = (node, op) => {
+    /* TODO: 结构操作对话框 */
+    toast(`节点操作：${op}（待实现）`)
   }
-  if (opts.addEvidenceBtn) {
-    opts.addEvidenceBtn.disabled = false
-    opts.addEvidenceBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'evidence', { onChanged: opts.onChanged })
-  }
-  const pendingLedgerJump = consumeChainEventJump(theme.id)
-  if (pendingLedgerJump) {
-    const request = pendingLedgerJump
-    const target = verifiedEvents.find((event) => event?.id === request.eventId)
-    if (target) queueMicrotask(() => { opts.openLedger?.(); ledgerController?.showEvent(target.id) })
-    else toast('该引用事件不在已校验账本前缀中，未执行跳转', 'var(--text-2)')
-  }
-  const pendingBuilderJump = consumeBuilderJump(theme.id)
-  if (pendingBuilderJump?.nodeId) {
-    const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
-    if (exists) queueMicrotask(() => selectProposition(pendingBuilderJump.nodeId))
-  }
+  renderNodeStructure()
+  /* 跳转：暂不支持信号定位，忽略 */
+  consumeBuilderJump(theme.id)
 
 }
 
