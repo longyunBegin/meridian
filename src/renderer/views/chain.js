@@ -106,25 +106,19 @@ export function renderChainSection(theme, opts = {}) {
   const graphPane = h('div', { class: 'cog-graph-pane', 'aria-label': '主题网络画布' })
   const stage = h('div', { class: 'cog-stage' })
   graphPane.append(stage)
-  const themeStats = h('section', { class: 'cog-theme-stats', role: 'group', 'aria-label': '主题动态统计' },
-    ...[
-      ['points', '全主题非证据节点'],
-      ['evidence', '全主题证据条目'],
-      ['events', '账本事件'],
-      ['integrity', '账本完整性'],
-    ].map(([key, label]) => h('div', { class: `cog-theme-stat${key === 'integrity' ? ' is-integrity' : ''}`, 'data-theme-stat': key },
-      h('span', { class: 'cog-theme-stat-label' }, label),
-      ['points', 'evidence'].includes(key) ? h('span', { class: 'cog-theme-stat-range' }, '全主题本地记录 · 不含外部引用') : null,
-      h('strong', { class: 'cog-theme-stat-value', 'data-theme-stat-value': key, 'aria-live': key === 'integrity' ? 'polite' : 'off' }, '—'))))
-  /* 建设者工作台（单视图，无子页签）：
-     左 = 命题列表（有什么）| 中 = 网络画布（怎么连的）+ 命题详情 | 右 = 待处理（新信息怎么办） */
-  const propListEl = h('aside', { class: 'cog-wb-props', 'aria-label': '命题列表' })
-  const detailEl = h('section', { class: 'cog-wb-detail', 'aria-label': '命题详情' })
-  const queueEl = h('aside', { class: 'cog-wb-queue', 'aria-label': '待处理' })
-  const chainPanel = h('div', { class: 'cog-chain-panel' }, graphPane)
-  const centerCol = h('div', { class: 'cog-wb-center' }, chainPanel, detailEl)
-  const workbench = h('div', { class: 'cog-workbench' }, propListEl, centerCol, queueEl)
-  concept.append(ledgerBackdrop, ledgerPane, themeStats, workbench)
+  /* 建设者：图主导（70%）+ 右侧抽屉（命题/详情/待处理）。
+     点节点 → 抽屉滑出详情；焦点永远在图上。 */
+  const drawerEl = h('aside', { class: 'cog-drawer', 'aria-label': '建设者抽屉' })
+  const drawerTabs = h('div', { class: 'cog-drawer-tabs', role: 'tablist', 'aria-label': '抽屉切面' })
+  const drawerPanels = {
+    props: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '命题列表' }),
+    detail: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '节点详情' }),
+    queue: h('div', { class: 'cog-drawer-panel', role: 'tabpanel', 'aria-label': '待处理' }),
+  }
+  drawerEl.append(drawerTabs, drawerPanels.props, drawerPanels.detail, drawerPanels.queue)
+  const graphCol = h('div', { class: 'cog-builder-graph' }, graphPane)
+  const builder = h('div', { class: 'cog-builder' }, graphCol, drawerEl)
+  concept.append(ledgerBackdrop, ledgerPane, builder)
   let ledgerButton = null
   const openLedger = () => {
     ledgerBackdrop.hidden = false
@@ -163,11 +157,10 @@ export function renderChainSection(theme, opts = {}) {
     closeLedger,
     openLedger,
     ledgerTitleId: drawerTitleId,
-    themeStats,
-    chainPanel,
-    propListEl,
-    detailEl,
-    queueEl,
+    chainPanel: graphPane,
+    drawerEl,
+    drawerTabs,
+    drawerPanels,
     onChanged: () => {
       clear(ledgerPane)
       clear(stage)
@@ -287,8 +280,10 @@ function renderPropDetail(container, theme, viewState, nodeId, { onClose, onOpen
   const node = nodeId
     ? projectedNodes(viewState?.projection || {}).find((n) => n.id === nodeId)
     : null
-  if (!node) { container.hidden = true; return }
-  container.hidden = false
+  if (!node) {
+    container.append(h('p', { class: 'chain-note' }, '在图上点一个节点，或从「命题」选一个，这里滑出它的详情与证据流。'))
+    return
+  }
   const { supports, against } = evidenceForNode(viewState, node.id)
   const settled = node.settledAt || node.settlementEventId
   const evidenceItem = ({ source, edge }) =>
@@ -608,36 +603,62 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
     verifiedEvents,
   })
   graphController.render(viewState)
-  /* ---- 工作台三列：单一选择状态贯穿列表 / 网络 / 详情 ---- */
+  /* ---- 抽屉：命题 / 详情 / 待处理。点节点 → 滑出详情；焦点永远在图上 ---- */
+  const drawerTabDefs = [['props', '命题'], ['detail', '详情'], ['queue', '待处理']]
+  const drawerTabBtns = {}
+  const showDrawerTab = (tab) => {
+    for (const [key, btn] of Object.entries(drawerTabBtns)) {
+      const active = key === tab
+      btn.classList.toggle('is-active', active)
+      btn.setAttribute('aria-selected', String(active))
+      btn.tabIndex = active ? 0 : -1
+    }
+    for (const [key, panel] of Object.entries(opts.drawerPanels)) {
+      panel.hidden = key !== tab
+    }
+    opts.drawerEl.dataset.tab = tab
+  }
+  for (const [key, label] of drawerTabDefs) {
+    const btn = h('button', {
+      type: 'button', role: 'tab', class: 'cog-drawer-tab', 'aria-selected': 'false', tabindex: '-1',
+      onclick: () => showDrawerTab(key),
+    }, label)
+    drawerTabBtns[key] = btn
+    opts.drawerTabs.append(btn)
+  }
   let selectedPropId = null
   const selectProposition = (nodeId, { fromNetwork = false } = {}) => {
     selectedPropId = nodeId || null
-    for (const el of opts.propListEl.querySelectorAll('[data-prop-id]')) {
+    for (const el of opts.drawerPanels.props.querySelectorAll('[data-prop-id]')) {
       el.classList.toggle('is-selected', el.dataset.propId === selectedPropId)
     }
     if (!fromNetwork && selectedPropId) graphController.focus(selectedPropId)
-    renderPropDetail(opts.detailEl, theme, viewState, selectedPropId, {
+    const node = selectedPropId
+      ? projectedNodes(viewState.projection).find((n) => n.id === selectedPropId)
+      : null
+    renderPropDetail(opts.drawerPanels.detail, theme, viewState, selectedPropId, {
       onChanged: opts.onChanged,
       onClose: () => selectProposition(null),
-      onOpenAttribution: (rel) => {
-        const node = projectedNodes(viewState.projection).find((n) => n.id === selectedPropId)
-        openAttributionDialog(theme, node, rel, { onChanged: opts.onChanged })
-      },
+      onOpenAttribution: (rel) => openAttributionDialog(theme, node, rel, { onChanged: opts.onChanged }),
     })
-    if (selectedPropId) {
-      queueMicrotask(() => opts.detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+    if (node) {
+      /* 节点管理（改名/失效）收进详情底部折叠 */
+      opts.drawerPanels.detail.append(renderNodeLifecycleControls(theme, node, {
+        onChanged: opts.onChanged,
+      }))
+      showDrawerTab('detail')
     }
   }
   nodeSelectRef.current = (node) => selectProposition(node?.id || null, { fromNetwork: true })
-  renderPropList(opts.propListEl, theme, viewState, {
+  renderPropList(opts.drawerPanels.props, theme, viewState, {
     selectedId: selectedPropId,
     onSelect: (nodeId) => selectProposition(nodeId),
-    onOpenAttribution: (nodeId, rel) => openAttributionDialog(theme, nodeId, rel, { onChanged: opts.onChanged }),
   })
-  renderQueuePanel(opts.queueEl, theme, viewState, {
+  renderQueuePanel(opts.drawerPanels.queue, theme, viewState, {
     onChanged: opts.onChanged,
     onFocusNode: (nodeId) => selectProposition(nodeId),
   })
+  showDrawerTab('props')
   const pendingLedgerJump = consumeChainEventJump(theme.id)
   if (pendingLedgerJump) {
     const request = pendingLedgerJump
@@ -648,7 +669,7 @@ async function loadConcept(theme, ledgerPane, stage, opts) {
   const pendingBuilderJump = consumeBuilderJump(theme.id)
   if (pendingBuilderJump) {
     if (pendingBuilderJump.pane === 'attribution') {
-      queueMicrotask(() => opts.queueEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+      queueMicrotask(() => showDrawerTab('queue'))
     }
     if (pendingBuilderJump.nodeId) {
       const exists = projectedNodes(viewState.projection).some((node) => node.id === pendingBuilderJump.nodeId)
@@ -1119,7 +1140,10 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     h('div', { class: 'cog-focus-bar' }, focusLabel,
       h('div', { class: 'cog-focus-actions' }, focusDetails, clearFocus)),
     searchTools, searchResults, searchPager, searchError,
-    graphCanvas, graphLegend, help, timeControls)
+    graphCanvas,
+    h('details', { class: 'cog-graph-legend-wrap' }, h('summary', {}, '图例'), graphLegend),
+    help,
+    h('details', { class: 'cog-graph-time-wrap' }, h('summary', {}, '时间轴'), timeControls))
   stage.append(graphToolbar, h('div', { class: 'cog-workspace-grid' }, graphMain, pointInspector))
   let currentView = { projection: proj, selectedSeq: null, events: [] }
   let currentFocus = null

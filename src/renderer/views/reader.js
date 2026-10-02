@@ -1,6 +1,6 @@
 import { h } from '../lib/dom.js'
 import { linearize } from '../lib/chain-linearizer.js'
-import { networkNodeType, truncateGraphemes } from '../lib/theme-network.js'
+import { networkNodeType, truncateGraphemes, layoutThemeNetwork, NODE_TYPE_META } from '../lib/theme-network.js'
 import { compactEventSummary } from '../lib/chain-ui-model.js'
 
 /* ------------------------------------------------------------------ */
@@ -169,6 +169,55 @@ const evidenceList = (items) => h('ul', { class: 'rdr-evidence' },
  * 读者视图。opts: { onOpenBuilder(kind, nodeId) }
  * kind: 'network' | 'propositions' | 'attribution'
  */
+/* 读者小图：主题结构的极简快照（点 + 线，无文字），点击进入建设者 */
+function renderMiniGraph(projection, go) {
+  const nodes = liveNodes(projection).filter((n) => !n.external)
+  if (nodes.length < 2) return null
+  const byId = new Set(nodes.map((n) => n.id))
+  const edges = liveEdges(projection).filter((e) => e && byId.has(e.from) && byId.has(e.to) && e.from !== e.to)
+  let layout
+  try {
+    layout = layoutThemeNetwork(nodes, edges, 640)
+  } catch { return null }
+  const W = layout.width || 640
+  const H = Math.min(300, layout.height || 300)
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+  svg.setAttribute('class', 'rdr-minigraph-svg')
+  svg.setAttribute('role', 'img')
+  svg.setAttribute('aria-label', '主题结构缩略图，点击进入建设者视图查看完整网络')
+  for (const e of edges.slice(0, 120)) {
+    const a = layout.pos.get(e.from)
+    const b = layout.pos.get(e.to)
+    if (!a || !b) continue
+    const line = document.createElementNS(NS, 'line')
+    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y)
+    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y)
+    line.setAttribute('class', `rdr-minigraph-edge${e.rel === 'contradicts' ? ' is-against' : ''}`)
+    svg.append(line)
+  }
+  for (const n of nodes) {
+    const p = layout.pos.get(n.id)
+    if (!p) continue
+    const type = networkNodeType(n)
+    const meta = NODE_TYPE_META[type] || {}
+    const circle = document.createElementNS(NS, 'circle')
+    circle.setAttribute('cx', p.x); circle.setAttribute('cy', p.y)
+    circle.setAttribute('r', type === 'viewpoint' ? 7 : type === 'evidence' ? 4 : 5.5)
+    circle.setAttribute('fill', meta.color || '#999')
+    const title = document.createElementNS(NS, 'title')
+    title.textContent = n.title || '未命名节点'
+    circle.append(title)
+    svg.append(circle)
+  }
+  const wrap = h('button', {
+    type: 'button', class: 'rdr-minigraph', 'aria-label': '查看完整主题网络，进入建设者视图',
+    onclick: () => go('network'),
+  }, svg, h('span', { class: 'rdr-minigraph-hint' }, '主题网络 · 点击深入 →'))
+  return h('section', { class: 'rdr-graph', 'aria-label': '主题结构' }, wrap)
+}
+
 export function renderReaderView(theme, opts = {}) {
   const article = h('article', { class: 'rdr', 'aria-label': `${theme?.name || '主题'} · 阅读视图` },
     h('p', { class: 'rdr-loading' }, '正在从当前投影生成阅读视图…'))
@@ -227,13 +276,16 @@ export function renderReaderView(theme, opts = {}) {
     }
     paintCards()
 
-    // 尾声：读完的终点感 + 进入建设者
+    // 主题图：结构快照（摘要 + 图 + 一句话模型）
+    const graphSection = renderMiniGraph(projection, go)
+
+    // 尾声：读完的终点感 + 深入建设者
     const tail = h('footer', { class: 'rdr-tail' },
       h('p', { class: 'rdr-tail-title' }, '已读完当前核心'),
-      h('p', { class: 'rdr-tail-sub' }, '以上均来自当前投影；判断的增删改只发生在建设者视图。'),
-      h('button', { type: 'button', class: 'btn', onclick: () => go('network') }, '进入建设者视图 →'))
+      h('p', { class: 'rdr-tail-sub' }, '以上均来自当前投影；判断的增删改只发生在建设者模式。'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => go('network') }, '深入 →'))
 
-    article.append(hero, modeSwitch, cardsHost, tail)
+    article.append(hero, graphSection, modeSwitch, cardsHost, tail)
   }
 
   // 异步加载投影（与建设者视图同一数据源）

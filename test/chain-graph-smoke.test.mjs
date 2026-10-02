@@ -62,7 +62,7 @@ ok('通用内容通过 DOM textContent 呈现，不使用 HTML 字符串注入',
   && !renderer.includes('innerHTML') && chain.includes('textContent ='))
 ok('网络控件按已校验事件前缀生成日期/密度刻度并置于主画布底部', chain.includes('const verifiedTimelineEvents = handlers.verifiedEvents || []')
   && chain.includes('buildDensityTimeline(verifiedTimelineEvents)') && chain.includes("class: 'cog-time-controls'")
-  && chain.includes('graphCanvas, graphLegend, help, timeControls'))
+  && chain.includes("class: 'cog-graph-time-wrap'") && chain.includes("class: 'cog-graph-legend-wrap'"))
 ok('时间轴日期刻度可点选；拖动选择时只发起只读历史回放', chain.includes("onclick: () => handlers.onReplay?.(point.seq)")
   && chain.includes("timeSlider.addEventListener('input', () => replayFromSlider(false))")
   && chain.includes('setTimeout(() => handlers.onReplay?.(point.seq), 90)')

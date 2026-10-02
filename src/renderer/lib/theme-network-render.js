@@ -58,14 +58,22 @@ function appendTypeGlyph(group, type, centerX, centerY) {
   /* 类型只用形状 + 颜色两重编码：汉字 icon 与类型文字标签已移除（见无障碍 label / 图例）。 */
 }
 
+/* 画布调色板：跟随系统浅色/深色（CSS 变量负责静态规则，这里负责 JS 直写的 fill）。 */
+function canvasPalette() {
+  const dark = typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches
+  return dark
+    ? { card: '#1c1c1e', pillBg: '#2c2c2e', ok: '#30d158', warn: '#ff5a54', muted: '#a7a7ad' }
+    : { card: '#ffffff', pillBg: 'rgba(0,0,0,0.06)', ok: '#34c759', warn: '#ff3b30', muted: '#8e8e93' }
+}
 function nodeStatusColor(status) {
   /* Apple 式：中性底，颜色只出现在文字上。 */
-  return '#2c2c2e'
+  return canvasPalette().pillBg
 }
 function nodeStatusTextColor(status) {
-  if (status === 'verified') return '#30d158'
-  if (status === 'disputed') return '#ff5a54'
-  return '#a7a7ad'
+  const p = canvasPalette()
+  if (status === 'verified') return p.ok
+  if (status === 'disputed') return p.warn
+  return p.muted
 }
 
 /** Render only event-projection nodes: topic is never synthesized as a graph root. */
@@ -239,7 +247,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : meta.color
     group.append(svgEl('rect', {
       x: -dimensions.w / 2, y: -dimensions.h / 2, width: dimensions.w, height: dimensions.h, rx: 13,
-      fill: '#1c1c1e', stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
+      fill: canvasPalette().card, stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
       'stroke-dasharray': unavailable ? '5 4' : 'none',
       class: 'cog-node-card',
     }))
