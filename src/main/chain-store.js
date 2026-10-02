@@ -377,3 +377,13 @@ export function setInboxChainDraft(inboxId, draft) {
   persistLedger()
   return item.chainDraft || null
 }
+
+export function setInboxEnginePipeline(inboxId, pipeline) {
+  const db = load()
+  const item = db.inbox.find((i) => i.id === inboxId)
+  if (!item) throw new Error('收件箱条目不存在')
+  if (pipeline == null) delete item.enginePipeline
+  else item.enginePipeline = { ...(pipeline && typeof pipeline === 'object' ? pipeline : {}) }
+  persistLedger()
+  return item.enginePipeline || null
+}

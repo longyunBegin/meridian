@@ -2240,6 +2240,103 @@ function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
   return wrap
 }
 
+/* ------------------------------------------------------------------ */
+/* 认知发动机 UI：四步流水线（抽取→分类→匹配→归因），人确认后闭环。       */
+/* ------------------------------------------------------------------ */
+
+function renderEnginePipeline(item, { themeId, onDone } = {}) {
+  const wrap = h('div', { class: 'engine-pipe' },
+    h('div', { class: 'draft-head' },
+      h('span', { class: 'draft-title' }, '认知发动机'),
+      h('span', { class: 'draft-sub' }, '抽取 → 分类 → 匹配 → 归因，人确认后写入')))
+  const pipeline = item.enginePipeline
+  if (!pipeline || pipeline.status !== 'done') {
+    const runBtn = h('button', { type: 'button', class: 'btn btn-primary' }, '运行发动机')
+    const hint = h('p', { class: 'chain-note' }, 'LLM 将把这条信息拆成原子陈述、分类、匹配命题、判断关系，你确认后写入主题。')
+    const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true
+      error.hidden = true
+      try {
+        const res = await m.engineRunPipeline(item.id)
+        if (res?.ok) {
+          item.enginePipeline = res.pipeline
+          toast('发动机运行完成，请检查建议后确认')
+          onDone?.()
+        } else {
+          throw new Error(res?.error || '运行失败')
+        }
+      } catch (e) {
+        error.hidden = false
+        error.textContent = e.message || String(e)
+        runBtn.disabled = false
+      }
+    })
+    wrap.append(hint, h('div', { class: 'draft-actions' }, runBtn), error)
+    return wrap
+  }
+  /* 四步结果展示 */
+  const { statements = [], results = [] } = pipeline
+  const typeLabel = { hard: '硬事实', soft: '软事实', relational: '关系陈述', meta: '元陈述' }
+  const relLabel = { supports: '支持', contradicts: '反驳', derives: '衍生', supersedes: '取代', related: '相关' }
+  /* Step 1+2: 陈述与分类 */
+  wrap.append(h('p', { class: 'engine-step-title' }, `抽取 · ${statements.length} 条原子陈述`))
+  const stmtList = h('ul', { class: 'engine-stmt-list' })
+  for (const s of statements) {
+    stmtList.append(h('li', { class: 'engine-stmt' },
+      h('span', { class: `engine-type is-${s.type}` }, typeLabel[s.type] || s.type),
+      h('span', { class: 'engine-stmt-text' }, `[${s.subject}] ${s.attribute} = ${s.value}`),
+      s.timeWindow ? h('span', { class: 'engine-stmt-time' }, s.timeWindow) : null))
+  }
+  wrap.append(stmtList)
+  /* Step 3+4: 匹配与归因 */
+  if (!results.length) {
+    wrap.append(h('p', { class: 'chain-note' }, '没有匹配到相关命题。可尝试手动快速归因。'))
+    return wrap
+  }
+  wrap.append(h('p', { class: 'engine-step-title' }, `归因建议 · ${results.length} 条`))
+  const attrList = h('ul', { class: 'engine-attr-list' })
+  for (const r of results) {
+    const confirmBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '确认')
+    const item2 = h('li', { class: 'engine-attr' },
+      h('div', { class: 'engine-attr-main' },
+        h('span', { class: `engine-rel is-${r.attribution.rel}` }, relLabel[r.attribution.rel] || r.attribution.rel),
+        h('span', { class: 'engine-attr-prop' }, r.proposition.title),
+        h('span', { class: 'engine-attr-reason' }, r.attribution.reason)),
+      h('div', { class: 'engine-attr-sub' },
+        h('span', {}, `「${r.statement.value}」`),
+        h('span', { class: 'engine-attr-strength' }, `强度 ${(r.attribution.strength * 100).toFixed(0)}%`)),
+      confirmBtn)
+    confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true
+      try {
+        /* 只有 supports/contradicts 可直接写入；derives/supersedes/related 需要用户进一步操作 */
+        if (r.attribution.rel === 'supports' || r.attribution.rel === 'contradicts') {
+          const res = await m.chainAddEvidence(themeId, r.proposition.id, {
+            text: `${r.statement.subject}${r.statement.attribute}：${r.statement.value}（${r.statement.timeWindow}）`,
+            rel: r.attribution.rel,
+            reason: r.attribution.reason,
+            url: item.provenance?.url || '',
+          })
+          if (res?.ok === false) throw new Error(res.error || '写入失败')
+          toast(`已${relLabel[r.attribution.rel]}「${r.proposition.title}」`)
+          item2.classList.add('is-done')
+          confirmBtn.textContent = '已确认'
+        } else {
+          toast(`${relLabel[r.attribution.rel]}关系请到建设者中手动处理`, 'var(--text-2)')
+          confirmBtn.disabled = false
+        }
+      } catch (e) {
+        toast('写入失败：' + (e.message || e), 'var(--red)')
+        confirmBtn.disabled = false
+      }
+    })
+    attrList.append(item2)
+  }
+  wrap.append(attrList)
+  return wrap
+}
+
 /* 提案草稿：收件箱条目详情内展开。只起草、不拍板；用户点"确认挂载"生效。 */
 /* ------------------------------------------------------------------ */
 
@@ -2277,6 +2374,9 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
 
   /* 快速归因：选命题 + 支持/反驳，一键在主题里连好（URL 自动带）。 */
   box.append(renderQuickAttribute(item, { themeId, loadExisting: opts.loadExisting, onDone: opts.onMounted }))
+
+  /* 认知发动机：四步流水线（抽取→分类→匹配→归因） */
+  box.append(renderEnginePipeline(item, { themeId, onDone: opts.onMounted }))
 
   const head = (sub) => h('div', { class: 'draft-head' },
     h('span', { class: 'draft-title' }, '认知链挂载'),

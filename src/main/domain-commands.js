@@ -31,9 +31,10 @@ import { discoverTags } from './discover.js'
 import {
   getChain, mountToChain, updateChainSegment, mergeChainSegments,
   addChainSubsegment, closeChainBranch, reviveChainSegment, getReadingMap, setReadingMap,
-  getInboxItem, setInboxChainDraft, setChainLayers,
+  getInboxItem, setInboxChainDraft, setInboxEnginePipeline, setChainLayers,
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
+import { extractStatements, classifyStatements, matchPropositions, attributeRelation } from './engine-pipeline.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
@@ -680,6 +681,64 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     if (!res?.ok) return { ok: false, error: res?.reason || '生成失败', reason: res?.reason }
     setInboxChainDraft(inboxId, res.draft)
     return { ok: true, draft: res.draft }
+  })
+  /* 认知发动机：四步流水线（抽取→分类→匹配→归因）。第五步更新是红区，不在此实现。 */
+  commands.register('engine:runPipeline', async (inboxId) => {
+    const item = getInboxItem(inboxId)
+    if (!item) return { ok: false, error: '收件箱条目不存在' }
+    const themeId = item.extractedThemeId || item.themeId || null
+    if (!themeId) return { ok: false, error: '条目没有关联主题' }
+    const s = settings()
+    if (!s.apiKey) return { ok: false, error: '未配置 LLM API key', reason: 'no-key' }
+    const llmCall = async (system, user) => {
+      const ctl = new AbortController()
+      const t = setTimeout(() => ctl.abort(new Error('TimeoutError')), 20000)
+      try {
+        const res = await fetch(`${String(s.baseUrl || '').replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${s.apiKey}` },
+          signal: ctl.signal,
+          body: JSON.stringify({ model: s.model, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        return data.choices?.[0]?.message?.content || ''
+      } finally { clearTimeout(t) }
+    }
+    try {
+      const theme = load().themes.find((t) => t.id === themeId)
+      const themeName = theme?.name || '未命名主题'
+      /* Step 1+2: 抽取 + 分类 */
+      let statements = await extractStatements(llmCall, {
+        themeName, title: item.title, text: item.text, source: item.provenance?.platform || '未知',
+      })
+      statements = await classifyStatements(llmCall, statements)
+      /* 取命题列表 */
+      const proj = getChainProjection(themeId)
+      const propositions = (proj.nodes || [])
+        .filter((n) => (n.kind === 'claim' || n.kind === 'inference') && !n.archived)
+        .map((n) => ({ id: n.id, title: n.title, status: n.status }))
+      /* Step 3+4: 匹配 + 归因（每个陈述） */
+      const results = []
+      for (const stmt of statements) {
+        if (stmt.type === 'meta') continue /* 元陈述不直接归因 */
+        const matches = await matchPropositions(llmCall, stmt, propositions)
+        for (const m of matches) {
+          const prop = propositions.find((p) => p.id === m.propositionId)
+          if (!prop) continue
+          try {
+            const attr = await attributeRelation(llmCall, stmt, prop)
+            results.push({ statement: stmt, match: m, attribution: attr, proposition: prop })
+          } catch (e) { /* 跳过归因失败的 */ }
+        }
+      }
+      /* 存到条目上 */
+      const pipeline = { statements, results, ranAt: new Date().toISOString(), status: 'done' }
+      setInboxEnginePipeline(inboxId, pipeline)
+      return { ok: true, pipeline }
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) }
+    }
   })
   commands.register('chain:readingMap', (themeId) => ({ ok: true, map: getReadingMap(themeId) }))
   commands.register('chain:setReadingMap', (themeId, map) => ({ ok: true, map: setReadingMap(themeId, map) }))

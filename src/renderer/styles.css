@@ -3463,3 +3463,31 @@ body.tauri-macos .app {
 .cog-wb-empty { padding: 48px 24px; text-align: center; }
 .cog-wb-empty-title { margin: 0 0 8px; font-size: var(--t-title); font-weight: 700; }
 .cog-wb-empty-sub { margin: 0 0 20px; font-size: var(--t-body); color: var(--text-2); }
+
+/* 认知发动机 */
+.engine-pipe { padding: 12px; margin-bottom: 12px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface-solid); }
+.engine-step-title { margin: 12px 0 8px; font-size: var(--t-caption); font-weight: 700; letter-spacing: .06em; color: var(--text-3); }
+.engine-step-title:first-of-type { margin-top: 8px; }
+.engine-stmt-list, .engine-attr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.engine-stmt { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--hairline-soft); border-radius: var(--r-sm); font-size: var(--t-body); }
+.engine-type { flex: none; padding: 2px 8px; border-radius: 999px; font-size: var(--t-caption); font-weight: 600; }
+.engine-type.is-hard { background: #e8f5e9; color: #2e7d32; }
+.engine-type.is-soft { background: #fff3e0; color: #e65100; }
+.engine-type.is-relational { background: #e3f2fd; color: #1565c0; }
+.engine-type.is-meta { background: #f3e5f5; color: #6a1b9a; }
+.engine-stmt-text { flex: 1; min-width: 0; }
+.engine-stmt-time { flex: none; font-size: var(--t-caption); color: var(--text-3); }
+.engine-attr { padding: 10px; border: 1px solid var(--hairline); border-radius: var(--r-sm); }
+.engine-attr.is-done { opacity: .6; }
+.engine-attr-main { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.engine-rel { flex: none; padding: 2px 8px; border-radius: 999px; font-size: var(--t-caption); font-weight: 700; }
+.engine-rel.is-supports { background: #e8f5e9; color: #2e7d32; }
+.engine-rel.is-contradicts { background: #ffebee; color: #c62828; }
+.engine-rel.is-derives { background: #e3f2fd; color: #1565c0; }
+.engine-rel.is-supersedes { background: #fce4ec; color: #ad1457; }
+.engine-rel.is-related { background: #f5f5f5; color: #616161; }
+.engine-attr-prop { font-weight: 600; font-size: var(--t-body); }
+.engine-attr-reason { font-size: var(--t-caption); color: var(--text-3); }
+.engine-attr-sub { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: var(--t-caption); color: var(--text-2); }
+.engine-attr-strength { margin-left: auto; font-variant-numeric: tabular-nums; }
+.btn-sm { padding: 4px 12px; font-size: var(--t-caption); }
