@@ -59,10 +59,13 @@ function appendTypeGlyph(group, type, centerX, centerY) {
 }
 
 function nodeStatusColor(status) {
-  if (status === 'verified') return '#16382f'
-  if (status === 'disputed') return '#492820'
-  if (status === 'invalidated' || status === 'archived') return '#31343b'
-  return '#273143'
+  /* Apple 式：中性底，颜色只出现在文字上。 */
+  return '#2c2c2e'
+}
+function nodeStatusTextColor(status) {
+  if (status === 'verified') return '#30d158'
+  if (status === 'disputed') return '#ff5a54'
+  return '#a7a7ad'
 }
 
 /** Render only event-projection nodes: topic is never synthesized as a graph root. */
@@ -131,7 +134,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     id: 'cog-network-arrow-review', viewBox: '0 0 10 10', refX: '8.5', refY: '5',
     markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse',
   })
-  reviewMarker.append(svgEl('path', { d: 'M 1 1 L 9 5 L 1 9 z', fill: '#a6b1c0' }))
+  reviewMarker.append(svgEl('path', { d: 'M 1 1 L 9 5 L 1 9 z', fill: '#8e8e93' }))
   defs.append(reviewMarker)
   svg.append(defs)
 
@@ -147,12 +150,12 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const toSize = layout.size.get(edge.to)
     if (!from || !to || !fromSize || !toSize) continue
     const argument = ARGUMENT_TYPES.has(edge.rel)
-    const rel = RELATION_META[edge.rel] || { label: edge.rel || '关系', color: '#7d8da3', group: 'association' }
+    const rel = RELATION_META[edge.rel] || { label: edge.rel || '关系', color: '#8e8e93', group: 'association' }
     const pending = Boolean(edge.pendingReview)
     const rejected = edge.reviewDecision === 'rejected'
     const confirmed = edge.reviewDecision === 'confirmed'
     const future = Boolean(edge._future)
-    const color = pending ? '#a6b1c0' : rejected ? '#ff8d78' : rel.color
+    const color = pending ? '#8e8e93' : rejected ? '#ff8d78' : rel.color
     const geometry = edgeGeometry(from, to, fromSize, toSize, argument)
     const path = svgEl('path', {
       d: geometry.d,
@@ -236,7 +239,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : meta.color
     group.append(svgEl('rect', {
       x: -dimensions.w / 2, y: -dimensions.h / 2, width: dimensions.w, height: dimensions.h, rx: 13,
-      fill: '#151b25', stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
+      fill: '#1c1c1e', stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
       'stroke-dasharray': unavailable ? '5 4' : 'none',
       class: 'cog-node-card',
     }))
@@ -250,7 +253,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       const pillX = dimensions.w / 2 - pillWidth - 7
       const pillY = -dimensions.h / 2 + 7
       group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
-      group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill' }))
+      group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: nodeStatusTextColor(status) }))
     }
     const titleLines = splitNetworkTitle(node.title || '未命名节点', 14, 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {

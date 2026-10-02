@@ -262,6 +262,24 @@ ok('手动证据保留来源 URL 并明确连到目标观点', addedEvidence[0].
 const contradiction = pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts')
 ok('反驳关系显式追加且完整性继续通过', contradiction.type === 'relation.declared'
   && contradiction.payload.rel === 'contradicts' && ev.verifyChain(manualTheme.id).ok)
+/* 佐证 / 反驳：同一入口，两种方向 */
+const confBefore = pj.getChainProjection(manualTheme.id).nodes.find((n) => n.id === manualClaimEvent.id)?.confidence
+const refutingEvidence = pj.appendEvidenceToProjectedNode(manualTheme.id, manualClaimEvent.id, {
+  text: '第三方复核发现数据口径不一致', rel: 'contradicts', reason: '口径差异导致结论不可比',
+})
+ok('反驳证据追加 relation.declared 且 rel=contradicts', refutingEvidence.length === 2
+  && refutingEvidence[1].type === 'relation.declared' && refutingEvidence[1].payload.rel === 'contradicts'
+  && refutingEvidence[1].payload.reason === '口径差异导致结论不可比')
+ok('用户亲笔的反驳不需要复核（pendingReview 为假）', refutingEvidence[1].payload.reviewOf == null)
+const defaultRelEvidence = pj.appendEvidenceToProjectedNode(manualTheme.id, manualClaimEvent.id, {
+  text: '另一份佐证材料', rel: 'nonsense',
+})
+ok('非法 rel 回退为 supports', defaultRelEvidence[1].payload.rel === 'supports')
+const projAfterRefute = pj.getChainProjection(manualTheme.id)
+const contradictsEdge = (projAfterRefute.allEdges || projAfterRefute.edges || [])
+  .find((e) => e.rel === 'contradicts' && e.from === refutingEvidence[0].id && e.to === manualClaimEvent.id)
+const confAfter = projAfterRefute.nodes.find((n) => n.id === manualClaimEvent.id)?.confidence
+ok('反驳边进入投影且目标节点 confidence 未被触碰（公理1）', !!contradictsEdge && confAfter === confBefore)
 let duplicateRelationRejected = false
 try { pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts') } catch { duplicateRelationRejected = true }
 ok('重复关系不会静默膨胀图谱', duplicateRelationRejected)

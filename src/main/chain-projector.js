@@ -478,6 +478,8 @@ export function invalidateProjectedNode(themeId, nodeId, reason = '') {
 export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {}) {
   const text = String(input.text || '').trim()
   if (!text) throw new Error('请填写证据摘要或原文摘录')
+  /* 佐证与反驳是同一种动作的两种方向：用户显式选择，AI 只建议不决定。 */
+  const rel = input.rel === 'contradicts' ? 'contradicts' : 'supports'
   const integrity = verifyChain(themeId)
   if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const target = projectEvents(getEvents(themeId)).nodes.find((node) => node.id === targetNodeId
@@ -490,6 +492,7 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
   const evidenceRefs = sourceUrl
     ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
     : []
+  const reason = String(input.reason || '').trim()
   return appendEventBatch(themeId, [
     {
       id: evidenceId,
@@ -501,11 +504,12 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
       actor: 'user',
       type: 'relation.declared',
       payload: {
-        rel: 'supports',
+        rel,
         from: { eventId: evidenceId },
         to: { eventId: target.id },
         sourceKind: 'manual-evidence',
         sourceRef,
+        ...(reason ? { reason } : {}),
       },
     },
   ])
