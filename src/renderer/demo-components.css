@@ -1095,3 +1095,31 @@
 /* 建设者6步指示器：按真实状态驱动 */
 .builder-flow-step.is-done { border-color:#16a34a; background:#dcfce7; color:#166534; }
 .builder-flow-step.is-current { border-color:#2563eb; background:#dbeafe; color:#1d4ed8; font-weight:600; }
+
+/* 新增原子对话框 v2（重新设计） */
+.meridian-theme .atom-dialog { max-width:640px; width:calc(100vw - 64px); max-height:calc(100vh - 80px); display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:16px; }
+.meridian-theme .atom-dialog-head-v2 { display:flex; align-items:center; justify-content:space-between; padding:20px 24px 16px; border-bottom:1px solid var(--line); }
+.meridian-theme .atom-head-left { display:flex; align-items:center; gap:12px; }
+.meridian-theme .atom-head-left h3 { margin:0; font-size:17px; font-weight:700; }
+.meridian-theme .atom-close-btn { width:32px; height:32px; display:flex; align-items:center; justify-content:center; font-size:20px; color:var(--text-2); background:transparent; border:none; border-radius:8px; cursor:pointer; }
+.meridian-theme .atom-close-btn:hover { background:var(--hover); color:var(--text); }
+.meridian-theme .atom-body { flex:1; overflow-y:auto; padding:20px 24px; }
+.meridian-theme .atom-field-v2 { margin-bottom:20px; }
+.meridian-theme .atom-field-v2:last-child { margin-bottom:0; }
+.meridian-theme .atom-label-v2 { display:flex; align-items:baseline; gap:8px; margin-bottom:10px; font-size:14px; font-weight:600; color:var(--text); }
+.meridian-theme .atom-hint-v2 { font-size:12px; font-weight:400; color:var(--text-3); }
+.meridian-theme .atom-body .atom-input, .meridian-theme .atom-body .atom-textarea { width:100%; padding:12px 14px; font-size:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-sizing:border-box; }
+.meridian-theme .atom-body .atom-input:focus, .meridian-theme .atom-body .atom-textarea:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+.meridian-theme .atom-body .atom-textarea { resize:vertical; min-height:88px; line-height:1.5; }
+.meridian-theme .atom-row-2col { display:flex; gap:16px; }
+.meridian-theme .atom-row-2col .atom-field-v2 { flex:1; }
+.meridian-theme .atom-rel-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.meridian-theme .atom-rel-label { font-size:13px; color:var(--text-2); }
+.meridian-theme .atom-node-list { max-height:180px; overflow-y:auto; border:1px solid var(--line); border-radius:10px; padding:6px; background:var(--bg); }
+.meridian-theme .atom-node-item { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; cursor:pointer; transition:background .15s; }
+.meridian-theme .atom-node-item:hover { background:var(--hover); }
+.meridian-theme .atom-node-item.is-checked { background:#eff6ff; }
+.meridian-theme .atom-node-check { width:16px; height:16px; flex:none; accent-color:#2563eb; }
+.meridian-theme .atom-node-title { font-size:13px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.meridian-theme .atom-empty-note { padding:12px; font-size:13px; color:var(--text-3); text-align:center; }
+.meridian-theme .atom-foot-v2 { display:flex; align-items:center; justify-content:space-between; padding:16px 24px; border-top:1px solid var(--line); background:var(--surface); }
