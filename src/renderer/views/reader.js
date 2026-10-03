@@ -9,12 +9,14 @@ import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline,
-  buildGapList, synthesisSummary, UNCATEGORIZED_LABEL,
+  buildGapList, buildDebateBoard, buildChronicle, synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import { renderArgumentOutline } from '../components/reader-argument-outline.js'
 import { renderSmallMultiples } from '../components/reader-small-multiples.js'
 import { renderGapList } from '../components/reader-gaps.js'
+import { renderDebateBoard } from '../components/reader-debate-board.js'
+import { renderChronicle } from '../components/reader-chronicle.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -771,6 +773,9 @@ export function renderReaderView(theme, opts = {}) {
     const multiplesHost = h('div', { class: 'rdr-multiples-host' })
     /* R5 缺口清单 + P1-5 回流：待办只写收件箱，不动账本；撤销＝把刚建的待办移出收件箱。 */
     const gapsHost = h('div', { class: 'rdr-gaps-host' })
+    /* R3 双边清单 / R4 编年史：同样是"图以外的有序结构"，读得完、跟得上时间。 */
+    const debateHost = h('div', { class: 'rdr-debate-host' })
+    const chronicleHost = h('div', { class: 'rdr-chronicle-host' })
     const todoKeys = new Set()
     let inboxCache = null
     const loadInboxItems = async () => {
@@ -838,6 +843,14 @@ export function renderReaderView(theme, opts = {}) {
         expandedIds: outlineExpanded,
         onToggle: (id, open) => { open ? outlineExpanded.add(id) : outlineExpanded.delete(id) },
         onFocusAtom: focusAtom,
+      }))
+      debateHost.replaceChildren(renderDebateBoard(buildDebateBoard(currentNodes, (id) => evidenceForNode(state, id)), {
+        onFocusEvidence: focusAtom,
+        onFocusAtom: focusAtom,
+      }))
+      chronicleHost.replaceChildren(renderChronicle(buildChronicle({ events: state.events, nodes: allNodesOf(state.projection) }), {
+        onFocusEvidence: focusAtom,
+        onOpenSource: (url) => globalThis.window?.meridian?.openExternal?.(url),
       }))
       renderGaps()
       multiplesHost.replaceChildren(renderSmallMultiples(rows, {
@@ -908,7 +921,7 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, multiplesHost, gapsHost, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()

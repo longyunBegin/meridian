@@ -149,6 +149,77 @@ export function buildArgumentOutline(nodes = [], evidenceForNodeFn = null) {
 }
 
 /**
+ * R3 双边清单（§10.1 第 4 项）：支持一列 / 挑战一列 / 中间当前强度。
+ * 图里"反驳"只是一条红线，极易被忽略；并排两列才能直接读"争议点到底在哪"。
+ * 只列有支持的或有的挑战的原子（两边都空的不算争议），按"两边都多"优先排序。
+ */
+export function buildDebateBoard(nodes = [], evidenceForNodeFn = null) {
+  const rows = asArray(nodes).filter((node) => node && !node.archived && networkNodeType(node) !== 'evidence')
+  return rows.map((node) => {
+    const summary = typeof evidenceForNodeFn === 'function' ? evidenceForNodeFn(node.id) : null
+    const map = (list) => asArray(list).map((row) => evidenceRow(row?.source || row)).filter((row) => row.id)
+    const supports = map(summary?.supports)
+    const against = map(summary?.against)
+    return {
+      id: node.id,
+      title: titleOf(node),
+      strength: confidenceValue(node.confidence),
+      supports, against,
+      contested: supports.length > 0 && against.length > 0,
+    }
+  }).filter((row) => row.supports.length || row.against.length)
+    .sort((a, b) => (Number(b.contested) - Number(a.contested))
+      || (b.supports.length + b.against.length) - (a.supports.length + a.against.length)
+      || String(a.title).localeCompare(String(b.title)))
+}
+
+/**
+ * R4 编年史（§10.1 第 5 项）：一行一条外部数据——日期 · 来源 · 归入哪个原子 · 支持/挑战 ·
+ * 这次归因带来的强度变化。人话模板来自 P0-4；日期用真实摄入/事件时间，不出现 seq/哈希。
+ */
+export function buildChronicle({ events = [], nodes = [] } = {}) {
+  const rows = asArray(events).filter((event) => event && event.type === 'evidence.appended')
+  const byId = new Map(asArray(nodes).map((node) => [node.id, node]))
+  const stanceByEvidence = new Map()
+  for (const event of asArray(events)) {
+    if (!event || event.type !== 'relation.declared') continue
+    const from = event.payload?.from?.eventId || event.payload?.from
+    const rel = event.payload?.rel
+    if (from && (rel === 'supports' || rel === 'contradicts')) stanceByEvidence.set(from, rel)
+  }
+  const strengthByEvidence = new Map()
+  for (const event of asArray(events)) {
+    if (!event || event.type !== 'confidence.updated') continue
+    const evidenceId = event.payload?.evidenceEventId
+    if (!evidenceId) continue
+    const before = confidenceValue(event.payload?.oldConfidence)
+    const after = confidenceValue(event.payload?.newConfidence)
+    strengthByEvidence.set(evidenceId, before == null ? `→ ${after}%` : `${before}% → ${after}%`)
+  }
+  return rows.map((event) => {
+    const payload = event.payload || {}
+    const node = byId.get(event.id)
+    const targets = asArray(node?.targetNodeIds)
+    const urlRef = asArray(node?.evidenceRefs || payload.evidenceRefs).find((ref) => ref?.type === 'url' && ref.id)
+    const rel = stanceByEvidence.get(event.id)
+    return {
+      id: event.id,
+      at: event.at || null,
+      date: String(event.at || '').slice(0, 10) || '—',
+      text: String(payload.text || payload.reason || node?.title || '外部数据').trim().slice(0, 120),
+      sourceLabel: String(node?.sourceLabel || payload.sourceLabel || '').trim() || null,
+      atomTitles: targets.map((id) => titleOf(byId.get(id))).filter((title) => title && title !== '未命名'),
+      stance: rel === 'supports' ? 'supports' : rel === 'contradicts' ? 'contradicts' : 'unstated',
+      strengthChange: strengthByEvidence.get(event.id) || null,
+      url: (() => {
+        const candidate = String(node?.sourceUrl || urlRef?.id || '').trim()
+        try { return /^https?:$/i.test(new URL(candidate).protocol) ? candidate : null } catch { return null }
+      })(),
+    }
+  }).sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))
+}
+
+/**
  * R5 缺口清单：模型的一半价值在"知道哪里还不知道"。
  * 四类缺口全部来自投影/收件箱的既有事实，不猜测：
  * ① 无任何证据的原子 ② 待复核的归因 ③ 适用时间已过的证据 ④ 跨主题未归位的收件箱条目

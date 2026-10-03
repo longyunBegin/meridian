@@ -1280,6 +1280,36 @@
 .meridian-theme .rdr-gap-done { color:#34c759; font-size:10.5px; font-weight:600; }
 .meridian-theme .rdr-gap-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:1px solid var(--line); }
 .meridian-theme .rdr-gap-foot-hint { color:var(--text-3); font-size:10px; }
+/* R3 双边清单：支持一列 / 中间强度 / 挑战一列 */
+.meridian-theme .rdr-debate, .meridian-theme .rdr-chronicle { margin:12px 0 0; padding:12px 14px; border:1px solid var(--hairline); border-radius:12px; background:var(--surface); }
+.meridian-theme .rdr-debate-row { display:grid; grid-template-columns:minmax(0,1fr) 132px minmax(0,1fr); gap:10px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
+.meridian-theme .rdr-debate-row.is-contested { background:linear-gradient(90deg, rgba(52,199,89,.05), transparent 35%, transparent 65%, rgba(255,59,48,.05)); }
+.meridian-theme .rdr-debate-col-label { font-size:10.5px; font-weight:600; color:var(--text-2); }
+.meridian-theme .rdr-debate-col.is-supports .rdr-debate-col-label { color:#34c759; }
+.meridian-theme .rdr-debate-col.is-against .rdr-debate-col-label { color:#ff3b30; }
+.meridian-theme .rdr-debate-list { margin:4px 0 0; padding:0; list-style:none; }
+.meridian-theme .rdr-debate-item + .rdr-debate-item { margin-top:5px; }
+.meridian-theme .rdr-debate-link { display:flex; flex-direction:column; gap:1px; padding:5px 7px; border:1px solid var(--line); border-radius:8px; background:var(--bg); text-align:left; cursor:pointer; width:100%; }
+.meridian-theme .rdr-debate-item-title { font-size:11px; font-weight:600; }
+.meridian-theme .rdr-debate-item-meta, .meridian-theme .rdr-debate-empty { color:var(--text-3); font-size:9.5px; }
+.meridian-theme .rdr-debate-empty { margin:4px 0 0; }
+.meridian-theme .rdr-debate-mid { display:flex; flex-direction:column; align-items:center; gap:3px; text-align:center; }
+.meridian-theme .rdr-debate-atom { padding:0; border:0; background:none; color:var(--text-1); font-size:11.5px; font-weight:600; cursor:pointer; }
+.meridian-theme .rdr-debate-strength { color:var(--text-2); font-size:10px; }
+.meridian-theme .rdr-debate-flag { padding:1px 6px; border-radius:999px; background:rgba(255,149,0,.14); color:#ff9500; font-size:9.5px; font-weight:600; }
+/* R4 编年史：一行一条外部数据 */
+.meridian-theme .rdr-chronicle-list { margin:0; padding:0; list-style:none; }
+.meridian-theme .rdr-chronicle-item { display:grid; grid-template-columns:74px minmax(0,1fr) 48px 84px auto; gap:10px; align-items:baseline; padding:7px 0; border-top:1px solid var(--line); }
+.meridian-theme .rdr-chronicle-date { color:var(--text-3); font-size:10px; font-family:ui-monospace,monospace; }
+.meridian-theme .rdr-chronicle-main { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.meridian-theme .rdr-chronicle-text { padding:0; border:0; background:none; color:var(--text-1); font-size:11.5px; text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.meridian-theme .rdr-chronicle-meta { color:var(--text-3); font-size:9.5px; }
+.meridian-theme .rdr-chronicle-stance { font-size:10px; font-weight:600; }
+.meridian-theme .rdr-chronicle-item.is-supports .rdr-chronicle-stance { color:#34c759; }
+.meridian-theme .rdr-chronicle-item.is-contradicts .rdr-chronicle-stance { color:#ff3b30; }
+.meridian-theme .rdr-chronicle-item.is-unstated .rdr-chronicle-stance { color:var(--text-3); }
+.meridian-theme .rdr-chronicle-delta { color:var(--text-2); font-size:10px; }
+.meridian-theme .rdr-chronicle-link { padding:0; border:0; background:none; color:var(--accent); font-size:10px; font-weight:600; cursor:pointer; }
 .meridian-theme .review-ai-note { font-size:12px; color:var(--text-3); margin:0; }
 .meridian-theme .review-advanced { margin-bottom:16px; }
 .meridian-theme .review-advanced summary { font-size:13px; color:var(--text-2); cursor:pointer; }

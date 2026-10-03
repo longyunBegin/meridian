@@ -1,6 +1,6 @@
 import {
   deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline,
-  strengthSparkline, buildGapList, parseApplicabilityEnd, UNCATEGORIZED_LABEL,
+  strengthSparkline, buildGapList, buildDebateBoard, buildChronicle, parseApplicabilityEnd, UNCATEGORIZED_LABEL,
 } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
@@ -178,6 +178,40 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
   check('R5 每条缺口都给出可执行的待办文案',
     gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条外部数据'
     && gaps.find((gap) => gap.kind === 'expired-evidence').todo.includes('更新'))
+
+  /* R3 双边清单 / R4 编年史：并排读争议、按时间读来源 */
+  const debateNodes = [
+    { id: 'd1', nodeType: 'viewpoint', title: '两边都有的原子', confidence: 71, archived: false },
+    { id: 'd2', nodeType: 'viewpoint', title: '只有支持的原子', confidence: null, archived: false },
+    { id: 'd3', nodeType: 'viewpoint', title: '没有表态的原子', confidence: null, archived: false },
+    { id: 'd1e1', nodeType: 'evidence', title: '支持数据', sourceLabel: '来源甲' },
+    { id: 'd1e2', nodeType: 'evidence', title: '挑战数据', sourceLabel: null },
+    { id: 'd2e1', nodeType: 'evidence', title: '支持数据二', sourceLabel: '来源乙' },
+  ]
+  const summaryFor = (id) => ({
+    d1: { supports: [{ source: debateNodes[3] }], against: [{ source: debateNodes[4] }] },
+    d2: { supports: [{ source: debateNodes[5] }], against: [] },
+    d3: { supports: [], against: [] },
+  }[id] || null)
+  const board = buildDebateBoard(debateNodes, summaryFor)
+  check('R3 双边清单只列有表态的原子，争议行优先，并带当前强度',
+    board.map((row) => row.id).join() === 'd1,d2'
+    && board[0].contested === true && board[0].supports.length === 1 && board[0].against.length === 1
+    && board[0].strength === 71 && board[1].strength === null
+    && board[0].supports[0].sourceLabel === '来源甲')
+  const chronicleEvents = [
+    { id: 'ce1', type: 'evidence.appended', at: '2026-09-20T00:00:00.000Z', payload: { text: '第一条外部数据' } },
+    { id: 'cr1', type: 'relation.declared', at: '2026-09-20T01:00:00.000Z', payload: { rel: 'supports', from: { eventId: 'ce1' }, to: { eventId: 'd1' } } },
+    { id: 'cc1', type: 'confidence.updated', at: '2026-09-20T01:00:01.000Z', payload: { evidenceEventId: 'ce1', oldConfidence: 62, newConfidence: 67 } },
+    { id: 'ce2', type: 'evidence.appended', at: '2026-09-25T00:00:00.000Z', payload: { text: '第二条外部数据' } },
+  ]
+  const chronicleNodes = [{ id: 'd1', nodeType: 'viewpoint', title: '结论原子' }, { id: 'ce1', nodeType: 'evidence', title: '第一条外部数据', targetNodeIds: ['d1'], sourceLabel: 'Yole' }]
+  const chronicle = buildChronicle({ events: chronicleEvents, nodes: chronicleNodes })
+  check('R4 编年史按时间倒序列出每条外部数据，并带来源、归入原子、立场与强度变化',
+    chronicle.length === 2 && chronicle[0].date === '2026-09-25' && chronicle[1].date === '2026-09-20'
+    && chronicle[1].sourceLabel === 'Yole' && chronicle[1].atomTitles.join() === '结论原子'
+    && chronicle[1].stance === 'supports' && chronicle[1].strengthChange === '62% → 67%'
+    && chronicle[0].strengthChange === null && chronicle[0].stance === 'unstated')
 
   check('R2 sparkline 由 confidence 历史算折线点，单点或空历史不画线',
     spark.enough && spark.min === 62 && spark.max === 71 && spark.points.split(' ').length === 2

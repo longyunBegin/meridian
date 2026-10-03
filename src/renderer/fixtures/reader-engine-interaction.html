@@ -438,8 +438,17 @@
         { id: 'sx-r2', from: 'sx-e2', to: 'sx-v1', rel: 'contradicts', reviewDecision: null, pendingReview: false },
       ]
       const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
+      /* 编年史要按事件流读：这里让事件 id 与投影证据节点 id 对齐（真实数据就是同一批 id）。 */
+      const structureEvents = [
+        { id: 'sx-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '支持用的外部数据' } },
+        { id: 'sx-rel1', seq: 2, at: '2026-09-20T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'sx-e1' }, to: { eventId: 'sx-v1' } } },
+        { id: 'sx-c1', seq: 3, at: '2026-09-20T01:00:01.000Z', type: 'confidence.updated', payload: { nodeId: 'sx-v1', evidenceEventId: 'sx-e1', oldConfidence: 62, newConfidence: 67 } },
+        { id: 'sx-e2', seq: 4, at: '2026-09-25T00:00:00.000Z', type: 'evidence.appended', payload: { text: '挑战用的外部数据' } },
+        { id: 'sx-rel2', seq: 5, at: '2026-09-25T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'contradicts', from: { eventId: 'sx-e2' }, to: { eventId: 'sx-v1' } } },
+        { id: 'sx-e3', seq: 6, at: '2026-09-26T00:00:00.000Z', type: 'evidence.appended', payload: { text: '未表态的外部数据' } },
+      ]
       const structureRoot = renderReaderView({ name: '大纲合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
-        loadProjection: async () => structureProjection, loadEvents: async () => [], onOpenBuilder: () => {},
+        loadProjection: async () => structureProjection, loadEvents: async () => structureEvents, onOpenBuilder: () => {},
         loadInbox: async () => ([{ id: 'inbox-unassigned', status: 'pending', title: '未归位条目', text: '还没归主题' }]),
       })
       document.querySelector('#fixture-root').append(structureRoot)
@@ -469,6 +478,28 @@
       await wait()
       check('R2 点卡片聚焦该原子并联动检视器', structureRoot.querySelector('.rdr-inspector-title')?.textContent === 'R1 结论原子'
         && Boolean(structureRoot.querySelector('.rdr-multiple-card.is-selected')))
+
+      /* R3 双边清单 / R4 编年史 */
+      check('R3 双边清单并排列出支持与挑战，并标出争议行',
+        structureRoot.querySelectorAll('.rdr-debate-row').length === 1
+        && Boolean(structureRoot.querySelector('.rdr-debate-row.is-contested'))
+        && structureRoot.querySelectorAll('.rdr-debate-col.is-supports .rdr-debate-item').length === 1
+        && structureRoot.querySelectorAll('.rdr-debate-col.is-against .rdr-debate-item').length === 1
+        && (structureRoot.querySelector('.rdr-debate-strength')?.textContent || '').includes('71%'))
+      structureRoot.querySelector('.rdr-debate-col.is-against .rdr-debate-link')?.click()
+      await wait()
+      check('R3 点某条挑战跳到该外部数据的详情',
+        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '挑战用的外部数据')
+      const chronicleItems = [...structureRoot.querySelectorAll('.rdr-chronicle-item')]
+      check('R4 编年史一行一条外部数据，带日期/来源/归入原子/立场/强度变化',
+        chronicleItems.length === 3
+        && chronicleItems[0].querySelector('.rdr-chronicle-date')?.textContent === '2026-09-26'
+        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-delta')?.textContent || '').includes('62% → 67%')
+        && (structureRoot.querySelector('.rdr-chronicle-item.is-contradicts .rdr-chronicle-stance')?.textContent || '') === '挑战'
+        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('归入 R1 结论原子')
+        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('示例来源'))
+      check('R4 编年史不出现账本术语（事件序号 / 哈希）',
+        !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
 
       /* R5 缺口清单 + P1-5 回流 */
       const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
