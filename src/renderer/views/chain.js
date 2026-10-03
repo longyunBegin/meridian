@@ -1143,7 +1143,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       if (!entry) {
         detail.append(h('div', { class: 'builder-review-empty' },
           h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),
-          h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择待归因项目'),
+          h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择一条开始审阅'),
           h('p', {}, '确认前保持主题投影不变；每一项决定都保留为可回放事件。')))
         return
       }

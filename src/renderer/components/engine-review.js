@@ -1,4 +1,5 @@
 import { h, toast } from '../lib/dom.js'
+import { evidenceForNode } from '../lib/chain-workbench-model.js'
 
 /**
  * 前端贝叶斯置信度预览（与后端 engine-confidence.js 公式一致）
@@ -252,6 +253,24 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
     const newConf = curConf != null && ['supports', 'contradicts'].includes(polarity)
       ? previewConfidence(curConf, weight, polarity) : null
     const newConfPct = newConf != null ? Math.round(newConf * 100) : null
+    /* 设计稿的预览卡带信号计数：同一套 evidenceForNode 口径（支持/挑战/两边都算），
+       和读者视图的强度块保持一致；确认后按本次极性推演目标原子的计数变化。 */
+    const evidenceCounts = (() => {
+      if (!targetNode) return null
+      try {
+        const summary = evidenceForNode({ projection }, targetNode.id)
+        return { supports: summary.supports.length + summary.both.length,
+          challenges: summary.against.length + summary.both.length }
+      } catch { return null }
+    })()
+    const beforeCounts = evidenceCounts
+      ? ` · 支持 ${evidenceCounts.supports} / 挑战 ${evidenceCounts.challenges}` : ''
+    const afterCounts = evidenceCounts ? {
+      supports: evidenceCounts.supports + (polarity === 'supports' ? 1 : 0),
+      challenges: evidenceCounts.challenges + (polarity === 'contradicts' ? 1 : 0),
+    } : null
+    const afterCountsText = afterCounts
+      ? ` · 支持 ${afterCounts.supports} / 挑战 ${afterCounts.challenges}` : ''
     // 变化描述
     const changeDesc = isNew
       ? `将新增原子「${suggestion.title || result.suggestedTitle || '待命名'}」；来源 ${shortId}。`
@@ -304,12 +323,12 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
         h('div', { class: 'review-preview-row' },
           h('div', { class: 'review-preview-card' },
             h('span', { class: 'review-attr-label' }, '● 当前原子强度'),
-            h('p', {}, `${targetTitle}：强度 ${curConfPct}%`)),
+            h('p', {}, `${targetTitle}：强度 ${curConfPct}%${beforeCounts}`)),
           h('div', { class: 'review-preview-card is-after' },
             h('span', { class: 'review-attr-label' }, '● 确认后'),
             h('p', {}, newConfPct != null
-              ? `${targetTitle}：强度将变为 ${newConfPct}%`
-              : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）`))),
+              ? `${targetTitle}：强度将变为 ${newConfPct}%${afterCountsText}`
+              : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）${afterCountsText}`))),
         h('div', { class: 'review-change-summary' },
           h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
         h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。'))
