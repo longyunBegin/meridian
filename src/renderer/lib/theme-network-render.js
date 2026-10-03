@@ -43,18 +43,20 @@ function edgeGeometry(a, b, aSize, bSize, arrow) {
   }
 }
 
-function appendTypeGlyph(group, type, centerX, centerY) {
+function appendTypeGlyph(group, type, centerX, centerY, scale = 1) {
   const meta = NODE_TYPE_META[type] || NODE_TYPE_META.viewpoint
+  // 视觉编码：尺寸表示强度（scale 0.7~1.3）
+  const s = Math.max(0.7, Math.min(1.3, scale))
   if (meta.shape === 'circle') {
-    group.append(svgEl('circle', { cx: centerX, cy: centerY, r: 10, fill: meta.color }))
+    group.append(svgEl('circle', { cx: centerX, cy: centerY, r: 10 * s, fill: meta.color }))
   } else if (meta.shape === 'diamond') {
-    group.append(svgEl('path', { d: `M ${centerX} ${centerY - 11} L ${centerX + 11} ${centerY} L ${centerX} ${centerY + 11} L ${centerX - 11} ${centerY} Z`, fill: meta.color }))
+    group.append(svgEl('path', { d: `M ${centerX} ${centerY - 11 * s} L ${centerX + 11 * s} ${centerY} L ${centerX} ${centerY + 11 * s} L ${centerX - 11 * s} ${centerY} Z`, fill: meta.color }))
   } else if (meta.shape === 'hexagon') {
-    group.append(svgEl('path', { d: `M ${centerX - 9} ${centerY - 10} L ${centerX + 4} ${centerY - 10} L ${centerX + 10} ${centerY} L ${centerX + 4} ${centerY + 10} L ${centerX - 9} ${centerY + 10} L ${centerX - 12} ${centerY} Z`, fill: meta.color }))
+    group.append(svgEl('path', { d: `M ${centerX - 9 * s} ${centerY - 10 * s} L ${centerX + 4 * s} ${centerY - 10 * s} L ${centerX + 10 * s} ${centerY} L ${centerX + 4 * s} ${centerY + 10 * s} L ${centerX - 9 * s} ${centerY + 10 * s} L ${centerX - 12 * s} ${centerY} Z`, fill: meta.color }))
   } else if (meta.shape === 'document') {
-    group.append(svgEl('path', { d: `M ${centerX - 9} ${centerY - 10} H ${centerX + 3} L ${centerX + 10} ${centerY - 3} V ${centerY + 10} H ${centerX - 9} Z M ${centerX + 3} ${centerY - 10} V ${centerY - 3} H ${centerX + 10}`, fill: meta.color, 'fill-rule': 'evenodd' }))
+    group.append(svgEl('path', { d: `M ${centerX - 9 * s} ${centerY - 10 * s} H ${centerX + 3 * s} L ${centerX + 10 * s} ${centerY - 3 * s} V ${centerY + 10 * s} H ${centerX - 9 * s} Z M ${centerX + 3 * s} ${centerY - 10 * s} V ${centerY - 3 * s} H ${centerX + 10 * s}`, fill: meta.color, 'fill-rule': 'evenodd' }))
   } else {
-    group.append(svgEl('rect', { x: centerX - 10, y: centerY - 10, width: 20, height: 20, rx: 6, fill: meta.color }))
+    group.append(svgEl('rect', { x: centerX - 10 * s, y: centerY - 10 * s, width: 20 * s, height: 20 * s, rx: 6 * s, fill: meta.color }))
   }
   /* 类型只用形状 + 颜色两重编码：汉字 icon 与类型文字标签已移除（见无障碍 label / 图例）。 */
 }
@@ -258,7 +260,9 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     }))
     const glyphX = -dimensions.w / 2 + 15
     const glyphY = -dimensions.h / 2 + 16
-    appendTypeGlyph(group, type, glyphX, glyphY)
+    // 视觉编码：glyph 尺寸表示节点强度（confidence 0-100 → 0.7-1.3）
+    const strengthScale = 0.7 + (Math.max(0, Math.min(100, Number(node.confidence ?? node.strength ?? 50))) / 100) * 0.6
+    appendTypeGlyph(group, type, glyphX, glyphY, strengthScale)
     /* 类型文字标签已移除：形状 + 颜色已足够区分，label 只保留在无障碍文本与图例中。 */
     const showPill = node._notYetCreated || status !== 'pending'
     if (showPill) {
