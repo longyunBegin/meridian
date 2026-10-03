@@ -699,31 +699,31 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, draft: res.draft }
   })
   /* 引擎只生成可审核建议；事实和关系由 chain:reviewEngineRecommendation 在用户确认后原子追加。 */
-  /** Mock 模式用的预设 pipeline（不调 LLM，用于 UI 测试） */
+  /**
+   * Mock 模式用的预设 pipeline（不调 LLM，用于 UI 测试）。
+   * 这里不预设任何领域：主体取条目标题，属性用中性说法，数值只从原文里抓到的数字来，
+   * 时间窗口只在原文确实写了时才带（否则留空，不编造）。摘录必须是原文的逐字片段，
+   * 否则 sourceQuoteVerified 会把确认按钮挡住——这条闸门在 mock 下也照常生效。
+   */
   function buildMockPipeline(item, themeId) {
-    const text = String(item.text || '').slice(0, 80)
+    const body = String(item.text || '').replace(/\s+/g, ' ').trim()
+    const text = body.slice(0, 80)
+    const subject = String(item.title || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '未命名来源'
+    const numbers = [...body.matchAll(/(\d+(?:[.,]\d+)?)\s*(%|％|亿元|万元|万台|万|亿|倍|个|条|天)?/g)]
+      .slice(0, 3)
+      .map((match) => `${match[1]}${match[2] || ''}`)
+    const timeMatch = body.match(/20\d{2}\s*年(?:\s*\d{1,2}\s*月)?|20\d{2}\s*Q[1-4]|\d{1,2}\s*月(?:\d{1,2}\s*日)?/)
+    const timeWindow = timeMatch ? timeMatch[0].replace(/\s+/g, '') : ''
     const mockStatement = {
-      subject: 'Sivers Semiconductors',
-      attribute: '光子业务营收占比',
-      value: '28%',
-      timeWindow: '2026Q3',
-      type: 'hard',
+      subject, attribute: '规模', value: numbers[0] || '未量化', timeWindow, type: 'hard',
       sourceText: text,  // 后端用 sourceText 做原文验证
     }
     const mockStatement2 = {
-      subject: 'Sivers Semiconductors',
-      attribute: '硅光技术渗透率',
-      value: '35%',
-      timeWindow: '2026Q3',
-      type: 'soft',
+      subject, attribute: '趋势', value: numbers[1] || '未量化', timeWindow, type: 'soft',
       sourceText: text,
     }
     const mockStatement3 = {
-      subject: 'Sivers Semiconductors',
-      attribute: '产能利用率',
-      value: '92%',
-      timeWindow: '2026Q3',
-      type: 'hard',
+      subject, attribute: '约束', value: numbers[2] || '未量化', timeWindow, type: 'hard',
       sourceText: text,
     }
     // 找现有的原子作为归因目标
@@ -752,7 +752,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
           rel: 'supports',
           strength: 0.7,
           reason: 'Mock：该信号支持目标原子的当前理解',
-          change: { note: 'Mock：营收结构变化（支持）' },
+          change: { note: 'Mock：规模信号（支持）' },
         },
         proposition: targetAtom,
         metaCount: 0,
@@ -769,7 +769,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
           rel: 'contradicts',
           strength: 0.6,
           reason: 'Mock：该信号与目标原子的当前理解存在分歧',
-          change: { note: 'Mock：产能瓶颈压力（反驳）' },
+          change: { note: 'Mock：约束信号（反驳）' },
         },
         proposition: secondAtom,
         metaCount: 0,
