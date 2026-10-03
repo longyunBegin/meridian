@@ -587,7 +587,6 @@ async function loadConcept(theme, ledgerPane, opts) {
        原来标题、说明、控件各占一行，头部 145px，工作台被推到 358px 以下。 */
     const head = h('div', { class: 'inbox-head builder-head-row' },
       h('div', { class: 'builder-intake-heading' },
-        h('p', { class: 'builder-intake-eyebrow' }, '建设者工作台'),
         h('div', { class: 'inbox-title' }, theme.name || '当前主题')),
       h('div', { class: 'inbox-sub' }, '每项都要你确认或驳回，才会写入主题。'),
       h('span', { class: 'spacer' }),
