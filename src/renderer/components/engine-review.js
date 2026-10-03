@@ -3,7 +3,7 @@ import { h, toast } from '../lib/dom.js'
 export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe' },
-    h('div', { class: 'draft-head' }, h('span', { class: 'draft-title' }, '摄入 → 抽取 → 映射 → 人工审核'),
+    h('div', { class: 'draft-head' }, h('span', { class: 'draft-title' }, '外部数据 → 抽取 → 归因/建议 → 人工确认'),
       h('span', { class: 'draft-sub' }, '建议只读预览；确认或驳回后才追加决定事件')))
   const pipeline = item.enginePipeline
   const runButton = (label, callback) => {
