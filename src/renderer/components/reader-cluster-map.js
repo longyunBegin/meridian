@@ -73,6 +73,12 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
   const cellH = 250
   const height = Math.max(250, rowCount * cellH)
 
+  /* 气泡半径 = **该原子的强度**（用户指定）：强度是它关联证据逐条累加的结果
+     （updateConfidence），所以"证据越硬、原子越大"这件事是自洽的。
+     没有强度记录时给最小半径（提示里写明未记录），不假造。 */
+  const bubbleR = (row) => row.strength == null
+    ? 7
+    : 7 + (Math.max(0, Math.min(100, row.strength)) / 100) * 15
   const place = new Map()
   groups.forEach((group, index) => {
     const cx = cellW * (index % cols) + cellW / 2
@@ -80,19 +86,18 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
     group.cx = cx
     group.cy = cy
     group.r = Math.min(cellW, cellH) / 2 - 30 + Math.sqrt(group.rows.length) * 5
+    /* 螺旋半径自适应：按组内最大气泡半径留边，保证所有气泡都落在簇圆内、
+       簇与簇之间不碰撞；相对间距仍按向日葵螺旋（黄金角）保持。 */
+    const maxR = Math.max(...group.rows.map(bubbleR), 7)
+    const maxSpread = Math.max(0, group.r - maxR - 10)
     group.rows.forEach((row, i) => {
       /* 向日葵螺旋：i=0 落在圆心，之后按黄金角铺开（与 demo 同一手法）。 */
       const angle = i * 2.39996 + cx * 0.01
-      const spread = group.rows.length === 1 ? 0 : group.r * 0.5 * Math.sqrt((i + 0.5) / group.rows.length)
+      const spread = group.rows.length === 1 ? 0 : maxSpread * Math.sqrt((i + 0.5) / group.rows.length)
       place.set(row.node.id, {
         x: cx + Math.cos(angle) * spread,
         y: cy + Math.sin(angle) * spread * 0.85,
-        /* 气泡半径 = **该原子的强度**（用户指定）：强度是它关联证据逐条累加的结果
-           （updateConfidence），所以"证据越硬、原子越大"这件事是自洽的。
-           没有强度记录时给最小半径（提示里写明未记录），不假造。 */
-        r: row.strength == null
-          ? 7
-          : 7 + (Math.max(0, Math.min(100, row.strength)) / 100) * 15,
+        r: bubbleR(row),
         row,
         group,
       })
@@ -150,6 +155,11 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
       r: point.r, class: 'rdr-cluster-circle', fill: meta.color, stroke: meta.color,
       ...(row.strength ? { style: `fill-opacity:${(0.15 + Math.min(100, row.strength) / 100 * 0.6).toFixed(2)}` } : {}),
     }))
+    /* 克制内发光：偏左上的淡白高光，模拟光源；纯装饰，不参与数据表达。 */
+    bubble.append(svgEl('circle', {
+      class: 'rdr-cluster-glint', cx: -point.r * 0.28, cy: -point.r * 0.3,
+      r: Math.max(2, point.r * 0.42), fill: '#ffffff',
+    }))
     bubble.append(svgText(short(row.node), { class: 'rdr-cluster-bubble-label', y: point.r + 12, 'text-anchor': 'middle' }))
     const tip = svgEl('title', {})
     tip.textContent = `${row.node.title || '未命名观点'}\n强度 ${row.strength ? `${row.strength}%` : '未记录'} · 支持 ${row.support} · 反对 ${row.challenge} · 独立来源 ${row.sources} 家\n${meta.label}：${meta.hint}`
@@ -165,7 +175,9 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
 
   /* 紧凑清单（demo 的 compact 区）：一簇一段，一行一条观点。 */
   const list = h('div', { class: 'rdr-cluster-wrap' },
-    ...groups.map((group, gi) => h('section', { class: 'rdr-cluster-group', id: `rdr-cluster-${gi}` },
+    ...groups.map((group, gi) => h('section', {
+      class: 'rdr-cluster-group', id: `rdr-cluster-${gi}`, style: { '--rdr-cat': group.color },
+    },
       h('div', { class: 'rdr-cluster-head' },
         h('span', { class: 'rdr-cluster-dot', style: `background:${group.color}` }),
         h('span', { class: 'rdr-cluster-head-title' }, group.name),
@@ -176,8 +188,8 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
           onclick: () => onOpenClaim?.(row.node.id),
         }, String(row.node.title || '未命名观点')),
         h('span', { class: `rdr-cluster-row-state is-${row.state}` }, (GROUPS[row.state] || GROUPS.none).label),
-        h('span', { class: 'rdr-cluster-row-strength' }, row.strength ? `${row.strength}%` : '未记录'),
-        h('span', { class: 'rdr-cluster-row-counts' },
+        h('span', { class: `rdr-cluster-row-strength${row.strength ? '' : ' is-empty'}` }, row.strength ? `${row.strength}%` : '未记录'),
+        h('span', { class: `rdr-cluster-row-counts${row.stated ? '' : ' is-empty'}` },
           row.stated ? `支持 ${row.support} · 反对 ${row.challenge}` : '还没有已表态的来源'))))))
 
   return h('div', { class: 'rdr-cluster-body' },

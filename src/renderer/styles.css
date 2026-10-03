@@ -1615,6 +1615,7 @@ body.tauri-macos{
 
 /* 读者页头部（对齐 demo 的 overview：kicker + 标题 + 四个统计数） */
 .rdr-head { margin: 0 0 var(--sp-4); }
+.rdr-main { max-width: 960px; margin: 0 auto; padding: var(--sp-8) var(--sp-5) 64px; }
 .rdr-head-kicker { margin: 0 0 4px; color: var(--text-3); font-size: var(--t-caption); }
 .rdr-head-title { margin: 0 0 var(--sp-3); color: var(--text-1); font-size: var(--t-largeTitle); font-weight: var(--fw-semibold); line-height: 1.25; }
 .rdr-stats { display: flex; flex-wrap: wrap; gap: var(--sp-5); }
@@ -1631,26 +1632,31 @@ body.tauri-macos{
 .rdr-conclusion-open { flex: none; margin-left: auto; }
 
 /* 观点图谱（簇 + 原子气泡，借鉴 demo 3）：标题默认隐藏，悬浮/选中才显示 */
-.rdr-cluster-link { stroke: var(--hairline); stroke-width: 1.5; }
-.rdr-cluster-bg-circle { fill-opacity: .07; stroke-width: 1.5; }
+.rdr-cluster-link { stroke: var(--hairline); stroke-width: 1; stroke-opacity: .5; }
+.rdr-cluster-bg-circle { fill-opacity: .05; stroke-width: 1; stroke-opacity: .45; }
 .rdr-cluster-bg-label { fill: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); }
-.rdr-cluster-bubble { cursor: pointer; }
+.rdr-cluster-bubble { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: scale 180ms ease; }
+.rdr-cluster-bubble:hover, .rdr-cluster-bubble:focus-visible { scale: 1.15; }
+.rdr-cluster-glint { opacity: .16; pointer-events: none; }
 .rdr-cluster-bubble .rdr-cluster-circle { fill-opacity: .22; }
 .rdr-cluster-bubble-label { fill: var(--text-2); font-size: var(--t-caption); opacity: 0; transition: opacity 120ms ease; }
 .rdr-cluster-bubble:hover .rdr-cluster-bubble-label,
 .rdr-cluster-bubble:focus-visible .rdr-cluster-bubble-label,
 .rdr-cluster-bubble.is-selected .rdr-cluster-bubble-label { opacity: 1; fill: var(--text-1); }
 .rdr-cluster-bubble.is-selected .rdr-cluster-circle { fill-opacity: .45; stroke-width: 3; }
-.rdr-cluster-wrap { display: grid; gap: var(--sp-3); }
-.rdr-cluster-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: 4px; font-size: var(--t-caption); }
+.rdr-cluster-wrap { display: grid; gap: var(--sp-4); }
+.rdr-cluster-group { border-left: 3px solid var(--rdr-cat, var(--hairline)); background: color-mix(in srgb, var(--rdr-cat, transparent) 5%, transparent); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3); }
+.rdr-cluster-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-2); font-size: var(--t-caption); }
 .rdr-cluster-head-title { color: var(--text-1); font-weight: var(--fw-semibold); }
 .rdr-cluster-head-count { color: var(--text-2); }
 .rdr-cluster-head-hint { color: var(--text-3); }
-.rdr-cluster-row { display: flex; align-items: baseline; gap: var(--sp-3); padding: 6px 2px; border-bottom: 1px solid var(--hairline-soft); }
+.rdr-cluster-row { display: flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-2); border-bottom: 1px solid var(--hairline-soft); }
+.rdr-cluster-row:last-child { border-bottom: 0; }
 .rdr-cluster-row.is-selected { background: var(--hover); }
 .rdr-cluster-claim { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 0; color: var(--text-1); font-size: var(--t-caption); text-align: left; cursor: pointer; }
 .rdr-cluster-row-strength { flex: none; color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
 .rdr-cluster-row-counts { flex: none; color: var(--text-3); font-size: var(--t-caption); }
+.rdr-cluster-row-strength.is-empty, .rdr-cluster-row-counts.is-empty { opacity: .6; }
 .rdr-cluster-row-state { flex: none; padding: 1px 7px; border-radius: var(--r-pill); background: var(--hover); color: var(--text-2); font-size: var(--t-caption); }
 .rdr-cluster-row-state.is-contested { color: var(--red-text); }
 .rdr-cluster-row-state.is-single { color: var(--orange-text); }
