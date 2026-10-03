@@ -252,45 +252,6 @@
       check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
         !currentRoot.querySelector('.rdr-replay-details'))
 
-      /* 整体情况（设计提案 01）：强度线 × 来源点 × 确认/修订台阶，同一条日期轴。 */
-      const axisEvents = [
-        { id: 'ax-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第一条来源' } },
-        { id: 'ax-r1', seq: 2, at: '2026-09-21T00:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'ax-e1' }, to: { eventId: 'ax-v1' } } },
-        { id: 'ax-e2', seq: 3, at: '2026-09-22T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第二条来源' } },
-        { id: 'ax-c1', seq: 4, at: '2026-09-23T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 62, newConfidence: 67, reason: '支持证据' } },
-        { id: 'ax-c2', seq: 5, at: '2026-09-24T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 67, newConfidence: 71, reason: '又一条支持' } },
-        { id: 'ax-s1', seq: 6, at: '2026-09-25T00:00:00.000Z', type: 'signal.reviewed', payload: { decision: 'accepted' } },
-      ]
-      const axisNode = {
-        id: 'ax-v1', nodeType: 'viewpoint', kind: 'claim', title: '整体情况原子', detail: '', currentText: '整体情况原子',
-        confidence: 71, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 2,
-        confidenceHistory: [
-          { at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67, reason: '支持证据' },
-          { at: '2026-09-24T00:00:00.000Z', oldConfidence: 67, newConfidence: 71, reason: '又一条支持' },
-        ],
-      }
-      const axisProjection = { nodes: [axisNode], allNodes: [axisNode], edges: [], allEdges: [], integrity: { ok: true }, eventCount: axisEvents.length }
-      const axisRoot = renderReaderView({ name: '整体情况合成主题' }, {
-        loadProjection: async () => axisProjection, loadEvents: async () => axisEvents, onOpenBuilder: () => {},
-      })
-      document.querySelector('#fixture-root').append(axisRoot)
-      await wait()
-      /* 选择方式改为点小倍数卡片：它和画布节点走同一条 focusAtom 路径（会联动检视器与合成轴）。 */
-      axisRoot.querySelector('.rdr-multiple-card')?.click()
-      await wait()
-      const axisSvg = axisRoot.querySelector('.rdr-axis-svg')
-      check('整体情况：选中原子后强度线按 confidence 历史画成折线',
-        axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') === '2',
-        axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') || '(无线)')
-      check('整体情况：来源落在同一条日期轴的轨道上，按支持/未表态上色',
-        axisSvg?.querySelectorAll('.rdr-axis-evidence').length === 2
-        && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-supports'))
-        && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-unstated')))
-      check('整体情况：确认/修订画成台阶，标题栏如实播报计数与当前强度',
-        axisSvg?.querySelectorAll('.rdr-axis-step').length === 1
-        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('2 条来源')
-        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('强度 71%'))
-
       /* R1 理由清单 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
       const structureEvidence = (id, title, extra = {}) => ({
         id, nodeType: 'evidence', kind: 'evidence', title, currentText: title, status: 'pending', archived: false, external: false,
@@ -347,30 +308,7 @@
       check('R1 大纲文案里不出现账本术语（事件 / seq / 哈希）',
         !/事件|seq|哈希/.test(structureRoot.querySelector('.rdr-outline')?.textContent || ''),
         structureRoot.querySelector('.rdr-outline')?.textContent?.slice(0, 60) || '')
-      check('R2 小倍数网格：每原子一卡，含强度条 / sparkline / 支持挑战计数 / 分类色点',
-        structureRoot.querySelectorAll('.rdr-multiple-card').length === 2
-        && Boolean(structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"] .rdr-multiple-spark polyline'))
-        && (structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"] .rdr-multiple-counts')?.textContent || '').includes('1 支持')
-        && (structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v2"] .rdr-multiple-value')?.textContent || '').includes('还没有强度')
-        && structureRoot.querySelectorAll('.rdr-multiple-cat').length === 2)
-      check('R2 没有强度历史的原子如实留白（虚线），不假装平稳',
-        Boolean(structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v2"] .rdr-multiple-spark line')))
-      structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"]')?.click()
-      await wait()
-      check('R2 点卡片聚焦该原子并联动检视器', structureRoot.querySelector('.rdr-inspector-title')?.textContent === 'R1 结论原子'
-        && Boolean(structureRoot.querySelector('.rdr-multiple-card.is-selected')))
-
       /* R3 正反两方 / R4 时间线 */
-      check('R3 正反两方并排列出支持与挑战，并标出争议行',
-        structureRoot.querySelectorAll('.rdr-debate-row').length === 1
-        && Boolean(structureRoot.querySelector('.rdr-debate-row.is-contested'))
-        && structureRoot.querySelectorAll('.rdr-debate-col.is-supports .rdr-debate-item').length === 1
-        && structureRoot.querySelectorAll('.rdr-debate-col.is-against .rdr-debate-item').length === 1
-        && (structureRoot.querySelector('.rdr-debate-strength')?.textContent || '').includes('71%'))
-      structureRoot.querySelector('.rdr-debate-col.is-against .rdr-debate-link')?.click()
-      await wait()
-      check('R3 点某条挑战跳到该来源的详情',
-        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '挑战用的来源')
       const chronicleItems = [...structureRoot.querySelectorAll('.rdr-chronicle-item')]
       check('R4 时间线一行一条来源，带日期/来源/归入原子/立场/强度变化',
         chronicleItems.length === 3
@@ -381,48 +319,6 @@
         && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('示例来源'))
       check('R4 时间线不出现账本术语（事件序号 / 哈希）',
         !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
-
-      /* R6 对照表 + ≥300 节点自动替代图 */
-      check('R6 矩阵行列重排后区分支持 / 挑战 / 挂上未表态',
-        structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
-        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-supports'))
-        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-contradicts'))
-        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-attached')))
-      structureRoot.querySelector('.rdr-matrix-cell.is-supports .rdr-matrix-dot')?.click()
-      await wait()
-      check('R6 点击矩阵单元格定位到该来源',
-        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '支持用的来源')
-      structureRoot.querySelector('.rdr-matrix-mode[aria-pressed="false"]')?.click()
-      await wait()
-      check('R6 可切原子 × 原子（来源的边不算原子间关系；对称关系两个方向都填充）',
-        structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
-        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-related').length === 2
-        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-empty').length === 2)
-      const bigNodes = [{
-        id: 'big-v1', nodeType: 'viewpoint', kind: 'claim', title: '大主题原子', detail: '', currentText: '大主题原子',
-        confidence: 60, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 300,
-      }]
-      for (let index = 0; index < 300; index++) {
-        bigNodes.push({
-          id: `big-e${index}`, nodeType: 'evidence', kind: 'evidence', title: `来源 ${index}`, currentText: `来源 ${index}`,
-          status: 'pending', archived: false, external: false, createdSeq: index + 2, eventIds: [], provenanceEventIds: [],
-          targetNodeIds: ['big-v1'], evidenceCount: 0,
-        })
-      }
-      const bigProjection = { nodes: bigNodes, allNodes: bigNodes, edges: [], allEdges: [], integrity: { ok: true }, eventCount: 1 }
-      const bigRoot = renderReaderView({ name: '大规模合成主题' }, {
-        loadProjection: async () => bigProjection, loadEvents: async () => [], onOpenBuilder: () => {},
-      })
-      document.querySelector('#fixture-root').append(bigRoot)
-      await wait()
-      check('R7 分类聚合按分类给出原子/来源计数，并标出缺数据的分类',
-        structureRoot.querySelectorAll('.rdr-category-row').length === 2
-        && (structureRoot.querySelector('.rdr-category-row .rdr-category-figures')?.textContent || '').includes('原子')
-        && Boolean(structureRoot.querySelector('.rdr-category-gap')))
-      check('R6 ≥300 节点时改由矩阵承载结构并如实标注（图谱已下线，不再假装画完了）',
-        (bigRoot.textContent || '').includes('矩阵')
-        && Boolean(bigRoot.querySelector('.rdr-matrix-degraded'))
-        && bigRoot.querySelectorAll('.rdr-matrix-row').length === 1)
 
       /* R5 还缺什么 + P1-5 回流 */
       const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
@@ -449,8 +345,8 @@
       check('P1-5 撤销把刚建的待办移出收件箱',
         inboxResolved.length === 1 && inboxResolved[0].id === todoCalls[0].id && inboxResolved[0].action === 'reject'
         && !structureRoot.querySelector('.rdr-gap-done'))
-      /* 「标记缺口」需要一个选中原子；原来这个选中态由画布选择建立，图下线后改为显式点一次卡片。 */
-      structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"]')?.click()
+      /* 「标记缺口」需要一个选中原子：点分簇清单里的那条观点（图与平面卡片都已下线）。 */
+      structureRoot.querySelector('.rdr-cluster-claim[data-claim-id="sx-v1"]')?.click()
       await wait()
       structureRoot.querySelector('.rdr-gap-mark').click()
       await wait()

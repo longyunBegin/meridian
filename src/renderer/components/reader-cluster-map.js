@@ -83,7 +83,7 @@ export function renderReaderClusterMap({ claims = [], evidenceForNode, onOpenCla
         h('span', { class: 'rdr-cluster-group-hint' }, group.meta.hint)),
       h('ul', { class: 'rdr-cluster-claims' }, ...group.rows.map((row) => h('li', {},
         onOpenClaim
-          ? h('button', { type: 'button', class: 'rdr-cluster-claim', onclick: () => onOpenClaim(row.node.id) },
+          ? h('button', { type: 'button', class: 'rdr-cluster-claim', dataset: { claimId: row.node.id }, onclick: () => onOpenClaim(row.node.id) },
             short(row.node),
             h('span', { class: 'rdr-cluster-claim-meta' },
               row.stated ? `支持 ${row.support} · 反对 ${row.challenge}` : '还没有已表态的来源'))

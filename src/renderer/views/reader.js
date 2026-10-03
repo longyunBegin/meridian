@@ -410,8 +410,8 @@ export function renderReaderView(theme, opts = {}) {
       state.selectedNodeId = next
       if (next) outlineExpanded.add(next)
       renderInspector()
-      renderAxis()
       renderStructure()
+      renderGaps()
     }
     /* R7 路径查询：两原子之间隔着什么。真正的图问题，保留下来。 */
     const renderStructure = () => {
@@ -469,6 +469,9 @@ export function renderReaderView(theme, opts = {}) {
       if (!node) return
       detailClaimId = id
       state.selectedNodeId = id
+      /* 缺口面板的「标记缺口」把 selectedId 固化在渲染时——选中变化后必须重渲染，
+         否则按钮记的是旧值（null），点了不会为该观点建待办。 */
+      renderGaps()
       detailHost.replaceChildren(renderReaderClaimDetail({
         node,
         stats: claimEvidenceStats(node, rowsOfClaim),
@@ -552,12 +555,17 @@ export function renderReaderView(theme, opts = {}) {
       ...[headBox, mapBox, conclusionBox, clusterList, detailHost].filter(Boolean),
       /* 其余面板（合成轴 / 理由清单 / 小倍数 / 正反两方 / 时间线 / 对照表 / 分类 / 缺口 / 检视器）
          保留能力，但收进**一行折叠**——可见区域保持 demo 式的精简，页面不再被它们占满。 */
-      moreView('更多视图',
-        axisBox, outlineHost, debateHost, multiplesHost,
-        chronicleHost, matrixHost, categoryHost, gapsHost, workspace))
+      /* 还缺什么：三个构造器里数据最实的一个（11 条、三类），也最回答"哪里不确定"——提到可见区。 */
+      block('还缺什么', gapsHost),
+      /* 「更多视图」只留两个看得懂的：
+         · 时间线：这主题是怎么长出来的（事件时间戳齐全）
+         · 理由清单：每个观点凭什么（来源按立场分组）
+         移除：整体情况（强度历史为空，画出来是空图）、分类聚合（主题没配分类，只有"未分类"一行）、
+         正反两方（与理由清单同源同轴）、小倍数（每卡都显示"还没有强度"、分类色点也没数据）、
+         对照表（用户反馈"完全看不懂"，且与理由清单同一份数据）。 */
+      moreView('更多视图', outlineHost, chronicleHost, workspace))
     /* 面板在折叠区里也必须先渲染（fixture 与无障碍都按 DOM 断言/读取）。 */
     renderInspector()
-    renderAxis()
     renderStructure()
     loadInboxItems().then(() => renderGaps())
   }
