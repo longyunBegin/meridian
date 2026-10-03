@@ -69,7 +69,6 @@ export async function renderLedger(container, theme) {
     filter: 'all',
     keyword: '',
     page: 1,
-    integrity: null,
     expanded: new Set(), // 已展开的事件 id
   }
 
@@ -83,12 +82,8 @@ export async function renderLedger(container, theme) {
     statusCheckEl,
     h('span', { class: 'status-sep' }, '|'),
     rangeEl,
-    h('span', { class: 'status-spacer' }),
-    h('span', {
-      class: 'status-action', id: 'ledger-recheck', role: 'button', tabindex: '0',
-      onclick: () => recheck(),
-      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); recheck() } },
-    }, '重新校验'))
+    h('span', { class: 'status-spacer' })
+)
 
   const searchInput = h('input', {
     type: 'text', id: 'ledger-search-input', placeholder: '搜索事件内容…',
@@ -156,27 +151,11 @@ export async function renderLedger(container, theme) {
   }
 
   const renderIntegrity = () => {
-    const g = state.integrity
     clear(statusCheckEl)
-    if (!g) {
-      statusCheckEl.append(h('span', { class: 'ic' }, '…'), h('span', { class: 'lbl' }, '未校验'))
-      return
-    }
-    if (g.ok) {
-      statusCheckEl.append(
-        h('span', { class: 'ic' }, '✓'),
-        h('span', { class: 'lbl' }, '链完整 ·'),
-        totalCountEl,
-        h('span', { class: 'lbl' }, '条事件'))
-      footNoteEl.textContent = '追加序列连续 · 无缺口'
-    } else {
-      const reason = g.reason || '未知原因'
-      const idx = Number.isInteger(g.index) ? `（第 ${g.index + 1} 条）` : ''
-      statusCheckEl.append(
-        h('span', { class: 'ic', style: { background: 'rgba(255,59,48,.14)', color: 'var(--red)' } }, '✕'),
-        h('span', { class: 'lbl', style: { color: 'var(--red)' } }, `校验失败：${reason}${idx}`))
-      footNoteEl.textContent = `校验失败：${reason}${idx}`
-    }
+    statusCheckEl.append(
+      totalCountEl,
+      h('span', { class: 'lbl' }, '条事件'))
+    footNoteEl.textContent = '按追加顺序排列'
   }
 
   const renderStats = () => {
@@ -329,19 +308,7 @@ export async function renderLedger(container, theme) {
     render()
   }
 
-  async function recheck() {
-    showToast('正在重新校验…')
-    try {
-      const res = await m.chainVerify(theme.id)
-      state.integrity = res?.integrity || null
-      renderIntegrity()
-      showToast(state.integrity?.ok ? `链完整 · ${state.events.length} 条事件` : '校验失败')
-    } catch (err) {
-      state.integrity = { ok: false, reason: err?.message || String(err) }
-      renderIntegrity()
-      showToast('校验失败')
-    }
-  }
+
 
   /* ---------- 事件绑定 ---------- */
   let searchTimer = null
@@ -372,17 +339,12 @@ export async function renderLedger(container, theme) {
     h('div', { class: 'empty-icon' }, '◌'),
     h('div', { class: 'empty-text' }, '正在加载账本事件…')))
   try {
-    const [evRes, verRes] = await Promise.all([
-      m.chainEvents(theme.id),
-      m.chainVerify(theme.id).catch(() => null),
-    ])
+    const evRes = await m.chainEvents(theme.id)
     const events = Array.isArray(evRes?.events) ? evRes.events : []
     /* 最新在前 */
     state.events = events.slice().sort((a, b) => (b?.seq ?? 0) - (a?.seq ?? 0))
-    state.integrity = verRes?.integrity || null
   } catch (err) {
     state.events = []
-    state.integrity = { ok: false, reason: err?.message || String(err) }
     showToast(`加载失败：${err?.message || err}`)
   }
   render()

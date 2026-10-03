@@ -52,7 +52,6 @@ export function createMeridianBridge() {
     chainProjectionAt: (themeId, sequence) => call('chain:getProjectionAt', themeId, sequence),
     chainArchives: (themeId) => call('chain:getArchive', themeId),
     chainEvents: (themeId) => call('chain:getEvents', themeId),
-    chainVerify: (themeId) => call('chain:verify', themeId),
     chainCreateNode: (themeId, input) => call('chain:createNode', themeId, input),
     chainRenameNode: (themeId, nodeId, title, reason) => call('chain:renameNode', themeId, nodeId, title, reason),
     chainCategorizeNode: (themeId, nodeId, category) => call('chain:categorizeNode', themeId, nodeId, category),
