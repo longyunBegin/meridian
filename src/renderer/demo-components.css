@@ -794,7 +794,13 @@
 .meridian-theme .rdr-lod-badge.is-degraded { color:var(--orange,#ff9500); }
 .meridian-theme .cog-node-dot { stroke:none; }
 /* 合成轴（设计提案 01） */
-.meridian-theme .rdr-axis-card { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5) 6px; border:1px solid var(--hairline); border-radius:12px; background:var(--surface); }
+/* 吸顶分段导航：长文档的全局感与一跳直达（薄材质 + 一档浮起，不用边框） */
+.meridian-theme .rdr-section-nav { position:sticky; top:0; z-index:15; display:flex; align-items:center; gap:2px; margin:0 0 var(--sp-3); padding:5px; border-radius:var(--r); background:color-mix(in srgb, var(--surface-solid) 82%, transparent); backdrop-filter:var(--material-thin); -webkit-backdrop-filter:var(--material-thin); box-shadow:var(--e-1); overflow-x:auto; scrollbar-width:none; }
+.meridian-theme .rdr-section-nav::-webkit-scrollbar { display:none; }
+.meridian-theme .rdr-section-nav-item { flex:0 0 auto; padding:4px 10px; border:0; border-radius:var(--r-sm); background:transparent; color:var(--text-2); font-size:var(--t-footnote); font-weight:var(--fw-medium); cursor:pointer; white-space:nowrap; }
+.meridian-theme .rdr-section-nav-item:hover { background:var(--hover); color:var(--text-1); }
+.meridian-theme .rdr-section-nav-item.is-active { background:var(--surface-solid); color:var(--text-1); font-weight:var(--fw-semibold); box-shadow:var(--e-1); }
+.meridian-theme .rdr-axis-card { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5) 6px; border:0; border-radius:var(--r-lg); background:var(--surface-solid); box-shadow:var(--e-1); }
 .meridian-theme .rdr-axis-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 .meridian-theme .rdr-axis-title { font-size:12.5px; }
 .meridian-theme .rdr-axis-caption { margin:4px 0 0; color:var(--text-2); font-size:10.5px; line-height:1.5; }
@@ -1185,11 +1191,11 @@
 .meridian-theme .atom-form-actions { display:flex; gap:12px; }
 
 /* 待审卡片 v2（按数据流转设计） */
-.meridian-theme .review-card-v2 { list-style:none; background:var(--surface); border:1px solid var(--line); border-radius: var(--r-lg); padding:24px 28px; margin-bottom:16px; }
+.meridian-theme .review-card-v2 { list-style:none; background:var(--surface-solid); border:0; border-radius:var(--r-lg); padding:var(--sp-6) var(--sp-6); margin-bottom:var(--sp-4); box-shadow:var(--e-2); }
 .meridian-theme .review-card-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
 .meridian-theme .review-card-kicker { font-size: var(--t-body); color:var(--text-2); }
-.meridian-theme .review-badge-pending { padding:5px 14px; font-size: var(--t-footnote); color:#c2410c; background:#ffedd5; border-radius: var(--r-pill); }
-.meridian-theme .review-source-card { border:1px solid var(--line); border-radius: var(--r-lg); padding:18px 20px; margin-bottom:20px; }
+.meridian-theme .review-badge-pending { padding:4px 11px; font-size:var(--t-footnote); color:var(--orange); background:var(--orange-soft); border-radius:var(--r-pill); }
+.meridian-theme .review-source-card { border:0; border-radius:var(--r-lg); padding:var(--sp-4); margin-bottom:var(--sp-4); background:var(--bg); }
 .meridian-theme .review-source-title-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .meridian-theme .review-source-title-row strong { font-size: var(--t-title); }
 .meridian-theme .review-source-id { padding:3px 10px; font-size: var(--t-caption); color:#2563eb; background:#eff6ff; border-radius: var(--r-sm); font-family:monospace; }
@@ -1230,7 +1236,7 @@
 .meridian-theme .review-trace-link { align-self:flex-start; padding:0; border:0; background:none; color:var(--accent); font-size: var(--t-caption); font-weight:600; cursor:pointer; }
 .meridian-theme .review-trace-link:hover { text-decoration:underline; }
 /* R1 论证大纲 + R2 小倍数网格（§10.2 首屏配方的第 2/3 屏） */
-.meridian-theme .rdr-outline, .meridian-theme .rdr-multiples { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:1px solid var(--hairline); border-radius: var(--r-lg); background:var(--surface); }
+.meridian-theme .rdr-outline, .meridian-theme .rdr-multiples { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:0; border-radius:var(--r-lg); background:var(--surface-solid); box-shadow:var(--e-1); }
 .meridian-theme .rdr-section-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
 .meridian-theme .rdr-section-head strong { font-size: var(--t-title); }
 .meridian-theme .rdr-section-hint, .meridian-theme .rdr-section-empty { margin:0; color:var(--text-2); font-size: var(--t-footnote); }
@@ -1266,7 +1272,7 @@
 .meridian-theme .rdr-multiple-spark { width:72px; height:22px; }
 .meridian-theme .rdr-multiple-counts { color:var(--text-3); font-size: var(--t-caption); }
 /* R5 缺口清单 + P1-5 回流 */
-.meridian-theme .rdr-gaps { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:1px solid var(--hairline); border-radius: var(--r-lg); background:var(--surface); }
+.meridian-theme .rdr-gaps { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:0; border-radius:var(--r-lg); background:var(--surface-solid); box-shadow:var(--e-1); }
 .meridian-theme .rdr-gap-list { margin:0; padding:0; list-style:none; }
 .meridian-theme .rdr-gap-item { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--line); }
 .meridian-theme .rdr-gap-kind { flex:0 0 auto; min-width:64px; padding:2px 7px; border-radius: var(--r-pill); background:var(--bg); color:var(--text-2); font-size: var(--t-caption); font-weight:600; text-align:center; }
@@ -1281,7 +1287,7 @@
 .meridian-theme .rdr-gap-foot { display:flex; align-items:center; gap:10px; padding-top:10px; border-top:1px solid var(--line); }
 .meridian-theme .rdr-gap-foot-hint { color:var(--text-3); font-size: var(--t-caption); }
 /* R3 双边清单：支持一列 / 中间强度 / 挑战一列 */
-.meridian-theme .rdr-debate, .meridian-theme .rdr-chronicle { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:1px solid var(--hairline); border-radius: var(--r-lg); background:var(--surface); }
+.meridian-theme .rdr-debate, .meridian-theme .rdr-chronicle { margin:var(--sp-4) 0 0; padding:var(--sp-4) var(--sp-5); border:0; border-radius:var(--r-lg); background:var(--surface-solid); box-shadow:var(--e-1); }
 .meridian-theme .rdr-debate-row { display:grid; grid-template-columns:minmax(0,1fr) 132px minmax(0,1fr); gap:10px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
 .meridian-theme .rdr-debate-row.is-contested { background:linear-gradient(90deg, rgba(52,199,89,.05), transparent 35%, transparent 65%, rgba(255,59,48,.05)); }
 .meridian-theme .rdr-debate-col-label { font-size: var(--t-caption); font-weight:600; color:var(--text-2); }
@@ -1650,3 +1656,25 @@
 #inbox-section .inbox2-belong-pill.is-add { border:1px dashed var(--line-2); background:transparent; color:var(--text-3); }
 #inbox-section .inbox2-belong-pill.is-add:hover { border-color:var(--accent); color:var(--accent); }
 #inbox-section .inbox2-hint { font-size: var(--t-footnote); color:var(--text-3); line-height:1.6; text-align:center; margin:0 0 16px; }
+
+
+/* ---------- 动效：出现/消失与状态切换（有目的、短、可关闭） ---------- */
+@keyframes md-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes md-fade { from { opacity: 0; } to { opacity: 1; } }
+.meridian-theme .rdr-axis-card,
+.meridian-theme .rdr-outline,
+.meridian-theme .rdr-debate,
+.meridian-theme .rdr-multiples,
+.meridian-theme .rdr-categories,
+.meridian-theme .rdr-matrix,
+.meridian-theme .rdr-chronicle,
+.meridian-theme .rdr-gaps,
+.editorial > .card,
+#inbox-section.card {
+  animation: md-rise var(--dur-3) var(--ease-out) both;
+}
+.meridian-theme .rdr-outline-atom > .rdr-outline-body,
+.meridian-theme .review-card-v2,
+.toast { animation: md-fade var(--dur-2) var(--ease-out) both; }
+/* 分段控件的选中项平滑移动而不是跳变 */
+.theme-view-tab, .inbox2-status-tab { transition: background-color var(--dur-2) var(--ease-out), color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out); }

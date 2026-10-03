@@ -175,6 +175,8 @@ export function renderReaderView(theme, opts = {}) {
   const outlineExpanded = new Set()
   /* R7：图是局部工具——默认 'local'（选中原子才画 1–2 跳邻域），'full' 是显式入口。 */
   let graphScope = 'local'
+  /* 吸顶分段导航当前锚点（只存内存）。 */
+  let activeSection = 'reader-axis'
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -808,7 +810,34 @@ export function renderReaderView(theme, opts = {}) {
       }
       axisCaption.textContent = parts.join(' · ')
     }
-    const axisBox = h('section', { class: 'rdr-axis-card', 'aria-label': '合成轴：强度、时间与外部数据' },
+    /* 读者页是一屏到底的长文档：给一条吸顶的分段导航，既是全局感也是一跳直达。
+       锚点用区块容器的 id；点击后高亮当前项（不整页重绘）。 */
+    const sectionNavHost = h('nav', { class: 'rdr-section-nav', 'aria-label': '读者页导航' })
+    const renderSectionNav = () => {
+      const items = [
+        ['reader-axis', '合成轴'],
+        ['reader-outline', '论证大纲'],
+        ['reader-debate', '双边清单'],
+        ['reader-multiples', '原子一览'],
+        ['reader-categories', '分类'],
+        ['reader-matrix', '矩阵'],
+        ['reader-chronicle', '编年史'],
+        ['reader-gaps', '缺口'],
+        ['reader-map', '图谱'],
+      ].filter(([id]) => document.getElementById(id) || hostsReady.has(id))
+      sectionNavHost.replaceChildren(...items.map(([id, label]) => h('button', {
+        type: 'button',
+        class: `rdr-section-nav-item${activeSection === id ? ' is-active' : ''}`,
+        onclick: () => {
+          activeSection = id
+          document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          renderSectionNav()
+        },
+      }, label)))
+    }
+    const hostsReady = new Set(['reader-outline', 'reader-debate', 'reader-multiples', 'reader-categories', 'reader-matrix', 'reader-chronicle', 'reader-gaps'])
+
+    const axisBox = h('section', { id: 'reader-axis', class: 'rdr-axis-card', 'aria-label': '合成轴：强度、时间与外部数据' },
       h('div', { class: 'rdr-axis-head' },
         h('strong', { class: 'rdr-axis-title' }, '强度 · 时间 · 外部数据（合成轴）'),
         axisCaption),
@@ -819,16 +848,16 @@ export function renderReaderView(theme, opts = {}) {
 
     /* R1 论证大纲 + R2 小倍数网格（§10.2 首屏配方第 2/3 屏）：
        图没有唯一阅读顺序、也比不了量；要"读完 / 比较"就用有序结构，图退到点开某个原子之后。 */
-    const outlineHost = h('div', { class: 'rdr-outline-host' })
-    const multiplesHost = h('div', { class: 'rdr-multiples-host' })
+    const outlineHost = h('div', { id: 'reader-outline', class: 'rdr-outline-host' })
+    const multiplesHost = h('div', { id: 'reader-multiples', class: 'rdr-multiples-host' })
     /* R5 缺口清单 + P1-5 回流：待办只写收件箱，不动账本；撤销＝把刚建的待办移出收件箱。 */
-    const gapsHost = h('div', { class: 'rdr-gaps-host' })
+    const gapsHost = h('div', { id: 'reader-gaps', class: 'rdr-gaps-host' })
     /* R3 双边清单 / R4 编年史：同样是"图以外的有序结构"，读得完、跟得上时间。 */
-    const debateHost = h('div', { class: 'rdr-debate-host' })
-    const chronicleHost = h('div', { class: 'rdr-chronicle-host' })
+    const debateHost = h('div', { id: 'reader-debate', class: 'rdr-debate-host' })
+    const chronicleHost = h('div', { id: 'reader-chronicle', class: 'rdr-chronicle-host' })
     /* R6 邻接矩阵：行＝原子、列＝外部数据（可切原子×原子）；≥300 节点时图自动换成它。 */
-    const matrixHost = h('div', { class: 'rdr-matrix-host' })
-    const categoryHost = h('div', { class: 'rdr-category-host' })
+    const matrixHost = h('div', { id: 'reader-matrix', class: 'rdr-matrix-host' })
+    const categoryHost = h('div', { id: 'reader-categories', class: 'rdr-category-host' })
     let matrixMode = 'atom-evidence'
     const todoKeys = new Set()
     let inboxCache = null
@@ -964,7 +993,7 @@ export function renderReaderView(theme, opts = {}) {
       }))
     }
 
-    const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
+    const controls = h('section', { id: 'reader-map', class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
@@ -1028,12 +1057,13 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()
     renderAxis()
     renderStructure()
+    renderSectionNav()
     loadInboxItems().then(() => renderGaps())
     updateHistoryStatus()
   }
