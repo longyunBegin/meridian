@@ -1582,3 +1582,11 @@ body.tauri-macos{
 .rdr-detail-spark { display: flex; align-items: center; gap: var(--sp-3); }
 .rdr-detail-spark-canvas { width: 220px; height: 40px; }
 .rdr-detail-spark-text { margin: 0; color: var(--text-3); font-size: var(--t-caption); }
+
+/* 读者页：三层常显 + 次级视图折叠（替代九个 tab） */
+.rdr-block { margin: 0 0 var(--sp-4); }
+.rdr-block-head { margin: 0 0 var(--sp-2); color: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); letter-spacing: .03em; }
+.rdr-more { margin: 0 0 var(--sp-3); border: 1px solid var(--hairline); border-radius: var(--r-lg); background: var(--surface); }
+.rdr-more-summary { padding: var(--sp-3) var(--sp-5); color: var(--text-2); font-size: var(--t-footnote); font-weight: var(--fw-semibold); cursor: pointer; }
+.rdr-more[open] > .rdr-more-summary { border-bottom: 1px solid var(--hairline-soft); }
+.rdr-more > *:not(summary) { padding: 0 var(--sp-5) var(--sp-4); }

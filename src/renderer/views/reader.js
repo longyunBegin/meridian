@@ -179,7 +179,6 @@ export function renderReaderView(theme, opts = {}) {
   /* R7：图是局部工具——默认 'local'（选中原子才画 1–2 跳邻域），'full' 是显式入口。 */
   let graphScope = 'local'
   /* 吸顶分段导航当前锚点（只存内存）。 */
-  let activeSection = 'reader-axis'
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -811,47 +810,6 @@ export function renderReaderView(theme, opts = {}) {
       }
       axisCaption.textContent = parts.join(' · ')
     }
-    /* 读者页是一屏到底的长文档：给一条吸顶的分段导航，既是全局感也是一跳直达。
-       锚点用区块容器的 id；点击后高亮当前项（不整页重绘）。 */
-    /* 九个区块改成真正的 tab：点哪个只显示哪一块。
-       一屏堆九块信息，读者没有兴趣也没有耐心——按问题分开，想看什么点什么。 */
-    const sectionNavHost = h('nav', { class: 'rdr-section-nav', role: 'tablist', 'aria-label': '读者页分区' })
-    const tabDefs = [
-      ['reader-axis', '整体情况'],
-      ['reader-outline', '理由清单'],
-      ['reader-debate', '正反两方'],
-      ['reader-multiples', '每条观点'],
-      ['reader-categories', '分类'],
-      ['reader-matrix', '对照表'],
-      ['reader-chronicle', '时间线'],
-      ['reader-gaps', '还缺什么'],
-      ['reader-map', '关系图'],
-    ]
-    const renderSectionNav = () => {
-      sectionNavHost.replaceChildren(...tabDefs.map(([id, label]) => h('button', {
-        type: 'button', role: 'tab', 'aria-selected': String(activeSection === id), 'aria-controls': id,
-        class: `rdr-section-nav-item${activeSection === id ? ' is-active' : ''}`,
-        onclick: () => {
-          if (activeSection === id) return
-          activeSection = id
-          renderTabs()
-          document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        },
-      }, label)))
-    }
-    /* 只显示当前 tab 对应的那一块。注意 reader-map 的锚点在 workspace 内部的画布上，
-       所以"图谱 tab"要显示整个 workspace（画布 + 检视器），否则隐藏 workspace 会把画布压成 0 高。 */
-    /* 必须在调用时求值：workspace 在本函数之后才定义，提前求值会撞 TDZ。 */
-    const panelNodes = () => [axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace]
-    const panelFor = (id) => (id === 'reader-map' ? workspace : document.getElementById(id))
-    const renderTabs = () => {
-      for (const panel of panelNodes()) if (panel) panel.hidden = true
-      const active = panelFor(activeSection)
-      if (active) active.hidden = false
-      renderSectionNav()
-      /* 图谱被隐藏时尺寸为 0，切回来必须重画一次，否则是空画布。 */
-      if (activeSection === 'reader-map') renderGraph()
-    }
 
     const axisBox = h('section', { id: 'reader-axis', class: 'rdr-axis-card', 'aria-label': '整体情况：强度、时间与来源' },
       h('div', { class: 'rdr-axis-head' },
@@ -924,12 +882,12 @@ export function renderReaderView(theme, opts = {}) {
       }))
     }
     const focusAtom = (id) => {
-      /* 检视器在图谱 tab 里：在其它 tab 点原子时自动切过去，避免"点了没反应"。
-         首次渲染期间 renderTabs 可能还没求值（TDZ），这里兜住。 */
-      if (activeSection !== 'reader-map') {
-        activeSection = 'reader-map'
-        try { renderTabs() } catch { /* 首帧忽略 */ }
-      }
+      /* 关系图现在是折叠区：点原子时先把它展开、再重画一次，避免"点了没反应"。
+         折叠时画布尺寸为 0，必须先展开再画（否则是空画布）。 */
+      try {
+        graphDetails.open = true
+        requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略 */ } })
+      } catch { /* 首帧忽略 */ }
       const next = id && currentNodes.some((node) => node.id === id) ? id : null
       state.selectedNodeId = next
       if (next) outlineExpanded.add(next)
@@ -1088,6 +1046,8 @@ export function renderReaderView(theme, opts = {}) {
         rows: rowsOfClaim(id),
         onClose: closeClaimDetail,
       }))
+      /* 关系图若已展开，跟随这次选择重画（不强制展开，避免点气泡就把图弹出来）。 */
+      if (graphDetails.open) requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略 */ } })
       detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
 
@@ -1102,13 +1062,38 @@ export function renderReaderView(theme, opts = {}) {
         selectedId: state.selectedNodeId,
         onOpenClaim: openClaimDetail,
       }))
-    article.replaceChildren(toolbar, conclusionBox, mapBox, detailHost, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
+    /* 九个 tab 换成"三层常显 + 次级视图折叠"：
+       常显 = 结论页(④) → 观点地图(②) → 单条下钻(①③) → 还缺什么；
+       其余（关系全貌 / 时间线 / 全部理由 / 对照与分类 / 整体情况）收进折叠区——
+       能力一个不丢，但读者不再需要先选一种"格式"才能开始看。 */
+    const graphDetails = h('details', { class: 'rdr-more rdr-more-graph' },
+      h('summary', { class: 'rdr-more-summary' }, '关系的全貌'),
+      workspace)
+    /* 折叠区展开时才画关系图（折叠状态下画布尺寸为 0）。 */
+    /* 必须在下一帧再画：折叠刚展开时布局还没刷新，graphCanvas.clientWidth 仍是 0，
+       而 renderGraph 是按宽度布局的——同帧调用会画出一张空图。 */
+    graphDetails.addEventListener('toggle', () => {
+      if (!graphDetails.open) return
+      requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略单次失败 */ } })
+    })
+    const moreView = (title, ...nodes) => h('details', { class: 'rdr-more' },
+      h('summary', { class: 'rdr-more-summary' }, title), ...nodes)
+    const block = (title, host) => h('section', { class: 'rdr-block' },
+      h('h2', { class: 'rdr-block-head' }, title), host)
+
+    article.replaceChildren(
+      toolbar, conclusionBox, mapBox, detailHost,
+      block('还缺什么', gapsHost),
+      graphDetails,
+      moreView('时间线', chronicleHost),
+      moreView('全部理由与逐条观点', outlineHost, debateHost, multiplesHost),
+      moreView('对照表与分类', matrixHost, categoryHost),
+      moreView('整体情况（强度随时间）', axisBox))
     renderSearch()
     renderInspector()
     renderGraph()
     renderAxis()
     renderStructure()
-    renderTabs()
     loadInboxItems().then(() => renderGaps())
     updateHistoryStatus()
   }
