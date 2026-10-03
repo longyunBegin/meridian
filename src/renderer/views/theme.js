@@ -1,5 +1,5 @@
 import { h, toast, confirmToast } from '../lib/dom.js'
-import { state, refresh } from '../app.js'
+import { state, refresh, setView } from '../app.js'
 import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
 import { renderReaderView } from './reader.js'
 import { requestBuilderPane, requestBuilderNodeFocus, requestChainEventJump } from '../lib/chain-ui-model.js'
@@ -49,12 +49,13 @@ function renderThemeOpsSection(theme) {
       toast(`已删除主题「${theme.name}」`, 'var(--text-2)')
     } }, '删除主题…'),
   ))
-  return h('div', { class: 'sect' }, toggle, body)
+  return h('div', { class: 'sect theme-ops' }, toggle, body)
 }
 
 /** Display existing theme tags without inventing a separate category field. */
 function renderThemeMetadata(theme) {
   const tags = Array.isArray(theme?.tags) ? theme.tags.filter((tag) => typeof tag === 'string' && tag.trim()) : []
+  if (!tags.length) return null
   return h('section', { class: 'theme-topic-meta', 'aria-label': '主题标签' },
     h('span', { class: 'theme-topic-meta-label' }, '主题标签'),
     tags.length
@@ -123,13 +124,15 @@ function renderSkeletonPrompt(theme) {
  */
 export function renderTheme(mid) {
   const theme = state.themes.find((t) => t.id === state.themeId)
-  const head = h('div', { class: 'mid-head hairline-b' },
-    h('h1', {}, theme ? theme.name : ''),
-  )
-  const readerTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '读者视图')
-  const builderTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '建设者视图')
+  const readerTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '读者')
+  const builderTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '建设者')
   const viewSwitch = h('div', { class: 'theme-view-switch', role: 'tablist', 'aria-label': '主题视图' }, readerTab, builderTab)
-  head.append(viewSwitch)
+  const leading = h('div', { class: 'theme-reference-leading' },
+    h('button', { type: 'button', class: 'theme-reference-back', 'aria-label': '返回应用导航', onclick: () => setView('today') }, '‹'),
+    h('div', { class: 'theme-reference-brand' },
+      h('img', { src: './assets/icons/icon-64.png', alt: '' }),
+      h('div', {}, h('strong', {}, 'Meridian'), h('span', {}, '主题工作区'))))
+  const head = h('header', { class: 'mid-head hairline-b theme-reference-head' })
 
   const openOpts = {
     onEvidence: openEvidenceDetail,
@@ -139,7 +142,10 @@ export function renderTheme(mid) {
   const metaEl = renderThemeMetadata(theme)
   const viewHost = h('div', { class: 'theme-view-host' })
   const opsEl = renderThemeOpsSection(theme)
-  for (const el of [metaEl, viewHost, opsEl]) if (el) body.append(el)
+  for (const el of [metaEl, viewHost]) if (el) body.append(el)
+  const headActions = h('div', { class: 'theme-reference-right' },
+    h('span', { class: 'theme-reference-context' }, '事件账本 · 可追溯'), opsEl)
+  head.append(leading, viewSwitch, headActions)
   mid.append(head, body)
 
   const paintTabs = (view) => {
@@ -160,6 +166,8 @@ export function renderTheme(mid) {
       viewHost.append(renderReaderView(theme, {
         loadProjection: async () => preloaded?.projection || m.chainProjection(theme.id),
         loadProjectionAt: async (sequence) => m.chainProjectionAt(theme.id, sequence),
+        initialSequence: preloaded?.initialSequence,
+        autoPlay: preloaded?.autoPlay,
         loadEvents: async () => preloaded?.events
           || (await m.chainEvents(theme.id).catch(() => null))?.events || [],
         onOpenBuilder: (kind, nodeId, eventId) => {
@@ -174,6 +182,8 @@ export function renderTheme(mid) {
         ...openOpts,
         initialProjection: preloaded?.projection || null,
         initialEvents: preloaded?.events || null,
+        onViewAtSequence: (sequence, play = false) => mount('reader', { initialSequence: sequence, autoPlay: play }),
+        onReturnLive: () => mount('reader'),
       }))
     }
   }

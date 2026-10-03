@@ -1,7 +1,7 @@
 import {
   NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, REVISION_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
   networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle, nodeTitleCharsPerLine,
-  buildDensityTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
+  buildDensityTimeline, buildEventTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
 } from '../src/renderer/lib/theme-network.js'
 
 let passed = 0
@@ -29,6 +29,15 @@ const familyText = `${family.repeat(3)}abcdef`
 check('通用截断按完整 grapheme 计算长度', truncateGraphemes(familyText, 5) === `${family.repeat(3)}a…`)
 check('节点标题分行不会拆分复杂 emoji', splitNetworkTitle(`${family.repeat(18)}后缀`, 14, 2).join('').includes(family.repeat(14)))
 check('空标题使用有意义占位文本', splitNetworkTitle('')[0] === '未命名')
+const longEnglishTitle = splitNetworkTitle('SupplyChainResilienceSuperLongIdentifier2026', 10, 2)
+check('SVG 标题对无空格英文长词按可用宽度换行并以省略号标记截断', longEnglishTitle.length === 2
+  && longEnglishTitle.every((line) => line.trim() === line) && longEnglishTitle.at(-1).endsWith('…'))
+const mixedUnicodeTitle = splitNetworkTitle('GPU / 云端👩‍👩‍👧‍👦—增长 Δ2', 9, 2)
+check('中英混排、组合 emoji 与希腊字母保留完整 grapheme', mixedUnicodeTitle.join('').replaceAll('…', '').includes(family)
+  && mixedUnicodeTitle.length <= 2)
+const narrowChars = nodeTitleCharsPerLine(120, 12, 28)
+check('窄视口按实际卡片内宽减少可用行宽', narrowChars === 7
+  && splitNetworkTitle('RevenueExpands2026', narrowChars, 2).length === 2)
 const longEvidenceTitle = '合成来源记载的内容超过卡片安全显示宽度需要换行截断'
 const evidenceTitleLines = splitNetworkTitle(longEvidenceTitle, nodeTitleCharsPerLine(144), 2)
 check('SVG 节点标题按卡片内宽计算行长，长中文证据标题在两行内截断',
@@ -52,6 +61,19 @@ check('时间轴按有事件日期聚合密度而非每个账本事件重复打�
 check('日期刻度按日历顺序和日期间距定位，能取最近不晚于目标日', timeline[0].position === 0
   && timeline[1].position === 100 && timelinePointForDay(timeline, Date.parse('2026-09-02T00:00:00Z') / 86400000)?.date === '2026-09-01')
 check('缺日期事件进入有标记的末端桶且仍可回放', timeline.at(-1).date === '日期未记录' && timeline.at(-1).seq === 7)
+const eventTimeline = buildEventTimeline(events)
+check('Reader 回放为每一条 ledger seq 提供独立停点，同日事件也可逐条查看', eventTimeline.length === events.length
+  && eventTimeline.map((point) => point.seq).join(',') === '1,2,3,4,5,6,7'
+  && eventTimeline[0].position === 0 && eventTimeline[1].position === 1
+  && eventTimeline.at(-1).position === events.length - 1 && eventTimeline[1].count === 2)
+check('逐事件回放保留有日期和缺日期事实；不会按日期重排账本序号或补造日期', eventTimeline[0].date === '2026-09-01'
+  && eventTimeline.at(-1).date === '日期未记录' && eventTimeline.at(-1).day == null)
+const longEventTimeline = buildEventTimeline(Array.from({ length: 240 }, (_, index) => ({
+  id: `ledger-${index + 1}`, seq: index + 1, at: '2026-09-01T00:00:00Z',
+})))
+check('超过100条账本事件仍以整数滑杆索引提供每一条可回放时点', longEventTimeline.length === 240
+  && longEventTimeline.every((point, index) => point.position === index && point.seq === index + 1)
+  && longEventTimeline.at(-1).position === 239)
 const summary = timelineChangeSummary(events, 3, 6)
 check('时间轴变化摘要能说明改名、失效和关系确认数量', summary.includes('改名 1')
   && summary.includes('失效 1') && summary.includes('确认 1'))

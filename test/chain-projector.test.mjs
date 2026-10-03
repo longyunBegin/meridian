@@ -62,9 +62,41 @@ ok('外部证据节点', proj.nodes.some((n) => n.external && n.title.includes('
 ok('缺少可读名称的外部引用显示来源未解析', proj.nodes.some((n) => n.external && n.sourceRef.includes('unresolved-claim') && n.title === '来源未解析'))
 ok('节点带来源事件 provenance', nodeA.provenanceEventIds.includes('e-a') && nodeA.sourceRef === 'segment:sa')
 ok('关系边带来源事件 provenance', proj.edges.every((edge) => edge.provenanceEventIds.includes(edge.eventId)))
-ok('支持关系汇总唯一证据数', nodeA.evidenceCount === 2, `实际 ${nodeA.evidenceCount}`)
+ok('支持与反驳关系汇总唯一可导航证据数', nodeA.evidenceCount === 3, `实际 ${nodeA.evidenceCount}`)
 const contradicts = proj.edges.find((e) => e.rel === 'contradicts')
 ok('反驳边存在', !!contradicts && contradicts.from === 'e-e2' && contradicts.to === 'e-b')
+
+console.log('\n— evidence.appended 显式目标与历史回放 —')
+const evidenceTheme = store.addTheme('证据目标隔离主题')
+ev.appendEvent(evidenceTheme.id, { id: 'target-a', type: 'node.created', payload: { nodeType: 'viewpoint', title: '目标观点 A', sourceRef: 'manual:target-a' } })
+ev.appendEvent(evidenceTheme.id, { id: 'target-b', type: 'node.created', payload: { nodeType: 'viewpoint', title: '目标观点 B', sourceRef: 'manual:target-b' } })
+for (let index = 0; index < 14; index++) {
+  const targetNodeId = index % 2 === 0 ? 'target-a' : 'target-b'
+  ev.appendEvent(evidenceTheme.id, {
+    id: `targeted-evidence-${index + 1}`, type: 'evidence.appended',
+    payload: { text: `目标证据 ${index + 1}`, ...(index % 3 === 0 ? { claimId: targetNodeId } : { targetNodeId }) },
+  })
+}
+ev.appendEvent(evidenceTheme.id, { id: 'orphan-evidence', type: 'evidence.appended', payload: { text: '未指定目标的孤立证据' } })
+const evidenceProjection = pj.getChainProjection(evidenceTheme.id)
+const targetA = evidenceProjection.allNodes.find((node) => node.id === 'target-a')
+const targetB = evidenceProjection.allNodes.find((node) => node.id === 'target-b')
+const expectedEvidenceA = Array.from({ length: 7 }, (_, index) => `targeted-evidence-${index * 2 + 1}`)
+const expectedEvidenceB = Array.from({ length: 7 }, (_, index) => `targeted-evidence-${index * 2 + 2}`)
+ok('14 条证据事件仅按显式目标进入对应观点清单', targetA.evidenceCount === 7 && targetB.evidenceCount === 7
+  && targetA.evidenceEventIds.length === 7 && targetB.evidenceEventIds.length === 7)
+ok('A/B 目标互不串挂', expectedEvidenceA.every((id) => targetA.evidenceEventIds.includes(id))
+  && expectedEvidenceB.every((id) => targetB.evidenceEventIds.includes(id))
+  && !targetA.evidenceEventIds.some((id) => expectedEvidenceB.includes(id)))
+ok('无目标证据不因事件总数或标题而猜挂', evidenceProjection.allNodes.find((node) => node.id === 'orphan-evidence').targetNodeIds.length === 0
+  && targetA.evidenceCount + targetB.evidenceCount === 14)
+const evidencePrefix = pj.getChainProjectionAt(evidenceTheme.id, 9)
+const prefixA = evidencePrefix.allNodes.find((node) => node.id === 'target-a')
+const prefixB = evidencePrefix.allNodes.find((node) => node.id === 'target-b')
+ok('有效前缀历史证据数随时间截断且目标保持一致', evidencePrefix.integrity.replayed === true
+  && prefixA.evidenceCount === 4 && prefixB.evidenceCount === 3
+  && prefixA.evidenceEventIds.every((id) => expectedEvidenceA.includes(id))
+  && prefixB.evidenceEventIds.every((id) => expectedEvidenceB.includes(id)))
 
 console.log('\n— chainScope —')
 const scope = pj.chainScope(proj)
@@ -92,6 +124,9 @@ const legacyClaim = gp.nodes.find((n) => n.title === '旧命题')
 const legacyEvidence = gp.nodes.find((n) => n.kind === 'evidence' && n.title === '旧来源标签')
 ok('旧命题和来源证据进入当前图并互相连通', !!legacyClaim && !!legacyEvidence
   && gp.edges.some((edge) => edge.rel === 'supports' && edge.from === legacyEvidence.id && edge.to === legacyClaim.id))
+ok('legacy evidence 目标事件 ID 与旧关系边汇总到同一清单', legacyClaim.evidenceCount === 1
+  && legacyClaim.evidenceEventIds.includes(legacyEvidence.id)
+  && ev.getEvents(theme2.id).some((event) => event.id === legacyEvidence.id && event.payload.targetNodeId === legacyClaim.id))
 ok('旧来源元数据保留在证据事件', ev.getEvents(theme2.id).some((e) => e.type === 'evidence.appended'
   && e.payload.legacySource?.url === 'https://example.com/legacy-source'))
 ok('二次调用不重复迁移', pj.getChainProjection(theme2.id).eventCount === 4)
@@ -527,5 +562,49 @@ ok('共享 legacy sourceRef 下改名/失效仍只作用于 payload 指定的 no
   && sharedRefNodes.find((node) => node.id === sharedRefSecond.id)?.invalidated
   && ev.verifyChain(sharedRefTheme.id).ok)
 
+console.log('\n— 旧 signal 决定投影与有效前缀 —')
+const signalTheme = store.addTheme('旧信号审核与回放')
+const signalTarget = pj.createProjectedNode(signalTheme.id, {
+  nodeType: 'viewpoint', title: '旧信号目标观点', detail: '原始观点内容',
+})
+const pendingEvidenceSignal = ev.appendEvent(signalTheme.id, {
+  id: 'legacy-pending-evidence', type: 'evidence.appended',
+  payload: { text: '旧待审证据', targetNodeId: signalTarget.id, pendingReview: true, sourceLabel: '旧来源' },
+})
+const pendingRelationSignal = ev.appendEvent(signalTheme.id, {
+  id: 'legacy-pending-relation', type: 'relation.declared',
+  payload: { rel: 'contradicts', from: { eventId: pendingEvidenceSignal.id }, to: { eventId: signalTarget.id }, reviewStatus: 'pending-review' },
+})
+const beforeSignalReviews = ev.getEvents(signalTheme.id).length
+const beforeSignalProjection = pj.getChainProjectionAt(signalTheme.id, beforeSignalReviews)
+const originalEvidencePayload = JSON.stringify(ev.getEvents(signalTheme.id).find((event) => event.id === pendingEvidenceSignal.id).payload)
+const relationReview = ev.appendEvent(signalTheme.id, {
+  id: 'legacy-relation-decision', type: 'signal.reviewed', actor: 'user',
+  payload: { signalEventId: pendingRelationSignal.id, decision: 'corrected', reason: '方向标签复核', change: { direction: 'declining', nature: 'epistemic', themeTag: '反例' } },
+})
+const evidenceReview = ev.appendEvent(signalTheme.id, {
+  id: 'legacy-evidence-decision', type: 'signal.reviewed', actor: 'user',
+  payload: { signalEventId: pendingEvidenceSignal.id, decision: 'rejected', reason: '来源需复核' },
+})
+const afterSignalProjection = pj.getChainProjection(signalTheme.id)
+const reviewedRelationEdge = afterSignalProjection.allEdges.find((edge) => edge.eventId === pendingRelationSignal.id)
+const reviewedEvidenceNode = afterSignalProjection.allNodes.find((node) => node.id === pendingEvidenceSignal.id)
+const beforeSignalReviewAgain = pj.getChainProjectionAt(signalTheme.id, beforeSignalReviews)
+ok('旧 evidence/relation 信号接受追加决定而不改写源事件', relationReview.payload.signalEventId === pendingRelationSignal.id
+  && evidenceReview.payload.signalEventId === pendingEvidenceSignal.id
+  && JSON.stringify(ev.getEvents(signalTheme.id).find((event) => event.id === pendingEvidenceSignal.id).payload) === originalEvidencePayload)
+ok('signal.reviewed 将 relation 待审状态关闭并保留三层修订及审核 provenance', !reviewedRelationEdge?.pendingReview
+  && reviewedRelationEdge?.reviewDecision === 'corrected'
+  && reviewedRelationEdge?.reviewChange?.themeTag === '反例'
+  && reviewedRelationEdge?.provenanceEventIds.includes(relationReview.id))
+ok('被驳回 evidence 保留目标关联、决定与来源可追溯字段', !reviewedEvidenceNode?.pendingReview
+  && reviewedEvidenceNode?.reviewDecision === 'rejected'
+  && reviewedEvidenceNode?.reviewEventId === evidenceReview.id
+  && afterSignalProjection.allNodes.find((node) => node.id === signalTarget.id)?.evidenceCount === 1)
+ok('有效前缀回放可回到未判决旧信号，不提前泄露未来决定', beforeSignalProjection.allEdges.find((edge) => edge.eventId === pendingRelationSignal.id)?.pendingReview
+  && beforeSignalProjection.allNodes.find((node) => node.id === pendingEvidenceSignal.id)?.pendingReview
+  && !beforeSignalProjection.allEdges.find((edge) => edge.eventId === pendingRelationSignal.id)?.reviewDecision
+  && !beforeSignalReviewAgain.allNodes.find((node) => node.id === pendingEvidenceSignal.id)?.reviewEventId)
+ok('旧信号复核后哈希链完整', ev.verifyChain(signalTheme.id).ok)
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

@@ -150,7 +150,7 @@ import '../styles.css'
       },
       async engineRunPipeline(id) {
         commandCalls.push(['engineRunPipeline', id])
-        if (!inboxItem.extracted || inboxItem.extractedThemeId !== theme.id) return { ok: false, error: '合成流程阶段尚未完成' }
+        if (inboxItem.extractedThemeId !== theme.id || !String(inboxItem.text || '').trim()) return { ok: false, error: '合成原文或主题映射缺失' }
         generatedPipeline = {
           status: 'done', ranAt: '2026-09-22T09:00:00.000Z',
           statements: [
@@ -311,21 +311,26 @@ import '../styles.css'
         host.querySelector('.builder-flow-steps')?.textContent.includes('来源已摄入')
         && host.querySelector('.builder-intake-card')?.textContent.includes('来源时间')
         && host.querySelector('.builder-intake-card')?.textContent.includes('系统摄入'))
-      const extract = [...host.querySelectorAll('.builder-intake-card button')].find((button) => button.textContent.includes('抽取原子陈述'))
-      extract.click()
-      await waitFor(() => inboxItem.extracted && host.textContent.includes('抽取候选'), '抽取候选显示')
-      check('抽取只产生候选并显示适用时间，没有追加主题事实', inboxItem.lemmas?.length === 1
-        && !events.some((event) => event.type === 'evidence.appended')
-        && commandCalls.some((call) => call[0] === 'inboxExtract'))
+      check('建设者不以人工表单冒充引擎抽取，来源原文尚未运行前没有模型候选',
+        ![...host.querySelectorAll('.builder-intake-card button')].some((button) => button.textContent.includes('抽取原子陈述'))
+        && !inboxItem.lemmas?.length && !commandCalls.some((call) => call[0] === 'inboxExtract')
+        && !events.some((event) => event.type === 'evidence.appended'))
       const map = [...host.querySelectorAll('.builder-intake-card button')].find((button) => button.textContent.includes('映射到'))
       map.click()
       await waitFor(() => inboxItem.extractedThemeId === theme.id && host.textContent.includes('已映射到当前主题'), '主题映射状态')
       check('映射阶段只更新收件箱归属，尚未写入观点或关系', inboxItem.extractedThemeId === theme.id
         && projection.nodes.length === 1 && !events.some((event) => ['evidence.appended', 'relation.declared'].includes(event.type)))
-      const generate = [...host.querySelectorAll('.builder-intake-card button')].find((button) => button.textContent.includes('生成建议'))
+      const generate = [...host.querySelectorAll('.builder-intake-card button')].find((button) => button.textContent.includes('运行模型抽取与映射'))
+      check('已映射来源以其真实原文启用配置引擎入口', !!generate && !generate.disabled
+        && host.querySelector('.engine-pipe')?.textContent.includes('模型只提出建议'))
       generate.click()
       await waitFor(() => host.querySelectorAll('.builder-queue-item').length === 4
         && host.querySelectorAll('.engine-attr').length === 1, '两条建议进入队列并显示选中建议')
+      check('configured engine 自动抽取并映射候选；用户审核前只追加建议事件',
+        commandCalls.filter((call) => call[0] === 'engineRunPipeline').length === 1
+        && generatedPipeline?.status === 'done'
+        && events.filter((event) => event.type === 'engine.recommendation.proposed').length === generatedPipeline.results.length
+        && !events.some((event) => ['evidence.appended', 'relation.declared'].includes(event.type)))
       check('建设者采用待处理/已处理双栏队列，所有建议可逐项选择而非被截断',
         host.querySelector('.builder-intake-queue') && host.querySelector('.builder-intake-review')
         && host.querySelectorAll('.builder-queue-item').length === 4)

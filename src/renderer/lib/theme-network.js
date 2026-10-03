@@ -52,20 +52,59 @@ export function truncateGraphemes(value, limit, suffix = '…') {
   return parts.length > limit ? `${parts.slice(0, Math.max(0, limit - 1)).join('')}${suffix}` : text
 }
 
+function titleGraphemes(value) {
+  return typeof Intl?.Segmenter === 'function'
+    ? [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(value)].map((part) => part.segment)
+    : Array.from(value)
+}
+
+function titleWidthUnits(grapheme) {
+  if (/^\s+$/u.test(grapheme)) return 0.32
+  if (/[\p{Extended_Pictographic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(grapheme)
+    || /[\u3000-\u303f\uff00-\uffef]/u.test(grapheme)) return 1
+  if (/^[ilI.,'`:;!|]$/u.test(grapheme)) return 0.34
+  if (/^[MW@#%&]$/u.test(grapheme)) return 0.82
+  if (/^[A-Z0-9]$/u.test(grapheme)) return 0.64
+  return 0.56
+}
+
+function titleLineWidth(value) {
+  return titleGraphemes(value).reduce((total, part) => total + titleWidthUnits(part), 0)
+}
+
 export function splitNetworkTitle(value, maxPerLine = 14, maxLines = 2) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim() || '未命名'
-  const parts = typeof Intl?.Segmenter === 'function'
-    ? [...new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(text)].map((part) => part.segment)
-    : Array.from(text)
+  const limit = Math.max(1, Number(maxPerLine) || 1)
+  const lineLimit = Math.max(1, Math.floor(Number(maxLines) || 1))
+  const parts = titleGraphemes(text)
   const lines = []
-  for (let i = 0; i < parts.length && lines.length < maxLines; i += maxPerLine) {
-    lines.push(parts.slice(i, i + maxPerLine).join(''))
+  let line = ''
+  let used = 0
+  let truncated = false
+  for (const part of parts) {
+    const width = titleWidthUnits(part)
+    if (used + width > limit && line.trim()) {
+      lines.push(line.trimEnd())
+      line = ''
+      used = 0
+      if (lines.length >= lineLimit) { truncated = true; break }
+      if (/^\s+$/u.test(part)) continue
+    }
+    if (!line && /^\s+$/u.test(part)) continue
+    line += part
+    used += width
   }
-  if (parts.length > maxPerLine * maxLines && lines.length) {
-    const lastLineStart = (lines.length - 1) * maxPerLine
-    lines[lines.length - 1] = `${parts.slice(lastLineStart, lastLineStart + Math.max(0, maxPerLine - 1)).join('')}…`
+  if (line.trim()) {
+    if (lines.length < lineLimit) lines.push(line.trimEnd())
+    else truncated = true
   }
-  return lines.length ? lines : ['未命名']
+  if (!lines.length) return ['未命名']
+  if (truncated) {
+    let parts = titleGraphemes(lines.at(-1))
+    while (parts.length && titleLineWidth(parts.join('')) + titleWidthUnits('…') > limit) parts.pop()
+    lines[lines.length - 1] = `${parts.join('').trimEnd()}…`
+  }
+  return lines
 }
 
 export function nodeTitleCharsPerLine(cardWidth, fontSize = 11, horizontalPadding = 24) {
@@ -114,6 +153,25 @@ export function buildDensityTimeline(events = []) {
     point.density = Math.max(1, Math.min(5, Math.round(Math.sqrt(point.count))))
   }
   return points
+}
+
+/** One replay stop for every ledger event; sequence, not wall-clock order, is authoritative. */
+export function buildEventTimeline(events = []) {
+  const rows = (Array.isArray(events) ? events : [])
+    .filter((event) => event && Number.isSafeInteger(event.seq) && event.seq > 0)
+    .sort((a, b) => a.seq - b.seq)
+  return rows.map((event, index) => {
+    const parsed = dateKeyFor(event)
+    return {
+      seq: event.seq,
+      eventId: event.id || null,
+      eventType: event.type || null,
+      date: parsed?.date || '日期未记录',
+      day: parsed?.day ?? null,
+      count: event.seq,
+      position: index,
+    }
+  })
 }
 
 export function timelinePointForDay(points = [], requestedDay = 0) {

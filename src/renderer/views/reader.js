@@ -1,9 +1,11 @@
 import { h } from '../lib/dom.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus,
-  buildDensityTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
+  buildEventTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
+import { evidenceForNode } from '../lib/chain-workbench-model.js'
+import { filterReaderNodes } from '../lib/reader-model.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -69,20 +71,12 @@ function sourceEventFor(node, eventsById, events) {
   return null
 }
 
-function relatedEvidence(node, nodesById, edges) {
-  const ids = new Set()
-  if (networkNodeType(node) === 'evidence') ids.add(node.id)
-  for (const edge of edges) {
-    if (edge.from !== node?.id && edge.to !== node?.id) continue
-    const otherId = edge.from === node.id ? edge.to : edge.from
-    const other = nodesById.get(otherId)
-    if (other && networkNodeType(other) === 'evidence') ids.add(otherId)
-  }
-  return [...ids].map((id) => nodesById.get(id)).filter(Boolean)
-}
-
-function renderSourceRecord(node, event, { onLocateEvent } = {}) {
+function renderSourceRecord(node, event, { onLocateEvent, stanceLabel } = {}) {
   const payload = event?.payload || {}
+  const reviewLabel = node?.reviewDecision === 'rejected' ? '已驳回 · 原记录保留'
+    : node?.reviewDecision === 'corrected' ? '已复核 · 建议已修订'
+      : node?.reviewDecision === 'accepted' || node?.reviewDecision === 'confirmed' ? '已复核 · 已接受'
+        : node?.pendingReview ? '待人工复核' : ''
   const source = payload.sourceLabel || payload.legacySource?.label || payload.sourceKind || node?.sourceKind || '来源未记录'
   const url = safeUrl(payload.sourceUrl || payload.url || payload.evidenceRefs?.find?.((ref) => ref?.type === 'url')?.id)
   const scores = scoreRowsOf(payload)
@@ -95,6 +89,8 @@ function renderSourceRecord(node, event, { onLocateEvent } = {}) {
   return h('article', { class: 'rdr-evidence-card', 'data-evidence-id': node?.id || '' },
     h('div', { class: 'rdr-evidence-top' },
       h('span', { class: 'rdr-evidence-kind' }, '证据'),
+      stanceLabel ? h('span', { class: 'rdr-evidence-stance' }, stanceLabel) : null,
+      reviewLabel ? h('span', { class: `rdr-evidence-review${node?.reviewDecision === 'rejected' ? ' is-rejected' : ''}` }, reviewLabel) : null,
       h('strong', { class: 'rdr-evidence-title' }, titleOf(node)),
       sourceLink),
     h('p', { class: 'rdr-evidence-text' }, cleanText(payload.text || payload.quote || node?.currentText || node?.detail || '来源内容未记录。')),
@@ -166,7 +162,7 @@ export function renderReaderView(theme, opts = {}) {
       return
     }
 
-    const timeline = buildDensityTimeline(verifiedEvents)
+    const timeline = buildEventTimeline(verifiedEvents)
     const layout = layoutThemeNetwork(currentNodes, currentEdges, 1120)
     const state = {
       projection: selectedSeq == null ? currentProjection : (replayProjection || currentProjection),
@@ -177,6 +173,7 @@ export function renderReaderView(theme, opts = {}) {
       liveSelectedNodeId: null,
       searchMatches: [],
       searchPage: 1,
+      searchLocatedNodeId: null,
       replaying: selectedSeq != null,
       loadingReplay: false,
     }
@@ -204,12 +201,18 @@ export function renderReaderView(theme, opts = {}) {
       ...STATUS_FILTERS.map((status) => h('option', { value: status }, NODE_STATUS_LABEL[status])))
     const countStatus = h('span', { class: 'rdr-node-count', role: 'status', 'aria-live': 'polite' })
     const timeSlider = h('input', {
-      class: 'rdr-time-slider', type: 'range', min: '0', max: '100', step: '1', value: '100',
+      class: 'rdr-time-slider', type: 'range', min: '0', max: String(Math.max(0, timeline.length - 1)), step: '1',
+      value: String(Math.max(0, timeline.length - 1)),
       disabled: timeline.length < 2 || typeof opts.loadProjectionAt !== 'function',
       'aria-label': '回放已校验的主题事件时间线',
     })
+    const hasDatedTimeline = timeline.some((point) => point.day != null)
     const timeStatus = h('p', { class: 'rdr-time-status', role: 'status', 'aria-live': 'polite' },
-      timeline.length ? '时间轴仅使用校验通过的事件；选择时点可只读回放。' : '暂无可回放的已校验事件。')
+      timeline.length
+        ? (hasDatedTimeline
+          ? '时间轴只使用已校验事件；缺失日期留作“日期未记录”，不会推断真实时间。'
+          : '没有可用时间元数据；仅按已校验账本序号回放，不推断日期。')
+        : '暂无可回放的已校验事件。')
     const playButton = h('button', { type: 'button', class: 'btn btn-sm rdr-play-button', 'aria-pressed': 'false', disabled: timeSlider.disabled }, '播放')
     const liveButton = h('button', { type: 'button', class: 'btn btn-sm rdr-live-button', hidden: true }, '返回当前模型')
     const compareButton = h('button', { type: 'button', class: 'btn btn-sm rdr-compare-button', hidden: true, 'aria-pressed': 'false' }, '与当前对比')
@@ -250,8 +253,18 @@ export function renderReaderView(theme, opts = {}) {
       const type = networkNodeType(node)
       const status = networkNodeStatus(node)
       const incidentEdges = historyEdges.filter((edge) => edge.from === node.id || edge.to === node.id)
-      const evidenceNodes = relatedEvidence(node, nodesById, historyEdges)
+      const evidenceSummary = evidenceForNode(state, node.id)
+      const evidenceNodes = [...new Map([
+        ...evidenceSummary.supports, ...evidenceSummary.against, ...evidenceSummary.both, ...evidenceSummary.unclassified,
+      ].map((row) => [row.source.id, row.source])).values()]
       const pending = incidentEdges.filter((edge) => edge.pendingReview && edge.reviewDecision == null)
+      const evidenceBuckets = [
+        { key: 'support', label: '支持', nodes: evidenceSummary.supports.map((row) => row.source) },
+        { key: 'against', label: '提出反驳', nodes: evidenceSummary.against.map((row) => row.source) },
+        { key: 'both', label: '支持与反驳并存', nodes: evidenceSummary.both.map((row) => row.source) },
+        { key: 'unclassified', label: '已关联，方向未标注', nodes: evidenceSummary.unclassified.map((row) => row.source) },
+        { key: 'rejected', label: '已驳回 · 保留在账本', nodes: evidenceSummary.rejected.map((row) => row.source) },
+      ]
       const event = sourceEventFor(node, eventById, state.events)
       const detail = node.currentText || node.detail || node.coreInfo || ''
       inspector.append(
@@ -260,26 +273,40 @@ export function renderReaderView(theme, opts = {}) {
           h('h2', { class: 'rdr-inspector-title' }, titleOf(node)),
           detail ? h('p', { class: 'rdr-inspector-summary' }, cleanText(detail)) : h('p', { class: 'rdr-inspector-summary is-empty' }, '没有记录节点说明。')),
         h('div', { class: 'rdr-inspector-scroll' },
-          h('section', { class: 'rdr-inspector-section' },
-            h('h3', {}, '关系与方向'),
-            incidentEdges.length ? h('div', { class: 'rdr-relations' }, ...incidentEdges.map((edge) => renderRelation(edge, node, nodesById, (id) => {
-              if (!nodesById.has(id)) return
-              state.selectedNodeId = id
-              renderInspector()
-              renderGraph()
-            }))) : h('p', { class: 'rdr-muted' }, '当前没有记录的直接关系。'),
-            h('p', { class: 'rdr-relation-note' }, '支持 / 推导 / 反驳属于有方向论证；归属 / 影响 / 依赖 / 时间关联 / 相关是弱主题关联，不等同于论证。')),
+          h('section', { class: 'rdr-inspector-section rdr-reader-questions' },
+            h('h3', {}, '读者三问 · 仅呈现账本中明确记录的关系'),
+            ...[
+              { label: '哪些关系支持该观点？', rows: incidentEdges.filter((edge) => edge.rel === 'supports') },
+              { label: '哪些关系提出反驳或挑战？', rows: incidentEdges.filter((edge) => edge.rel === 'contradicts') },
+              { label: '哪些关系待复核？', rows: incidentEdges.filter((edge) => edge.pendingReview && edge.reviewDecision == null) },
+              { label: '推导、修订与弱关联', rows: incidentEdges.filter((edge) => !['supports', 'contradicts'].includes(edge.rel)) },
+            ].map((group) => h('div', { class: `rdr-relation-group${group.rows.some((edge) => edge.pendingReview && edge.reviewDecision == null) ? ' is-pending' : ''}` },
+              h('strong', {}, `${group.label} · ${group.rows.length}`),
+              group.rows.length ? h('div', { class: 'rdr-relations' }, ...group.rows.map((edge) => renderRelation(edge, node, nodesById, (id) => {
+                if (!nodesById.has(id)) return
+                state.selectedNodeId = id
+                renderInspector()
+                renderGraph()
+              }))) : h('p', { class: 'rdr-muted' }, '账本未记录此类关系；这不表示已经排除反例。'))),
+            h('p', { class: 'rdr-relation-note' }, '支持、推导与反驳是有方向论证；归属、影响、依赖、时间关联与相关是弱主题关联。关系数量不构成可信度评级。')),
           h('section', { class: 'rdr-inspector-section' },
             h('h3', {}, `未决项 · ${pending.length + (status === 'disputed' ? 1 : 0)}`),
             status === 'disputed' ? h('p', { class: 'rdr-open-item' }, '节点当前标记为有争议。') : null,
             ...pending.map((edge) => h('p', { class: 'rdr-open-item' }, `关系「${edge.rel || '未知'}」仍待人工复核。`)),
             !pending.length && status !== 'disputed' ? h('p', { class: 'rdr-muted' }, '当前没有显式记录的未决项；这不表示所有问题都已解决。') : null),
           h('section', { class: 'rdr-inspector-section' },
-            h('h3', {}, `证据与来源 · ${evidenceNodes.length}`),
-            evidenceNodes.length ? h('div', { class: 'rdr-evidence-list' }, ...evidenceNodes.map((evidence) => {
-              const sourceEvent = sourceEventFor(evidence, eventById, state.events)
-              return renderSourceRecord(evidence, sourceEvent, { onLocateEvent: (source) => opts.onOpenBuilder?.('network', evidence.id, source.id) })
-            })) : h('p', { class: 'rdr-muted' }, '没有找到直接关联的证据节点。观点说明本身不是证据。')),
+            h('h3', {}, `证据与来源 · ${evidenceSummary.total} 条可导航证据`),
+            h('p', { class: 'rdr-evidence-count-note' }, '按唯一证据节点计数，不按关系边计数；方向未标注时不会推定为支持或反驳。'),
+            evidenceNodes.length ? h('div', { class: 'rdr-evidence-groups' }, ...evidenceBuckets.filter((bucket) => bucket.nodes.length).map((bucket) =>
+              h('div', { class: `rdr-evidence-group is-${bucket.key}` },
+                h('strong', {}, `${bucket.label} · ${bucket.nodes.length}`),
+                h('div', { class: 'rdr-evidence-list' }, ...bucket.nodes.map((evidence) => {
+                  const sourceEvent = sourceEventFor(evidence, eventById, state.events)
+                  return renderSourceRecord(evidence, sourceEvent, {
+                    stanceLabel: bucket.label,
+                    onLocateEvent: (source) => opts.onOpenBuilder?.('network', evidence.id, source.id),
+                  })
+                }))))) : h('p', { class: 'rdr-muted' }, '没有找到直接关联的证据节点。观点说明本身不是证据。')),
           event ? h('section', { class: 'rdr-inspector-section' },
             h('h3', {}, '节点自身的来源记录'),
             renderSourceRecord(node, event, { onLocateEvent: (source) => opts.onOpenBuilder?.('network', node.id, source.id) })) : null,
@@ -314,6 +341,7 @@ export function renderReaderView(theme, opts = {}) {
               return
             }
             state.selectedNodeId = node.id
+            state.searchLocatedNodeId = node.id
             renderInspector()
             renderGraph()
             focusSearchResult(node.id)
@@ -345,14 +373,16 @@ export function renderReaderView(theme, opts = {}) {
     const renderGraph = () => {
       const type = typeFilter.value
       const status = statusFilter.value
-      const filters = (node) => (type === 'all' || networkNodeType(node) === type)
-        && (status === 'all' || networkNodeStatus(node) === status)
-      const matching = currentNodes.filter(filters)
-      const focus = state.selectedNodeId && historyNodes.some((node) => node.id === state.selectedNodeId)
-        ? historyNodes.find((node) => node.id === state.selectedNodeId) : null
-      if (focus && !matching.some((node) => node.id === focus.id)) matching.push(focus)
+      const frameNodes = state.replaying ? historyNodes : currentNodes
+      const frameEdges = state.replaying ? historyEdges : currentEdges
+      const matching = filterReaderNodes(frameNodes, type, status)
+      const selected = state.selectedNodeId && frameNodes.some((node) => node.id === state.selectedNodeId)
+        ? frameNodes.find((node) => node.id === state.selectedNodeId) : null
+      if (selected && !matching.some((node) => node.id === selected.id) && nodeSearch.value.trim()
+        && state.searchLocatedNodeId === selected.id) matching.push(selected)
+      const focus = selected && matching.some((node) => node.id === selected.id) ? selected : null
       const matchIds = new Set(matching.map((node) => node.id))
-      const candidateEdges = historyEdges.filter((edge) => matchIds.has(edge.from) && matchIds.has(edge.to))
+      const candidateEdges = frameEdges.filter((edge) => matchIds.has(edge.from) && matchIds.has(edge.to))
       const frame = selectGraphWindow({ nodes: matching, allNodes: matching, edges: candidateEdges }, {
         focusNodeId: focus?.id || null, maxNodes: GRAPH_FRAME_NODE_LIMIT, maxEdges: GRAPH_FRAME_EDGE_LIMIT,
       })
@@ -363,12 +393,13 @@ export function renderReaderView(theme, opts = {}) {
         `画布逐步展开，当前呈现 ${shown} 个局部节点；另有 ${matching.length - shown} 个匹配节点。可在上方全量搜索或缩小筛选，不会从主题中删除记录。`))
       if (!matching.length) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' }, '没有节点符合筛选。调整类型或状态以查看完整网络。'))
       const drawProjection = { ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges, allEdges: historyEdges }
-      const currentFrameNodes = currentNodes.filter(filters)
+      const currentFrameNodes = filterReaderNodes(currentNodes, type, status)
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
       if (frame.nodes.length) drawThemeNetwork(drawProjection, {
         networkLayout: layout,
         focusNodeId: state.selectedNodeId,
+        searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
         historyContext: { events: state.events, projection: state.projection, selectedSeq: state.selectedSeq },
         compareCurrent: Boolean(state.compareCurrent && state.replaying),
         currentNodes: currentFrameNodes,
@@ -381,7 +412,19 @@ export function renderReaderView(theme, opts = {}) {
           renderGraph()
         },
       }, graphCanvas)
-      focusLabel.textContent = focus ? `已选择：${titleOf(focus)} · 来源与关系显示在右侧` : '选择任一节点查看其论证、关联与来源'
+      if (state.searchLocatedNodeId && nodeSearch.value.trim()) {
+        const point = layout.pos.get(state.searchLocatedNodeId)
+        const shownIndex = frame.nodes.findIndex((node) => node.id === state.searchLocatedNodeId)
+        const located = currentNodes.find((node) => node.id === state.searchLocatedNodeId)
+        if (point && shownIndex >= 0 && located) {
+          const horizontal = point.x < layout.width / 3 ? '左侧' : point.x > layout.width * 2 / 3 ? '右侧' : '中部'
+          const vertical = point.y < layout.height / 3 ? '上方' : point.y > layout.height * 2 / 3 ? '下方' : '中部'
+          searchStatus.textContent = `已定位并高亮「${titleOf(located)}」：画布${vertical}${horizontal} · 当前窗口 ${shownIndex + 1}/${frame.nodes.length}。`
+        }
+      }
+      focusLabel.textContent = focus ? `已选择：${titleOf(focus)} · 来源与关系显示在右侧`
+        : selected ? `已选择：${titleOf(selected)} · 当前筛选未显示该节点，右侧仍保留其来源与关系`
+          : '选择任一节点查看其论证、关联与来源'
     }
 
     const timelinePointAt = (position) => {
@@ -403,7 +446,8 @@ export function renderReaderView(theme, opts = {}) {
         const summary = timelineChangeSummary(verifiedEvents, priorSeq, point.seq)
         const compare = state.compareCurrent ? ` · 与当前比较：${timelineChangeSummary(verifiedEvents, point.seq, verifiedEvents.at(-1)?.seq || 0)}` : ''
         historyCaption.textContent = `${point.date} · 第 ${state.selectedSeq} 条 · ${point.count} 条事件`
-        timeStatus.textContent = `${summary}${compare} · 只读回放`
+        const missingTime = point.date === '日期未记录' ? ' · 日期元数据缺失，仅按已校验序号回放' : ''
+        timeStatus.textContent = `${summary}${compare}${missingTime} · 只读回放`
       }
       liveButton.hidden = !state.replaying
       compareButton.hidden = !state.replaying
@@ -481,7 +525,7 @@ export function renderReaderView(theme, opts = {}) {
       renderInspector()
       renderGraph()
       updateHistoryStatus()
-      timeSlider.value = '100'
+      timeSlider.value = String(Math.max(0, timeline.length - 1))
     }
     timeSlider.addEventListener('input', () => {
       stopPlayback()
@@ -503,14 +547,18 @@ export function renderReaderView(theme, opts = {}) {
       renderGraph()
       updateHistoryStatus()
     })
-    nodeSearch.addEventListener('input', renderSearch)
+    nodeSearch.addEventListener('input', () => {
+      state.searchLocatedNodeId = null
+      renderSearch()
+      renderGraph()
+    })
     nodeSearch.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault()
         const node = state.searchMatches[0]
         if (node) {
           const present = historyNodes.some((candidate) => candidate.id === node.id)
-          if (present) { state.selectedNodeId = node.id; renderInspector(); renderGraph(); focusSearchResult(node.id) }
+          if (present) { state.selectedNodeId = node.id; state.searchLocatedNodeId = node.id; renderInspector(); renderGraph(); focusSearchResult(node.id) }
           else searchStatus.textContent = '该节点在此历史时点尚未建立；退出回放后可定位当前节点。'
         }
       } else if (event.key === 'ArrowDown') {
@@ -519,8 +567,13 @@ export function renderReaderView(theme, opts = {}) {
         event.preventDefault(); nodeSearch.value = ''; renderSearch(); nodeSearch.focus()
       }
     })
-    typeFilter.addEventListener('change', renderGraph)
-    statusFilter.addEventListener('change', renderGraph)
+    const onFilterChange = () => {
+      state.searchLocatedNodeId = null
+      if (nodeSearch.value.trim()) searchStatus.textContent = '筛选已更改；搜索仍覆盖完整主题，选择可见结果即可定位。'
+      renderGraph()
+    }
+    typeFilter.addEventListener('change', onFilterChange)
+    statusFilter.addEventListener('change', onFilterChange)
 
     const toolbar = h('div', { class: 'rdr-reader-head' },
       h('div', { class: 'rdr-reader-title-row' },
@@ -558,9 +611,23 @@ export function renderReaderView(theme, opts = {}) {
   const loadProjection = typeof opts.loadProjection === 'function' ? opts.loadProjection() : Promise.resolve({})
   const loadEvents = typeof opts.loadEvents === 'function' ? opts.loadEvents() : Promise.resolve([])
   Promise.all([loadProjection, loadEvents])
-    .then(([projection, response]) => {
+    .then(async ([projection, response]) => {
       const events = Array.isArray(response) ? response : response?.events || []
-      render(projection || {}, events)
+      const integrity = projection?.integrity || {}
+      const validEvents = verifiedLedgerPrefix(events, integrity)
+      const requestedSeq = Number.isSafeInteger(opts.initialSequence)
+        && validEvents.some((event) => event.seq === opts.initialSequence) ? opts.initialSequence : null
+      if (Number.isSafeInteger(opts.initialSequence) && requestedSeq == null) {
+        throw new Error(`第 ${opts.initialSequence} 条事件不在已校验的有效前缀中。`)
+      }
+      let historicalProjection = null
+      if (requestedSeq != null) {
+        if (typeof opts.loadProjectionAt !== 'function') throw new Error('当前环境不支持按账本序号读取历史投影。')
+        historicalProjection = await opts.loadProjectionAt(requestedSeq)
+        if (!historicalProjection || historicalProjection.integrity?.ok === false) throw new Error('历史投影校验失败，不能显示该时间点。')
+      }
+      render(projection || {}, events, requestedSeq, historicalProjection)
+      if (opts.autoPlay && requestedSeq != null) setTimeout(() => article.querySelector('.rdr-play-button')?.click(), 0)
     })
     .catch((error) => article.replaceChildren(h('p', { class: 'rdr-note', role: 'alert' }, `读者视图加载失败：${error?.message || error}`)))
   return root

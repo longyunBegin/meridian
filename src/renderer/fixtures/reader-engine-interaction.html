@@ -138,13 +138,19 @@
 
       const generateHost = document.createElement('section')
       generateHost.setAttribute('aria-label', '新建建议生成操作')
-      const generateItem = { id: 'synthetic-inbox-run' }
+      const unsupportedItem = { id: 'synthetic-inbox-no-body' }
+      const unsupportedBox = renderEnginePipeline(unsupportedItem, { themeId: 'synthetic-theme' })
+      check('缺少可分析正文时模型运行入口禁用且不伪造抽取', unsupportedBox.querySelector('button').disabled
+        && unsupportedBox.textContent.includes('仅凭标题或 URL 不会伪造抽取结果') && pipelineCalls === 0)
+      const generateItem = { id: 'synthetic-inbox-run', text: '隔离合成原文：供应链交付周期出现变化。' }
       const generateBox = renderEnginePipeline(generateItem, { themeId: 'synthetic-theme' })
       generateHost.append(generateBox)
       document.querySelector('#fixture-root').append(generateHost)
+      check('有正文时明确提供已配置模型的抽取/映射入口', generateBox.querySelector('button').textContent === '运行模型抽取与映射'
+        && !generateBox.querySelector('button').disabled && generateBox.textContent.includes('确认或驳回前不会修改主题投影'))
       generateBox.querySelector('button').click()
       await wait()
-      check('无缓存时“生成建议”按钮确实调用 engine:runPipeline bridge 并保存返回状态', pipelineCalls === 1
+      check('无缓存时模型运行按钮确实调用 engine:runPipeline bridge 并保存返回状态', pipelineCalls === 1
         && generateItem.enginePipeline?.status === 'done')
       generateHost.replaceChildren(renderEnginePipeline(generateItem, { themeId: 'synthetic-theme' }))
       check('pipeline 返回后正式 renderer 显示对应建议审阅卡', generateHost.querySelectorAll('.engine-attr').length === 3)

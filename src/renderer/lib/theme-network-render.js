@@ -96,6 +96,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     if (Object.keys(changes).length) return { ...node, _comparison: changes }
     return node
   })
+  const searchMatchIds = new Set(Array.isArray(opts.searchMatchIds) ? opts.searchMatchIds : [])
   const presentLimit = Math.min(MAX_VISIBLE_EDGES, Number(opts.maxComparisonNodes) || 8)
   let notYetAdded = 0
   if (opts.compareCurrent) {
@@ -232,9 +233,10 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const statusLabel = node._notYetCreated ? '后续新增' : NODE_STATUS_LABEL[status] || status
     const unavailable = Boolean(node.archived || node.invalidated || node._notYetCreated)
     const group = svgEl('g', {
-      class: `cog-node${node.archived ? ' is-archived' : ''}${node.invalidated ? ' is-invalidated' : ''}${node._notYetCreated ? ' is-not-yet-created' : ''}${node._comparison ? ' has-current-comparison' : ''}`,
+      class: `cog-node${node.archived ? ' is-archived' : ''}${node.invalidated ? ' is-invalidated' : ''}${node._notYetCreated ? ' is-not-yet-created' : ''}${node._comparison ? ' has-current-comparison' : ''}${searchMatchIds.has(node.id) ? ' is-search-match' : ''}`,
       transform: `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})`,
       'data-node-id': node.id,
+      'data-search-match': String(searchMatchIds.has(node.id)),
       'data-node-type': type,
       'data-kind': type,
       'data-status': status,
@@ -266,7 +268,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
       group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: nodeStatusTextColor(status) }))
     }
-    const titleLines = splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w), 2)
+    const titleLines = splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w, 11, 28), 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {
       x: -dimensions.w / 2 + 12,
       y: titleLines.length === 1 ? 5 : -1 + index * 15,
@@ -274,7 +276,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     })))
     if (node._comparison?.currentTitle) {
       const comparisonText = `当前：${node._comparison.currentTitle}`
-      group.append(svgText(splitNetworkTitle(comparisonText, 22, 1)[0], {
+      group.append(svgText(splitNetworkTitle(comparisonText, nodeTitleCharsPerLine(dimensions.w, 11, 28), 1)[0], {
         x: -dimensions.w / 2 + 12, y: dimensions.h / 2 - 5, class: 'cog-node-comparison-label',
       }))
     } else if (node._comparison?.currentStatus) {

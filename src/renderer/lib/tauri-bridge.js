@@ -96,6 +96,7 @@ export function createMeridianBridge() {
     process: (text, themeId) => call('agent:process', text, themeId), socratic: (nodeId) => call('agent:socratic', nodeId),
     onChanged: (cb) => subscribe('db:changed', cb),
     inboxCapture: (text, channelMeta, themeId) => call('inbox:capture', text, channelMeta, themeId),
+    inboxUpsertItem: (item) => call('inbox:upsertItem', item),
     inboxList: (opts) => call('inbox:list', opts), inboxIgnored: () => call('inbox:ignored'),
     inboxResolve: (id, action) => call('inbox:resolve', id, action), inboxResolveMany: (ids, action) => call('inbox:resolveMany', ids, action),
     inboxImport: (themeId, items, overrides) => call('inbox:import', themeId, items, overrides), inboxClear: () => call('inbox:clear'),

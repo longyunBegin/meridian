@@ -1,5 +1,4 @@
-import { networkNodeType } from './theme-network.js'
-import { truncateGraphemes } from './theme-network.js'
+import { networkNodeStatus, networkNodeType, truncateGraphemes } from './theme-network.js'
 
 export const DIRECTION_META = {
   improving: { label: '好转', color: 'var(--green)', icon: '↑' },
@@ -30,6 +29,13 @@ const eventDate = (event) => {
 const confidenceValue = (value) => {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : null
+}
+
+/** Filter only the visible graph frame; never mutate or remove ledger projection nodes. */
+export function filterReaderNodes(nodes = [], type = 'all', status = 'all') {
+  if (!Array.isArray(nodes)) return []
+  return nodes.filter((node) => node && (type === 'all' || networkNodeType(node) === type)
+    && (status === 'all' || networkNodeStatus(node) === status))
 }
 
 function liveEdges(projection) {

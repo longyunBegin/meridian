@@ -12,9 +12,12 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     return button
   }
   if (!pipeline || pipeline.status !== 'done') {
-    const hint = h('p', { class: 'chain-note' }, '从已摄入的外部来源抽取原子陈述、映射候选节点并生成变更预览。此操作生成建议，不修改主题投影。')
+    const sourceText = String(item.text || '').trim()
+    const hint = h('p', { class: 'chain-note' }, sourceText
+      ? '运行已配置的模型来抽取原子陈述、映射候选关系并生成变更前后预览。模型只提出建议；确认或驳回前不会修改主题投影。未配置模型或运行失败时会显示实际错误。'
+      : '此来源没有保存可供分析的正文。请重新接入原文或摘录；仅凭标题或 URL 不会伪造抽取结果。')
     const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
-    const button = runButton('生成建议', async () => {
+    const button = runButton('运行模型抽取与映射', async () => {
       button.disabled = true
       error.hidden = true
       try {
@@ -27,6 +30,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
         error.hidden = false; error.textContent = cause?.message || String(cause); button.disabled = false
       }
     })
+    button.disabled = !sourceText
     wrap.append(hint, h('div', { class: 'draft-actions' }, button), error)
     return wrap
   }

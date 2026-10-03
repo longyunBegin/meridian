@@ -272,6 +272,9 @@ function verifyEvents(events, themeId) {
           || p.rel !== op.rel || JSON.stringify(p.from) !== JSON.stringify(op.from) || JSON.stringify(p.to) !== JSON.stringify(op.to)) {
           return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定或理由非法，或与原关系不一致' }
         }
+        if ([...ids.values()].some((evt) => evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.reviewOf)) {
+          return { ok: false, index: i, lastValidSeq: i, reason: '该信号已经判决' }
+        }
         reviewedRelations.add(p.reviewOf)
       } else if (p.reviewDecision != null || p.decisionReason != null) {
         return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定缺少 reviewOf' }
@@ -287,7 +290,9 @@ function verifyEvents(events, themeId) {
       }
       /* 检查目标确实是待审阅信号 */
       const targetPayload = target.payload || {}
-      if (!targetPayload.pendingReview && !target.pendingReview) {
+      const relationPending = target.type === 'relation.declared'
+        && (targetPayload.reviewStatus != null ? targetPayload.reviewStatus === 'pending-review' : targetPayload.rel === 'derives')
+      if (!targetPayload.pendingReview && !target.pendingReview && !relationPending) {
         return { ok: false, index: i, lastValidSeq: i, reason: '目标不是待审阅信号' }
       }
       /* accepted/corrected 需要三层 change */
@@ -305,7 +310,8 @@ function verifyEvents(events, themeId) {
       }
       /* 防止重复判决同一信号 */
       for (const [id, evt] of ids) {
-        if (evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.signalEventId) {
+        if ((evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.signalEventId)
+          || (evt.type === 'relation.declared' && evt.payload?.reviewOf === p.signalEventId)) {
           return { ok: false, index: i, lastValidSeq: i, reason: '信号已被判决' }
         }
       }
@@ -532,6 +538,7 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
           payload: {
             text: logEntry.reason || logEntry.newValue || '',
             reason: logEntry.reason || '',
+            targetNodeId: segEvent.id,
             evidenceRefs: copy(logEntry.evidenceRefs || []),
             sourceKind: 'segment-changeLog',
             sourceRef: `segment:${seg.id}#log:${logEntry.id}`,
@@ -676,6 +683,7 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
           text: title,
           reason: '旧节点来源迁移',
           legacySource: copy(source),
+          targetNodeId: `evt:node:${node.id}`,
           sourceKind: 'legacy-node-source',
           sourceRef: identity.sourceRef,
         },

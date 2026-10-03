@@ -1,4 +1,4 @@
-import { deriveReaderModel, estimateReadSeconds } from '../src/renderer/lib/reader-model.js'
+import { deriveReaderModel, estimateReadSeconds, filterReaderNodes } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
 let failed = 0
@@ -10,6 +10,22 @@ const vp = (id, title, extra = {}) => ({ id, nodeType: 'viewpoint', title, archi
 const ev = (id, type, payload, at = '2026-10-01T12:00:00.000Z') => ({ id, type, payload, at, seq: 2 })
 const edge = (id, from, to, rel, extra = {}) => ({ id, from, to, rel, reviewDecision: null, pendingReview: false, ...extra })
 const now = Date.parse('2026-10-02T12:00:00.000Z')
+
+{
+  const nodes = [
+    vp('pending', '待复核观点'),
+    vp('verified', '已确认观点', { status: 'verified' }),
+    vp('disputed', '有反驳观点', { status: 'disputed' }),
+    vp('archived', '归档观点', { archived: true }),
+    { id: 'evidence', nodeType: 'evidence', title: '一手数据' },
+  ]
+  const originalIds = nodes.map((node) => node.id).join()
+  check('Reader 图过滤在纯模型中按五类类型和生命周期状态工作', filterReaderNodes(nodes, 'viewpoint', 'disputed').map((node) => node.id).join() === 'disputed'
+    && filterReaderNodes(nodes, 'evidence', 'all').map((node) => node.id).join() === 'evidence'
+    && filterReaderNodes(nodes, 'all', 'archived').map((node) => node.id).join() === 'archived')
+  check('Reader 过滤只改变可见帧，不改写完整主题节点列表', nodes.map((node) => node.id).join() === originalIds
+    && filterReaderNodes(nodes, 'all', 'all').length === nodes.length)
+}
 
 {
   const model = deriveReaderModel({ nodes: [], edges: [] }, [], { now })

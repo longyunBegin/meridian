@@ -42,6 +42,18 @@ function uniqueEvidenceRefs(refs) {
   return [...ordered.values()]
 }
 
+function explicitEvidenceTargetIds(payload) {
+  const candidates = [
+    ...(Array.isArray(payload?.targetNodeIds) ? payload.targetNodeIds : []),
+    payload?.targetNodeId,
+    payload?.targetClaimId,
+    payload?.claimId,
+    payload?.nodeId,
+  ]
+  return [...new Set(candidates.filter((value) => typeof value === 'string' && value.trim())
+    .map((value) => value.trim()))]
+}
+
 function graphemes(value) {
   const text = String(value || '')
   if (typeof Intl?.Segmenter === 'function') {
@@ -140,6 +152,8 @@ export function projectEvents(events) {
       nodeType: 'evidence',
       title: shortTitle(p.text || p.reason || '证据'),
       status: 'pending',
+      pendingReview: p.pendingReview === true,
+      reviewDecision: null,
       confidence: null,
       correct: null,
       resolved: null,
@@ -149,6 +163,7 @@ export function projectEvents(events) {
       currentText: p.text || p.reason || '',
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
+      targetNodeIds: explicitEvidenceTargetIds(p),
       eventIds: [e.id],
       provenanceEventIds: [e.id],
       external: false,
@@ -296,14 +311,57 @@ export function projectEvents(events) {
     const p = e.payload || {}
     if (p.signalEventId) reviewedSignals.set(p.signalEventId, e)
   }
+  for (const [signalEventId, reviewEvent] of reviewedSignals) {
+    const review = reviewEvent.payload || {}
+    const targetEvent = byId.get(signalEventId)
+    const target = targetEvent?.type === 'evidence.appended' ? nodes.get(signalEventId) : null
+    const edge = targetEvent?.type === 'relation.declared'
+      ? edges.find((candidate) => candidate.eventId === signalEventId) : null
+    const reviewed = target || edge
+    if (!reviewed) continue
+    reviewed.pendingReview = false
+    reviewed.reviewDecision = review.decision || null
+    reviewed.reviewReason = review.reason || ''
+    reviewed.reviewEventId = reviewEvent.id
+    reviewed.reviewedAt = reviewEvent.at || null
+    reviewed.reviewedBy = reviewEvent.actor || null
+    reviewed.reviewChange = review.change || null
+    reviewed.provenanceEventIds ||= []
+    if (!reviewed.provenanceEventIds.includes(reviewEvent.id)) reviewed.provenanceEventIds.push(reviewEvent.id)
+    if (target) {
+      target.eventIds ||= []
+      if (!target.eventIds.includes(reviewEvent.id)) target.eventIds.push(reviewEvent.id)
+    }
+  }
 
   for (const node of nodes.values()) {
-    const evidenceIds = edges.filter((edge) => edge.rel === 'supports'
-      && edge.reviewDecision !== 'rejected'
-      && (edge.from === node.id || edge.to === node.id))
-      .map((edge) => edge.from === node.id ? edge.to : edge.from)
-      .filter((id) => nodes.get(id)?.kind === 'evidence')
-    node.evidenceCount = new Set(evidenceIds).size
+    node.evidenceNodeIds = []
+    node.evidenceEventIds = []
+  }
+  const linkEvidence = (target, evidence) => {
+    if (!target || target.external || target.kind === 'evidence' || !evidence || evidence.kind !== 'evidence') return
+    if (!target.evidenceNodeIds.includes(evidence.id)) target.evidenceNodeIds.push(evidence.id)
+    if (!evidence.external && evidence.eventIds?.includes(evidence.id)
+      && !target.evidenceEventIds.includes(evidence.id)) target.evidenceEventIds.push(evidence.id)
+  }
+  // An evidence event may carry an explicit target without making a semantic edge.
+  // Never infer a target from event counts, title similarity, or a shared sourceRef.
+  for (const evidence of nodes.values()) {
+    if (evidence.kind !== 'evidence' || evidence.external) continue
+    evidence.targetNodeIds = [...new Set((evidence.targetNodeIds || []).filter((id) => {
+      const target = nodes.get(id)
+      return target && !target.external && target.kind !== 'evidence'
+    }))]
+    for (const targetId of evidence.targetNodeIds) linkEvidence(nodes.get(targetId), evidence)
+  }
+  // Semantic evidence links remain independent relation events. Only evidence →
+  // target supports/contradicts declarations enter the corresponding evidence list.
+  for (const edge of edges) {
+    if (!['supports', 'contradicts'].includes(edge.rel) || edge.reviewDecision === 'rejected') continue
+    linkEvidence(nodes.get(edge.to), nodes.get(edge.from))
+  }
+  for (const node of nodes.values()) {
+    node.evidenceCount = node.evidenceNodeIds.length
   }
 
   // 结算 / 归档 / 恢复：按 sourceRef 找到节点，状态只由追加事件顺序决定。
@@ -571,6 +629,7 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
       type: 'evidence.appended',
       payload: {
         text, sourceLabel: String(input.sourceLabel || '').trim(), sourceKind: 'manual-evidence', sourceRef, evidenceRefs,
+        targetNodeId,
         ...(String(input.sourcePublishedAt || '').trim() ? { sourcePublishedAt: String(input.sourcePublishedAt).trim().slice(0, 100) } : {}),
         ...(String(input.applicability || '').trim() ? { applicability: String(input.applicability).trim().slice(0, 160) } : {}),
       },
@@ -653,8 +712,10 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
     const evidenceId = stableId('evidence')
     const sourceRef = `engine-recommendation:${recommendationId}`
     const sourceLabel = String(proposal.payload.sourceLabel || '').trim()
+    const evidenceTargetNodeId = recommendation.kind === 'new-proposition' ? stableId('node') : targetNodeId
     const evidencePayload = {
       text: sourceQuote, sourceLabel, sourceKind: 'engine-reviewed', sourceRef,
+      ...(evidenceTargetNodeId ? { targetNodeId: evidenceTargetNodeId } : {}),
       evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
       change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) },
       recommendationId,
