@@ -1499,50 +1499,28 @@
 .inbox-goto-builder:hover {text-decoration:underline; }
 
 /* ============ 收件箱要点卡片（从 deepseek demo 完整移植） ============ */
-.prop-list{display:flex;flex-direction:column;gap:10px;}
-.prop{padding:14px 16px;border:1px solid var(--line);border-radius: var(--r);background:var(--surface);transition:border-color 100ms,box-shadow 100ms;}
-.prop:hover{border-color:var(--line-2);}
-.prop.mapped{border-color:rgba(52,199,89,.35);background:rgba(52,199,89,.12);}
-.prop-text{font-size: var(--t-body);line-height:1.55;color:var(--text);letter-spacing:-.005em;margin-bottom:12px;}
-
-/* 归位行 */
-.prop-map-row{
-  display:flex;gap:6px;
-  margin-bottom:8px;
-  flex-wrap:wrap;
-  align-items:stretch;
-}
+/* 提出来的要点：两列带标签的字段 + 立场单独一行。
+   原来两个 select 是 flex 死宽（主题 130px），标题被截断成"选主题…"，且没有可见标签。 */
+.prop-list{display:flex;flex-direction:column;gap:var(--sp-2);}
+.prop{padding:var(--sp-3) var(--sp-4);border:0;border-radius:var(--r-lg);background:var(--bg);}
+.prop.mapped{background:var(--green-soft);}
+.prop-text{font-size:var(--t-body);line-height:1.55;color:var(--text-1);margin-bottom:var(--sp-3);}
+.prop-map-row{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2) var(--sp-3);margin-bottom:var(--sp-3);align-items:end;}
+.prop-map-row.is-single{grid-template-columns:1fr;}
 .prop-map-row:last-child{margin-bottom:0;}
-.prop-select{
-  flex:1;min-width:140px;
-  padding:7px 30px 7px 11px;
-  border:1px solid var(--line-2);
-  border-radius: var(--r-sm);
-  background:var(--surface);
-  font-size: var(--t-footnote);
-  color:var(--text);
-  outline:none;
-  appearance:none;-webkit-appearance:none;
-  background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
-  background-position:calc(100% - 14px) center,calc(100% - 9px) center;
-  background-size:5px 5px,5px 5px;
-  background-repeat:no-repeat;
-  cursor:pointer;
-  font-family:inherit;
-}
+.prop-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.prop-field-label{font-size:var(--t-caption);color:var(--text-3);}
+.prop-select{width:100%;min-width:0;height:28px;padding:0 28px 0 10px;border:1px solid var(--hairline);border-radius:var(--r-sm);background-color:var(--surface-solid);font-size:var(--t-footnote);color:var(--text-1);font-family:inherit;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),linear-gradient(135deg,var(--text-3) 50%,transparent 50%);background-position:calc(100% - 14px) center,calc(100% - 9px) center;background-size:5px 5px,5px 5px;background-repeat:no-repeat;cursor:pointer;}
 .prop-select:focus{border-color:var(--accent);}
-.prop-select.topic-select{
-  flex:0 0 130px;
-  font-weight:500;
-}
 .prop-select:disabled{opacity:.5;cursor:not-allowed;}
-
-.stance{display:flex;gap:0;border:1px solid var(--line-2);border-radius: var(--r-sm);overflow:hidden;flex:0 0 auto;}
-.stance-btn{padding:7px 12px;font-size: var(--t-footnote);font-weight:500;background:var(--surface);color:var(--text-2);transition:all 100ms;display:flex;align-items:center;gap:5px;border:none;cursor:pointer;font-family:inherit;}
-.stance-btn + .stance-btn{border-left:1px solid var(--line-2);}
-.stance-btn:hover{background:var(--surface-2);color:var(--text);}
+.stance{display:inline-flex;gap:0;justify-self:start;border:1px solid var(--hairline);border-radius:var(--r-sm);overflow:hidden;}
+.stance-btn{min-height:28px;padding:6px 14px;font-size:var(--t-footnote);font-weight:var(--fw-medium);background:var(--surface-solid);color:var(--text-2);display:flex;align-items:center;gap:5px;border:none;cursor:pointer;font-family:inherit;}
+.stance-btn + .stance-btn{border-left:1px solid var(--hairline);}
+.stance-btn:hover{background:var(--hover);color:var(--text-1);}
 .stance-btn.active.support{background:var(--green-soft);color:var(--green-text);}
 .stance-btn.active.challenge{background:var(--red-soft);color:var(--red-text);}
+/* 批量条里的"已绑定"说明 */
+.inbox-batch-note{color:var(--text-2);font-size:var(--t-footnote);}
 
 .prop-actions{display:flex;gap:8px;margin-top:10px;justify-content:flex-end;}
 

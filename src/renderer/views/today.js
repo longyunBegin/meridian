@@ -317,6 +317,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
+  /* 批量语义提示：哪些选中项已经绑过主题——用户问的就是"都绑定了为什么还要我选主题" */
+  const assignNote = h('span', { class: 'inbox-batch-note', hidden: true })
   // 复选框全开：分拣语义是"选中这批处理"，批量栏按选中成分自适应可用操作。
   // 未抽取条目可勾选 → 抽取所选 / 忽略所选；已抽取且挂点有效 → 批量入库。
   const isSelectable = (item) => !resolving.has(item.id)
@@ -360,8 +362,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     onclick: async () => {
       const tid = assignThemePick.value
       if (!tid) { toast('请先选择要分配到的主题', 'var(--red)'); return }
-      const targets = items.filter((item) => picked.has(item.id))
-      if (!targets.length) return
+      const targets = items.filter((item) => picked.has(item.id) && !itemThemeId(item))
+      if (!targets.length) { toast('所选项都已归入主题，不需要再分配'); return }
       assignPicked.disabled = true
       let okCount = 0
       for (const item of targets) {
@@ -398,11 +400,25 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     ignorePicked.hidden = !picked.size
     ignorePicked.textContent = `忽略所选（${picked.size}）`
     ignorePicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
-    // 批量分配：有选中项时显示
-    assignThemePick.hidden = !picked.size
-    assignPicked.hidden = !picked.size
-    assignPicked.textContent = `分配到主题（${picked.size}）`
-    assignPicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
+    // 批量分配：只有"还没绑定主题"的选中项才需要选主题；已绑定的一律不再要求重选。
+    const pickedItems = items.filter((item) => picked.has(item.id))
+    const boundPicked = pickedItems.filter((item) => itemThemeId(item))
+    const unboundPicked = pickedItems.filter((item) => !itemThemeId(item))
+    const boundNames = [...new Set(boundPicked
+      .map((item) => liveThemes.find((t) => t.id === itemThemeId(item))?.name)
+      .filter(Boolean))]
+    assignThemePick.hidden = !unboundPicked.length
+    assignPicked.hidden = !unboundPicked.length
+    assignPicked.textContent = `分配到主题（${unboundPicked.length}）`
+    assignPicked.disabled = !unboundPicked.length || unboundPicked.some((item) => resolving.has(item.id))
+    assignNote.hidden = !boundPicked.length
+    assignNote.textContent = boundPicked.length
+      ? (unboundPicked.length
+        ? `其中 ${boundPicked.length} 条已归入「${boundNames.join('、')}」，只会给剩下 ${unboundPicked.length} 条分配。`
+        : `所选中 ${boundPicked.length} 条已归入「${boundNames.join('、')}」，不需要再选主题。`)
+      : ''
+    // 抽取主题同理：选中的都绑好了就不需要再指定
+    extractThemePick.hidden = !extractable.length || !extractable.some((item) => !itemThemeId(item))
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
@@ -650,7 +666,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
       loadMore,
-      h('div', { class: 'inbox-import-bar' }, count, extractThemePick, extractPicked, importPicked, assignThemePick, assignPicked, ignorePicked),
+      h('div', { class: 'inbox-import-bar' }, count, assignNote, extractThemePick, extractPicked, importPicked, assignThemePick, assignPicked, ignorePicked),
     ),
     detail,
   ))
@@ -965,8 +981,14 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
             })
             const card = h('div', { class: 'prop' },
               h('div', { class: 'prop-text' }, lemma.title),
-              h('div', { class: 'prop-map-row' }, themeSel, atomSel),
-              h('div', { class: 'prop-map-row' }, stanceBtns))
+              h('div', { class: 'prop-map-row' },
+                h('label', { class: 'prop-field' },
+                  h('span', { class: 'prop-field-label' }, '归到哪个主题'), themeSel),
+                h('label', { class: 'prop-field' },
+                  h('span', { class: 'prop-field-label' }, '挂到哪个原子'), atomSel)),
+              h('div', { class: 'prop-map-row is-single' },
+                h('div', { class: 'prop-field' },
+                  h('span', { class: 'prop-field-label' }, '这条要点是佐证还是反驳'), stanceBtns)))
             return card
           }),
         ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的要点。你可以忽略，或补充原文后重新捕获。'),

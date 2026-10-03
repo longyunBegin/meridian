@@ -1531,6 +1531,15 @@ input[type="range"]::-webkit-slider-thumb:active {transform: scale(1.08); }
 }
 .inbox-item:hover {background: var(--hover); }
 .inbox-item[data-sel="true"] {background: var(--accent-soft); }
+/* 勾选（等着批量处理）必须有可见反馈——updateBatch() 一直在写 data-on，样式却缺了这一条。
+   勾选与"正在查看"是两种不同的选中：勾选用浅底 + 左侧强调条，避免二者混淆。 */
+#inbox-section .inbox2-item[data-on="true"], .inbox-item[data-on="true"] {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-solid));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+#inbox-section .inbox2-item[data-on="true"][data-sel="true"], .inbox-item[data-on="true"][data-sel="true"] {
+  background: var(--accent-soft);
+}
 input.inbox-ck {
   flex: none; width: 14px; height: 14px; margin: 2px 0 0;
   accent-color: var(--accent); cursor: pointer;
