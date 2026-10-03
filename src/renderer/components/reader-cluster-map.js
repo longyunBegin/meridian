@@ -1,6 +1,8 @@
 import { h } from '../lib/dom.js'
 import { svgEl, svgText } from '../lib/theme-network-render.js'
 import { claimEvidenceStats } from './reader-claim-map.js'
+import { categoryColor } from '../lib/theme-network.js'
+import { UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
 import { RELATION_LABEL } from '../lib/chain-ui-model.js'
 
 /**
@@ -38,13 +40,30 @@ const strengthOf = (node) => {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : null
 }
 
-export function renderReaderClusterMap({ claims = [], edges = [], evidenceForNode, selectedId = null, onOpenClaim } = {}) {
+export function renderReaderClusterMap({ claims = [], edges = [], themeCategories = [], evidenceForNode, selectedId = null, onOpenClaim } = {}) {
   if (!claims.length) return h('div', { class: 'rdr-cluster-empty' }, '还没有可以画成图谱的观点。')
 
   const rows = claims.map((node) => ({ node, ...claimEvidenceStats(node, evidenceForNode), strength: strengthOf(node) }))
-  const groups = GROUP_ORDER
-    .map((key) => ({ key, meta: GROUPS[key], rows: rows.filter((row) => row.state === key) }))
-    .filter((group) => group.rows.length > 0)
+  /* 簇 = **主题自定义分类**（建设者在「主题设置 → 分类管理」里定义、新建观点时选的那一档）——
+     这是唯一"能被归类"的轴；没有分类的观点按模型的既定回落显示为「未分类」。
+     证据状况（有争议/单一来源/…）是**派生状态**，不是分类，所以它只用来给气泡上色。 */
+  const categoryOf = (node) => String(node?.atomCategory || '').trim() || UNCATEGORIZED_LABEL
+  const order = [...(Array.isArray(themeCategories) ? themeCategories : [])]
+  const groups = []
+  for (const row of rows) {
+    const name = categoryOf(row.node)
+    let group = groups.find((g) => g.name === name)
+    if (!group) { group = { name, rows: [], color: categoryColor(order, name) }; groups.push(group) }
+    group.rows.push(row)
+  }
+  /* 顺序：主题词表的顺序优先，未分类放最后；簇内按证据数降序（有据的先看）。 */
+  groups.sort((a, b) => {
+    const ai = order.indexOf(a.name), bi = order.indexOf(b.name)
+    if (a.name === UNCATEGORIZED_LABEL) return 1
+    if (b.name === UNCATEGORIZED_LABEL) return -1
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+  })
+  for (const group of groups) group.rows.sort((a, b) => b.stated - a.stated || String(a.node.id).localeCompare(String(b.node.id)))
 
   /* 固定分区：按簇数排成一行/网格；圆半径随成员数增长（√ 尺度，避免大簇吞掉小簇）。 */
   const width = 880
@@ -86,7 +105,7 @@ export function renderReaderClusterMap({ claims = [], edges = [], evidenceForNod
     if (!claimIds.has(edge?.from) || !claimIds.has(edge?.to)) continue
     const a = place.get(edge.from)
     const b = place.get(edge.to)
-    if (!a || !b || a.group.key === b.group.key) continue
+    if (!a || !b || a.group.name === b.group.name) continue
     const line = svgEl('line', {
       class: 'rdr-cluster-link', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       'stroke-dasharray': edge.rel === 'contradicts' ? '4 4' : '0',
@@ -99,13 +118,12 @@ export function renderReaderClusterMap({ claims = [], edges = [], evidenceForNod
 
   /* 簇背景圆 + 簇标签 */
   for (const group of groups) {
-    const bg = svgEl('g', { class: `rdr-cluster-bg is-${group.key}` })
+    const bg = svgEl('g', { class: 'rdr-cluster-bg' })
     bg.append(svgEl('circle', {
       cx: group.cx, cy: group.cy, r: group.r, class: 'rdr-cluster-bg-circle',
-      stroke: group.meta.color, fill: group.meta.color,
-      'stroke-dasharray': group.key === 'none' ? '6 6' : '0',
+      stroke: group.color, fill: group.color,
     }))
-    bg.append(svgText(`${group.meta.label} · ${group.rows.length}`, {
+    bg.append(svgText(`${group.name} · ${group.rows.length}`, {
       class: 'rdr-cluster-bg-label', x: group.cx, y: group.cy - group.r + 16, 'text-anchor': 'middle',
     }))
     svg.append(bg)
@@ -138,17 +156,17 @@ export function renderReaderClusterMap({ claims = [], edges = [], evidenceForNod
 
   /* 紧凑清单（demo 的 compact 区）：一簇一段，一行一条观点。 */
   const list = h('div', { class: 'rdr-cluster-wrap' },
-    ...groups.map((group) => h('section', { class: `rdr-cluster-group is-${group.key}`, id: `rdr-cluster-${group.key}` },
+    ...groups.map((group, gi) => h('section', { class: 'rdr-cluster-group', id: `rdr-cluster-${gi}` },
       h('div', { class: 'rdr-cluster-head' },
-        h('span', { class: 'rdr-cluster-dot', style: `background:${group.meta.color}` }),
-        h('span', { class: 'rdr-cluster-head-title' }, group.meta.label),
-        h('span', { class: 'rdr-cluster-head-count' }, `${group.rows.length} 条`),
-        h('span', { class: 'rdr-cluster-head-hint' }, group.meta.hint)),
+        h('span', { class: 'rdr-cluster-dot', style: `background:${group.color}` }),
+        h('span', { class: 'rdr-cluster-head-title' }, group.name),
+        h('span', { class: 'rdr-cluster-head-count' }, `${group.rows.length} 条`)),
       ...group.rows.map((row) => h('div', { class: `rdr-cluster-row${row.node.id === selectedId ? ' is-selected' : ''}` },
         h('button', {
           type: 'button', class: 'rdr-cluster-claim', dataset: { claimId: row.node.id },
           onclick: () => onOpenClaim?.(row.node.id),
         }, String(row.node.title || '未命名观点')),
+        h('span', { class: `rdr-cluster-row-state is-${row.state}` }, (GROUPS[row.state] || GROUPS.none).label),
         h('span', { class: 'rdr-cluster-row-strength' }, row.strength ? `${row.strength}%` : '未记录'),
         h('span', { class: 'rdr-cluster-row-counts' },
           row.stated ? `支持 ${row.support} · 反对 ${row.challenge}` : '还没有已表态的来源'))))))
@@ -156,6 +174,8 @@ export function renderReaderClusterMap({ claims = [], edges = [], evidenceForNod
   return h('div', { class: 'rdr-cluster-body' },
     svg,
     h('p', { class: 'rdr-cluster-caliber' },
-      '大圆 = 证据状况分组 · 圆内每个气泡 = 一条观点（大小 = 已表态来源数）· 悬浮或选中才显示标题 · 连线 = 观点之间的真实关系'),
+      '大圆 = 主题分类（在「主题设置 → 分类管理」里定义；没分类的观点归入「未分类」）· '
+      + '圆内每个气泡 = 一条观点（大小 = 已表态来源数）· 气泡颜色 = 证据状况 · '
+      + '悬浮或选中才显示标题 · 连线 = 观点之间的真实关系'),
     list)
 }

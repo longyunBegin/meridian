@@ -511,6 +511,8 @@ export function renderReaderView(theme, opts = {}) {
     const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点分簇缩略图' },
       renderReaderClusterMap({
         claims: claimNodes,
+        /* 簇 = 主题自定义分类（建设者可在「主题设置 → 分类管理」里定义）；没分类的归入「未分类」。 */
+        themeCategories,
         /* 真实关系（已驳回的边在 currentEdges 上游已过滤）：用于画簇间连线，没有关系就不画。 */
         edges: currentEdges,
         evidenceForNode: rowsOfClaim,
@@ -533,9 +535,10 @@ export function renderReaderView(theme, opts = {}) {
        页面上渲染出 [object BarProp] —— 已修。 */
     const readerStats = (() => {
       const states = claimNodes.map((node) => claimEvidenceStats(node, rowsOfClaim).state)
+      const categories = new Set(claimNodes.map((node) => String(node?.atomCategory || '').trim() || '未分类'))
       return {
         claims: claimNodes.length,
-        clusters: new Set(states).size,
+        clusters: categories.size,
         evidence: currentNodes.filter((node) => networkNodeType(node) === 'evidence').length,
         contested: states.filter((state) => state === 'contested').length,
       }
@@ -548,7 +551,7 @@ export function renderReaderView(theme, opts = {}) {
       h('h1', { class: 'rdr-head-title' }, theme?.name || '未命名主题'),
       h('div', { class: 'rdr-stats' },
         statBox(readerStats.claims, '观点'),
-        statBox(readerStats.clusters, '分簇'),
+        statBox(readerStats.clusters, '分类'),
         statBox(readerStats.evidence, '证据'),
         statBox(readerStats.contested, '受关注')))
     /* demo 的顺序：气泡图 → 「当前最该看的 5 个」→ 分簇清单。
