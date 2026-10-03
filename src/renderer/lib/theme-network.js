@@ -315,8 +315,9 @@ function nodeDimensions(node) {
   const type = networkNodeType(node)
   /* 证据是"数据点"：卡片明显小于观点原子，一眼就能看出谁是论点、谁是数据。 */
   const base = type === 'evidence' ? { w: 128, h: 38 } : { w: 156, h: 72 }
-  const raw = Number(node?.confidence ?? node?.strength)
-  const strength = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50
+  /* 没有强度（null/undefined）＝中性尺寸：注意 Number(null) 是 0，别把它当成"强度 0"。 */
+  const raw = node?.confidence ?? node?.strength
+  const strength = raw == null ? 50 : Math.max(0, Math.min(100, Number(raw) || 0))
   const scale = 0.84 + (strength / 100) * 0.32
   return { w: Math.round(base.w * scale), h: Math.round(base.h * scale) }
 }

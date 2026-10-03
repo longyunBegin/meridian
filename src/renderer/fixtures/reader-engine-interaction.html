@@ -353,6 +353,47 @@
       check('分类色条按主题词表上色（分类＝主题自定义，颜色只表达属于哪一类）',
         categoryRoot.querySelectorAll('.cog-node-category').length >= 2)
 
+      /* 合成轴（设计提案 01）：强度线 × 外部数据点 × 确认/修订台阶，同一条日期轴。 */
+      const axisEvents = [
+        { id: 'ax-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第一条外部数据' } },
+        { id: 'ax-r1', seq: 2, at: '2026-09-21T00:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'ax-e1' }, to: { eventId: 'ax-v1' } } },
+        { id: 'ax-e2', seq: 3, at: '2026-09-22T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第二条外部数据' } },
+        { id: 'ax-c1', seq: 4, at: '2026-09-23T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 62, newConfidence: 67, reason: '支持证据' } },
+        { id: 'ax-c2', seq: 5, at: '2026-09-24T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 67, newConfidence: 71, reason: '又一条支持' } },
+        { id: 'ax-s1', seq: 6, at: '2026-09-25T00:00:00.000Z', type: 'signal.reviewed', payload: { decision: 'accepted' } },
+      ]
+      const axisNode = {
+        id: 'ax-v1', nodeType: 'viewpoint', kind: 'claim', title: '合成轴原子', detail: '', currentText: '合成轴原子',
+        confidence: 71, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 2,
+        confidenceHistory: [
+          { at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67, reason: '支持证据' },
+          { at: '2026-09-24T00:00:00.000Z', oldConfidence: 67, newConfidence: 71, reason: '又一条支持' },
+        ],
+      }
+      const axisProjection = { nodes: [axisNode], allNodes: [axisNode], edges: [], allEdges: [], integrity: { ok: true }, eventCount: axisEvents.length }
+      const axisRoot = renderReaderView({ name: '合成轴合成主题' }, {
+        loadProjection: async () => axisProjection, loadEvents: async () => axisEvents, onOpenBuilder: () => {},
+      })
+      document.querySelector('#fixture-root').append(axisRoot)
+      await wait()
+      axisRoot.querySelector('.cog-node')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await wait()
+      const axisSvg = axisRoot.querySelector('.rdr-axis-svg')
+      check('合成轴：选中原子后强度线按 confidence 历史画成折线',
+        axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') === '2',
+        axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') || '(无线)')
+      check('合成轴：外部数据落在同一条日期轴的轨道上，按支持/未表态上色',
+        axisSvg?.querySelectorAll('.rdr-axis-evidence').length === 2
+        && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-supports'))
+        && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-unstated')))
+      check('合成轴：确认/修订画成台阶，标题栏如实播报计数与当前强度',
+        axisSvg?.querySelectorAll('.rdr-axis-step').length === 1
+        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('2 条外部数据')
+        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('强度 71%'))
+      check('序号回放降级进折叠区，不再抢占主控制位',
+        Boolean(axisRoot.querySelector('.rdr-replay-details > summary'))
+        && Boolean(axisRoot.querySelector('.rdr-replay-details .rdr-history')))
+
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'
     } catch (error) {

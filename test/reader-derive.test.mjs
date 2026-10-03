@@ -1,4 +1,4 @@
-import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
+import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
 let failed = 0
@@ -87,6 +87,33 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
   const model = deriveReaderModel({ nodes: [vp('v1', '旧变化观点', { confidence: 80 })], edges: [] }, events, { now })
   check('30 天外变化保留在历史序列但不伪装成最近拐点', model.turningPoints.length === 0
     && model.nodesByDirection.undetermined[0]?.evolution[0]?.eventId === 'old-confidence')
+}
+
+{
+  /* 合成轴（设计提案 01）：强度线 × 外部数据点 × 确认/修订台阶，同一条真实日期轴。 */
+  const axisEvents = [
+    { id: 'a1', type: 'evidence.appended', at: '2026-09-20T00:00:00.000Z', payload: { text: '第一条外部数据' } },
+    { id: 'a2', type: 'relation.declared', at: '2026-09-21T00:00:00.000Z', payload: { rel: 'supports', from: { eventId: 'a1' }, to: { eventId: 'v1' } } },
+    { id: 'a3', type: 'evidence.appended', at: '2026-09-22T00:00:00.000Z', payload: { text: '第二条外部数据' } },
+    { id: 'a4', type: 'relation.declared', at: '2026-09-22T00:00:00.000Z', payload: { rel: 'contradicts', from: { eventId: 'a3' }, to: { eventId: 'v1' } } },
+    { id: 'a5', type: 'confidence.updated', at: '2026-09-23T00:00:00.000Z', payload: { nodeId: 'v1', newConfidence: 67 } },
+    { id: 'a6', type: 'signal.reviewed', at: '2026-09-24T00:00:00.000Z', payload: { decision: 'accepted' } },
+    { id: 'a7', type: 'relation.declared', at: '2026-09-25T00:00:00.000Z', payload: { rel: 'supersedes', from: { eventId: 'a3' }, to: { eventId: 'v1' } } },
+  ]
+  const axisNode = { id: 'v1', confidence: 67, confidenceHistory: [{ at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67, reason: '支持证据' }] }
+  const axis = buildSynthesisAxis({ events: axisEvents, node: axisNode })
+  check('合成轴把外部数据点按支持/挑战/未表态分色，并落在同一条日期轴上',
+    axis.counts.evidence === 2 && axis.counts.supports === 1 && axis.counts.contradicts === 1 && axis.counts.unstated === 0
+    && axis.evidence[0].t === 0 && axis.evidence[1].t > 0)
+  check('合成轴强度线来自该原子的 confidence 历史，台阶含确认与修订',
+    axis.series.length === 1 && axis.series[0].value === 67
+    && axis.steps.map((step) => step.label).join() === '确认归因,版本修订'
+    && axis.counts.steps === 2)
+  const flat = buildSynthesisAxis({ events: axisEvents.slice(0, 3), node: { id: 'v1', confidence: null, confidenceHistory: [] } })
+  check('没有强度记录时不编造曲线（只用轨道显示外部数据累积）',
+    flat.series.length === 0 && flat.evidence.length === 2 && flat.start === Date.parse('2026-09-20T00:00:00.000Z'))
+  const empty = buildSynthesisAxis({})
+  check('空账本合成轴保持真实空状态', empty.evidence.length === 0 && empty.series.length === 0 && empty.start === null && empty.end === null)
 }
 
 console.log(`\n${passed} 通过，${failed} 失败`)

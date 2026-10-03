@@ -793,6 +793,25 @@
 .meridian-theme .rdr-zoom-badge, .meridian-theme .rdr-lod-badge { font-size:10.5px; color:var(--text-2); white-space:nowrap; }
 .meridian-theme .rdr-lod-badge.is-degraded { color:var(--orange,#ff9500); }
 .meridian-theme .cog-node-dot { stroke:none; }
+/* 合成轴（设计提案 01） */
+.meridian-theme .rdr-axis-card { margin:12px 0 0; padding:12px 14px 6px; border:1px solid var(--hairline); border-radius:12px; background:var(--surface); }
+.meridian-theme .rdr-axis-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.meridian-theme .rdr-axis-title { font-size:12.5px; }
+.meridian-theme .rdr-axis-caption { margin:4px 0 0; color:var(--text-2); font-size:10.5px; line-height:1.5; }
+.meridian-theme .rdr-axis-svg { display:block; width:100%; height:auto; margin-top:2px; }
+.meridian-theme .rdr-axis-grid-line { stroke:var(--line); stroke-width:1; opacity:.55; }
+.meridian-theme .rdr-axis-tick { fill:var(--text-3); font-size:10px; font-family:ui-monospace,monospace; }
+.meridian-theme .rdr-axis-line { fill:none; stroke:var(--accent); stroke-width:2; }
+.meridian-theme .rdr-axis-area { opacity:.9; }
+.meridian-theme .rdr-axis-point { fill:var(--accent); }
+.meridian-theme .rdr-axis-rail-line { stroke:var(--line); stroke-width:1; }
+.meridian-theme .rdr-axis-evidence { stroke:none; }
+.meridian-theme .rdr-axis-step-mark { opacity:.9; }
+.meridian-theme .rdr-axis-step-label { fill:var(--text-2); font-size:9.5px; }
+.meridian-theme .rdr-axis-date { fill:var(--text-3); font-size:10px; font-family:ui-monospace,monospace; }
+.meridian-theme .rdr-axis-empty { fill:var(--text-3); font-size:11px; }
+.meridian-theme .rdr-replay-details { margin:8px 12px 0; color:var(--text-2); font-size:10.5px; }
+.meridian-theme .rdr-replay-details > summary { cursor:pointer; }
 .meridian-theme .rdr-frame-note { margin:0; padding:8px 12px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--accent) 6%,var(--surface)); color:var(--text-2); font-size:10.5px; line-height:1.5; }
 .meridian-theme .rdr-legend { padding:0 12px 8px; color:var(--text-2); font-size:10.5px; }
 .meridian-theme .rdr-legend summary { padding:8px 0 3px; cursor:pointer; font-weight:600; }

@@ -33,6 +33,72 @@ const confidenceValue = (value) => {
 
 export const UNCATEGORIZED_LABEL = '未分类'
 
+/**
+ * 合成轴（设计提案 01）：强度（线）× 外部数据（点）× 确认/修订（台阶）画在同一条日期轴上。
+ * 全部来自账本事件与投影里的 confidenceHistory，不做叙事化插值——没有强度记录就如实空着。
+ */
+export function buildSynthesisAxis({ events = [], node = null } = {}) {
+  const rows = asArray(events).filter((event) => event && event.type && Number.isFinite(Date.parse(event.at)))
+  const times = rows.map((event) => Date.parse(event.at))
+  const start = times.length ? Math.min(...times) : null
+  const end = times.length ? Math.max(...times) : null
+  const span = start != null && end != null ? Math.max(1, end - start) : 1
+  const positionOf = (value) => {
+    const time = Date.parse(value)
+    return Number.isFinite(time) && start != null ? Math.min(1, Math.max(0, (time - start) / span)) : 0
+  }
+  const relationOfEvidence = new Map()
+  const steps = []
+  for (const event of rows) {
+    if (event.type === 'relation.declared') {
+      const from = event.payload?.from?.eventId || event.payload?.from
+      const rel = event.payload?.rel
+      if (from && (rel === 'supports' || rel === 'contradicts')) relationOfEvidence.set(from, rel)
+      if (rel === 'supersedes') steps.push({ id: event.id, at: event.at, t: positionOf(event.at), kind: 'revision', label: '版本修订' })
+    } else if (event.type === 'signal.reviewed') {
+      const decision = String(event.payload?.decision || '').trim()
+      steps.push({
+        id: event.id, at: event.at, t: positionOf(event.at),
+        kind: decision === 'rejected' ? 'rejected' : 'review',
+        label: decision === 'rejected' ? '驳回建议' : '确认归因',
+      })
+    }
+  }
+  const evidence = rows.filter((event) => event.type === 'evidence.appended').map((event) => {
+    const rel = relationOfEvidence.get(event.id)
+    return {
+      id: event.id, at: event.at, t: positionOf(event.at),
+      kind: rel === 'supports' ? 'supports' : rel === 'contradicts' ? 'contradicts' : 'unstated',
+      label: truncateGraphemes(String(event.payload?.text || event.payload?.reason || '外部数据'), 48),
+    }
+  })
+  /* 强度线＝该原子的 confidence 历史（投影已解析好）；没有历史但有当前强度时画一个点，
+     避免"有强度却没有线"的错觉。 */
+  const series = asArray(node?.confidenceHistory)
+    .map((row) => ({
+      at: row.at, t: positionOf(row.at),
+      value: Number(row.newConfidence ?? row.oldConfidence),
+      reason: String(row.reason || ''),
+    }))
+    .filter((point) => Number.isFinite(point.value))
+  /* 只有真的存在当前强度、且不是 null/undefined 时才补一个点：
+     注意 Number(null) === 0，直接判 Number.isFinite 会凭空画出一个 0% 的假点。 */
+  const currentStrength = node?.confidence ?? node?.strength
+  if (!series.length && currentStrength != null && Number.isFinite(Number(currentStrength))) {
+    series.push({ at: end ? new Date(end).toISOString() : null, t: 1, value: Number(currentStrength), reason: '当前强度' })
+  }
+  return {
+    start, end, evidence, series, steps,
+    counts: {
+      evidence: evidence.length,
+      supports: evidence.filter((point) => point.kind === 'supports').length,
+      contradicts: evidence.filter((point) => point.kind === 'contradicts').length,
+      unstated: evidence.filter((point) => point.kind === 'unstated').length,
+      steps: steps.length,
+    },
+  }
+}
+
 /** 原子的主题分类（L2 主题自定义层）：分类是用户自己的词，空值统一归到"未分类"。 */
 export function nodeCategory(node) {
   return String(node?.atomCategory || '').trim() || UNCATEGORIZED_LABEL

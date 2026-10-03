@@ -7,7 +7,8 @@ import {
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
-import { filterReaderNodes, nodeCategory, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
+import { filterReaderNodes, nodeCategory, buildSynthesisAxis, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
+import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -502,6 +503,7 @@ export function renderReaderView(theme, opts = {}) {
           state.selectedNodeId = node?.id || null
           focusLabel.textContent = node ? `已选择：${titleOf(node)} · 来源与关系显示在右侧` : '选择任一节点查看其论证、关联与来源'
           renderInspector()
+          renderAxis()
           renderGraph()
         },
       }, graphCanvas)
@@ -720,6 +722,41 @@ export function renderReaderView(theme, opts = {}) {
       },
     }, lodAuto ? 'LOD 自动' : 'LOD 手动')
 
+    /* 合成轴（设计提案 01）：强度线 × 外部数据点 × 确认/修订台阶，同一条日期轴。
+       它取代原来的序号滑条成为主控制；序号回放降级进 <details>（保留能力，不再抢焦点）。 */
+    const axisCaption = h('p', { class: 'rdr-axis-caption', role: 'status', 'aria-live': 'polite' })
+    const axisHost = h('div', { class: 'rdr-axis-host' })
+    const renderAxis = () => {
+      const selected = state.selectedNodeId && currentNodes.some((node) => node.id === state.selectedNodeId)
+        ? currentNodes.find((node) => node.id === state.selectedNodeId) : null
+      const model = buildSynthesisAxis({ events: state.events, node: selected })
+      axisHost.replaceChildren(renderSynthesisAxis(model, {
+        nodeTitle: selected ? titleOf(selected) : '',
+        onHover: (text) => { axisCaption.textContent = text },
+      }))
+      const span = model.start != null && model.end != null
+        ? `${new Date(model.start).toISOString().slice(0, 10)} → ${new Date(model.end).toISOString().slice(0, 10)}`
+        : '尚无事件'
+      const parts = [
+        `${model.counts.evidence} 条外部数据（支持 ${model.counts.supports} · 挑战 ${model.counts.contradicts} · 未表态 ${model.counts.unstated}）`,
+        `${model.counts.steps} 次确认/修订`,
+        span,
+      ]
+      if (selected) {
+        const last = model.series[model.series.length - 1]
+        parts.push(`${titleOf(selected)}：${last ? `强度 ${last.value}%` : '还没有强度记录'}`)
+      }
+      axisCaption.textContent = parts.join(' · ')
+    }
+    const axisBox = h('section', { class: 'rdr-axis-card', 'aria-label': '合成轴：强度、时间与外部数据' },
+      h('div', { class: 'rdr-axis-head' },
+        h('strong', { class: 'rdr-axis-title' }, '强度 · 时间 · 外部数据（合成轴）'),
+        axisCaption),
+      axisHost)
+    /* 序号回放降级为内部细节：能力保留，主控制让给合成轴。 */
+    const replayDetails = h('details', { class: 'rdr-replay-details' },
+      h('summary', {}, '按事件序号回放 · 内部细节'), replayBox)
+
     const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
@@ -744,7 +781,7 @@ export function renderReaderView(theme, opts = {}) {
           ' / ',
           h('span', { style: `color:${READER_STATE_META.unevaluated.color}` }, '未评估'),
           '。点击空白处可清空选择，回到整张图谱。')),
-      replayBox)
+      replayDetails)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
     // 综合理解横幅：最强共识与最大分歧（对齐设计稿）
     let synthesisBanner = null
@@ -780,10 +817,11 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, workspace)
     renderSearch()
     renderInspector()
     renderGraph()
+    renderAxis()
     updateHistoryStatus()
   }
 
