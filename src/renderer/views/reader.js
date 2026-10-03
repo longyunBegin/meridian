@@ -1068,7 +1068,10 @@ export function renderReaderView(theme, opts = {}) {
        常显 = 结论页(④) → 观点地图(②) → 单条下钻(①③) → 还缺什么；
        其余（关系全貌 / 时间线 / 全部理由 / 对照与分类 / 整体情况）收进折叠区——
        能力一个不丢，但读者不再需要先选一种"格式"才能开始看。 */
-    const graphDetails = h('details', { class: 'rdr-more rdr-more-graph' },
+    /* 用户决定：读者页不要全节点关系图（"关系图很鸡肋"）。
+       第一步只从界面移除（hidden），DOM 与代码暂留——两个 fixture 断言了
+       .cog-node/.rdr-graph-scope 等的存在，直接删会让套件变红；下一步连同代码与 fixture 一起清。 */
+    const graphDetails = h('details', { class: 'rdr-more rdr-more-graph', hidden: true },
       h('summary', { class: 'rdr-more-summary' }, '关系的全貌'),
       workspace)
     /* 折叠区展开时才画关系图（折叠状态下画布尺寸为 0）。 */
