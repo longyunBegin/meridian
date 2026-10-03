@@ -1,6 +1,7 @@
 import { h } from '../lib/dom.js'
 import {
-  NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus,
+  NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
+  networkNodeType, networkNodeStatus, evidenceAttachmentEdges,
   buildEventTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
@@ -163,7 +164,10 @@ export function renderReaderView(theme, opts = {}) {
     }
 
     const timeline = buildEventTimeline(verifiedEvents)
-    const layout = layoutThemeNetwork(currentNodes, currentEdges, 1120)
+    /* 归位/入库只写 evidence.appended + targetNodeIds（未声明立场），投影里没有对应的边。
+       布局必须把这类"证据挂载"也算进去，否则证据节点会散落在画布各处、和自己的观点离得很远。 */
+    const attachmentEdges = evidenceAttachmentEdges(currentNodes, currentEdges)
+    const layout = layoutThemeNetwork(currentNodes, [...currentEdges, ...attachmentEdges], 1120)
     const state = {
       projection: selectedSeq == null ? currentProjection : (replayProjection || currentProjection),
       events: selectedSeq == null ? verifiedEvents : verifiedEvents.filter((event) => event.seq <= selectedSeq),
@@ -187,7 +191,7 @@ export function renderReaderView(theme, opts = {}) {
       nodesById = new Map(historyNodes.map((node) => [node.id, node]))
       eventById = new Map(state.events.map((event) => [event.id, event]))
     }
-    const graphCanvas = h('div', { class: 'rdr-graph-canvas', 'aria-label': '主题认知网络画布' })
+    const graphCanvas = h('div', { class: 'rdr-graph-canvas', 'aria-label': '原子节点图谱画布' })
     const inspector = h('aside', { class: 'rdr-inspector', 'aria-label': '节点、证据与来源检视', 'aria-live': 'polite' })
     const focusLabel = h('span', { class: 'rdr-focus-label', role: 'status', 'aria-live': 'polite' }, '选择任一节点查看其论证、关联与来源')
     const nodeSearch = h('input', { class: 'txt rdr-search', type: 'search', placeholder: '搜索所有节点、说明或旧名', 'aria-label': '搜索完整主题中的所有节点' })
@@ -396,7 +400,9 @@ export function renderReaderView(theme, opts = {}) {
       const type = typeFilter.value
       const status = statusFilter.value
       const frameNodes = state.replaying ? historyNodes : currentNodes
-      const frameEdges = state.replaying ? historyEdges : currentEdges
+      const declaredFrameEdges = state.replaying ? historyEdges : currentEdges
+      /* 声明关系 + 证据挂载一起参与筛选/裁剪，画布上才看得见"谁挂着谁"。 */
+      const frameEdges = [...declaredFrameEdges, ...evidenceAttachmentEdges(frameNodes, declaredFrameEdges)]
       const matching = filterReaderNodes(frameNodes, type, status)
       const selected = state.selectedNodeId && frameNodes.some((node) => node.id === state.selectedNodeId)
         ? frameNodes.find((node) => node.id === state.selectedNodeId) : null
@@ -414,13 +420,19 @@ export function renderReaderView(theme, opts = {}) {
       if (matching.length > shown) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' },
         `画布逐步展开，当前呈现 ${shown} 个局部节点；另有 ${matching.length - shown} 个匹配节点。可在上方全量搜索或缩小筛选，不会从主题中删除记录。`))
       if (!matching.length) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' }, '没有节点符合筛选。调整类型或状态以查看完整网络。'))
-      const drawProjection = { ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges, allEdges: historyEdges }
+      const drawProjection = {
+        ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges,
+        allEdges: [...historyEdges, ...evidenceAttachmentEdges(historyNodes, historyEdges)],
+      }
+      /* 每个原子的读者状态（已佐证/受挑战/有争议/未评估）：颜色由它决定，而不是节点自身的复核状态。 */
+      const readerStates = new Map(frame.nodes.map((node) => [node.id, readerStateKey(node, evidenceForNode(state, node.id))]))
       const currentFrameNodes = filterReaderNodes(currentNodes, type, status)
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
       if (frame.nodes.length) drawThemeNetwork(drawProjection, {
         networkLayout: layout,
         focusNodeId: state.selectedNodeId,
+        readerStates,
         searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
         historyContext: { events: state.events, projection: state.projection, selectedSeq: state.selectedSeq },
         compareCurrent: Boolean(state.compareCurrent && state.replaying),
@@ -611,33 +623,52 @@ export function renderReaderView(theme, opts = {}) {
 
     const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
-        h('div', {}, h('strong', { class: 'rdr-map-heading' }, '主题认知网络'),
-          h('p', { class: 'rdr-map-sub' }, '无预设起点 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联')),
+        h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
+          h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
       h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter),
       searchResults, searchStatus,
       h('div', { class: 'rdr-focus-bar' }, focusLabel),
       graphCanvas,
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
-        h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关。待复核与驳回关系会保留其决定状态。'),
+        h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关；灰色细点线：证据挂载——外部数据已挂到这个原子上，但你还没有声明它是支持还是反驳。待复核与驳回关系会保留其决定状态。'),
         h('p', {}, '主题下的节点均为原子节点（主题拆分的第一性原理单元）。网络位置为稳定布局，不代表重要度或因果强度。'),
-        h('p', {}, h('strong', {}, '视觉编码：'), '节点图标大小表示强度（越大越强）；状态徽标颜色表示已佐证（绿）/受挑战（红）/待复核（灰）。')),
+        h('p', {}, h('strong', {}, '视觉编码：'), '节点卡片大小反映强度（越大越强）；边框与状态徽标颜色反映状态——',
+          h('span', { style: `color:${READER_STATE_META.supported.color}` }, '已佐证'),
+          ' / ',
+          h('span', { style: `color:${READER_STATE_META.challenged.color}` }, '受挑战'),
+          ' / ',
+          h('span', { style: `color:${READER_STATE_META.contested.color}` }, '有争议'),
+          ' / ',
+          h('span', { style: `color:${READER_STATE_META.evidenced.color}` }, '有证据·未表态'),
+          ' / ',
+          h('span', { style: `color:${READER_STATE_META.unevaluated.color}` }, '未评估'),
+          '。点击空白处可清空选择，回到整张图谱。')),
       replayBox)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
     // 综合理解横幅：最强共识与最大分歧（对齐设计稿）
     let synthesisBanner = null
     try {
-      const summary = synthesisSummary(currentNodes)
-      if (summary && (summary.strongest || summary.mostDisputed)) {
+      /* 必须传真实的证据口径：不传时 synthesisSummary 会退化成"把 evidenceCount 对半分"
+         的估算，于是横幅说"支持 2 · 挑战 2"，而图谱上同一个原子标的是"有证据·未表态"。 */
+      const summary = synthesisSummary(currentNodes, (_view, nodeId) => evidenceForNode(state, nodeId))
+      const hasStrength = currentNodes.some((node) => Number.isFinite(Number(node.confidence ?? node.strength)))
+      if (summary) {
         const parts = []
-        parts.push(`当前 ${summary.nodeCount} 个原子节点中，`)
-        if (summary.strongest) {
-          parts.push(`最强共识是「${summary.strongest.title}」(强度 ${summary.strongest.strength}%)；`)
+        if (hasStrength) {
+          parts.push(`当前 ${summary.nodeCount} 个原子节点中，`)
+          if (summary.strongest) {
+            parts.push(`最强共识是「${summary.strongest.title}」(强度 ${summary.strongest.strength}%)；`)
+          }
+          if (summary.mostDisputed) {
+            parts.push(`最大分歧是「${summary.mostDisputed.title}」(支持 ${summary.mostDisputed.support} · 挑战 ${summary.mostDisputed.challenge})。`)
+          }
+          parts.push('拖动底部时间条可以看强度如何随外部数据累积变化。')
+        } else {
+          /* 没有强度数据时不要硬报"最强共识 0%"：那只是把 Default 当结论。 */
+          parts.push(`当前 ${summary.nodeCount} 个原子节点都还没有强度：外部数据已经挂上来，但还没有一条被表态为支持或反驳。`)
+          parts.push('点开图上一个原子看它的来源，或到建设者视图确认归因——强度会在确认之后开始累积。')
         }
-        if (summary.mostDisputed) {
-          parts.push(`最大分歧是「${summary.mostDisputed.title}」(支持 ${summary.mostDisputed.support} · 挑战 ${summary.mostDisputed.challenge})。`)
-        }
-        parts.push('拖动底部时间条可以看强度如何随外部数据累积变化。')
         synthesisBanner = h('div', { class: 'rdr-synthesis-banner', role: 'status' },
           h('span', { class: 'rdr-synthesis-banner-mark', 'aria-hidden': 'true' }, '✳'),
           h('div', {},

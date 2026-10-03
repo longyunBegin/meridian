@@ -44,6 +44,74 @@ export const NODE_STATUS_LABEL = {
   stale: '待更新', forking: '待收敛', closed: '已关闭', superseded: '已更正', resolved: '已结案',
 }
 
+/**
+ * 读者视角的状态：由账本里的证据与关系推导，而不是节点自身的复核状态。
+ * 陌生主题第一眼要看的是"哪里被佐证、哪里被挑战、哪里还没动过"——
+ * 而节点自身的 status 往往全是"待复核"，那个维度对读者没有信息量。
+ */
+export const READER_STATE_META = {
+  supported: { label: '已佐证', color: '#34c759', text: '#08240f' },
+  challenged: { label: '受挑战', color: '#ff3b30', text: '#ffffff' },
+  contested: { label: '有争议', color: '#ff9500', text: '#1d1d1f' },
+  evidenced: { label: '有证据·未表态', color: '#0a84ff', text: '#ffffff' },
+  unevaluated: { label: '未评估', color: '#8e8e93', text: '#ffffff' },
+  archived: { label: '已归档', color: '#8390a0', text: '#ffffff' },
+  invalidated: { label: '已失效', color: '#ad756a', text: '#ffffff' },
+}
+
+/** 一个原子的读者状态。summary 用 evidenceForNode() 的口径（supports/against/both/unclassified）。 */
+export function readerStateKey(node, summary = null) {
+  if (node?.archived) return 'archived'
+  if (node?.invalidated) return 'invalidated'
+  if (!summary) return 'unevaluated'
+  const supports = (summary.supports?.length || 0) + (summary.both?.length || 0)
+  const against = (summary.against?.length || 0) + (summary.both?.length || 0)
+  if (supports && against) return 'contested'
+  if (supports) return 'supported'
+  if (against) return 'challenged'
+  /* 挂了数据但还没声明立场：这是账本里最常见的真实状态，必须和"完全没数据"区分开。 */
+  if ((summary.unclassified?.length || 0) > 0 || (summary.total || 0) > 0) return 'evidenced'
+  return 'unevaluated'
+}
+
+/**
+ * 证据挂载边：归位/入库写的是 evidence.appended + targetNodeIds，那是"证据已挂上、
+ * 但用户还没声明立场"的连接。它没有对应的 relation.declared 事件，所以过去在图上
+ * 完全看不见——21 个节点会显示成 21 个孤立的点。
+ *
+ * 这里把它单独派生出来给画布用：灰点线、无箭头，绝不冒充支持/反驳。
+ * 同一对节点已经有声明关系时跳过，避免两条线叠在一起。
+ */
+export function evidenceAttachmentEdges(nodes = [], declaredEdges = []) {
+  const rows = Array.isArray(nodes) ? nodes : []
+  const byId = new Map(rows.map((node) => [node?.id, node]).filter(([id]) => id != null))
+  const declared = new Set()
+  for (const edge of Array.isArray(declaredEdges) ? declaredEdges : []) {
+    if (!edge?.from || !edge?.to) continue
+    declared.add(`${edge.from}->${edge.to}`)
+    declared.add(`${edge.to}->${edge.from}`)
+  }
+  const derived = []
+  for (const node of rows) {
+    if (networkNodeType(node) !== 'evidence') continue
+    for (const targetId of node.targetNodeIds || []) {
+      if (!byId.has(targetId) || targetId === node.id) continue
+      if (declared.has(`${node.id}->${targetId}`)) continue
+      derived.push({
+        id: `attached:${node.id}:${targetId}`,
+        eventId: `attached:${node.id}:${targetId}`,
+        from: node.id,
+        to: targetId,
+        rel: 'evidence-attached',
+        relationGroup: 'evidence',
+        seq: Number(node.createdSeq) || 0,
+        derived: true,
+      })
+    }
+  }
+  return derived
+}
+
 export function truncateGraphemes(value, limit, suffix = '…') {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim()
   const parts = typeof Intl?.Segmenter === 'function'
@@ -216,9 +284,14 @@ function hashId(value) {
   return hash >>> 0
 }
 
+/** 尺寸即强度：confidence 0-100 映射到 0.84–1.16 的缩放；布局间距与碰撞检测同步跟随。 */
 function nodeDimensions(node) {
   const type = networkNodeType(node)
-  return { w: type === 'evidence' ? 144 : 156, h: 72 }
+  const base = type === 'evidence' ? { w: 144, h: 72 } : { w: 156, h: 72 }
+  const raw = Number(node?.confidence ?? node?.strength)
+  const strength = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50
+  const scale = 0.84 + (strength / 100) * 0.32
+  return { w: Math.round(base.w * scale), h: Math.round(base.h * scale) }
 }
 
 /**
@@ -332,7 +405,10 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       let dx = b.x - a.x
       let dy = b.y - a.y
       const distance = Math.hypot(dx, dy) || 1
-      const isAssociation = edge.relationGroup === 'association' || ASSOCIATION_RELATIONS.includes(edge.rel)
+      /* 证据挂载和弱关联一样松散：让证据与它的观点之间留出看得见的距离，
+         否则两张 144px 宽的卡片会把中间的连线整个盖住。 */
+      const isAssociation = edge.relationGroup === 'association' || edge.relationGroup === 'evidence'
+        || ASSOCIATION_RELATIONS.includes(edge.rel)
       const isRevision = edge.relationGroup === 'revision' || REVISION_RELATIONS.includes(edge.rel)
       /* 论证边和修订链是阅读主干；弱主题关联保持疏松。 */
       const target = isAssociation ? 235 : isRevision ? 190 : 168

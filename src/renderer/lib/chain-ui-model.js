@@ -181,6 +181,13 @@ export function selectGraphWindow(projection, {
   const nodeLimit = Math.max(1, Math.floor(maxNodes))
   const edgeLimit = Math.max(0, Math.floor(maxEdges))
   const selected = new Set()
+  /* 候选节点按"活着优先、越新越前"排序；聚焦时先铺该节点的邻域，
+     再用同一顺序把剩余名额填满——聚焦是"强调"，不该把其它节点从画布上删掉。 */
+  const recent = [...candidates].sort((a, b) => {
+    const liveBias = Number(Boolean(a.archived)) - Number(Boolean(b.archived))
+    return liveBias || (Number(b.createdSeq) || 0) - (Number(a.createdSeq) || 0)
+      || String(a.id).localeCompare(String(b.id))
+  })
   if (focusNodeId && byId.has(focusNodeId)) {
     const adjacency = new Map(candidates.map((node) => [node.id, []]))
     for (const edge of edges) {
@@ -201,12 +208,11 @@ export function selectGraphWindow(projection, {
         if (selected.size >= nodeLimit) break
       }
     }
+    for (const node of recent) {
+      if (selected.size >= nodeLimit) break
+      selected.add(node.id)
+    }
   } else {
-    const recent = [...candidates].sort((a, b) => {
-      const liveBias = Number(Boolean(a.archived)) - Number(Boolean(b.archived))
-      return liveBias || (Number(b.createdSeq) || 0) - (Number(a.createdSeq) || 0)
-        || String(a.id).localeCompare(String(b.id))
-    })
     for (const node of recent.slice(0, nodeLimit)) selected.add(node.id)
   }
 

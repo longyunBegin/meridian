@@ -41,6 +41,17 @@ ok('无主题根/提示线的单帧主题网络不超过 60 节点/72 关系', f
   && frame.edges.length <= GRAPH_FRAME_EDGE_LIMIT
   && focusFrame.edges.length <= GRAPH_FRAME_EDGE_LIMIT)
 ok('搜索/事件聚焦节点保留在有界子图中', focusFrame.focusNodeId === 'n-200' && focusFrame.nodes.some((node) => node.id === 'n-200'))
+/* 聚焦是"强调"：只要节点总数没到上限，其它节点必须仍然在画布上（曾经只留连通分量，
+   21 个节点一聚焦就只剩 5 个）。 */
+ok('聚焦不会把不相连的节点从画布上删掉（名额够时全部保留）',
+  focusFrame.nodes.length === Math.min(nodes.length, GRAPH_FRAME_NODE_LIMIT)
+  && focusFrame.truncated === (nodes.length > GRAPH_FRAME_NODE_LIMIT),
+  `${focusFrame.nodes.length}/${nodes.length}`)
+const tinyNodes = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+const tinyEdges = [{ id: 'e1', from: 'a', to: 'b', seq: 1 }]
+const tinyFocus = selectGraphWindow({ nodes: tinyNodes, allNodes: tinyNodes, edges: tinyEdges }, { focusNodeId: 'c' })
+ok('孤立节点被聚焦时，其余节点同样留在画布上', tinyFocus.nodes.length === 3
+  && tinyFocus.focusNodeId === 'c' && tinyFocus.edges.length === 1, `${tinyFocus.nodes.length} 节点 / ${tinyFocus.edges.length} 边`)
 ok('537 节点与 2400 边两次选择在保护预算内完成', elapsed < 2000, `${Math.round(elapsed)} ms`)
 
 const provenanceProjection = {

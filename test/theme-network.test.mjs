@@ -2,6 +2,7 @@ import {
   NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, REVISION_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
   networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle, nodeTitleCharsPerLine,
   buildDensityTimeline, buildEventTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
+  evidenceAttachmentEdges, readerStateKey, READER_STATE_META,
 } from '../src/renderer/lib/theme-network.js'
 
 let passed = 0
@@ -125,6 +126,49 @@ const largeNodes = Array.from({ length: 500 }, (_, index) => ({ id: `large-${ind
 const largeLayout = layoutThemeNetwork(largeNodes, [], 1120)
 const elapsed = performance.now() - started
 check('500 节点无关系合成主题布局在合理时间完成', largeLayout.pos.size === 500 && elapsed < 5000, `${Math.round(elapsed)} ms`)
+
+/* —— 原子节点图谱：证据挂载边 / 读者状态 / 尺寸即强度 —— */
+check('证据挂载边：证据的 targetNodeIds 派生为独立连线，不冒充关系', (() => {
+  const nodes = [
+    { id: 'v1', nodeType: 'viewpoint', title: '观点一', confidence: 60 },
+    { id: 'e1', nodeType: 'evidence', title: '证据一', targetNodeIds: ['v1'] },
+    { id: 'e2', nodeType: 'evidence', title: '证据二', targetNodeIds: ['v1'] },
+  ]
+  const derived = evidenceAttachmentEdges(nodes, [])
+  return derived.length === 2
+    && derived.every((edge) => edge.rel === 'evidence-attached' && edge.to === 'v1' && edge.derived === true)
+    && derived.every((edge) => edge.relationGroup === 'evidence')
+})())
+check('已声明立场的证据不再派生挂载边（避免两条线叠在同一对节点上）', (() => {
+  const nodes = [
+    { id: 'v1', nodeType: 'viewpoint', title: '观点一' },
+    { id: 'e1', nodeType: 'evidence', title: '证据一', targetNodeIds: ['v1'] },
+  ]
+  return evidenceAttachmentEdges(nodes, [{ from: 'e1', to: 'v1', rel: 'contradicts' }]).length === 0
+    && evidenceAttachmentEdges(nodes, [{ from: 'v1', to: 'e1', rel: 'supports' }]).length === 0
+})())
+check('挂载边只连到仍然存在的目标节点', evidenceAttachmentEdges(
+  [{ id: 'e1', nodeType: 'evidence', targetNodeIds: ['已经删了'] }], []).length === 0)
+
+check('读者状态由证据推导：已佐证 / 受挑战 / 有争议 / 有证据未表态 / 未评估',
+  readerStateKey({ id: 'v1' }, { supports: [1], against: [], both: [] }) === 'supported'
+  && readerStateKey({ id: 'v1' }, { supports: [], against: [1], both: [] }) === 'challenged'
+  && readerStateKey({ id: 'v1' }, { supports: [1], against: [1], both: [1] }) === 'contested'
+  && readerStateKey({ id: 'v1' }, { supports: [], against: [], both: [], unclassified: [1], total: 1 }) === 'evidenced'
+  && readerStateKey({ id: 'v1' }, { supports: [], against: [], both: [], unclassified: [], total: 0 }) === 'unevaluated'
+  && readerStateKey({ id: 'v1' }, null) === 'unevaluated')
+check('归档/失效优先于证据状态', readerStateKey({ archived: true }, { supports: [1] }) === 'archived'
+  && readerStateKey({ invalidated: true }, { against: [1] }) === 'invalidated')
+check('四种读者状态在 META 里都有可读标签与颜色',
+  ['supported', 'challenged', 'contested', 'unevaluated'].every((key) => READER_STATE_META[key]?.label && READER_STATE_META[key]?.color))
+
+check('节点尺寸随强度变化，布局间距同步跟随', (() => {
+  const weak = layoutThemeNetwork([{ id: 'a', nodeType: 'viewpoint', confidence: 0 }], [], 1120).size.get('a')
+  const strong = layoutThemeNetwork([{ id: 'b', nodeType: 'viewpoint', confidence: 100 }], [], 1120).size.get('b')
+  const mid = layoutThemeNetwork([{ id: 'c', nodeType: 'viewpoint' }], [], 1120).size.get('c')
+  return strong.w > mid.w && mid.w > weak.w
+    && weak.w === Math.round(156 * 0.84) && strong.w === Math.round(156 * 1.16)
+})())
 
 console.log(`\n${passed} 通过，${failed} 失败`)
 process.exit(failed ? 1 : 0)

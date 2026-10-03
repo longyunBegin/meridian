@@ -1,5 +1,6 @@
 import {
-  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, networkNodeType, networkNodeStatus, splitNetworkTitle, nodeTitleCharsPerLine,
+  NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
+  networkNodeType, networkNodeStatus, splitNetworkTitle, nodeTitleCharsPerLine,
 } from './theme-network.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -161,6 +162,32 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const fromSize = layout.size.get(edge.from)
     const toSize = layout.size.get(edge.to)
     if (!from || !to || !fromSize || !toSize) continue
+    /* 证据挂载：归位/入库留下的"已挂上但未声明立场"的连接。它不是论证关系，
+       所以画成灰点线、无箭头，和图例里单列一行；确认或驳回后才会变成真关系。 */
+    if (edge.derived && edge.rel === 'evidence-attached') {
+      const future = Boolean(edge._future)
+      const geometry = edgeGeometry(from, to, fromSize, toSize, false)
+      const attachedLabel = (id) => projection.allNodes?.find((node) => node.id === id)?.title || id
+      const path = svgEl('path', {
+        d: geometry.d,
+        class: `cog-edge cog-edge-evidence-attached is-evidence-attached${future ? ' is-future' : ''}`,
+        'data-from': edge.from, 'data-to': edge.to, 'data-rel': edge.rel,
+        'data-group': 'evidence',
+        stroke: '#8a93a3',
+        'stroke-width': 1.4,
+        'stroke-opacity': future ? 0.2 : 0.6,
+        'stroke-dasharray': '3 4',
+        'marker-end': 'none',
+        role: 'img',
+        'aria-label': `证据挂载：${attachedLabel(edge.from)} 挂在 ${attachedLabel(edge.to)} 上，尚未声明立场`,
+      })
+      const attachedTitle = svgEl('title')
+      attachedTitle.textContent = '证据挂载 · 未声明立场（它还不是支持或反驳）'
+      path.append(attachedTitle)
+      edgeLayer.append(path)
+      edgeRecords.push({ path, label: null, edge })
+      continue
+    }
     const argument = ARGUMENT_TYPES.has(edge.rel)
     const revision = REVISION_TYPES.has(edge.rel) || edge.relationGroup === 'revision'
     const directional = argument || revision
@@ -222,7 +249,8 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       record.label?.classList.toggle('is-visible', Boolean(activeId && related))
     }
     const node = nodesById.get(activeId)
-    if (notify && node && !node._notYetCreated) opts.onFocusNode?.(node)
+    /* 清空聚焦（activeId 为 null）也要通知调用方，否则右侧检视器会继续显示上一个节点。 */
+    if (notify && (!node || !node._notYetCreated)) opts.onFocusNode?.(node || null)
   }
 
   for (const node of nodes) {
@@ -234,6 +262,10 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const meta = NODE_TYPE_META.viewpoint
     const status = node._notYetCreated ? 'pending' : networkNodeStatus(node)
     const statusLabel = node._notYetCreated ? '后续新增' : NODE_STATUS_LABEL[status] || status
+    /* 读者视角状态（已佐证/受挑战/有争议/未评估）：只有调用方给了 readerStates 时生效，
+       其它画布（建设者）保持原来的统一原子配色，避免顺带改掉那边的观感。 */
+    const readerMeta = opts.readerStates ? READER_STATE_META[opts.readerStates.get?.(node.id)] || null : null
+    const pillLabel = readerMeta ? readerMeta.label : statusLabel
     const unavailable = Boolean(node.archived || node.invalidated || node._notYetCreated)
     const group = svgEl('g', {
       class: `cog-node${node.archived ? ' is-archived' : ''}${node.invalidated ? ' is-invalidated' : ''}${node._notYetCreated ? ' is-not-yet-created' : ''}${node._comparison ? ' has-current-comparison' : ''}${searchMatchIds.has(node.id) ? ' is-search-match' : ''}`,
@@ -243,16 +275,17 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       'data-node-type': type,
       'data-kind': type,
       'data-status': status,
+      'data-reader-state': readerMeta ? opts.readerStates.get(node.id) : null,
       'data-source-ref': node.sourceRef || '',
       'data-provenance': (node.provenanceEventIds || node.eventIds || []).join(','),
       tabindex: node._notYetCreated ? '-1' : '0',
       role: node._notYetCreated ? 'img' : 'button',
       'aria-label': node._notYetCreated
         ? `${meta.label}：${node.title || '未命名'}；此节点在所选历史时点之后新增，仅供比较`
-        : `${meta.label}：${node.title || '未命名'}；状态：${statusLabel}${node.external ? '；外部引用，尚未解析' : ''}${node._comparison?.currentTitle ? `；当前名称：${node._comparison.currentTitle}` : ''}。按 Enter 或空格选择节点并查看详情。`,
+        : `${meta.label}：${node.title || '未命名'}；状态：${pillLabel}${node.external ? '；外部引用，尚未解析' : ''}${node._comparison?.currentTitle ? `；当前名称：${node._comparison.currentTitle}` : ''}。按 Enter 或空格选择节点并查看详情。`,
     })
     group.style.opacity = unavailable ? (node._notYetCreated ? '0.36' : '0.68') : '1'
-    const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : meta.color
+    const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : (readerMeta?.color || meta.color)
     group.append(svgEl('rect', {
       x: -dimensions.w / 2, y: -dimensions.h / 2, width: dimensions.w, height: dimensions.h, rx: 13,
       fill: canvasPalette().card, stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
@@ -265,13 +298,13 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const strengthScale = 0.7 + (Math.max(0, Math.min(100, Number(node.confidence ?? node.strength ?? 50))) / 100) * 0.6
     appendTypeGlyph(group, type, glyphX, glyphY, strengthScale)
     /* 类型文字标签已移除：形状 + 颜色已足够区分，label 只保留在无障碍文本与图例中。 */
-    const showPill = node._notYetCreated || status !== 'pending'
+    const showPill = node._notYetCreated || Boolean(readerMeta) || status !== 'pending'
     if (showPill) {
-      const pillWidth = Math.max(44, Math.min(68, statusLabel.length * 10 + 13))
+      const pillWidth = Math.max(44, Math.min(68, pillLabel.length * 10 + 13))
       const pillX = dimensions.w / 2 - pillWidth - 7
       const pillY = -dimensions.h / 2 + 7
-      group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: nodeStatusColor(status), class: 'cog-node-status-bg' }))
-      group.append(svgText(statusLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: nodeStatusTextColor(status) }))
+      group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: readerMeta ? readerMeta.color : nodeStatusColor(status), class: 'cog-node-status-bg' }))
+      group.append(svgText(pillLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: readerMeta ? readerMeta.text : nodeStatusTextColor(status) }))
     }
     const titleLines = splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w, 11, 28), 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {
@@ -290,7 +323,7 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       }))
     }
     const title = svgEl('title')
-    title.textContent = `${meta.label} · ${node.title || '未命名节点'} · ${statusLabel}${node.originalTitle ? ` · 旧名：${node.originalTitle}` : ''}`
+    title.textContent = `${meta.label} · ${node.title || '未命名节点'} · ${pillLabel}${node.originalTitle ? ` · 旧名：${node.originalTitle}` : ''}`
     group.append(title)
     if (!node._notYetCreated) {
       group.addEventListener('focus', () => setFocus(node.id, true))
@@ -308,6 +341,12 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
   canvas.append(svg)
   requestAnimationFrame(() => { if (svg.isConnected) svg.style.opacity = '1' })
   svg.addEventListener('cog-clear-focus', () => setFocus(null))
+  /* 点空白处＝清空聚焦：所有节点与连线回到完全可见，右侧检视器也退回"未选中"。
+     之前点空白没有任何反应，读者被"锁"在某次选择里出不来。 */
+  svg.addEventListener('click', (event) => {
+    if (event.target?.closest?.('.cog-node')) return
+    setFocus(null, true)
+  })
   if (opts.focusNodeId && nodesById.has(opts.focusNodeId) && !nodesById.get(opts.focusNodeId)._notYetCreated) {
     setFocus(opts.focusNodeId)
   }
