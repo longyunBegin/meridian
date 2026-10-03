@@ -120,7 +120,30 @@ async function main() {
     ok('写入后可读回（graphZoom=7）', b2?.result?.graphZoom === 7, `实际 ${b2?.result?.graphZoom}`)
   }
 
-  // — 5. 未知 channel / 非法 JSON —
+  // — 5. 去领域化 L2 词表经 HTTP 落到 theme.config（bridge 走的就是这条 /api/:channel） —
+  console.log('\n— theme:update → theme:all（L2 词表）—')
+  {
+    const rAdd = await post('theme:add', { body: { args: ['HTTP 词表主题'] } })
+    const bAdd = await rAdd.json()
+    const themeId = bAdd?.result?.id
+    ok('theme:add 200 且返回主题 id', rAdd.status === 200 && typeof themeId === 'string', JSON.stringify(bAdd?.result).slice(0, 60))
+    const patch = { config: { atomCategories: ['技术路线', '关键问题'], relationLabels: ['导致'] } }
+    const rUpdate = await post('theme:update', { body: { args: [themeId, patch] } })
+    const bUpdate = await rUpdate.json()
+    ok('theme:update 200 且 ok', rUpdate.status === 200 && bUpdate?.ok === true, `实际 ${rUpdate.status}`)
+    const rAll = await post('theme:all')
+    const bAll = await rAll.json()
+    const stored = (bAll?.result || []).find((t) => t.id === themeId)
+    ok('词表经 HTTP 写入后可由 theme:all 读回',
+      JSON.stringify(stored?.config) === JSON.stringify(patch.config), JSON.stringify(stored?.config))
+    const rClean = await post('theme:update', { body: { args: [themeId, { config: { atomCategories: [' 技术路线 ', '技术路线', ''] } }] } })
+    await rClean.json()
+    const cleaned = ((await (await post('theme:all')).json())?.result || []).find((t) => t.id === themeId)
+    ok('词表清洗同样在 service 侧生效（去空白/去重）',
+      JSON.stringify(cleaned?.config?.atomCategories) === JSON.stringify(['技术路线']), JSON.stringify(cleaned?.config))
+  }
+
+  // — 6. 未知 channel / 非法 JSON —
   console.log('\n— 404 / 400 —')
   {
     const r1 = await post('nope:channel')
