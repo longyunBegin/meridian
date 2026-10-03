@@ -193,9 +193,9 @@ export function renderReaderView(theme, opts = {}) {
     const nodeSearch = h('input', { class: 'txt rdr-search', type: 'search', placeholder: '搜索所有节点、说明或旧名', 'aria-label': '搜索完整主题中的所有节点' })
     const searchResults = h('div', { class: 'rdr-search-results', role: 'listbox', 'aria-label': '全量节点搜索结果', hidden: true })
     const searchStatus = h('p', { class: 'rdr-search-status', role: 'status', 'aria-live': 'polite' })
-    const typeFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点类型筛选' },
-      h('option', { value: 'all' }, '全部类型'),
-      ...NETWORK_NODE_TYPES.map((type) => h('option', { value: type }, TYPE_LABEL[type])))
+    // 类型筛选已移除：主题下只有原子节点，无类型区分
+    const typeFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点类型筛选', hidden: true },
+      h('option', { value: 'all' }, '全部类型'))
     const statusFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点状态筛选' },
       h('option', { value: 'all' }, '全部状态'),
       ...STATUS_FILTERS.map((status) => h('option', { value: status }, NODE_STATUS_LABEL[status])))
@@ -278,7 +278,7 @@ export function renderReaderView(theme, opts = {}) {
       })
       inspector.append(
         h('div', { class: 'rdr-inspector-head' },
-          h('p', { class: 'rdr-inspector-kicker' }, `${TYPE_LABEL[type] || '节点'} · ${NODE_STATUS_LABEL[status] || status}`),
+          h('p', { class: 'rdr-inspector-kicker' }, `原子 · ${NODE_STATUS_LABEL[status] || status}`),
           h('h2', { class: 'rdr-inspector-title' }, titleOf(node)),
           detail ? h('p', { class: 'rdr-inspector-summary' }, cleanText(detail)) : h('p', { class: 'rdr-inspector-summary is-empty' }, '没有记录节点说明。'),
           // 当前强度条（对齐设计稿）
@@ -368,7 +368,7 @@ export function renderReaderView(theme, opts = {}) {
             renderGraph()
             focusSearchResult(node.id)
           },
-        }, h('span', { class: 'rdr-search-type' }, TYPE_LABEL[networkNodeType(node)] || '节点'),
+        }, h('span', { class: 'rdr-search-type' }, '原子'),
         h('span', {}, titleOf(node)),
         !present ? h('span', { class: 'rdr-search-future' }, '此时点之后新增') : null)
         result.addEventListener('keydown', (event) => {
@@ -620,7 +620,7 @@ export function renderReaderView(theme, opts = {}) {
       graphCanvas,
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
         h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关。待复核与驳回关系会保留其决定状态。'),
-        h('p', {}, '节点按概念、对象、事件、观点、证据区分。网络位置为稳定布局，不代表重要度或因果强度。'),
+        h('p', {}, '主题下的节点均为原子节点（主题拆分的第一性原理单元）。网络位置为稳定布局，不代表重要度或因果强度。'),
         h('p', {}, h('strong', {}, '视觉编码：'), '节点图标大小表示强度（越大越强）；状态徽标颜色表示已佐证（绿）/受挑战（红）/待复核（灰）。')),
       replayBox)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
