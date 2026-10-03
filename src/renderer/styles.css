@@ -1525,3 +1525,25 @@ body.tauri-macos{
 .rdr-conclusion-pick-title { flex: 0 1 auto; font-weight: var(--fw-semibold); }
 .rdr-conclusion-counts { flex: 1 1 100%; color: var(--text-3); font-size: var(--t-caption); }
 .rdr-conclusion-open { flex: none; margin-left: auto; }
+
+/* 观点图谱（簇 + 原子气泡，借鉴 demo 3）：标题默认隐藏，悬浮/选中才显示 */
+.rdr-cluster-link { stroke: var(--hairline); stroke-width: 1.5; }
+.rdr-cluster-bg-circle { fill-opacity: .07; stroke-width: 1.5; }
+.rdr-cluster-bg-label { fill: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); }
+.rdr-cluster-bubble { cursor: pointer; }
+.rdr-cluster-bubble .rdr-cluster-circle { fill-opacity: .22; }
+.rdr-cluster-bubble-label { fill: var(--text-2); font-size: var(--t-caption); opacity: 0; transition: opacity 120ms ease; }
+.rdr-cluster-bubble:hover .rdr-cluster-bubble-label,
+.rdr-cluster-bubble:focus-visible .rdr-cluster-bubble-label,
+.rdr-cluster-bubble.is-selected .rdr-cluster-bubble-label { opacity: 1; fill: var(--text-1); }
+.rdr-cluster-bubble.is-selected .rdr-cluster-circle { fill-opacity: .45; stroke-width: 3; }
+.rdr-cluster-wrap { display: grid; gap: var(--sp-3); }
+.rdr-cluster-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: 4px; font-size: var(--t-caption); }
+.rdr-cluster-head-title { color: var(--text-1); font-weight: var(--fw-semibold); }
+.rdr-cluster-head-count { color: var(--text-2); }
+.rdr-cluster-head-hint { color: var(--text-3); }
+.rdr-cluster-row { display: flex; align-items: baseline; gap: var(--sp-3); padding: 6px 2px; border-bottom: 1px solid var(--hairline-soft); }
+.rdr-cluster-row.is-selected { background: var(--hover); }
+.rdr-cluster-claim { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 0; color: var(--text-1); font-size: var(--t-caption); text-align: left; cursor: pointer; }
+.rdr-cluster-row-strength { flex: none; color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+.rdr-cluster-row-counts { flex: none; color: var(--text-3); font-size: var(--t-caption); }

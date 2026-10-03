@@ -511,7 +511,10 @@ export function renderReaderView(theme, opts = {}) {
     const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点分簇缩略图' },
       renderReaderClusterMap({
         claims: claimNodes,
+        /* 真实关系（已驳回的边在 currentEdges 上游已过滤）：用于画簇间连线，没有关系就不画。 */
+        edges: currentEdges,
         evidenceForNode: rowsOfClaim,
+        selectedId: state.selectedNodeId,
         onOpenClaim: openClaimDetail,
       }))
     /* 九个 tab 换成"三层常显 + 次级视图折叠"：
@@ -550,7 +553,7 @@ export function renderReaderView(theme, opts = {}) {
         statBox(readerStats.contested, '受关注')))
     /* demo 的顺序：气泡图 → 「当前最该看的 5 个」→ 分簇清单。
        清单由缩略图组件一并产出，这里把那个节点搬到 Top 5 之后（同一个节点搬家，不重建）。 */
-    const clusterList = mapBox.querySelector('.rdr-cluster-list')
+    const clusterList = mapBox.querySelector('.rdr-cluster-wrap')
     article.replaceChildren(
       ...[headBox, mapBox, conclusionBox, clusterList, detailHost].filter(Boolean),
       /* 其余面板（合成轴 / 理由清单 / 小倍数 / 正反两方 / 时间线 / 对照表 / 分类 / 缺口 / 检视器）
