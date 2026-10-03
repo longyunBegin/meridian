@@ -165,9 +165,9 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
     tip.textContent = `${row.node.title || '未命名观点'}\n强度 ${row.strength ? `${row.strength}%` : '未记录'} · 支持 ${row.support} · 反对 ${row.challenge} · 独立来源 ${row.sources} 家\n${meta.label}：${meta.hint}`
     bubble.append(tip)
     if (typeof onOpenClaim === 'function') {
-      bubble.addEventListener('click', () => onOpenClaim(row.node.id))
+      bubble.addEventListener('click', () => onOpenClaim(row.node.id, bubble))
       bubble.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenClaim(row.node.id) }
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenClaim(row.node.id, bubble) }
       })
     }
     svg.append(bubble)

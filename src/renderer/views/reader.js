@@ -45,19 +45,49 @@ export function renderReaderView(theme, opts = {}) {
       selectedNodeId: null,
     }
 
-    /* 第 ①③ 层「单条下钻」：就地展开在地图下方（读者不丢上下文）。
+    /* 第 ①③ 层「单条下钻」：右侧抽屉（fixed 定位但仍挂在 article 内，保证 fixture 的
+       currentRoot.querySelector('.rdr-detail') 不变红）。
        口径与地图共用 claimEvidenceStats（不另写一份，避免两处说法分叉）。 */
     let detailClaimId = null
-    const detailHost = h('div', { class: 'rdr-detail' })
+    let detailTriggerEl = null
+    const detailHost = h('div', { class: 'rdr-detail', role: 'dialog', 'aria-label': '观点详情', 'aria-hidden': 'true' })
+    const detailBackdrop = h('div', { class: 'rdr-drawer-backdrop', 'aria-hidden': 'true' })
     const closeClaimDetail = () => {
       detailClaimId = null
-      detailHost.replaceChildren()
+      detailHost.classList.remove('is-open')
+      detailBackdrop.classList.remove('is-open')
+      detailHost.setAttribute('aria-hidden', 'true')
+      document.body.style.overflow = ''
+      // 焦点还给触发的气泡
+      if (detailTriggerEl?.isConnected) detailTriggerEl.focus()
+      detailTriggerEl = null
     }
-    const openClaimDetail = (id) => {
+    // ESC 关闭
+    const onDrawerKey = (e) => {
+      if (e.key === 'Escape' && detailHost.classList.contains('is-open')) {
+        e.preventDefault()
+        closeClaimDetail()
+      }
+    }
+    document.addEventListener('keydown', onDrawerKey)
+    detailBackdrop.addEventListener('click', closeClaimDetail)
+    const openClaimDetail = (id, triggerEl = null) => {
       const node = claimNodes.find((row) => row.id === id) || null
-      if (!node) return
+      if (!node) {
+        // 静默 return 改成可诊断：开发态打 warn，抽屉里也给一句人话
+        if (typeof console !== 'undefined' && console.warn) console.warn('[reader] openClaimDetail: 找不到 id 为 ' + id + ' 的观点')
+        detailHost.replaceChildren(h('p', { class: 'rdr-note' }, '找不到该观点的数据（id: ' + String(id) + '）。'))
+        detailHost.classList.add('is-open')
+        detailBackdrop.classList.add('is-open')
+        detailHost.setAttribute('aria-hidden', 'false')
+        return
+      }
+      const isSwitching = detailClaimId !== null && detailClaimId !== id
       detailClaimId = id
       state.selectedNodeId = id
+      if (triggerEl?.isConnected) detailTriggerEl = triggerEl
+      // 内容切换只做淡入，不重放整块动效
+      if (isSwitching) detailHost.classList.add('is-switching')
       detailHost.replaceChildren(renderReaderClaimDetail({
         node,
         stats: claimEvidenceStats(node, rowsOfClaim),
@@ -83,11 +113,24 @@ export function renderReaderView(theme, opts = {}) {
           }
           return map
         })(),
-        onOpenRelation: openClaimDetail,
+        onOpenRelation: (relId, relTrigger) => openClaimDetail(relId, relTrigger),
         onClose: closeClaimDetail,
       }))
-      // 点气泡后详情在页面底部，必须滚到可见位置（nearest 经常不动，用户以为没反应）
-      detailHost.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // 抽屉打开：加 is-open、锁 body 滚动、焦点移入
+      detailHost.classList.add('is-open')
+      detailBackdrop.classList.add('is-open')
+      detailHost.setAttribute('aria-hidden', 'false')
+      document.body.style.overflow = 'hidden'
+      if (isSwitching) {
+        // 100-120ms 淡入后去掉 switching 类
+        setTimeout(() => detailHost.classList.remove('is-switching'), 130)
+      }
+      // 焦点移入抽屉（关闭按钮优先）
+      const focusTarget = detailHost.querySelector('.rdr-detail-close') || detailHost
+      if (focusTarget) {
+        if (!focusTarget.hasAttribute('tabindex') && focusTarget === detailHost) focusTarget.setAttribute('tabindex', '-1')
+        focusTarget.focus()
+      }
     }
 
     /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
@@ -155,7 +198,7 @@ export function renderReaderView(theme, opts = {}) {
        清单由缩略图组件一并产出，这里把那个节点搬到 Top 5 之后（同一个节点搬家，不重建）。 */
     const clusterList = mapBox.querySelector('.rdr-cluster-wrap')
     article.replaceChildren(
-      ...[headBox, mapBox, conclusionBox, clusterList, detailHost].filter(Boolean),
+      ...[headBox, mapBox, conclusionBox, clusterList, detailBackdrop, detailHost].filter(Boolean),
       /* 用户决定：理由清单、时间线、"还缺什么"、检视器卡片、"更多视图"都已删除；
          页面只保留 头部统计 → 观点图谱 → 当前最该看的 5 个 → 按分类观点清单 → 单条信息卡。 */
       )
