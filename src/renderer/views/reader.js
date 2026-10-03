@@ -86,7 +86,8 @@ export function renderReaderView(theme, opts = {}) {
         onOpenRelation: openClaimDetail,
         onClose: closeClaimDetail,
       }))
-      detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // 点气泡后详情在页面底部，必须滚到可见位置（nearest 经常不动，用户以为没反应）
+      detailHost.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
 
     /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
