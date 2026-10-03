@@ -745,7 +745,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
     const addManualOpinion = () => {
       // 打开新增原子对话框（对齐设计稿）
-      openAddAtomDialog(theme, opts)
+      openAddAtomDialog(theme, viewState.projection, opts)
     }
     addNode.addEventListener('click', addManualOpinion)
     const queueCount = h('span', { class: 'builder-queue-count' }, '0')
@@ -1953,8 +1953,10 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
  * 新增原子节点对话框（对齐设计稿）
  * 为读者的主题认知网络新增一个原子节点
  */
-function openAddAtomDialog(theme, opts) {
+function openAddAtomDialog(theme, proj, opts) {
   const previousFocus = document.activeElement
+  // 可连接的现有节点（排除已归档/失效）
+  const connectableNodes = projectedNodes(proj).filter((node) => !node.archived && !node.invalidated)
   // 类型选项（设计稿）→ 底层节点类型映射
   const typeOptions = [
     { label: '技术路线', nodeType: 'concept' },
@@ -2040,7 +2042,20 @@ function openAddAtomDialog(theme, opts) {
         atomLabel: selectedType.label, // 保存显示用的原子类型标签
       })
       if (result?.ok === false) throw new Error(result.error || '保存未完成')
-      toast(`已新增原子「${title}」`)
+      const newNodeId = result.node?.id || result.id
+      // 追加与所选现有节点的关系（可选；不选则为孤立节点）
+      if (newNodeId && selectedNodeIds.size > 0 && typeof m.chainDeclareRelation === 'function') {
+        for (const targetId of selectedNodeIds) {
+          try {
+            await m.chainDeclareRelation(theme.id, newNodeId, targetId, selectedRel)
+          } catch (relError) {
+            console.warn('关系追加失败:', relError)
+          }
+        }
+        toast(`已新增原子「${title}」，并连接到 ${selectedNodeIds.size} 个节点`)
+      } else {
+        toast(`已新增原子「${title}」（孤立节点）`)
+      }
       close()
       opts.onChanged?.()
     } catch (saveError) {
@@ -2049,6 +2064,39 @@ function openAddAtomDialog(theme, opts) {
       saveBtn.disabled = false
     }
   }
+
+  // 连接现有节点（可选；不选则为孤立节点）
+  const relOptions = [
+    { value: 'supports', label: '支持' },
+    { value: 'contradicts', label: '反驳' },
+    { value: 'derives', label: '推导' },
+    { value: 'related', label: '相关' },
+  ]
+  let selectedRel = 'supports'
+  const relSelect = h('select', { class: 'txt atom-rel-select', 'aria-label': '关系类型' },
+    ...relOptions.map((o) => h('option', { value: o.value, selected: o.value === selectedRel }, o.label)))
+  relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
+  const nodeCheckboxes = h('div', { class: 'atom-connect-list' })
+  const selectedNodeIds = new Set()
+  if (connectableNodes.length) {
+    for (const node of connectableNodes.slice(0, 20)) { // 最多显示20个
+      const cb = h('input', { type: 'checkbox', id: `atom-connect-${node.id}`, value: node.id })
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedNodeIds.add(node.id)
+        else selectedNodeIds.delete(node.id)
+      })
+      nodeCheckboxes.append(
+        h('label', { class: 'atom-connect-item' }, cb,
+          h('span', {}, node.title || node.id)))
+    }
+  } else {
+    nodeCheckboxes.append(h('p', { class: 'atom-hint' }, '当前主题暂无可连接的节点，新原子将为孤立节点。'))
+  }
+  const connectSection = h('div', { class: 'atom-field' },
+    h('div', { class: 'atom-label-row' }, h('span', {}, '连接到现有节点'), h('span', { class: 'atom-hint' }, '可选；不选则为孤立节点')),
+    h('div', { class: 'atom-connect-row' },
+      h('span', { class: 'atom-label-inline' }, '关系'), relSelect),
+    nodeCheckboxes)
 
   dialog.append(
     h('header', { class: 'atom-dialog-head' },
@@ -2065,6 +2113,7 @@ function openAddAtomDialog(theme, opts) {
       h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '类型'), typePills),
       h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '时间起点'), timeInput)),
     h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '颜色'), colorPicker),
+    connectSection,
     error,
     h('div', { class: 'atom-dialog-foot' },
       h('span', { class: 'atom-foot-note' }, '新增原子会改变图谱结构。'),
