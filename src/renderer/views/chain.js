@@ -299,6 +299,16 @@ async function loadConcept(theme, ledgerPane, opts) {
     onChanged: opts.onChanged,
     initialState: viewState,
     verifiedEvents,
+    projection: proj,
+    onOpenAffected: (nodeId) => {
+      const node = projectedNodes(proj).find((entry) => entry.id === nodeId)
+      if (!node) { toast('这条记录指向的对象已经不在了'); return }
+      opts.onOpen?.(node, {
+        onChanged: opts.onChanged,
+        historyContext: { events, projection: proj, selectedSeq: state.selectedSeq ?? null },
+        onJumpToEvent: opts.onJumpToEvent,
+      })
+    },
   })
   /* Historical signals stay in this same review queue; no separate history page. */
   const buildSignals = () => {
@@ -1435,6 +1445,36 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
         } finally { verifyButton.disabled = false }
     },
   }, '重新校验')
+  /* 账本要回答的是"谁在什么时候改了什么"，所以先按"谁做的"分堆，而不是按事件类型平铺。 */
+  const BUCKETS = [['all', '全部'], ['mine', '你做的'], ['engine', '机器提的'], ['source', '来源流入']]
+  const bucketOf = (record) => {
+    if (record?.actor === 'user') return 'mine'
+    if (record?.type === 'engine.recommendation.proposed' || /engine|agent/.test(String(record?.actor || ''))) return 'engine'
+    return 'source'
+  }
+  let bucket = 'all'
+  let query = ''
+  const countOf = (key) => (key === 'all' ? events.length : events.filter((record) => bucketOf(record) === key).length)
+  const filterChips = BUCKETS.map(([key, label]) => h('button', {
+    type: 'button', class: `cog-ledger-filter${key === bucket ? ' is-active' : ''}`, 'aria-pressed': String(key === bucket),
+    dataset: { bucket: key },
+    onclick: () => { bucket = key; syncFilters(); page = 1; renderPage(currentViewState) },
+  }, label, h('span', { class: 'cog-ledger-filter-count' }, String(countOf(key)))))
+  const filters = h('div', { class: 'cog-ledger-filters', role: 'group', 'aria-label': '按谁做的筛选' }, ...filterChips)
+  const syncFilters = () => {
+    for (const chip of filterChips) {
+      const key = chip.dataset.bucket
+      const active = key === bucket
+      chip.classList.toggle('is-active', active)
+      chip.setAttribute('aria-pressed', String(active))
+      const count = chip.querySelector('.cog-ledger-filter-count')
+      if (count) count.textContent = String(countOf(key))
+    }
+  }
+  const search = h('input', {
+    type: 'search', class: 'cog-ledger-search', placeholder: '在这本账里找…', 'aria-label': '在账本里搜索',
+    oninput: (event) => { query = String(event.target.value || '').trim().toLowerCase().replace(/外部数据/g, '来源').replace(/原子/g, '观点'); page = 1; renderPage(currentViewState) },
+  })
   const pageLabel = h('span', { class: 'cog-page-label', 'aria-live': 'polite' })
   const ordered = events.map((record, index) => ({ record, index })).sort((a, b) => {
     const ax = Number.isSafeInteger(a.record?.seq) ? a.record.seq : Number.MAX_SAFE_INTEGER
@@ -1450,13 +1490,15 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   pane.append(
     h('div', { class: 'cog-ledger-head' },
       h('span', { class: 'cog-ledger-num' }, '01'),
-      h('span', { class: 'cog-ledger-title', id: handlers.titleId || '' }, '账本 · 追加式审计记录'),
+      h('span', { class: 'cog-ledger-title', id: handlers.titleId || '' }, '账本 · 谁在什么时候改了什么'),
       h('span', { class: 'cog-ledger-badge' }, '只追加'),
       h('button', { type: 'button', class: 'btn cog-ledger-close', 'aria-label': '关闭账本抽屉', onclick: handlers.onClose }, '关闭')),
-    h('p', { class: 'cog-ledger-sub' }, '完整时间顺序保留；窗口分页避免一次性渲染大账本。更正、归档、恢复与复核均追加新事件，不覆盖旧记录。'),
+    h('p', { class: 'cog-ledger-sub' }, '只追加，不覆盖：更正、归档、恢复与复核都会留下新记录。'),
     h('div', { class: 'cog-integrity-row' }, integrityBox, verifyButton),
     handlers.replayControls || null,
-    h('p', { class: 'cog-ledger-colhead' }, '按 append sequence 升序 · 每页最多 40 条'),
+    filters,
+    search,
+    h('p', { class: 'cog-ledger-colhead' }, '从早到晚 · 每页 40 条'),
   )
   if (!events.length) {
     pane.append(h('div', { class: 'cog-ledger-empty' }, '还没有账本事件。创建原子或补充信号后，操作会按顺序记录在这里。'))
@@ -1483,7 +1525,19 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       return e ? String(e.payload?.title || e.payload?.coreInfo || e.payload?.text || e.payload?.legacySource?.label || '').slice(0, 80) : ''
     }
     clear(list)
-    const pageRows = paginate(ordered, page, LEDGER_PAGE_SIZE)
+    const filtered = ordered.filter(({ record }) => {
+      if (bucket !== 'all' && bucketOf(record) !== bucket) return false
+      if (!query) return true
+      /* 搜索要跨口径：读者侧叫"观点/来源"，建设者侧叫"原子/外部数据"，两边搜都要命中。 */
+      const haystack = `${compactEventSummary(record) || ''} ${record?.payload?.title || ''} ${record?.payload?.text || ''} ${EVENT_KIND_LABEL[record?.type] || ''}`
+        .replace(/外部数据/g, '来源').replace(/原子/g, '观点').replace(/证据/g, '来源')
+        .toLowerCase()
+      return haystack.includes(query) || query.includes('来源') && /来源|外部数据/.test(`${compactEventSummary(record) || ''}`)
+    })
+    if (!filtered.length) {
+      list.append(h('p', { class: 'cog-ledger-nomatch' }, '这个筛选下没有记录。换一个分堆，或清空搜索。'))
+    }
+    const pageRows = paginate(filtered, page, LEDGER_PAGE_SIZE)
     page = pageRows.page
     const first = pageRows.total ? pageRows.start + 1 : 0
     pageLabel.textContent = `${first}–${pageRows.end} / ${pageRows.total} 条 · 第 ${pageRows.page} / ${pageRows.pages} 页`
@@ -1519,12 +1573,22 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       const reviewText = reviewDecision
         ? `已${reviewDecision.payload.reviewDecision === 'confirmed' ? '确认' : '驳回'} · ${ACTOR_LABEL[reviewDecision.actor] || reviewDecision.actor || '未记录'} · ${fmtAt(reviewDecision.at) || '时间未记录'} · ${reviewDecision.payload.decisionReason || '未填写理由'}`
         : isPendingReview ? '待人工复核；在明确决定前，不作为已确认关系展示。' : ''
+      /* 主操作是"看这条改变了什么"（直接打开受影响的对象），图谱定位降为次要动作。 */
+      const affectedId = (() => {
+        try { return affectedNodeIdForEvent(e, handlers.projection, events) || null } catch { return null }
+      })()
+      const openButton = affectedId && handlers.onOpenAffected
+        ? h('button', {
+          type: 'button', class: 'btn cog-event-open',
+          onclick: () => handlers.onOpenAffected(affectedId, e),
+        }, '看这条改变了什么')
+        : null
       const focusButton = h('button', {
         type: 'button', class: 'btn cog-event-focus',
         disabled: isInvalid || verification === '校验失败' || verification === '未校验',
-        'aria-label': `⌖ 在图中定位第 ${Number.isSafeInteger(e.seq) ? e.seq : item.index + 1} 条事件`,
+        'aria-label': `在图里看第 ${Number.isSafeInteger(e.seq) ? e.seq : item.index + 1} 条事件`,
         onclick: () => handlers.onFocusEvent?.(e),
-      }, h('span', { 'aria-hidden': 'true' }, '⌖'), h('span', {}, '在图中定位'))
+      }, h('span', { 'aria-hidden': 'true' }, '⌖'), h('span', {}, '在图里看'))
       const disclosure = h('details', { class: 'cog-ev-disclosure' },
         h('summary', { class: 'cog-ev-summary', title: compactEventSummary(e) },
           h('span', { class: `cog-ev-dot${isCorrection || isReviewEvent ? ' orange' : ''}`, 'aria-hidden': 'true' }),
@@ -1571,6 +1635,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
         h('div', { class: 'cog-ev-row' },
           disclosure,
           h('span', { class: `cog-ev-validation ${verificationClass}`, role: verification === '校验失败' ? 'alert' : 'status' }, verification),
+          openButton,
           focusButton))
       list.append(card)
     }

@@ -300,7 +300,7 @@ import '../styles.css'
       const ledgerPane = host.querySelector('.theme-view-host .cog-ledger-pane')
       check('历史导航移除后，追加式账本、完整性状态与关闭控件仍可用',
         ledgerPane.getAttribute('role') === 'dialog'
-        && ledgerPane.querySelector('.cog-ledger-title')?.textContent.includes('追加式审计记录')
+        && ledgerPane.querySelector('.cog-ledger-title')?.textContent.includes('谁在什么时候改了什么')
         && !!ledgerPane.querySelector('.cog-integrity')
         && !!ledgerPane.querySelector('.cog-ledger-close'))
       ledgerPane.querySelector('.cog-ledger-close').click()
