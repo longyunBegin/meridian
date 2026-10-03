@@ -125,18 +125,14 @@ export async function renderToday(mid) {
       }, '撤销'),
     ) : null,
 
-    // ---- 顶部两个大数字：同色，靠字号和位置区分主次。
-    // 颜色只留给真正的异常——"今日结算"用橙色会让用户误以为出问题了。
-    h('div', { class: 'today-metrics' },
-      h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'inbox-section') },
-        h('span', { class: 'today-metric-num', style: { color: inboxTotal ? 'var(--text-1)' : 'var(--text-3)' } }, String(inboxTotal)),
-        h('span', { class: 'today-metric-label' }, '待确认'),
-      ),
-      h('div', { class: 'today-metric', onclick: () => scrollTo(mid, 'due-section') },
-        h('span', { class: 'today-metric-num', style: { color: due.length ? 'var(--text-1)' : 'var(--text-3)' } }, String(due.length)),
-        h('span', { class: 'today-metric-label' }, '今日结算'),
-      ),
-    ),
+    /* 页面级状态：一行、次要色、等宽数字。同一批数字全页只出现一次——
+       以前"待确认 4"在这里、在区块头、在统计卡、在页签里各出现一遍，读者要先做减法。 */
+    h('p', { class: 'today-summary' },
+      h('button', { type: 'button', class: 'today-summary-link', onclick: () => scrollTo(mid, 'inbox-section') },
+        '待确认 ', h('b', {}, String(inboxTotal))),
+      h('span', { class: 'today-summary-sep' }, '·'),
+      h('button', { type: 'button', class: 'today-summary-link', onclick: () => scrollTo(mid, 'due-section') },
+        '今日结算 ', h('b', {}, String(due.length)))),
 
     renderInboxWorkspace(mid, seq, allNodes),
     renderIgnoredProposals(ignored, allNodes),
@@ -249,15 +245,15 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const items = inboxItems
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
 
-  // ---- 头部：大数字统计（对齐设计稿：待处理橙色 / 已归位绿色）----
-  const statPending = h('b', { class: 'inbox2-stat-num is-pending' }, '…')
-  const statLemmas = h('b', { class: 'inbox2-stat-num' }, '…')
-  const statResolved = h('b', { class: 'inbox2-stat-num is-resolved' }, '…')
-  const statsRow = h('div', { class: 'inbox2-stats' },
-    h('div', { class: 'inbox2-stat' }, statPending, h('span', { class: 'inbox2-stat-label' }, '待处理')),
-    h('div', { class: 'inbox2-stat' }, statLemmas, h('span', { class: 'inbox2-stat-label' }, '已抽取要点')),
-    h('div', { class: 'inbox2-stat' }, statResolved, h('span', { class: 'inbox2-stat-label' }, '已归位')),
-  )
+  /* 区块级摘要：只放"次要"的两个数（已抽取 / 已归位），主数（待确认）在页面级那一行。
+     12px 次要色 + 等宽数字，不再是大号彩色数字。 */
+  const statPending = h('b', {}, '…')
+  const statLemmas = h('b', {}, '…')
+  const statResolved = h('b', {}, '…')
+  const statsRow = h('span', { class: 'inbox2-summary' },
+    h('span', {}, '已抽取要点 ', statLemmas),
+    h('span', { class: 'inbox2-summary-sep' }, '·'),
+    h('span', {}, '已归位 ', statResolved))
   m.inboxStats?.().then((s) => {
     if (!s) return
     statPending.textContent = String(s.pending ?? '—')
@@ -285,7 +281,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const countPending = items.filter((i) => i.extracted === false).length
   const countDone = items.filter((i) => i.extracted !== false).length
   const statusTabs = h('div', { class: 'inbox2-status-tabs' },
-    ...[['all', '全部', countAll], ['pending', '待处理', countPending], ['done', '已处理', countDone]].map(([key, label, n]) =>
+    ...[['all', '全部', countAll], ['pending', '待抽取', countPending], ['done', '已抽取', countDone]].map(([key, label, n]) =>
       h('button', {
         type: 'button',
         class: `inbox2-status-tab${inboxStatusFilter === key ? ' is-active' : ''}`,
@@ -304,9 +300,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const section = h('section', { class: 'card inbox-workspace inbox2', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
       h('h2', {}, '待确认'),
-      h('span', { class: 'spacer' }), h('em', {}, `${inboxTotal} 条待审阅`),
+      h('span', { class: 'spacer' }), statsRow,
     ),
-    statsRow,
     themeFilterRow,
     statusTabs,
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },

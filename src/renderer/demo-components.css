@@ -1428,25 +1428,21 @@
 /* ========== 收件箱 v2（对齐设计稿） ========== */
 
 /* 头部大数字统计 */
-.meridian-theme .inbox2-stats { display:flex; gap:40px; margin:16px 0 20px; }
-.meridian-theme .inbox2-stat { display:flex; flex-direction:column; gap:2px; }
-.meridian-theme .inbox2-stat-num { font-size: var(--t-largeTitle); font-weight: var(--fw-semibold); line-height:1.1; color:var(--text-1); }
-.meridian-theme .inbox2-stat-num.is-pending { color:var(--orange); }
-.meridian-theme .inbox2-stat-num.is-resolved { color:var(--green); }
-.meridian-theme .inbox2-stat-label { font-size: var(--t-body); color:var(--text-3); }
 
 /* 主题筛选 pills */
 .meridian-theme .inbox2-theme-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
 .meridian-theme .inbox2-filter-label { font-size: var(--t-body); color:var(--text-3); margin-right:4px; }
-.meridian-theme .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:1px solid var(--line); border-radius: var(--r-pill); background:var(--bg); font-size: var(--t-body); color:var(--text-2); cursor:pointer; }
-.meridian-theme .inbox2-theme-pill.is-active { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+.meridian-theme .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border:1px solid var(--hairline); border-radius:var(--r-pill); background:var(--surface-solid); font-size:var(--t-footnote); color:var(--text-2); cursor:pointer; }
+.meridian-theme .inbox2-theme-pill:hover { background:var(--hover); color:var(--text-1); }
+/* 区块级摘要（已抽取 / 已归位 / 待处理）：12px 次要色，不再是大号彩色数字 */
+.meridian-theme .inbox2-summary { display:inline-flex; align-items:baseline; gap:6px; color:var(--text-3); font-size:var(--t-footnote); font-variant-numeric:tabular-nums; }
+.meridian-theme .inbox2-summary b { color:var(--text-1); font-weight:var(--fw-semibold); }
+.meridian-theme .inbox2-summary-sep { color:var(--text-3); }
+.meridian-theme .inbox2-theme-pill.is-active { background:var(--accent-soft); color:var(--accent-strong); border-color:rgba(0,113,227,.28); font-weight:var(--fw-medium); }
 .meridian-theme .inbox2-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
 .meridian-theme .inbox2-dot.is-white { background:#fff; }
 
 /* 状态页签 */
-.meridian-theme .inbox2-status-tabs { display:inline-flex; background:var(--bg-2); border-radius: var(--r); padding:3px; gap:2px; margin-bottom:16px; }
-.meridian-theme .inbox2-status-tab { padding:7px 16px; border:none; border-radius: var(--r); background:transparent; font-size: var(--t-body); color:var(--text-2); cursor:pointer; }
-.meridian-theme .inbox2-status-tab.is-active { background:var(--bg); color:var(--text-1); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
 .meridian-theme .inbox2-tab-count { margin-left:6px; color:var(--text-3); font-weight:400; }
 
 /* 列表项 v2 */
@@ -1600,25 +1596,23 @@
    只在 .meridian-theme.rdr-root 下重定义，暗色模式会退回浅色值。所以这里把同一批规则镜像到
    #inbox-section，变量沿用应用自身的主题变量（暗色自动跟随 :root）。 */
 #inbox-section { --line-2: var(--hairline); }
-#inbox-section .inbox2-stats { display:flex; gap:40px; margin:16px 0 20px; }
-#inbox-section .inbox2-stat { display:flex; flex-direction:column; gap:2px; }
-#inbox-section .inbox2-stat-num { font-size: var(--t-largeTitle); font-weight: var(--fw-semibold); line-height:1.1; color:var(--text-1); }
-#inbox-section .inbox2-stat-num.is-pending { color:var(--orange); }
-#inbox-section .inbox2-stat-num.is-resolved { color:var(--green); }
-#inbox-section .inbox2-stat-label { font-size: var(--t-body); color:var(--text-3); }
 
 /* 主题筛选 pills */
 #inbox-section .inbox2-theme-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
 #inbox-section .inbox2-filter-label { font-size: var(--t-body); color:var(--text-3); margin-right:4px; }
-#inbox-section .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:1px solid var(--line); border-radius: var(--r-pill); background:var(--bg); font-size: var(--t-body); color:var(--text-2); cursor:pointer; }
-#inbox-section .inbox2-theme-pill.is-active { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+#inbox-section .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border:1px solid var(--hairline); border-radius:var(--r-pill); background:var(--surface-solid); font-size:var(--t-footnote); color:var(--text-2); cursor:pointer; }
+#inbox-section .inbox2-theme-pill:hover { background:var(--hover); color:var(--text-1); }
+#inbox-section .inbox2-summary { display:inline-flex; align-items:baseline; gap:6px; color:var(--text-3); font-size:var(--t-footnote); font-variant-numeric:tabular-nums; }
+#inbox-section .inbox2-summary b { color:var(--text-1); font-weight:var(--fw-semibold); }
+#inbox-section .inbox2-summary-sep { color:var(--text-3); }
+#inbox-section .inbox2-theme-pill.is-active { background:var(--accent-soft); color:var(--accent-strong); border-color:rgba(0,113,227,.28); font-weight:var(--fw-medium); }
 #inbox-section .inbox2-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
 #inbox-section .inbox2-dot.is-white { background:#fff; }
 
 /* 状态页签 */
-#inbox-section .inbox2-status-tabs { display:inline-flex; background:var(--bg-2); border-radius: var(--r); padding:3px; gap:2px; margin-bottom:16px; }
+#inbox-section .inbox2-status-tabs { display:inline-flex; background:var(--hover); border-radius:var(--r); padding:3px; gap:2px; margin-bottom:var(--sp-4); }
 #inbox-section .inbox2-status-tab { padding:7px 16px; border:none; border-radius: var(--r); background:transparent; font-size: var(--t-body); color:var(--text-2); cursor:pointer; }
-#inbox-section .inbox2-status-tab.is-active { background:var(--bg); color:var(--text-1); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+#inbox-section .inbox2-status-tab.is-active { background:var(--surface-solid); color:var(--text-1); font-weight:var(--fw-semibold); box-shadow:var(--e-1); }
 #inbox-section .inbox2-tab-count { margin-left:6px; color:var(--text-3); font-weight:400; }
 
 /* 列表项 v2 */

@@ -184,7 +184,7 @@ state.view = 'today'
 setView('today')
 await waitFor(() => document.querySelector('.inbox-empty-state'), '今日空收件箱')
 check('今日空状态可辨认，待确认数清零', document.querySelector('.inbox-empty-state')?.textContent.includes('待确认已清空')
-  && document.querySelector('.today-metrics')?.textContent.includes('0'))
+  && document.querySelector('.today-summary')?.textContent.includes('0'))
 check('今日结算、校准曲线和空态说明同时可见', document.querySelector('.today-page')?.textContent.includes('到期未结算')
   && document.querySelector('.today-page')?.textContent.includes('命题校准曲线'))
 
