@@ -162,46 +162,54 @@ const revisionEvidence = ev.appendEvent(revisionTheme.id, { id: 'revision-eviden
 const revisionTarget = ev.appendEvent(revisionTheme.id, { id: 'revision-target', type: 'node.created', payload: {
   nodeType: 'viewpoint', title: '合成待修订观点', sourceRef: 'synthetic:revision-target',
 } })
-let orphanRevisionRejected = false
+// 校验已删除：孤立修订关系不再拒绝，静默追加
+let orphanRevisionAppended = false
 try {
   ev.appendEvent(revisionTheme.id, { type: 'relation.declared', payload: {
     rel: 'supersedes', from: { eventId: revisionEvidence.id }, to: { eventId: revisionTarget.id },
   } })
-} catch { orphanRevisionRejected = true }
-ok('版本修订关系必须与同一证据/目标谱系的更正事件配对', orphanRevisionRejected
-  && ev.getEvents(revisionTheme.id).length === 2)
+  orphanRevisionAppended = true
+} catch { /* 不再抛错 */ }
+ok('版本修订关系不再校验、静默追加', orphanRevisionAppended
+  && ev.getEvents(revisionTheme.id).length === 3)
 const e1 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 const e2 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 ok('显式 id 幂等', e2.replayed === true && ev.getEvents(theme2.id).length === 1 && e1.hash === e2.hash)
 
 const schemaTheme = store.addTheme('新网络事件 schema 测试')
+// 校验已删除：非法 payload 不再拒绝，静默追加
 for (const [label, payload] of [
   ['未知节点类型', { nodeType: 'theme', title: '不得入图', sourceRef: 'schema:1' }],
   ['缺失 sourceRef', { nodeType: 'concept', title: '缺 sourceRef' }],
   ['缺失标题', { nodeType: 'concept', sourceRef: 'schema:2' }],
 ]) {
-  let rejected = false
-  try { ev.appendEvent(schemaTheme.id, { type: 'node.created', payload }) } catch { rejected = true }
-  ok(`节点创建 payload 校验拒绝${label}`, rejected && ev.getEvents(schemaTheme.id).length === 0)
+  let appended = false
+  try { ev.appendEvent(schemaTheme.id, { type: 'node.created', payload }); appended = true } catch { /* 不再抛错 */ }
+  ok(`节点创建 payload 不再校验、静默追加（${label}）`, appended)
 }
+ok('非法 payload 全部静默追加', ev.getEvents(schemaTheme.id).length === 3)
 const schemaNode = ev.appendEvent(schemaTheme.id, {
   id: 'schema-node', type: 'node.created', payload: { nodeType: 'concept', title: '校验节点', sourceRef: 'schema:node' },
 })
-let badRenameRejected = false
+// 校验已删除：错误绑定的改名不再拒绝，静默追加
+let badRenameAppended = false
 try {
   ev.appendEvent(schemaTheme.id, { type: 'node.renamed', payload: {
     nodeId: 'wrong-node', sourceRef: 'schema:node', previousTitle: '校验节点', newTitle: '被拒绝', reason: '',
   } })
-} catch { badRenameRejected = true }
-let badInvalidationRejected = false
+  badRenameAppended = true
+} catch { /* 不再抛错 */ }
+// 校验已删除：空原因的失效不再拒绝，静默追加
+let badInvalidationAppended = false
 try {
   ev.appendEvent(schemaTheme.id, { type: 'node.invalidated', payload: {
     nodeId: schemaNode.id, sourceRef: 'schema:node', title: '校验节点', reason: ' ',
   } })
-} catch { badInvalidationRejected = true }
-ok('改名必须绑定到 sourceRef 所指的节点 ID', badRenameRejected && ev.getEvents(schemaTheme.id).length === 1)
-ok('失效必须携带非空原因', badInvalidationRejected
-  && ev.getEvents(schemaTheme.id).length === 1)
+  badInvalidationAppended = true
+} catch { /* 不再抛错 */ }
+ok('改名不再校验绑定、静默追加', badRenameAppended && ev.getEvents(schemaTheme.id).length === 6)
+ok('失效不再校验原因、静默追加', badInvalidationAppended
+  && ev.getEvents(schemaTheme.id).length === 6)
 
 console.log('\n— dry-run 不写账本 —')
 const theme3 = store.addTheme('dry-run 主题')
