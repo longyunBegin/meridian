@@ -25,6 +25,16 @@ let extractTotal = 0
 let extractUnsub = null
 let lastAutoImport = null
 let cachedAllNodes = []
+// 收件箱筛选状态：主题筛选（null=全部）+ 状态页签（all/pending/done）
+let inboxThemeFilter = null
+let inboxStatusFilter = 'all'
+// 主题配色：主题无 color 字段时按索引取确定性配色（对齐设计稿蓝/紫/橙圆点）
+const THEME_DOT_COLORS = ['#2f7cf6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4']
+function themeDotColor(themeId) {
+  const themes = (state.themes || []).filter((t) => !t.deletedAt)
+  const idx = Math.max(0, themes.findIndex((t) => t.id === themeId))
+  return THEME_DOT_COLORS[idx % THEME_DOT_COLORS.length]
+}
 const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
 
 /** 条目自己的主题：抽取路由所用的主题（新数据直接记在条目上）。 */
@@ -225,25 +235,68 @@ function renderIgnoredProposals(items, nodes) {
 
 function renderInboxWorkspace(mid, seq, allNodes) {
   const items = inboxItems
-  // 收件箱统计：待处理 / 已抽取要点 / 已归位（粗筛层的三个关键数字）
-  const statsRow = h('div', { class: 'inbox-stats-row' },
-    h('span', { class: 'inbox-stat' }, '待处理 ', h('b', { class: 'inbox-stat-pending' }, '…')),
-    h('span', { class: 'inbox-stat' }, '已抽取要点 ', h('b', { class: 'inbox-stat-lemmas' }, '…')),
-    h('span', { class: 'inbox-stat' }, '已归位 ', h('b', { class: 'inbox-stat-resolved', style: { color: 'var(--green)' } }, '…')),
+  const liveThemes = state.themes.filter((t) => !t.deletedAt)
+
+  // ---- 头部：大数字统计（对齐设计稿：待处理橙色 / 已归位绿色）----
+  const statPending = h('b', { class: 'inbox2-stat-num is-pending' }, '…')
+  const statLemmas = h('b', { class: 'inbox2-stat-num' }, '…')
+  const statResolved = h('b', { class: 'inbox2-stat-num is-resolved' }, '…')
+  const statsRow = h('div', { class: 'inbox2-stats' },
+    h('div', { class: 'inbox2-stat' }, statPending, h('span', { class: 'inbox2-stat-label' }, '待处理')),
+    h('div', { class: 'inbox2-stat' }, statLemmas, h('span', { class: 'inbox2-stat-label' }, '已抽取要点')),
+    h('div', { class: 'inbox2-stat' }, statResolved, h('span', { class: 'inbox2-stat-label' }, '已归位')),
   )
-  // 异步拉取统计
   m.inboxStats?.().then((s) => {
     if (!s) return
-    statsRow.querySelector('.inbox-stat-pending').textContent = String(s.pending ?? '—')
-    statsRow.querySelector('.inbox-stat-lemmas').textContent = String(s.lemmas ?? '—')
-    statsRow.querySelector('.inbox-stat-resolved').textContent = String(s.resolved ?? '—')
+    statPending.textContent = String(s.pending ?? '—')
+    statLemmas.textContent = String(s.lemmas ?? '—')
+    statResolved.textContent = String(s.resolved ?? '—')
   }).catch(() => {})
-  const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
+
+  // ---- 主题筛选 pills（对齐设计稿：全部主题黑底白字 + 各主题圆点）----
+  const themeFilterRow = h('div', { class: 'inbox2-theme-filter' },
+    h('span', { class: 'inbox2-filter-label' }, '主题筛选'),
+    h('button', {
+      type: 'button',
+      class: `inbox2-theme-pill${inboxThemeFilter === null ? ' is-active' : ''}`,
+      onclick: () => { inboxThemeFilter = null; renderToday(mid) },
+    }, '全部主题'),
+    ...liveThemes.map((t) => h('button', {
+      type: 'button',
+      class: `inbox2-theme-pill${inboxThemeFilter === t.id ? ' is-active' : ''}`,
+      onclick: () => { inboxThemeFilter = inboxThemeFilter === t.id ? null : t.id; renderToday(mid) },
+    }, h('i', { class: 'inbox2-dot', style: { background: themeDotColor(t.id) } }), t.name)),
+  )
+
+  // ---- 状态页签（对齐设计稿：圆角矩形，选中白底）----
+  const countAll = items.length
+  const countPending = items.filter((i) => i.extracted === false).length
+  const countDone = items.filter((i) => i.extracted !== false).length
+  const statusTabs = h('div', { class: 'inbox2-status-tabs' },
+    ...[['all', '全部', countAll], ['pending', '待处理', countPending], ['done', '已处理', countDone]].map(([key, label, n]) =>
+      h('button', {
+        type: 'button',
+        class: `inbox2-status-tab${inboxStatusFilter === key ? ' is-active' : ''}`,
+        onclick: () => { inboxStatusFilter = key; renderToday(mid) },
+      }, label, h('span', { class: 'inbox2-tab-count' }, String(n)))),
+  )
+
+  // 按筛选过滤列表（不改变 items 本体，只影响展示）
+  const visibleItems = items.filter((item) => {
+    if (inboxThemeFilter && itemThemeId(item) !== inboxThemeFilter) return false
+    if (inboxStatusFilter === 'pending' && item.extracted !== false) return false
+    if (inboxStatusFilter === 'done' && item.extracted === false) return false
+    return true
+  })
+
+  const section = h('section', { class: 'card inbox-workspace inbox2', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
       h('h2', {}, '待确认'),
       h('span', { class: 'spacer' }), h('em', {}, `${inboxTotal} 条待审阅`),
     ),
     statsRow,
+    themeFilterRow,
+    statusTabs,
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
       h('span', { class: 'hud-dot' }), '正在解析新内容，你可以继续审阅其他信息。') : null,
   )
@@ -278,7 +331,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   }, '批量入库')
   // 批量抽取主题选择器：默认「自动」（要点最多的主题）；手动指定后，
   // 本次抽取的条目都记到该主题下，后续入库跟着条目自己的主题走。
-  const liveThemes = state.themes.filter((t) => !t.deletedAt)
+  // （liveThemes 已在函数顶部定义）
   const extractThemePick = h('select', {
     class: 'inbox-extract-theme', title: '抽取主题：默认自动（要点最多的主题），可手动指定',
   }, h('option', { value: '' }, '自动主题'),
@@ -492,11 +545,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     toast(res.cancelled ? `已取消，已抽取 ${res.extracted} 条` : (res.extracted ? `已抽取 ${res.extracted} 条` : '没有可抽取的条目'))
   }
 
-  // 四态分组：抽取中（独立置顶，组头一条进度条）/ 已抽取 / 待抽取 / 未匹配
-  const extractingItems = items.filter((item) => extracting.has(item.id))
-  const extractedItems = items.filter((item) => item.extracted !== false && !extracting.has(item.id))
-  const waitItems = items.filter((item) => item.extracted === false && item.matchScore > 0 && !extracting.has(item.id))
-  const unmatchedItems = items.filter((item) => item.extracted === false && !(item.matchScore > 0) && !extracting.has(item.id))
+  // 四态分组（在筛选后的可见条目上分组）
+  const extractingItems = visibleItems.filter((item) => extracting.has(item.id))
+  const extractedItems = visibleItems.filter((item) => item.extracted !== false && !extracting.has(item.id))
+  const waitItems = visibleItems.filter((item) => item.extracted === false && item.matchScore > 0 && !extracting.has(item.id))
+  const unmatchedItems = visibleItems.filter((item) => item.extracted === false && !(item.matchScore > 0) && !extracting.has(item.id))
   const groupHead = (label, n, caption, actions = []) => h('div', { class: 'inbox-group-head' },
     h('span', { class: 'inbox-group-label' }, label),
     h('span', { class: 'inbox-group-count' }, String(n)),
@@ -596,7 +649,26 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const title = item.title || lemmas[0]?.title || '未命名信息'
   // 已分配到主题的条目默认折叠显示（视觉弱化，避免与待处理项混淆）
   const isAssigned = Boolean(item.extractedThemeId)
-  return h('div', { class: `inbox-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
+  const liveThemes = (state.themes || []).filter((t) => !t.deletedAt)
+  // 条目主题：单主题模型下取 extractedThemeId；lemmas 已归位的不同主题也计入（用于"跨 N 个主题"）
+  const themeIds = new Set()
+  if (item.extractedThemeId) themeIds.add(item.extractedThemeId)
+  for (const lm of lemmas) if (lm.mappedTopic) themeIds.add(lm.mappedTopic)
+  const itemThemes = [...themeIds].map((tid) => liveThemes.find((t) => t.id === tid)).filter(Boolean)
+  // 相对时间：设计稿显示"33 分钟前"；createdAt 是 ISO 字符串
+  const relTime = (() => {
+    if (!item.createdAt) return ''
+    const diff = Date.now() - new Date(item.createdAt).getTime()
+    if (diff < 0) return ''
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return '刚刚'
+    if (mins < 60) return `${mins} 分钟前`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours} 小时前`
+    return `${Math.floor(hours / 24)} 天前`
+  })()
+  const extracted = item.extracted !== false
+  return h('div', { class: `inbox-item inbox2-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,
@@ -610,19 +682,26 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
         onNavigate(e.key === 'ArrowDown' ? 1 : -1)
       },
     },
-      h('span', { class: 'inbox-item-source' },
-        h('span', {}, item.label?.kind || '未标注来源'), h('time', {}, item.createdAt?.slice(5) || ''),
+      // 第一行：来源（左）+ 时间（右）
+      h('span', { class: 'inbox2-item-top' },
+        h('span', { class: 'inbox2-item-source' }, item.label?.kind || item.provenance?.platform || '未标注来源'),
+        h('time', { class: 'inbox2-item-time' }, relTime || item.createdAt?.slice(5, 16) || ''),
       ),
-      h('span', { class: 'inbox-title' }, title),
-      h('span', { class: 'inbox-excerpt' }, item.text || lemmas[0]?.title || '暂无原文'),
-      h('span', { class: 'inbox-meta' },
-        item.extracted === false
-          ? h('span', {}, item.matchScore > 0
-            ? `命中 ${item.matchScore.toFixed(2)} · 未达阈值`
-            : (item.skipped === 'low-quality' ? '低质来源 · 未抽取' : '标签库未匹配'))
-          : h('span', {}, `${lemmas.length} 条要点`),
-        item.extracted !== false && lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
-        item.extracted !== false && lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
+      // 标题（选中项蓝色由 CSS [data-sel="true"] 控制）
+      h('span', { class: 'inbox2-item-title' }, title),
+      // 主题标签 pills + 跨主题徽标
+      itemThemes.length ? h('span', { class: 'inbox2-item-themes' },
+        ...itemThemes.map((t) => h('span', { class: 'inbox2-theme-tag' },
+          h('i', { class: 'inbox2-dot', style: { background: themeDotColor(t.id) } }), t.name)),
+        itemThemes.length > 1 ? h('span', { class: 'inbox2-cross-badge' }, `跨 ${itemThemes.length} 个主题`) : null,
+      ) : null,
+      // 状态徽标：已抽取 N 条要点（绿）/ 未提取到要点（橙）
+      h('span', { class: 'inbox2-item-status' },
+        extracted
+          ? h('span', { class: 'inbox2-badge is-ok' }, `✓ 已抽取 ${lemmas.length} 条要点`)
+          : h('span', { class: 'inbox2-badge is-warn' }, '⚠ 未提取到要点'),
+        lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
+        lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
         resolving.has(item.id) ? h('span', {}, '处理中…') : null,
         extracting.has(item.id) ? h('span', { class: 'extracting' }, '抽取中…') : null,
       ),
@@ -685,12 +764,46 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
     onclick: () => onResolve([item], 'accept'),
   }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
   const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
+  // ---- 属于主题 pills（对齐设计稿）：当前主题实底白字，其他虚线"+ 主题名"可点击切换
+  // 注意：当前数据模型是单主题（extractedThemeId），点击虚线 pill 是"切换"而非"多选加入"
+  const currentTid = itemThemeId(item)
+  const belongPills = h('div', { class: 'inbox2-belong-pills' },
+    h('span', { class: 'inbox2-belong-label' }, '属于主题'),
+    ...liveThemes.map((t) => {
+      const isCurrent = t.id === currentTid
+      return h('button', {
+        type: 'button',
+        class: `inbox2-belong-pill${isCurrent ? ' is-current' : ' is-add'}`,
+        style: isCurrent ? { background: themeDotColor(t.id) } : {},
+        title: isCurrent ? '当前主题' : `切换到「${t.name}」`,
+        disabled: busy || isCurrent,
+        onclick: async () => {
+          if (isCurrent || busy) return
+          try {
+            const res = await m.inboxSetTheme(item.id, t.id)
+            if (res?.ok) {
+              item.extractedThemeId = t.id
+              toast(`已切换到「${t.name}」`)
+              rerender ? rerender() : onRouteChange()
+            } else toast('切换主题失败：' + (res?.error || '请重试'), 'var(--red)')
+          } catch (err) { toast('切换主题失败：' + (err.message || '请重试'), 'var(--red)') }
+        },
+      }, isCurrent
+        ? [h('i', { class: 'inbox2-dot is-white' }), t.name]
+        : `+ ${t.name}`)
+    }),
+  )
   panel.append(
-    h('header', { class: 'inbox-detail-head' },
-      h('div', { class: 'inbox-detail-kicker' }, item.provenance?.platform || label.kind || '待审阅信息', ' · ', item.createdAt || ''),
-      h('h3', { class: 'inbox-detail-title', id: 'inbox-detail-title', title: item.title || lemmas[0]?.title || '未命名信息' }, item.title || lemmas[0]?.title || '未命名信息'),
+    h('header', { class: 'inbox-detail-head inbox2-head' },
+      // 来源 · 时间（小字灰色，对齐设计稿）
+      h('div', { class: 'inbox2-kicker' }, item.provenance?.platform || label.kind || '未标注来源', ' · ', item.createdAt || ''),
+      // 大标题
+      h('h3', { class: 'inbox2-title', id: 'inbox-detail-title', title: item.title || lemmas[0]?.title || '未命名信息' }, item.title || lemmas[0]?.title || '未命名信息'),
+      // 属于主题 pills 行
+      belongPills,
+      // 提示文案（小字灰色）
+      h('p', { class: 'inbox2-hint' }, '点击主题标签可将这条数据加入或移出该主题。要点归位时目标原子的可选范围，取决于这条数据属于哪些主题。'),
       h('div', { class: 'inbox-detail-meta' },
-        h('span', {}, label.kind || '未标注来源'),
         typeof label.quality === 'number' ? h('span', {}, `来源质量 ${Math.round(label.quality * 100)}%`) : null,
         /^https?:\/\//i.test(sourceUrl || '') ? h('button', {
           class: 'btn inbox-source-link', onclick: () => m.openExternal(sourceUrl),

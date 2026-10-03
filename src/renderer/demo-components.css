@@ -1260,3 +1260,71 @@
 .meridian-theme .inbox-mapped-feedback { font-size:13px; color:var(--green); font-weight:600; margin:0 0 8px; }
 .meridian-theme .inbox-goto-builder { font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
 .meridian-theme .inbox-goto-builder:hover { text-decoration:underline; }
+
+/* ========== 收件箱 v2（对齐设计稿） ========== */
+
+/* 头部大数字统计 */
+.meridian-theme .inbox2-stats { display:flex; gap:40px; margin:16px 0 20px; }
+.meridian-theme .inbox2-stat { display:flex; flex-direction:column; gap:2px; }
+.meridian-theme .inbox2-stat-num { font-size:32px; font-weight:700; line-height:1.1; color:var(--text-1); }
+.meridian-theme .inbox2-stat-num.is-pending { color:var(--orange); }
+.meridian-theme .inbox2-stat-num.is-resolved { color:var(--green); }
+.meridian-theme .inbox2-stat-label { font-size:13px; color:var(--text-3); }
+
+/* 主题筛选 pills */
+.meridian-theme .inbox2-theme-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.meridian-theme .inbox2-filter-label { font-size:13px; color:var(--text-3); margin-right:4px; }
+.meridian-theme .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:1px solid var(--line); border-radius:999px; background:var(--bg); font-size:13px; color:var(--text-2); cursor:pointer; }
+.meridian-theme .inbox2-theme-pill.is-active { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+.meridian-theme .inbox2-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+.meridian-theme .inbox2-dot.is-white { background:#fff; }
+
+/* 状态页签 */
+.meridian-theme .inbox2-status-tabs { display:inline-flex; background:var(--bg-2); border-radius:10px; padding:3px; gap:2px; margin-bottom:16px; }
+.meridian-theme .inbox2-status-tab { padding:7px 16px; border:none; border-radius:8px; background:transparent; font-size:13px; color:var(--text-2); cursor:pointer; }
+.meridian-theme .inbox2-status-tab.is-active { background:var(--bg); color:var(--text-1); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+.meridian-theme .inbox2-tab-count { margin-left:6px; color:var(--text-3); font-weight:400; }
+
+/* 列表项 v2 */
+.meridian-theme .inbox2-item .inbox-body { display:flex; flex-direction:column; gap:8px; padding:14px 16px; text-align:left; width:100%; }
+.meridian-theme .inbox2-item-top { display:flex; justify-content:space-between; align-items:center; }
+.meridian-theme .inbox2-item-source { font-size:12px; color:var(--text-3); }
+.meridian-theme .inbox2-item-time { font-size:12px; color:var(--text-3); }
+.meridian-theme .inbox2-item-title { font-size:15px; font-weight:600; color:var(--text-1); line-height:1.4; }
+.meridian-theme .inbox2-item[data-sel="true"] .inbox2-item-title { color:var(--accent); }
+.meridian-theme .inbox2-item-themes { display:flex; flex-wrap:wrap; gap:6px; }
+.meridian-theme .inbox2-theme-tag { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:999px; background:color-mix(in srgb, var(--accent) 10%, transparent); font-size:12px; color:var(--text-2); }
+.meridian-theme .inbox2-cross-badge { padding:4px 10px; border-radius:999px; background:var(--bg-2); font-size:12px; color:var(--text-3); }
+.meridian-theme .inbox2-item-status { display:flex; gap:6px; flex-wrap:wrap; }
+.meridian-theme .inbox2-badge { padding:4px 10px; border-radius:6px; font-size:12px; }
+.meridian-theme .inbox2-badge.is-ok { background:color-mix(in srgb, var(--green) 12%, transparent); color:var(--green); }
+.meridian-theme .inbox2-badge.is-warn { background:color-mix(in srgb, var(--orange) 12%, transparent); color:var(--orange); }
+
+/* 详情面板 v2 */
+.meridian-theme .inbox2-head { padding:20px 24px 16px; }
+.meridian-theme .inbox2-kicker { font-size:13px; color:var(--text-3); margin-bottom:8px; }
+.meridian-theme .inbox2-title { font-size:22px; font-weight:700; line-height:1.3; margin:0 0 16px; }
+.meridian-theme .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--bg-2); margin-bottom:12px; }
+.meridian-theme .inbox2-belong-label { font-size:13px; color:var(--text-3); }
+.meridian-theme .inbox2-belong-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:999px; font-size:13px; cursor:pointer; border:1px solid transparent; }
+.meridian-theme .inbox2-belong-pill.is-current { color:#fff; font-weight:600; }
+.meridian-theme .inbox2-belong-pill.is-add { border:1px dashed var(--line-2); background:transparent; color:var(--text-3); }
+.meridian-theme .inbox2-belong-pill.is-add:hover { border-color:var(--accent); color:var(--accent); }
+.meridian-theme .inbox2-hint { font-size:12px; color:var(--text-3); line-height:1.6; text-align:center; margin:0 0 16px; }
+
+/* 要点卡片 v2（对齐设计稿：两个下拉并排 + 立场切换） */
+.meridian-theme .inbox-statements { display:flex; flex-direction:column; gap:12px; }
+.meridian-theme .inbox-statement-card { border:1px solid var(--line); border-radius:12px; padding:16px; background:var(--bg); }
+.meridian-theme .inbox-statement-card.is-mapped { border-color:var(--green); }
+.meridian-theme .inbox-statement-text { font-size:14px; font-weight:600; margin:0 0 12px; line-height:1.5; }
+.meridian-theme .inbox-stmt-controls { display:flex; gap:8px; margin-bottom:12px; }
+.meridian-theme .inbox-stmt-controls select { flex:1; min-width:0; padding:9px 12px; border:1px solid var(--accent); border-radius:8px; font-size:13px; background:var(--bg); }
+.meridian-theme .inbox-stmt-controls select:disabled { border-color:var(--line); color:var(--text-3); }
+.meridian-theme .inbox-stmt-row { display:flex; justify-content:space-between; align-items:center; }
+.meridian-theme .inbox-stance-toggle { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.meridian-theme .inbox-stance-toggle button { padding:8px 20px; border:none; background:transparent; font-size:13px; cursor:pointer; color:var(--text-2); }
+.meridian-theme .inbox-stance-toggle button.is-active[data-stance="support"] { background:var(--green); color:#fff; font-weight:600; }
+.meridian-theme .inbox-stance-toggle button.is-active[data-stance="challenge"] { background:var(--red); color:#fff; font-weight:600; }
+.meridian-theme .inbox-mapped-feedback { font-size:13px; color:var(--green); font-weight:600; margin:0 0 8px; }
+.meridian-theme .inbox-goto-builder { font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
+.meridian-theme .inbox-goto-builder:hover { text-decoration:underline; }
