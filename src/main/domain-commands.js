@@ -699,6 +699,69 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, draft: res.draft }
   })
   /* 引擎只生成可审核建议；事实和关系由 chain:reviewEngineRecommendation 在用户确认后原子追加。 */
+  /** Mock 模式用的预设 pipeline（不调 LLM，用于 UI 测试） */
+  function buildMockPipeline(item, themeId) {
+    const text = String(item.text || '').slice(0, 80)
+    const mockStatement = {
+      subject: 'Sivers Semiconductors',
+      attribute: '光子业务营收占比',
+      value: '28%',
+      timeWindow: '2026Q3',
+      type: 'hard',
+      quote: text,
+    }
+    // 找一个现有的原子作为归因目标（没有就建议新建）
+    let targetProp = null
+    try {
+      const proj = getChainProjection(themeId)
+      const candidates = (proj.nodes || []).filter((n) => !n.archived && !n.invalidated && !n.external)
+      if (candidates.length) {
+        const c = candidates[0]
+        targetProp = { id: c.id, title: c.title, status: c.status }
+      }
+    } catch { /* ignore */ }
+    const results = []
+    if (targetProp) {
+      results.push({
+        kind: 'evidence',
+        statement: mockStatement,
+        match: { propositionId: targetProp.id, score: 0.85 },
+        attribution: {
+          rel: 'supports',
+          strength: 0.7,
+          reason: 'Mock 数据：该信号支持目标原子的当前理解',
+          change: { direction: 'improving', nature: 'quantitative', themeTag: '营收结构' },
+        },
+        proposition: targetProp,
+        metaCount: 0,
+        metaMultiplier: 1,
+      })
+    } else {
+      results.push({
+        kind: 'new-proposition',
+        statement: mockStatement,
+        match: null,
+        proposition: null,
+        suggestedTitle: mockStatement.subject + '·' + mockStatement.attribute,
+        attribution: {
+          rel: 'related',
+          strength: 1,
+          reason: 'Mock 数据：未找到匹配的原子，建议新建',
+          change: { direction: 'stable', nature: 'structural', themeTag: mockStatement.attribute.slice(0, 20) },
+        },
+        metaCount: 0,
+        metaMultiplier: 1,
+      })
+    }
+    return {
+      statements: [mockStatement],
+      results,
+      diagnostics: [],
+      metaCount: 0,
+      metaMultiplier: 1,
+      status: 'done',
+    }
+  }
   commands.register('engine:runPipeline', async (inboxId) => {
     const item = getInboxItem(inboxId)
     if (!item) return { ok: false, error: '收件箱条目不存在' }
@@ -706,6 +769,12 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     if (!themeId) return { ok: false, error: '条目没有关联主题' }
     let pipeline = item.enginePipeline?.status === 'done' ? item.enginePipeline : null
     if (!pipeline) {
+      // Mock 模式：不调 LLM，直接返回预设的抽取与归因结果（用于 UI 测试）
+      if (process.env.MERIDIAN_MOCK_ENGINE === '1') {
+        pipeline = buildMockPipeline(item, themeId)
+        pipeline.ranAt = new Date().toISOString()
+        pipeline.mocked = true
+      } else {
       const s = settings()
       if (!s.apiKey) return { ok: false, error: '未配置 LLM API key', reason: 'no-key' }
       const llmCall = async (system, user) => {
@@ -733,6 +802,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         })
         pipeline.ranAt = new Date().toISOString()
       } catch (error) { return { ok: false, error: error?.message || String(error) } }
+      } // end mock else
     }
 
     const priorEvents = getChainEvents(themeId)
