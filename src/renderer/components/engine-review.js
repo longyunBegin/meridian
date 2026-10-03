@@ -229,7 +229,9 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
       h('div', { class: 'engine-preview-arrow', 'aria-hidden': 'true' }, '→'),
       h('div', { class: 'engine-preview-column is-after' }, h('strong', {}, '确认后 · 建议投影'), afterPreviewText),
       h('p', { class: 'engine-preview-note' }, '此处为预览。确认前不会写入事实或关系；决定后以追加事件更新投影。'))
-    const status = h('span', { class: 'engine-review-status', role: 'status' })
+    /* 判决结果的 live region：这段文案给读屏软件播报，视觉上不占位（.sr-only）。
+       之前它构造后从未插入 DOM，五处 textContent 赋值等于白写。 */
+    const status = h('span', { class: 'engine-review-status sr-only', role: 'status' })
     const confirm = runButton('确认并追加', async () => {
       confirm.disabled = true; reject.disabled = true
       try {
@@ -367,6 +369,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
       advancedOptions,
       // 底部操作
       h('div', { class: 'review-card-foot' },
+        status,
         h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),
         h('div', { class: 'review-foot-actions' }, reject, confirm)))
     // 更新按钮文本
