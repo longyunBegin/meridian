@@ -28,7 +28,7 @@ function shortSourceId(item) {
   return `IN-${String(Math.abs(hash) % 900 + 100)}`
 }
 
-export function renderEnginePipeline(item, { themeId, onDone, projection = {}, relationLabels = [] } = {}) {
+export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe-v2' })
   const pipeline = item.enginePipeline
@@ -144,14 +144,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
       ...allAtoms.map((n) => h('option', { value: n.id }, n.title || '未命名原子')))
     // 默认选中 AI 建议
     targetSelect.value = isNew ? '__new__' : (targetNode?.id || '__new__')
-    /* 关系词表（L2）只改下拉里的措辞；写进事件的 rel 仍是 L1 固定枚举。 */
-    const relChoices = ['supports', 'contradicts', 'derives', 'supersedes', 'related']
-    const relationLabelsFor = { ...relLabel }
-    for (const [index, rel] of relChoices.entries()) {
-      const custom = String(relationLabels?.[index] ?? '').trim()
-      if (custom) relationLabelsFor[rel] = custom
-    }
-    const relation = changeOptions(relChoices, suggestion.rel || attribution.rel, relationLabelsFor)
+    const relation = changeOptions(['supports', 'contradicts', 'derives', 'supersedes', 'related'],
+      suggestion.rel || attribution.rel, relLabel)
     /* 新原子标题只在目标选择器停在「＋ 新建原子」时才需要——包括 AI 没给 propositionId、
        或目标已被归档/失效导致下拉默认落在新建的情形（那种情形下若没有输入框，点确认会抛
        null.value）。它按需插入 DOM，所以正常归因卡的高级选项仍然只有

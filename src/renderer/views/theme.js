@@ -86,7 +86,7 @@ function renderThemeVocabulary(theme) {
       placeholder: '添加一个分类', onSave: (atomCategories) => save({ atomCategories }),
     }),
     vocabularyEditor({
-      label: '关系词表', hint: '按顺序对应 支持 / 反驳 / 推导 / 修订 / 相关，留空用默认措辞',
+      label: '关系词表', hint: '主题自定义的关系措辞（留空沿用默认；当前仅存档，图谱与选择器还未接入）',
       values: Array.isArray(config.relationLabels) ? config.relationLabels : [],
       placeholder: '添加一个关系标签', onSave: (relationLabels) => save({ relationLabels }),
     }))

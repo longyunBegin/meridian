@@ -1033,14 +1033,10 @@ async function loadConcept(theme, ledgerPane, opts) {
 
       // 连接现有节点（可选）
       const connectableNodes = projectedNodes(viewState.projection).filter((n) => !n.archived && !n.invalidated)
-      /* 关系词表（L2）只改显示的措辞，事件里的 rel 值仍是 L1 的固定枚举。 */
-      const relLabels = Array.isArray(themeConfig.relationLabels) ? themeConfig.relationLabels : []
-      const relChoices = ['supports', 'contradicts', 'derives', 'related']
       const relSelect = h('select', { class: 'txt atom-form-rel', 'aria-label': '关系类型' },
-        ...relChoices.map((v, index) =>
+        ...['supports', 'contradicts', 'derives', 'related'].map((v) =>
           h('option', { value: v, selected: v === selectedRel },
-            String(relLabels[index] || '').trim()
-              || { supports: '支持', contradicts: '反驳', derives: '推导', related: '相关' }[v])))
+            { supports: '支持', contradicts: '反驳', derives: '推导', related: '相关' }[v])))
       relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
       const nodeList = h('div', { class: 'atom-form-nodelist' })
       if (connectableNodes.length) {
@@ -1224,7 +1220,6 @@ async function loadConcept(theme, ledgerPane, opts) {
         engineHost.append(renderEnginePipeline(reviewItem, {
           themeId: theme.id,
           projection: viewState.projection,
-          relationLabels: theme.config?.relationLabels || [],
           onDone: (change) => {
             if (change?.kind === 'decision') {
               queueMode = 'processed'

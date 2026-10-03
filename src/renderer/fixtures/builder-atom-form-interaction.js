@@ -3,9 +3,11 @@
  *
  * 守住两条最容易悄悄退化的验收：
  *  1. 手动新增原子时，「类型」下拉不是写死的领域词，而是 theme.config.atomCategories
- *     （空词表只给「未分类」并指向主题设置）；关系下拉按 relationLabels 顺序覆盖、
- *     未给的回落默认措辞。
+ *     （空词表只给「未分类」并指向主题设置）。
  *  2. 主题设置里的「分类管理」增删都按契约发出 theme:update（带完整词表，而非只发增量）。
+ *
+ * 注意：relationLabels 目前只做存档（渲染层选择器仍用固定措辞，因为没有统一词表源时
+ * 会出现"选器说导致、图例说支持"的不一致），所以这里断言的是现状而非接入效果。
  *
  * 只渲染 UI，不跑流水线、不写账本；命令桩只够把主题页与建设者挂起来。
  */
@@ -105,15 +107,15 @@ try {
     JSON.stringify(populated.pills) === JSON.stringify(['技术路线', '关键问题']), JSON.stringify(populated.pills))
   check('默认选中第一个分类', populated.selected === '技术路线', String(populated.selected))
   check('有词表时不再提示去主题设置添加分类', populated.typeHint === '类型', String(populated.typeHint))
-  check('关系下拉按 relationLabels 顺序覆盖，未给的回落默认措辞',
-    JSON.stringify(populated.relOptions) === JSON.stringify(['导致', '依赖', '推导', '相关']), JSON.stringify(populated.relOptions))
+  check('关系下拉目前用固定措辞（relationLabels 只存档，未接入选择器）',
+    JSON.stringify(populated.relOptions) === JSON.stringify(['支持', '反驳', '推导', '相关']), JSON.stringify(populated.relOptions))
 
   const empty = await openAtomForm(plainTheme)
   check('空词表只给「未分类」并指向主题设置',
     JSON.stringify(empty.pills) === JSON.stringify(['未分类'])
     && String(empty.typeHint || '').includes('可在主题设置中添加分类'),
     JSON.stringify({ pills: empty.pills, hint: empty.typeHint }))
-  check('空词表时关系下拉用默认措辞',
+  check('空词表时关系下拉同样是固定措辞',
     JSON.stringify(empty.relOptions) === JSON.stringify(['支持', '反驳', '推导', '相关']), JSON.stringify(empty.relOptions))
   check('颜色选择器两种词表下都在（7 色）', populated.colors === 7 && empty.colors === 7,
     `${populated.colors}/${empty.colors}`)
