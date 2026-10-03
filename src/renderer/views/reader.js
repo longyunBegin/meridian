@@ -1,16 +1,15 @@
 import { h, toast } from '../lib/dom.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
-  graphLodLevel, GRAPH_LOD_LABEL, evidenceAttachmentEdges, categoryColor,
+  categoryColor,
   networkNodeType, networkNodeStatus,
-  buildEventTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
+  truncateGraphemes,
 } from '../lib/theme-network.js'
-import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline,
   buildGapList, buildDebateBoard, buildChronicle, buildAdjacencyMatrix, matrixReplacesGraph,
-  graphNeighborhood, shortestNodePath, buildCategoryAggregation,
+  buildCategoryAggregation,
   synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
 import { claimEvidenceStats } from '../components/reader-claim-map.js'
@@ -171,51 +170,33 @@ export function renderReaderView(theme, opts = {}) {
 
   let refreshGeneration = 0
   /* 全览开关（面板装不下一屏时用）：挂在 reader 视图闭包上，跨多次 render 保持。 */
-  let overviewMode = false
   /* 图谱缩放与 LOD（设计提案 02）：缩放 <0.75 点阵 / ≤1.15 卡片 / >1.15 卡片+标题。 */
   let zoom = 1
-  let lodAuto = true
   /* R1 论证大纲的折叠状态：只存内存（§10.3 验收要求），不写任何数据。 */
   const outlineExpanded = new Set()
-  /* R7：图是局部工具——默认 'local'（选中原子才画 1–2 跳邻域），'full' 是显式入口。 */
-  let graphScope = 'local'
   /* 吸顶分段导航当前锚点（只存内存）。 */
-  const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
+  const render = (currentProjection, rawEvents) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
     const verifiedEvents = verifiedLedgerPrefix(rawEvents, integrity)
     const currentNodes = allNodesOf(currentProjection)
     const currentEdges = allEdgesOf(currentProjection)
+    /* 分类来自 L2 主题自定义层（主题设置里的观点分类）：主题没配分类就没有这一档。
+       （原来定义在画布筛选控件旁边，画布移除后挪到这里——分类面板仍然要用。） */
+    const themeCategories = asArray(theme?.config?.atomCategories).map((name) => String(name || '').trim()).filter(Boolean)
     if (!currentNodes.length) {
       article.replaceChildren(renderEmpty(currentProjection))
       return
     }
 
-    const timeline = buildEventTimeline(verifiedEvents)
-    /* 布局按容器实测宽度算：写死 1120 会在这块 ~500px 的面板里被 CSS 缩到 0.64 倍
-       （卡片标题实际只有 8px），还得横向滚动。归位/入库只写 evidence.appended +
-       targetNodeIds（未声明立场），布局必须把证据挂载也算进去，否则证据会散落在画布各处。 */
-    let layout = null
-    const ensureLayout = () => {
-      const measured = Math.round(graphCanvas?.clientWidth || 0)
-      const width = Math.max(480, Math.min(1680, measured > 40 ? measured - 8 : 1120))
-      if (layout && layout.width === width) return layout
-      const attachmentEdges = evidenceAttachmentEdges(currentNodes, currentEdges)
-      layout = layoutThemeNetwork(currentNodes, [...currentEdges, ...attachmentEdges], width)
-      return layout
-    }
     const state = {
-      projection: selectedSeq == null ? currentProjection : (replayProjection || currentProjection),
-      events: selectedSeq == null ? verifiedEvents : verifiedEvents.filter((event) => event.seq <= selectedSeq),
-      selectedSeq,
+      projection: currentProjection,
+      events: verifiedEvents,
       selectedNodeId: null,
-      compareCurrent: false,
       liveSelectedNodeId: null,
       searchMatches: [],
       searchPage: 1,
       searchLocatedNodeId: null,
-      replaying: selectedSeq != null,
-      loadingReplay: false,
     }
     let historyNodes = allNodesOf(state.projection)
     let historyEdges = allEdgesOf(state.projection)
@@ -227,62 +208,7 @@ export function renderReaderView(theme, opts = {}) {
       nodesById = new Map(historyNodes.map((node) => [node.id, node]))
       eventById = new Map(state.events.map((event) => [event.id, event]))
     }
-    const graphCanvas = h('div', { class: 'rdr-graph-canvas', 'aria-label': '关系图画布' })
     const inspector = h('aside', { class: 'rdr-inspector', 'aria-label': '节点、证据与来源检视', 'aria-live': 'polite' })
-    const focusLabel = h('span', { class: 'rdr-focus-label', role: 'status', 'aria-live': 'polite' }, '选择任一节点查看其论证、关联与来源')
-    const nodeSearch = h('input', { class: 'txt rdr-search', type: 'search', placeholder: '搜索所有节点、说明或旧名', 'aria-label': '搜索完整主题中的所有节点' })
-    const searchResults = h('div', { class: 'rdr-search-results', role: 'listbox', 'aria-label': '全量节点搜索结果', hidden: true })
-    const searchStatus = h('p', { class: 'rdr-search-status', role: 'status', 'aria-live': 'polite' })
-    // 类型筛选已移除：主题下只有原子节点，无类型区分
-    const typeFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点类型筛选', hidden: true },
-      h('option', { value: 'all' }, '全部类型'))
-    const statusFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点状态筛选' },
-      h('option', { value: 'all' }, '全部状态'),
-      ...STATUS_FILTERS.map((status) => h('option', { value: status }, NODE_STATUS_LABEL[status])))
-    /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：主题没配分类就不出现，
-       配了之后"未分类"单独一档，保证早先建的原子仍然找得到。 */
-    const themeCategories = asArray(theme?.config?.atomCategories).map((name) => String(name || '').trim()).filter(Boolean)
-    const categoryFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按分类筛选', hidden: themeCategories.length === 0 },
-      h('option', { value: 'all' }, '全部分类'),
-      ...themeCategories.map((name) => h('option', { value: name }, name)),
-      h('option', { value: UNCATEGORIZED_LABEL }, UNCATEGORIZED_LABEL))
-    const countStatus = h('span', { class: 'rdr-node-count', role: 'status', 'aria-live': 'polite' })
-    /* R7 路径查询：图真正擅长的"两原子之间怎么走"。 */
-    const pathFrom = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径起点' })
-    const pathTo = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径终点' })
-    const pathFind = h('button', { type: 'button', class: 'btn btn-sm rdr-path-find' }, '找路径')
-    const pathStatus = h('p', { class: 'rdr-path-status', role: 'status', 'aria-live': 'polite' }, '选两条观点，看看它们之间隔着几层关系。')
-    const timeSlider = h('input', {
-      class: 'rdr-time-slider', type: 'range', min: '0', max: String(Math.max(0, timeline.length - 1)), step: '1',
-      value: String(Math.max(0, timeline.length - 1)),
-      disabled: timeline.length < 2 || typeof opts.loadProjectionAt !== 'function',
-      'aria-label': '回放已校验的主题事件时间线',
-    })
-    const hasDatedTimeline = timeline.some((point) => point.day != null)
-    const timeStatus = h('p', { class: 'rdr-time-status', role: 'status', 'aria-live': 'polite' },
-      timeline.length
-        ? (hasDatedTimeline
-          ? '时间轴只使用已校验事件；缺失日期留作“日期未记录”，不会推断真实时间。'
-          : '没有可用时间元数据；仅按已校验账本序号回放，不推断日期。')
-        : '暂无可回放的已校验事件。')
-    const playButton = h('button', { type: 'button', class: 'btn btn-sm rdr-play-button', 'aria-pressed': 'false', disabled: timeSlider.disabled }, '播放')
-    const liveButton = h('button', { type: 'button', class: 'btn btn-sm rdr-live-button', hidden: true }, '返回当前模型')
-    const compareButton = h('button', { type: 'button', class: 'btn btn-sm rdr-compare-button', hidden: true, 'aria-pressed': 'false' }, '与当前对比')
-    const historyCaption = h('span', { class: 'rdr-history-caption', role: 'status', 'aria-live': 'polite' })
-    const replayBox = h('section', { class: 'rdr-history', 'aria-label': '主题时间回放' },
-      h('div', { class: 'rdr-history-head' },
-        h('div', {}, h('strong', {}, '时间回放'), h('p', {}, '同一组节点位置按事件前缀重放；不生成或改写事件。')),
-        h('div', { class: 'rdr-history-actions' }, playButton, compareButton, liveButton)),
-      timeSlider, historyCaption, timeStatus)
-
-    let searchPage = 1
-    let previousQuery = ''
-    let replayTimer = null
-    let playbackTimer = null
-    let playbackIndex = -1
-    let playbackGeneration = 0
-    let replayPlaying = false
-    let replayRequest = 0
     const currentFocusNode = () => historyNodes.find((node) => node.id === state.selectedNodeId) || null
 
     const renderInspector = () => {
@@ -357,8 +283,7 @@ export function renderReaderView(theme, opts = {}) {
                 if (!nodesById.has(id)) return
                 state.selectedNodeId = id
                 renderInspector()
-                renderGraph()
-              }))) : h('p', { class: 'rdr-muted' }, '账本未记录此类关系；这不表示已经排除反例。'))),
+                          }))) : h('p', { class: 'rdr-muted' }, '账本未记录此类关系；这不表示已经排除反例。'))),
             h('p', { class: 'rdr-relation-note' }, '支持、推导与反驳是有方向论证；归属、影响、依赖、时间关联与相关是弱主题关联。关系数量不构成可信度评级。')),
           h('section', { class: 'rdr-inspector-section' },
             h('h3', {}, `未决项 · ${pending.length + (status === 'disputed' ? 1 : 0)}`),
@@ -389,404 +314,6 @@ export function renderReaderView(theme, opts = {}) {
             h('button', { type: 'button', class: 'btn btn-sm', onclick: () => opts.onOpenBuilder?.('network', node.id) }, '在建设者视图定位同一节点'))))
     }
 
-    const renderSearch = () => {
-      const query = nodeSearch.value.trim()
-      const matches = searchGraphNodes(currentNodes, query)
-      state.searchMatches = matches
-      if (query !== previousQuery) { searchPage = 1; previousQuery = query }
-      searchResults.replaceChildren()
-      if (!query) {
-        searchResults.hidden = true
-        searchStatus.textContent = `全量检索范围：${currentNodes.length} 条内容。画布可渐进展开，搜索始终覆盖完整投影。`
-        return
-      }
-      searchResults.hidden = false
-      if (!matches.length) { searchStatus.textContent = '没有找到匹配节点。'; return }
-      const pages = Math.max(1, Math.ceil(matches.length / SEARCH_PAGE_SIZE))
-      searchPage = Math.min(searchPage, pages)
-      const start = (searchPage - 1) * SEARCH_PAGE_SIZE
-      for (const node of matches.slice(start, start + SEARCH_PAGE_SIZE)) {
-        const present = historyNodes.some((item) => item.id === node.id)
-        const result = h('button', {
-          type: 'button', role: 'option', class: 'rdr-search-result', 'data-node-id': node.id,
-          onclick: () => {
-            if (!present) {
-              searchStatus.textContent = '该节点在此历史时点尚未建立；退出回放后可定位当前节点。'
-              return
-            }
-            state.selectedNodeId = node.id
-            state.searchLocatedNodeId = node.id
-            renderInspector()
-            renderGraph()
-            focusSearchResult(node.id)
-          },
-        }, h('span', { class: 'rdr-search-type' }, '原子'),
-        h('span', {}, titleOf(node)),
-        !present ? h('span', { class: 'rdr-search-future' }, '此时点之后新增') : null)
-        result.addEventListener('keydown', (event) => {
-          const buttons = [...searchResults.querySelectorAll('.rdr-search-result')]
-          const index = buttons.indexOf(result)
-          if (event.key === 'Escape') { event.preventDefault(); nodeSearch.value = ''; renderSearch(); nodeSearch.focus() }
-          else if (event.key === 'ArrowDown') { event.preventDefault(); buttons[index + 1]?.focus() }
-          else if (event.key === 'ArrowUp') { event.preventDefault(); index ? buttons[index - 1]?.focus() : nodeSearch.focus() }
-        })
-        searchResults.append(result)
-      }
-      const pager = h('div', { class: 'rdr-search-pager' },
-        h('button', { type: 'button', class: 'btn btn-sm', disabled: searchPage <= 1, onclick: () => { searchPage--; renderSearch() } }, '上一组'),
-        h('span', {}, `结果 ${start + 1}–${Math.min(start + SEARCH_PAGE_SIZE, matches.length)} / ${matches.length}`),
-        h('button', { type: 'button', class: 'btn btn-sm', disabled: searchPage >= pages, onclick: () => { searchPage++; renderSearch() } }, '下一组'))
-      searchResults.append(pager)
-      searchStatus.textContent = `${matches.length} 个匹配节点；方向键浏览，回车定位。`
-    }
-
-    const focusSearchResult = (nodeId) => {
-      requestAnimationFrame(() => graphCanvas.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.focus())
-    }
-
-    const renderGraph = () => {
-      /* R6 的规模规则（§10.0 结论第 3 条）：≥300 节点不再画全图，如实说明已换成矩阵。
-         工具栏与面板保留，计数与提示仍可读。 */
-      if (matrixReplacesGraph(currentNodes.length)) {
-        graphCanvas.classList.remove('is-overview')
-        graphCanvas.replaceChildren(h('p', { class: 'rdr-frame-note', role: 'status' },
-          `这个主题有 ${currentNodes.length} 条内容（≥300）：图谱已自动降级为矩阵视图——力导向在千级节点上不再是可读结构，矩阵里找块状结构更快。矩阵在上方「邻接矩阵」区。`))
-        countStatus.textContent = `已降级为矩阵 · ${currentNodes.length} 条内容`
-        lodBadge.textContent = 'LOD 点阵 · ≥300 已降级为矩阵'
-        lodBadge.classList.add('is-degraded')
-        return
-      }
-      /* render() 会重建画布，所以每次重画都把全览状态贴回去。 */
-      graphCanvas.classList.toggle('is-overview', overviewMode)
-      const type = typeFilter.value
-      const status = statusFilter.value
-      const category = categoryFilter.value
-      const frameNodes = state.replaying ? historyNodes : currentNodes
-      const declaredFrameEdges = state.replaying ? historyEdges : currentEdges
-      /* 声明关系 + 证据挂载一起参与筛选/裁剪，画布上才看得见"谁挂着谁"。 */
-      const frameEdges = [...declaredFrameEdges, ...evidenceAttachmentEdges(frameNodes, declaredFrameEdges)]
-      const matching = filterReaderNodes(frameNodes, type, status, category)
-      const selected = state.selectedNodeId && frameNodes.some((node) => node.id === state.selectedNodeId)
-        ? frameNodes.find((node) => node.id === state.selectedNodeId) : null
-      if (selected && !matching.some((node) => node.id === selected.id) && nodeSearch.value.trim()
-        && state.searchLocatedNodeId === selected.id) matching.push(selected)
-      const focus = selected && matching.some((node) => node.id === selected.id) ? selected : null
-      /* R7：局部模式下把画布收窄到选中原子的 1–2 跳邻域；未选中且非全图时给引导，不画全图。 */
-      const neighborhood = graphScope === 'local' && focus
-        ? graphNeighborhood({ nodes: frameNodes, edges: frameEdges, focusId: focus.id, hops: 2 }) : null
-      const scopedMatching = neighborhood ? matching.filter((node) => neighborhood.nodeIds.includes(node.id)) : matching
-      if (graphScope === 'local' && !focus) {
-        graphCanvas.replaceChildren(h('div', { class: 'rdr-graph-guide' },
-          h('p', {}, '点一条观点，看它周围的关系；想看整体就点「全图」。'),
-          h('button', { type: 'button', class: 'btn btn-sm rdr-graph-full-link', onclick: () => setGraphScope('full') }, '仍要看全图')))
-        countStatus.textContent = `未选择原子 · 当前主题共 ${currentNodes.length} 条内容`
-        return
-      }
-      const matchIds = new Set(scopedMatching.map((node) => node.id))
-      const candidateEdges = frameEdges.filter((edge) => matchIds.has(edge.from) && matchIds.has(edge.to))
-      const frame = selectGraphWindow({ nodes: scopedMatching, allNodes: scopedMatching, edges: candidateEdges }, {
-        focusNodeId: focus?.id || null, maxNodes: GRAPH_FRAME_NODE_LIMIT, maxEdges: GRAPH_FRAME_EDGE_LIMIT,
-      })
-      graphCanvas.replaceChildren()
-      const shown = frame.nodes.length
-      countStatus.textContent = neighborhood
-        ? `局部邻域 ${shown} / ${matching.length} 个节点（当前主题共 ${currentNodes.length} 个）`
-        : `画布 ${shown} / ${scopedMatching.length} 个节点（当前主题共 ${currentNodes.length} 个）`
-      if (scopedMatching.length > shown) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' },
-        `画布逐步展开，当前呈现 ${shown} 个局部节点；另有 ${scopedMatching.length - shown} 个匹配节点。可在上方全量搜索或缩小筛选，不会从主题中删除记录。`))
-      if (!scopedMatching.length) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' }, '没有节点符合筛选。调整类型或状态以查看完整网络。'))
-      const drawProjection = {
-        ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges,
-        allEdges: [...historyEdges, ...evidenceAttachmentEdges(historyNodes, historyEdges)],
-      }
-      /* 每个原子的读者状态（已佐证/受挑战/有争议/有证据未表态/未评估）：颜色由它决定；
-         信号计数只在被选中的那个原子上画到画布上（渐进披露，不让 21 张卡片都摊开数字）。 */
-      const readerStates = new Map()
-      const readerCounts = new Map()
-      for (const node of frame.nodes) {
-        const summary = evidenceForNode(state, node.id)
-        readerStates.set(node.id, readerStateKey(node, summary))
-        readerCounts.set(node.id, {
-          supports: (summary?.supports?.length || 0) + (summary?.both?.length || 0),
-          challenges: (summary?.against?.length || 0) + (summary?.both?.length || 0),
-          unclassified: summary?.unclassified?.length || 0,
-        })
-      }
-      const currentFrameNodes = filterReaderNodes(currentNodes, type, status, category)
-      const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
-      const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
-      /* LOD 级别按"实际渲染比例"算：显示全图时取 fit 比例，否则取 缩放 × 容器宽 / 布局宽。
-         这样窗口变窄、点了显示全图、拖了缩放，画多少文字都跟着走（提案 02）。 */
-      const activeLayout = ensureLayout()
-      const canvasWidth = graphCanvas.clientWidth || 0
-      const canvasHeight = graphCanvas.clientHeight || 0
-      const effectiveScale = canvasWidth > 0
-        ? (overviewMode
-          ? Math.min(canvasWidth / activeLayout.width, (canvasHeight || activeLayout.height) / activeLayout.height)
-          : (canvasWidth * zoom) / activeLayout.width)
-        : zoom
-      const lodLevel = (lodAuto && !activeLayout.heavy) ? graphLodLevel(effectiveScale) : 'cards-labels'
-      const drawnLevel = activeLayout.heavy ? 'dots' : lodLevel
-      lodBadge.textContent = activeLayout.heavy
-        ? `LOD ${GRAPH_LOD_LABEL[drawnLevel]} · ≥600 已降级为网格布局`
-        : `LOD ${GRAPH_LOD_LABEL[drawnLevel]}`
-      lodBadge.classList.toggle('is-degraded', Boolean(activeLayout.heavy))
-      if (frame.nodes.length) drawThemeNetwork(drawProjection, {
-        networkLayout: activeLayout,
-        focusNodeId: state.selectedNodeId,
-        readerStates,
-        readerCounts,
-        /* 证据压成紧凑数据点，让观点原子成为视觉主体（建设者画布不受影响）。 */
-        compactEvidence: true,
-        lodLevel,
-        /* 读者画布用分类色条 + 状态描边表达含义；状态文字徽标只在"卡片+标题"档出现
-           （文字是最贵的东西，低 LOD 一律不出字）。 */
-        statusPill: lodLevel === 'cards-labels',
-        atomCategories: themeCategories,
-        searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
-        historyContext: { events: state.events, projection: state.projection, selectedSeq: state.selectedSeq },
-        compareCurrent: Boolean(state.compareCurrent && state.replaying),
-        currentNodes: currentFrameNodes,
-        currentEdges: currentFrameEdges,
-        maxComparisonNodes: 8,
-        onFocusNode: (node) => {
-          state.selectedNodeId = node?.id || null
-          focusLabel.textContent = node ? `已选择：${titleOf(node)} · 来源与关系显示在右侧` : '选择任一节点查看其论证、关联与来源'
-          renderInspector()
-          renderAxis()
-          renderGraph()
-        },
-      }, graphCanvas)
-      /* 缩放＝把 SVG 按比例放大/缩小（布局与 viewBox 不变，容器负责滚动）；
-         显示全图时交给 CSS 的 fit 规则，不写内联宽度。 */
-      const drawnSvg = graphCanvas.querySelector('.cog-network-svg')
-      if (drawnSvg) drawnSvg.style.width = overviewMode ? '' : `${Math.round(zoom * 100)}%`
-      if (state.searchLocatedNodeId && nodeSearch.value.trim()) {
-        const currentLayout = ensureLayout()
-        const point = currentLayout.pos.get(state.searchLocatedNodeId)
-        const shownIndex = frame.nodes.findIndex((node) => node.id === state.searchLocatedNodeId)
-        const located = currentNodes.find((node) => node.id === state.searchLocatedNodeId)
-        if (point && shownIndex >= 0 && located) {
-          const horizontal = point.x < currentLayout.width / 3 ? '左侧' : point.x > currentLayout.width * 2 / 3 ? '右侧' : '中部'
-          const vertical = point.y < currentLayout.height / 3 ? '上方' : point.y > currentLayout.height * 2 / 3 ? '下方' : '中部'
-          searchStatus.textContent = `已定位并高亮「${titleOf(located)}」：画布${vertical}${horizontal} · 当前窗口 ${shownIndex + 1}/${frame.nodes.length}。`
-        }
-      }
-      focusLabel.textContent = focus ? `已选择：${titleOf(focus)} · 来源与关系显示在右侧`
-        : selected ? `已选择：${titleOf(selected)} · 当前筛选未显示该节点，右侧仍保留其来源与关系`
-          : '选择任一节点查看其论证、关联与来源'
-    }
-
-    const timelinePointAt = (position) => {
-      if (!timeline.length) return null
-      let chosen = timeline[0]
-      for (const point of timeline) { if (point.position > position) break; chosen = point }
-      return chosen
-    }
-    const updateHistoryStatus = () => {
-      const point = timeline.find((item) => item.seq === state.selectedSeq) || timeline.filter((item) => item.seq <= state.selectedSeq).at(-1)
-      if (!state.replaying || !point) {
-        historyCaption.textContent = ''
-        timeStatus.textContent = integrity.ok === false
-          ? `当前模型 · 仅展示链完整前缀的 ${verifiedEvents.length} 条记录；损坏尾部已隔离。`
-          : `当前模型 · ${verifiedEvents.length} 条已校验事件。`
-      } else {
-        const index = timeline.findIndex((item) => item.seq === point.seq)
-        const priorSeq = index > 0 ? timeline[index - 1].seq : 0
-        const summary = timelineChangeSummary(verifiedEvents, priorSeq, point.seq)
-        const compare = state.compareCurrent ? ` · 与当前比较：${timelineChangeSummary(verifiedEvents, point.seq, verifiedEvents.at(-1)?.seq || 0)}` : ''
-        historyCaption.textContent = `${point.date} · 第 ${state.selectedSeq} 条 · ${point.count} 条事件`
-        const missingTime = point.date === '日期未记录' ? ' · 日期元数据缺失，仅按已校验序号回放' : ''
-        timeStatus.textContent = `${summary}${compare}${missingTime} · 只读回放`
-      }
-      liveButton.hidden = !state.replaying
-      compareButton.hidden = !state.replaying
-      compareButton.setAttribute('aria-pressed', String(state.compareCurrent))
-      compareButton.textContent = state.compareCurrent ? '隐藏当前对比' : '与当前对比'
-    }
-
-    const commitReplay = async (point) => {
-      if (!point || typeof opts.loadProjectionAt !== 'function') return
-      const request = ++replayRequest
-      state.loadingReplay = true
-      const selectedBeforeReplay = state.selectedNodeId
-      timeStatus.textContent = `正在读取 ${point.date} 的只读投影…`
-      try {
-        const historical = await opts.loadProjectionAt(point.seq)
-        if (request !== replayRequest || generation !== refreshGeneration) return
-        state.projection = historical || {}
-        state.events = verifiedEvents.filter((event) => event.seq <= point.seq)
-        state.selectedSeq = point.seq
-        state.replaying = true
-        if (state.liveSelectedNodeId == null) state.liveSelectedNodeId = selectedBeforeReplay
-        refreshHistoryIndexes()
-        const selectedNode = state.selectedNodeId
-        if (selectedNode && !allNodesOf(state.projection).some((node) => node.id === selectedNode)) state.selectedNodeId = null
-        renderInspector()
-        renderGraph()
-        timeSlider.value = String(point.position)
-        updateHistoryStatus()
-      } catch (error) {
-        if (request === replayRequest) timeStatus.textContent = `历史回放失败：${error?.message || error}`
-      } finally { if (request === replayRequest) state.loadingReplay = false }
-    }
-    const stopPlayback = () => {
-      replayPlaying = false
-      playbackGeneration++
-      clearTimeout(playbackTimer)
-      playbackTimer = null
-      playButton.textContent = '播放'
-      playButton.setAttribute('aria-pressed', 'false')
-    }
-    const runPlayback = async (generation) => {
-      if (!replayPlaying || generation !== playbackGeneration) return
-      playbackIndex++
-      if (playbackIndex >= timeline.length) { stopPlayback(); return }
-      const point = timeline[playbackIndex]
-      timeSlider.value = String(point.position)
-      await commitReplay(point)
-      if (!replayPlaying || generation !== playbackGeneration) return
-      if (playbackIndex >= timeline.length - 1) { stopPlayback(); return }
-      playbackTimer = setTimeout(() => runPlayback(generation), 900)
-    }
-    playButton.addEventListener('click', () => {
-      if (replayPlaying) { stopPlayback(); return }
-      if (timeline.length < 2 || typeof opts.loadProjectionAt !== 'function') return
-      const currentIndex = timeline.findIndex((point) => point.seq === state.selectedSeq)
-      playbackIndex = currentIndex >= 0 && currentIndex < timeline.length - 1 ? currentIndex : -1
-      replayPlaying = true
-      playbackGeneration++
-      const generation = playbackGeneration
-      playButton.textContent = '暂停'
-      playButton.setAttribute('aria-pressed', 'true')
-      runPlayback(generation)
-    })
-    const returnLive = () => {
-      stopPlayback()
-      replayRequest++
-      state.projection = currentProjection
-      state.events = verifiedEvents
-      state.selectedSeq = null
-      state.replaying = false
-      state.compareCurrent = false
-      refreshHistoryIndexes()
-      state.selectedNodeId = state.liveSelectedNodeId || state.selectedNodeId
-      state.liveSelectedNodeId = null
-      renderInspector()
-      renderGraph()
-      updateHistoryStatus()
-      timeSlider.value = String(Math.max(0, timeline.length - 1))
-    }
-    timeSlider.addEventListener('input', () => {
-      stopPlayback()
-      const point = timelinePointAt(Number(timeSlider.value))
-      if (!point) return
-      historyCaption.textContent = `${point.date} · 第 ${point.seq} 条`
-      clearTimeout(replayTimer)
-      replayTimer = setTimeout(() => commitReplay(point), 120)
-    })
-    timeSlider.addEventListener('change', () => {
-      stopPlayback()
-      const point = timelinePointAt(Number(timeSlider.value))
-      clearTimeout(replayTimer)
-      commitReplay(point)
-    })
-    liveButton.addEventListener('click', returnLive)
-    compareButton.addEventListener('click', () => {
-      state.compareCurrent = !state.compareCurrent
-      renderGraph()
-      updateHistoryStatus()
-    })
-    nodeSearch.addEventListener('input', () => {
-      state.searchLocatedNodeId = null
-      renderSearch()
-      renderGraph()
-    })
-    nodeSearch.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        const node = state.searchMatches[0]
-        if (node) {
-          const present = historyNodes.some((candidate) => candidate.id === node.id)
-          if (present) { state.selectedNodeId = node.id; state.searchLocatedNodeId = node.id; renderInspector(); renderGraph(); focusSearchResult(node.id) }
-          else searchStatus.textContent = '该节点在此历史时点尚未建立；退出回放后可定位当前节点。'
-        }
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault(); searchResults.querySelector('.rdr-search-result')?.focus()
-      } else if (event.key === 'Escape') {
-        event.preventDefault(); nodeSearch.value = ''; renderSearch(); nodeSearch.focus()
-      }
-    })
-    const onFilterChange = () => {
-      state.searchLocatedNodeId = null
-      if (nodeSearch.value.trim()) searchStatus.textContent = '筛选已更改；搜索仍覆盖完整主题，选择可见结果即可定位。'
-      renderGraph()
-    }
-    typeFilter.addEventListener('change', onFilterChange)
-    statusFilter.addEventListener('change', onFilterChange)
-    categoryFilter.addEventListener('change', onFilterChange)
-
-    const toolbar = h('div', { class: 'rdr-reader-head' },
-      h('div', { class: 'rdr-reader-title-row' },
-        h('div', {}, h('p', { class: 'rdr-kicker' }, '主题'), h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题')),
-        h('span', { class: 'rdr-scope-badge' }, `${currentNodes.length} 条内容`),
-        h('button', { type: 'button', class: 'btn btn-sm rdr-builder-link', onclick: () => opts.onOpenBuilder?.('network') }, '去整理')),
-      /* 引导横幅已删除：页面本身要能直观看懂，不靠一段说明去解释它怎么读。
-         只保留链完整性徽标（这是事实状态，不是说教）；那句诚实提醒移进合成轴卡片。 */
-      integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
-        : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `记录完整 · ${verifiedEvents.length} 条`))
-
-    /* 全览：默认关（保持卡片原始可读尺寸），开了就把整张图缩进面板一屏——
-       不需要滚动也能看全 21 个节点，代价是字变小。开关状态跟随这次挂载，不写任何数据。 */
-    const overviewButton = h('button', {
-      type: 'button', class: 'btn btn-sm rdr-overview-toggle', 'aria-pressed': String(overviewMode),
-      onclick: () => {
-        overviewMode = !overviewMode
-        overviewButton.setAttribute('aria-pressed', String(overviewMode))
-        overviewButton.textContent = overviewMode ? '显示全图 · 开' : '显示全图'
-        graphCanvas.classList.toggle('is-overview', overviewMode)
-        renderGraph()
-      },
-    }, overviewMode ? '显示全图 · 开' : '显示全图')
-    /* 缩放与 LOD（设计提案 02）：缩放决定画多少文字；LOD 自动＝按缩放分级，手动＝始终出标题。 */
-    const zoomBadge = h('span', { class: 'rdr-zoom-badge' }, `${zoom.toFixed(2)}×`)
-    const zoomSlider = h('input', {
-      type: 'range', class: 'rdr-zoom-slider', min: '0.4', max: '2', step: '0.05',
-      value: String(zoom), 'aria-label': '图谱缩放',
-    })
-    zoomSlider.addEventListener('input', () => {
-      zoom = Number(zoomSlider.value) || 1
-      zoomBadge.textContent = `${zoom.toFixed(2)}×`
-      renderGraph()
-    })
-    const lodBadge = h('span', { class: 'rdr-lod-badge', role: 'status' })
-    /* R7：局部邻域 / 全图 显式切换；未选中原子时画布给引导而不是全图。 */
-    const setGraphScope = (scope) => {
-      graphScope = scope === 'full' ? 'full' : 'local'
-      graphScopeLocal.setAttribute('aria-pressed', String(graphScope === 'local'))
-      graphScopeFull.setAttribute('aria-pressed', String(graphScope === 'full'))
-      renderGraph()
-    }
-    const graphScopeLocal = h('button', {
-      type: 'button', class: 'btn btn-sm rdr-graph-scope is-local', 'aria-pressed': String(graphScope === 'local'),
-      onclick: () => setGraphScope('local'),
-    }, '局部邻域')
-    const graphScopeFull = h('button', {
-      type: 'button', class: 'btn btn-sm rdr-graph-scope is-full', 'aria-pressed': String(graphScope === 'full'),
-      onclick: () => setGraphScope('full'),
-    }, '全图')
-    const lodAutoButton = h('button', {
-      type: 'button', class: 'btn btn-sm rdr-lod-auto', 'aria-pressed': String(lodAuto),
-      onclick: () => {
-        lodAuto = !lodAuto
-        lodAutoButton.setAttribute('aria-pressed', String(lodAuto))
-        lodAutoButton.textContent = lodAuto ? 'LOD 自动' : 'LOD 手动'
-        renderGraph()
-      },
-    }, lodAuto ? 'LOD 自动' : 'LOD 手动')
-
-    /* 合成轴（设计提案 01）：强度线 × 外部数据点 × 确认/修订台阶，同一条日期轴。
-       它取代原来的序号滑条成为主控制；序号回放降级进 <details>（保留能力，不再抢焦点）。 */
     const axisCaption = h('p', { class: 'rdr-axis-caption', role: 'status', 'aria-live': 'polite' })
     const axisHost = h('div', { class: 'rdr-axis-host' })
     const renderAxis = () => {
@@ -817,12 +344,6 @@ export function renderReaderView(theme, opts = {}) {
         h('strong', { class: 'rdr-axis-title' }, '整体情况'),
         axisCaption),
       axisHost)
-    /* 用户决定：读者页不要时间回放（与当前对比/播放/返回当前模型一并去掉）。
-       第一步只从界面上移除（hidden），内部代码与 DOM 暂时保留——两个 fixture 断言了
-       .rdr-time-slider/.rdr-time-status 的存在，直接删会让套件变红；下一步再连同代码一起清。 */
-    const replayDetails = h('details', { class: 'rdr-replay-details', hidden: true },
-      h('summary', {}, '按事件序号回放 · 内部细节'), replayBox)
-
     /* R1 论证大纲 + R2 小倍数网格（§10.2 首屏配方第 2/3 屏）：
        图没有唯一阅读顺序、也比不了量；要"读完 / 比较"就用有序结构，图退到点开某个原子之后。 */
     const outlineHost = h('div', { id: 'reader-outline', class: 'rdr-outline-host' })
@@ -885,59 +406,15 @@ export function renderReaderView(theme, opts = {}) {
       }))
     }
     const focusAtom = (id) => {
-      /* 关系图现在是折叠区：点原子时先把它展开、再重画一次，避免"点了没反应"。
-         折叠时画布尺寸为 0，必须先展开再画（否则是空画布）。 */
-      try {
-        graphDetails.open = true
-        requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略 */ } })
-      } catch { /* 首帧忽略 */ }
       const next = id && currentNodes.some((node) => node.id === id) ? id : null
       state.selectedNodeId = next
       if (next) outlineExpanded.add(next)
-      focusLabel.textContent = next
-        ? `已选择：${titleOf(currentNodes.find((node) => node.id === next) || {})} · 来源与关系显示在右侧`
-        : '选择任一节点查看其论证、关联与来源'
       renderInspector()
       renderAxis()
-      renderGraph()
       renderStructure()
     }
     /* R7 路径查询：两原子之间隔着什么。真正的图问题，保留下来。 */
-    const PATH_REL_LABEL = { supports: '支持', contradicts: '挑战', derives: '推导', supersedes: '修订', related: '相关', 'evidence-attached': '挂载' }
-    const renderPathOptions = () => {
-      const atoms = currentNodes.filter((node) => networkNodeType(node) !== 'evidence')
-      for (const select of [pathFrom, pathTo]) {
-        const previous = select.value
-        select.replaceChildren(...atoms.map((node) => h('option', { value: node.id }, titleOf(node))))
-        if (atoms.some((node) => node.id === previous)) select.value = previous
-      }
-      if (atoms.length > 1 && (!pathTo.value || pathFrom.value === pathTo.value)) pathTo.value = atoms[1].id
-      pathFind.disabled = atoms.length < 2
-    }
-    pathFind.addEventListener('click', () => {
-      const result = shortestNodePath({ edges: allEdgesOf(currentProjection), from: pathFrom.value, to: pathTo.value })
-      if (!result.found) {
-        pathStatus.textContent = `没找到路径：${result.reason}。`
-        return
-      }
-      const chain = result.nodeIds.map((id, index) => {
-        const name = titleOf(currentNodes.find((node) => node.id === id) || {})
-        if (index === 0) return name
-        const rel = result.edges[index - 1]?.rel
-        return `—${PATH_REL_LABEL[rel] || rel || '关联'}→ ${name}`
-      })
-      pathStatus.textContent = `路径（${result.edges.length} 跳）：${chain.join(' ')}`
-      /* 路径超过 2 跳就把图切到全图，否则局部邻域里看不到整条路。 */
-      if (result.edges.length > 2) setGraphScope('full')
-      else {
-        state.selectedNodeId = result.nodeIds[0]
-        renderInspector()
-        renderGraph()
-      }
-    })
-
     const renderStructure = () => {
-      renderPathOptions()
       const rows = buildArgumentOutline(currentNodes, (id) => evidenceForNode(state, id))
       const nodeById = new Map(currentNodes.map((node) => [node.id, node]))
       outlineHost.replaceChildren(renderArgumentOutline(rows, {
@@ -976,36 +453,8 @@ export function renderReaderView(theme, opts = {}) {
       }))
     }
 
-    const controls = h('section', { id: 'reader-map', class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
-      h('div', { class: 'rdr-map-toolbar' },
-        h('div', {}, h('strong', { class: 'rdr-map-heading' }, '关系图'),
-          h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
-        countStatus),
-      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
-      h('div', { class: 'rdr-path-row' }, h('span', { class: 'rdr-path-label' }, '路径查询'), pathFrom, h('span', {}, '→'), pathTo, pathFind),
-      pathStatus,
-      searchResults, searchStatus,
-      h('div', { class: 'rdr-focus-bar' }, focusLabel),
-      graphCanvas,
-      h('div', { class: 'rdr-graph-foot' },
-        h('span', { class: 'rdr-graph-scope-group', role: 'group', 'aria-label': '图谱范围' }, graphScopeLocal, graphScopeFull),
-        lodAutoButton, zoomSlider, zoomBadge, overviewButton, lodBadge),
-      h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
-        h('p', {}, '实线：支持、推导、反驳；虚线：改过版本；点线：归属、影响、依赖、时间上的关联；灰色细点线：来源挂上了这条观点，但还没说支持还是反对。'),
-        h('p', {}, '每条观点都是主题拆出来的最小单元。位置是排版结果，不代表重要程度。'),
-        h('p', {}, h('strong', {}, '视觉编码：'), '节点卡片大小反映强度（越大越强）；边框与状态徽标颜色反映状态——',
-          h('span', { style: `color:${READER_STATE_META.supported.textColor}` }, '已佐证'),
-          ' / ',
-          h('span', { style: `color:${READER_STATE_META.challenged.textColor}` }, '受挑战'),
-          ' / ',
-          h('span', { style: `color:${READER_STATE_META.contested.textColor}` }, '有争议'),
-          ' / ',
-          h('span', { style: `color:${READER_STATE_META.evidenced.textColor}` }, '有证据·未表态'),
-          ' / ',
-          h('span', { style: `color:${READER_STATE_META.unevaluated.textColor}` }, '未评估'),
-          '。点击空白处可清空选择，回到整张图谱。')),
-      replayDetails)
-    const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
+    /* 检视器保留：它是理由清单/正反两方/时间线/矩阵等下钻的详情面板（原本挂在关系图面板里）。 */
+    const workspace = h('div', { class: 'rdr-workspace' }, inspector)
     axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '来源多，不等于大家都认同——它只说明有多少条被挂上来。'))
     /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
        内容全部由真实数据推导：synthesisSummary 给"最强/最分歧"，gaps 给缺口，证据条数与
@@ -1049,13 +498,11 @@ export function renderReaderView(theme, opts = {}) {
         rows: rowsOfClaim(id),
         onClose: closeClaimDetail,
       }))
-      /* 关系图若已展开，跟随这次选择重画（不强制展开，避免点气泡就把图弹出来）。 */
-      if (graphDetails.open) requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略 */ } })
       detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
 
     /* 第 ② 层「观点地图」：常显，紧跟结论页（三层下钻的第二层）。
-       位置复用 layoutThemeNetwork；大小/颜色口径写在组件图例上。 */
+       位置固定（按组数分区）、不用力导向；大小/颜色口径写在组件里。 */
     /* 图谱缩略图（分簇版，借鉴用户给的 demo）：固定分区、不用力导向。
        分簇依据 = 按证据状况（用户已确认），口径写在组件里。 */
     const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点分簇缩略图' },
@@ -1068,19 +515,6 @@ export function renderReaderView(theme, opts = {}) {
        常显 = 结论页(④) → 观点地图(②) → 单条下钻(①③) → 还缺什么；
        其余（关系全貌 / 时间线 / 全部理由 / 对照与分类 / 整体情况）收进折叠区——
        能力一个不丢，但读者不再需要先选一种"格式"才能开始看。 */
-    /* 用户决定：读者页不要全节点关系图（"关系图很鸡肋"）。
-       第一步只从界面移除（hidden），DOM 与代码暂留——两个 fixture 断言了
-       .cog-node/.rdr-graph-scope 等的存在，直接删会让套件变红；下一步连同代码与 fixture 一起清。 */
-    const graphDetails = h('details', { class: 'rdr-more rdr-more-graph', hidden: true },
-      h('summary', { class: 'rdr-more-summary' }, '关系的全貌'),
-      workspace)
-    /* 折叠区展开时才画关系图（折叠状态下画布尺寸为 0）。 */
-    /* 必须在下一帧再画：折叠刚展开时布局还没刷新，graphCanvas.clientWidth 仍是 0，
-       而 renderGraph 是按宽度布局的——同帧调用会画出一张空图。 */
-    graphDetails.addEventListener('toggle', () => {
-      if (!graphDetails.open) return
-      requestAnimationFrame(() => { try { renderGraph() } catch { /* 忽略单次失败 */ } })
-    })
     const moreView = (title, ...nodes) => h('details', { class: 'rdr-more' },
       h('summary', { class: 'rdr-more-summary' }, title), ...nodes)
     const block = (title, host) => h('section', { class: 'rdr-block' },
@@ -1089,18 +523,17 @@ export function renderReaderView(theme, opts = {}) {
     article.replaceChildren(
       toolbar, conclusionBox, mapBox, detailHost,
       block('还缺什么', gapsHost),
-      graphDetails,
+      /* 检视器常显：它是理由清单 / 正反两方 / 时间线 / 对照表 / 分簇清单点选后的详情面板
+         （原本挂在关系图面板里，图移除后单独挂出来）。 */
+      block('详情', workspace),
       moreView('时间线', chronicleHost),
       moreView('全部理由与逐条观点', outlineHost, debateHost, multiplesHost),
       moreView('对照表与分类', matrixHost, categoryHost),
       moreView('整体情况（强度随时间）', axisBox))
-    renderSearch()
     renderInspector()
-    renderGraph()
     renderAxis()
     renderStructure()
     loadInboxItems().then(() => renderGaps())
-    updateHistoryStatus()
   }
 
   const loadProjection = typeof opts.loadProjection === 'function' ? opts.loadProjection() : Promise.resolve({})

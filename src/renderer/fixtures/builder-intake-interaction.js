@@ -498,19 +498,16 @@ import '../styles.css'
       const liveEventCount = events.length
       const readerTab = themeMount.querySelector('.theme-view-tab')
       readerTab.click()
-      /* 用户决定：读者页不要时间回放（与当前对比 / 播放 / 返回当前模型一并去掉）。
-         回放 UI 已从界面移除，这里改为断言"回放块不可见"，不再驱动它。
-         注意：回放块与其内部 DOM 暂留（下一步连代码一起清），所以不断言元素不存在。 */
-      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-replay-details'), '主题读者视图挂载')
+      /* 用户决定：读者页不要时间回放、也不要全节点关系图——两者已连代码一并删除。
+         这里改为断言"回放块不存在"，并把"选节点"改走观点卡片（图下线后的等价路径）。 */
+      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-cluster-canvas'), '主题读者视图挂载')
       check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
-        Boolean(themeMount.querySelector('.rdr-replay-details')?.hidden)
-        && events.length === liveEventCount)
-      const readerNode = themeMount.querySelector(`.rdr-graph-canvas .cog-node[data-node-id="${target.id}"]`)
-      readerNode.focus()
-      readerNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-      await waitFor(() => themeMount.querySelector('.rdr-node-identity button'), '键盘选择读者图谱节点')
-      check('读者图谱节点支持 Enter 键并显示同一节点的建设者定位入口',
-        readerNode.getAttribute('role') === 'button'
+        !themeMount.querySelector('.rdr-replay-details') && events.length === liveEventCount)
+      const readerNode = themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`)
+      readerNode.click()
+      await waitFor(() => themeMount.querySelector('.rdr-node-identity button'), '点读者观点卡片后出现建设者定位入口')
+      check('读者观点卡片可选中同一节点并显示其建设者定位入口',
+        readerNode.classList.contains('is-selected')
         && themeMount.querySelector('.rdr-node-identity button')?.textContent.includes('在建设者视图定位'))
       const readerSourceEvent = themeMount.querySelector('.rdr-evidence-list .rdr-event-link')
       check('Reader 证据详情提供可达的来源事件入口', !!readerSourceEvent)
@@ -530,10 +527,8 @@ import '../styles.css'
         await waitFor(() => sourceLedger.hidden, '关闭 Reader 来源事件账本')
         themeMount.querySelector('.theme-view-tab').click()
         await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-root'), '返回 Reader 继续节点定位验证')
-        await waitFor(() => themeMount.querySelector(`.rdr-graph-canvas .cog-node[data-node-id="${target.id}"]`), 'Reader 来源回程图谱数据加载')
-        const readerNodeAfterJump = themeMount.querySelector(`.rdr-graph-canvas .cog-node[data-node-id="${target.id}"]`)
-        readerNodeAfterJump.focus()
-        readerNodeAfterJump.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+        await waitFor(() => themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`), 'Reader 来源回程数据加载')
+        themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`).click()
         await waitFor(() => themeMount.querySelector('.rdr-node-identity button'), '恢复 Reader 节点定位按钮')
       }
       themeMount.querySelector('.rdr-node-identity button').click()

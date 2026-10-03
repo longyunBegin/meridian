@@ -240,154 +240,16 @@
       currentRoot.setAttribute('data-snapshot', 'current')
       document.querySelector('#fixture-root').append(historicRoot, currentRoot)
       await wait()
-      check('读者视图以无中心根的主题网络为主结构，并明确拒绝由支持数推导整体走向', currentRoot.querySelector('.rdr-map-panel')
+      check('读者视图以观点分簇缩略图为主结构，并明确拒绝由支持数推导整体走向',
+        Boolean(currentRoot.querySelector('.rdr-cluster-canvas'))
         && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('来源多，不等于大家都认同'))
-      /* R7：图是局部工具——默认不画全图，未选中原子时给引导；全图是显式入口。 */
-      check('R7 默认不画全图：未选中原子时画布给引导',
-        !currentRoot.querySelector('.rdr-map-panel .cog-network-svg')
-        && Boolean(currentRoot.querySelector('.rdr-graph-guide')))
-      currentRoot.querySelector('.rdr-graph-scope.is-full').click()
-      await wait()
-      check('R7「全图」是显式入口：切换后才画完整网络',
-        Boolean(currentRoot.querySelector('.rdr-map-panel .cog-network-svg')))
-      const fullGraphNodes = currentRoot.querySelectorAll('.cog-node').length
-      check('有方向论证、版本修订与弱主题关联采用三种视觉分层', currentRoot.querySelector('.cog-edge-supports.is-argument')
-        && currentRoot.querySelector('.cog-edge-influences.is-association')
-        && currentRoot.querySelector('.cog-edge-supersedes.is-revision[data-group="revision"]')?.getAttribute('marker-end')?.includes('supersedes'))
-
-      const productNode = currentRoot.querySelector('.cog-node[data-node-id="vp-product"]')
-      productNode.focus(); productNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await wait()
-      check('键盘选择节点后检视器展示其关联证据与完整时间溯源', currentRoot.querySelector('.rdr-inspector-title')?.textContent === '产品判断'
-        && currentRoot.querySelector('.rdr-evidence-card')?.textContent.includes('来源发布时间')
-        && currentRoot.querySelector('.rdr-evidence-card')?.textContent.includes('适用时间'))
-      const sourceCard = currentRoot.querySelector('.rdr-evidence-card')
-      check('来源发布时间、适用时间、抓取/摄入/事件追加时间与模型评分分别显示', sourceCard?.textContent.includes('2026-09-18')
-        && sourceCard.textContent.includes('2026Q2') && sourceCard.textContent.includes('2026-09-21')
-        && sourceCard.textContent.includes('匹配分数') && sourceCard.textContent.includes('归因强度'))
-      const correctionSection = [...currentRoot.querySelectorAll('.rdr-inspector-section')]
-        .find((section) => section.querySelector('h3')?.textContent.includes('节点自身的来源'))
-      check('观点修订后读者可从当前版本回到该次 correction 的原文、适用时间和来源时间',
-        currentRoot.querySelector('.rdr-inspector-summary')?.textContent === '更新后的产品判断。'
-        && correctionSection?.textContent.includes('修订所依据的合成来源摘录')
-        && correctionSection.textContent.includes('隔离修订来源')
-        && correctionSection.textContent.includes('2026-09-23'))
-
-      const search = currentRoot.querySelector('.rdr-search')
-      search.value = '供应链'; search.dispatchEvent(new Event('input', { bubbles: true }))
-      const searchResult = currentRoot.querySelector('.rdr-search-result')
-      check('全量搜索可定位画布未聚焦的主题节点', searchResult?.dataset.nodeId === 'vp-driver')
-      searchResult.click(); await wait()
-      ;[...currentRoot.querySelectorAll('.rdr-node-identity button')].find((button) => button.textContent.includes('在建设者视图定位'))?.click()
-      check('读者可用相同节点 ID 在建设者中定位', openedNode === 'network:vp-driver')
-      /* R7 局部邻域：已选中原子时只画它的 1–2 跳邻域；清空选择回到引导（图是局部工具）。 */
-      currentRoot.querySelector('.rdr-graph-scope.is-local').click()
-      await wait()
-      const localNodes = currentRoot.querySelectorAll('.cog-node').length
-      /* 这份 fixture 的图很小且全连通，局部＝全图；"严格子集"由单测（graphNeighborhood）
-         与 dev 实测（21 节点主题只呈现邻域）覆盖，这里断言模式确实被标成局部。 */
-      check(`R7 局部模式把画布收窄到已选原子的邻域（局部 ${localNodes} / 全图 ${fullGraphNodes}）`,
-        localNodes > 0 && localNodes <= fullGraphNodes
-        && (currentRoot.querySelector('.rdr-node-count')?.textContent || '').includes('局部邻域'))
-      currentRoot.querySelector('.rdr-map-panel .cog-network-svg')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await wait()
-      check('R7 清空选择后回到引导（不再默认画全图）',
-        !currentRoot.querySelector('.cog-node') && Boolean(currentRoot.querySelector('.rdr-graph-guide')))
-      /* 后面的回放用例依赖"已选中 vp-driver"，这里用原子卡把选择恢复回来。 */
-      currentRoot.querySelector('.rdr-multiple-card[data-atom-id="vp-driver"]')?.click()
-      await wait()
-      currentRoot.querySelector('.rdr-graph-scope.is-full').click()
-      await wait()
-
       /* 用户决定：读者页不要时间回放（播放 / 与当前对比 / 返回当前模型）。
          回放 UI 已从界面移除，这里改为断言"回放块不可见"；原来的 4 条行为断言
          （时间线对比 / 播放推进 / 暂停 / 返回当前状态）随功能一起下线——
          通过数会因此减少，这是覆盖范围变化，不是回归。
          注意：回放块内部 DOM 暂留（下一步连代码一起清），所以不断言元素不存在。 */
       check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
-        Boolean(currentRoot.querySelector('.rdr-replay-details')?.hidden))
-
-      /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：
-         没配分类的主题不该出现这个控件；配了之后按用户自己的词筛，未分类单独一档。 */
-      check('主题没配原子分类时读者视图不出现分类筛选',
-        currentRoot.querySelector('select[aria-label="按分类筛选"]')?.hidden === true)
-      const catNode = (id, title, seq, atomCategory) => ({
-        id, nodeType: 'viewpoint', kind: 'claim', title, detail: '', currentText: title, confidence: null,
-        status: 'pending', archived: false, external: false, createdSeq: seq, eventIds: [], provenanceEventIds: [],
-        evidenceCount: 0, ...(atomCategory ? { atomCategory } : {}),
-      })
-      const categoryNodes = [catNode('cat-tech', '技术路线原子', 1, '技术路线'), catNode('cat-biz', '商业模式原子', 2, '商业模式'), catNode('cat-none', '早先建的原子', 3)]
-      const categoryProjection = { nodes: categoryNodes, allNodes: categoryNodes, edges: [], allEdges: [], integrity: { ok: true }, eventCount: 3 }
-      const categoryRoot = renderReaderView({ name: '分类合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
-        loadProjection: async () => categoryProjection, loadEvents: async () => [], onOpenBuilder: () => {},
-      })
-      categoryRoot.setAttribute('data-snapshot', 'category')
-      document.querySelector('#fixture-root').append(categoryRoot)
-      await wait()
-      /* R7 之后默认不画全图，这一段要验分类筛选对画布可见帧的影响，先显式切到全图。 */
-      categoryRoot.querySelector('.rdr-graph-scope.is-full').click()
-      await wait()
-      const categorySelect = categoryRoot.querySelector('select[aria-label="按分类筛选"]')
-      check('主题配了原子分类后出现分类筛选，含"未分类"一档', Boolean(categorySelect) && !categorySelect.hidden
-        && [...categorySelect.options].map((option) => option.textContent).join() === '全部分类,技术路线,商业模式,未分类',
-        categorySelect ? [...categorySelect.options].map((option) => option.textContent).join() : '(控件缺失)')
-      check('默认不筛分类时三个原子都在画布上', categoryRoot.querySelectorAll('.cog-node').length === 3)
-      categorySelect.value = '技术路线'
-      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
-      await wait()
-      check('按分类筛选后画布只留该分类的原子（只改可见帧，不从主题删除）',
-        categoryRoot.querySelectorAll('.cog-node').length === 1
-        && Boolean(categoryRoot.querySelector('.cog-node[data-node-id="cat-tech"]'))
-        && (categoryRoot.querySelector('.rdr-node-count')?.textContent || '').includes('1'))
-      categorySelect.value = '未分类'
-      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
-      await wait()
-      check('配了分类之后，早先建的原子归入"未分类"仍然找得到',
-        categoryRoot.querySelectorAll('.cog-node').length === 1
-        && Boolean(categoryRoot.querySelector('.cog-node[data-node-id="cat-none"]')))
-      categorySelect.value = 'all'
-      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
-      await wait()
-      check('切回全部分类后三个原子都回到画布上', categoryRoot.querySelectorAll('.cog-node').length === 3)
-
-      /* 全览开关：默认关闭（卡片保持原始可读尺寸），打开后给画布加 is-overview。 */
-      const overviewToggle = categoryRoot.querySelector('.rdr-overview-toggle')
-      check('全览开关默认关闭，保持卡片原始尺寸', Boolean(overviewToggle)
-        && overviewToggle.getAttribute('aria-pressed') === 'false'
-        && !categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview'))
-      overviewToggle.click(); await wait()
-      check('打开全览后画布进入 is-overview 且按钮状态同步', categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview')
-        && overviewToggle.getAttribute('aria-pressed') === 'true' && overviewToggle.textContent.includes('开'))
-      overviewToggle.click(); await wait()
-      check('再点一次回到可读模式（开关可逆，不改任何数据）',
-        !categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview')
-        && overviewToggle.getAttribute('aria-pressed') === 'false')
-
-      /* LOD 分级（设计提案 02）：缩放决定画多少文字；文字是 SVG 里最贵的东西。 */
-      const lodBadge = categoryRoot.querySelector('.rdr-lod-badge')
-      const zoomSlider = categoryRoot.querySelector('.rdr-zoom-slider')
-      const lodAuto = categoryRoot.querySelector('.rdr-lod-auto')
-      const zoomTo = async (value) => { zoomSlider.value = String(value); zoomSlider.dispatchEvent(new Event('input', { bubbles: true })); await wait() }
-      await zoomTo(2)
-      check(`放大到 2.00× 出标题（徽标 ${lodBadge.textContent.trim()}）`,
-        lodBadge.textContent.includes('卡片+标题')
-        && categoryRoot.querySelectorAll('.cog-node-title').length === 3
-        && categoryRoot.querySelectorAll('.cog-node-card').length === 3)
-      await zoomTo(0.4)
-      check(`缩到 0.40× 只剩点阵（徽标 ${lodBadge.textContent.trim()}）`,
-        lodBadge.textContent.includes('点阵')
-        && categoryRoot.querySelectorAll('.cog-node-dot').length === 3
-        && categoryRoot.querySelectorAll('.cog-node-card').length === 0
-        && categoryRoot.querySelectorAll('.cog-node-title').length === 0)
-      await zoomTo(2)
-      lodAuto.click(); await wait()
-      await zoomTo(0.4)
-      check('LOD 手动＝不再按缩放抑制文字（缩到 0.40× 仍出标题）',
-        lodBadge.textContent.includes('卡片+标题') && categoryRoot.querySelectorAll('.cog-node-title').length === 3)
-      lodAuto.click(); await wait()
-      await zoomTo(1)
-      check('分类色条按主题词表上色（分类＝主题自定义，颜色只表达属于哪一类）',
-        categoryRoot.querySelectorAll('.cog-node-category').length >= 2)
+        !currentRoot.querySelector('.rdr-replay-details'))
 
       /* 整体情况（设计提案 01）：强度线 × 来源点 × 确认/修订台阶，同一条日期轴。 */
       const axisEvents = [
@@ -412,9 +274,8 @@
       })
       document.querySelector('#fixture-root').append(axisRoot)
       await wait()
-      axisRoot.querySelector('.rdr-graph-scope.is-full').click()
-      await wait()
-      axisRoot.querySelector('.cog-node')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      /* 选择方式改为点小倍数卡片：它和画布节点走同一条 focusAtom 路径（会联动检视器与合成轴）。 */
+      axisRoot.querySelector('.rdr-multiple-card')?.click()
       await wait()
       const axisSvg = axisRoot.querySelector('.rdr-axis-svg')
       check('整体情况：选中原子后强度线按 confidence 历史画成折线',
@@ -428,9 +289,6 @@
         axisSvg?.querySelectorAll('.rdr-axis-step').length === 1
         && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('2 条来源')
         && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('强度 71%'))
-      check('序号回放降级进折叠区，不再抢占主控制位',
-        Boolean(axisRoot.querySelector('.rdr-replay-details > summary'))
-        && Boolean(axisRoot.querySelector('.rdr-replay-details .rdr-history')))
 
       /* R1 理由清单 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
       const structureEvidence = (id, title, extra = {}) => ({
@@ -556,24 +414,12 @@
       })
       document.querySelector('#fixture-root').append(bigRoot)
       await wait()
-      const pathSelects = [...structureRoot.querySelectorAll('.rdr-path-select')]
-      check('R7 路径查询默认列了主题里的原子', pathSelects.length === 2 && pathSelects[0].options.length === 2)
-      pathSelects[0].value = 'sx-v1'
-      pathSelects[1].value = 'sx-v2'
-      structureRoot.querySelector('.rdr-path-find').click()
-      await wait()
-      check('R7 找路径给出真实关系链',
-        (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('路径（1 跳）')
-        && (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('—相关→'),
-        structureRoot.querySelector('.rdr-path-status')?.textContent || '(无)')
       check('R7 分类聚合按分类给出原子/来源计数，并标出缺数据的分类',
         structureRoot.querySelectorAll('.rdr-category-row').length === 2
         && (structureRoot.querySelector('.rdr-category-row .rdr-category-figures')?.textContent || '').includes('原子')
         && Boolean(structureRoot.querySelector('.rdr-category-gap')))
-      check('R6 ≥300 节点时图谱位置自动换成矩阵并如实标注（不假装画完了）',
-        !bigRoot.querySelector('.rdr-map-panel .cog-network-svg')
-        && (bigRoot.querySelector('.rdr-frame-note')?.textContent || '').includes('已自动降级为矩阵')
-        && (bigRoot.querySelector('.rdr-node-count')?.textContent || '').includes('已降级为矩阵')
+      check('R6 ≥300 节点时改由矩阵承载结构并如实标注（图谱已下线，不再假装画完了）',
+        (bigRoot.textContent || '').includes('矩阵')
         && Boolean(bigRoot.querySelector('.rdr-matrix-degraded'))
         && bigRoot.querySelectorAll('.rdr-matrix-row').length === 1)
 
@@ -602,6 +448,9 @@
       check('P1-5 撤销把刚建的待办移出收件箱',
         inboxResolved.length === 1 && inboxResolved[0].id === todoCalls[0].id && inboxResolved[0].action === 'reject'
         && !structureRoot.querySelector('.rdr-gap-done'))
+      /* 「标记缺口」需要一个选中原子；原来这个选中态由画布选择建立，图下线后改为显式点一次卡片。 */
+      structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"]')?.click()
+      await wait()
       structureRoot.querySelector('.rdr-gap-mark').click()
       await wait()
       check('P1-5「标记缺口」对选中原子记一条待办',
