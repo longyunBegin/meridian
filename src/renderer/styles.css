@@ -2756,7 +2756,7 @@ body.tauri-macos .app {
 /* Theme-first cognition graph: focused, full-width workspace replaces the global navigation shell. */
 .app[data-view="theme"] { grid-template-columns:minmax(0,1fr); }
 .app[data-view="theme"] > .sidebar,
-/* 主题视图保留左侧栏（用户要求）：不再隐藏 sidebar */
+.app[data-view="theme"] .meridian-theme > .builder > .sidebar { display:none !important; }
 .app[data-view="theme"] > .mid { grid-column:1; min-width:0; }
 .app[data-view="theme"] > .inspect,
 .app[data-view="theme"] .inspect { display:none !important; }
