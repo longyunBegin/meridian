@@ -1123,3 +1123,35 @@
 .meridian-theme .atom-node-title { font-size:13px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .meridian-theme .atom-empty-note { padding:12px; font-size:13px; color:var(--text-3); text-align:center; }
 .meridian-theme .atom-foot-v2 { display:flex; align-items:center; justify-content:space-between; padding:16px 24px; border-top:1px solid var(--line); background:var(--surface); }
+
+/* 新增原子内联表单（右侧详情区，非弹窗，对齐截图） */
+.meridian-theme .atom-form-card { background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:28px 32px; max-width:860px; }
+.meridian-theme .atom-form-head { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+.meridian-theme .atom-form-head h3 { margin:0; font-size:18px; font-weight:700; }
+.meridian-theme .atom-form-field { margin-bottom:22px; }
+.meridian-theme .atom-form-labelrow { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
+.meridian-theme .atom-form-label { font-size:14px; font-weight:600; color:var(--text); }
+.meridian-theme .atom-form-hint { font-size:12px; color:var(--text-3); }
+.meridian-theme .atom-form-input, .meridian-theme .atom-form-textarea { width:100%; padding:13px 16px; font-size:14px; border:1px solid var(--line); border-radius:10px; background:var(--bg); box-sizing:border-box; }
+.meridian-theme .atom-form-input:focus, .meridian-theme .atom-form-textarea:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+.meridian-theme .atom-form-textarea { resize:vertical; min-height:110px; line-height:1.6; }
+.meridian-theme .atom-form-2col { display:flex; gap:32px; }
+.meridian-theme .atom-form-2col .atom-form-field { flex:1; }
+.meridian-theme .atom-form-pills { display:flex; flex-wrap:wrap; gap:10px; }
+.meridian-theme .atom-form-pill { padding:9px 18px; font-size:13px; color:var(--text-2); background:var(--surface); border:1px solid var(--line); border-radius:999px; cursor:pointer; }
+.meridian-theme .atom-form-pill.is-selected { color:#2563eb; border-color:#2563eb; background:#eff6ff; font-weight:600; }
+.meridian-theme .atom-form-colors { display:flex; gap:14px; }
+.meridian-theme .atom-form-dot { width:34px; height:34px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; }
+.meridian-theme .atom-form-dot.is-selected { border-color:#fff; box-shadow:0 0 0 2px #111; }
+.meridian-theme .atom-form-relrow { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:13px; color:var(--text-2); }
+.meridian-theme .atom-form-rel { padding:7px 12px; font-size:13px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.meridian-theme .atom-form-nodelist { max-height:190px; overflow-y:auto; border:1px solid var(--line); border-radius:10px; padding:6px; background:var(--bg); }
+.meridian-theme .atom-form-nodeitem { display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:8px; cursor:pointer; }
+.meridian-theme .atom-form-nodeitem:hover { background:var(--hover); }
+.meridian-theme .atom-form-nodeitem.is-checked { background:#eff6ff; }
+.meridian-theme .atom-form-check { width:16px; height:16px; flex:none; accent-color:#2563eb; }
+.meridian-theme .atom-form-nodetitle { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.meridian-theme .atom-form-empty { padding:12px; font-size:13px; color:var(--text-3); text-align:center; }
+.meridian-theme .atom-form-foot { display:flex; align-items:center; justify-content:space-between; margin-top:8px; padding-top:20px; border-top:1px solid var(--line); }
+.meridian-theme .atom-form-note { font-size:13px; color:var(--text-2); }
+.meridian-theme .atom-form-actions { display:flex; gap:12px; }
