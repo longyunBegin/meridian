@@ -13,6 +13,7 @@ import {
   graphNeighborhood, shortestNodePath, buildCategoryAggregation,
   synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
+import { renderReaderConclusion } from '../components/reader-conclusion.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import { renderArgumentOutline } from '../components/reader-argument-outline.js'
 import { renderSmallMultiples } from '../components/reader-small-multiples.js'
@@ -1043,7 +1044,25 @@ export function renderReaderView(theme, opts = {}) {
       replayDetails)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
     axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '来源多，不等于大家都认同——它只说明有多少条被挂上来。'))
-    article.replaceChildren(toolbar, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
+    /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
+       内容全部由真实数据推导：synthesisSummary 给"最强/最分歧"，gaps 给缺口，证据条数与
+       独立来源家数来自 evidenceForNode；口径直接写在页面上。 */
+    const conclusionBox = h('section', { class: 'rdr-conclusion', 'aria-label': '结论' },
+      renderReaderConclusion({
+        summary: synthesisSummary(currentNodes, (id) => evidenceForNode(state, id)),
+        claims: currentNodes.filter((node) => node && !node.archived
+          && (node.nodeType === 'viewpoint' || node.kind === 'claim')),
+        /* 注意：renderGaps 里那份 gaps 是函数内部变量，作用域到不了这里——
+           这里按同样入参现算一次（buildGapList 是纯函数，不写数据）。 */
+        gaps: buildGapList({
+          nodes: currentNodes,
+          edges: allEdgesOf(currentProjection),
+          inboxItems: inboxCache || [],
+        }),
+        evidenceForNode: (id) => evidenceForNode(state, id),
+        onOpenClaim: focusAtom,
+      }))
+    article.replaceChildren(toolbar, conclusionBox, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()

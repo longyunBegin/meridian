@@ -1512,3 +1512,25 @@ body.tauri-macos{
 .fk-chain-review-theme { flex: none; color: var(--text-3); font-size: var(--t-caption); }
 .fk-chain-review-flag { flex: none; color: var(--orange-text); font-size: var(--t-caption); }
 .fk-chain-review-list time { flex: none; color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+
+/* 读者页第 ④ 层：结论页（读者第一屏·全部由真实数据推导） */
+.rdr-conclusion { margin: 0 0 var(--sp-5); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--hairline); border-radius: var(--r-lg); background: var(--surface); }
+.rdr-conclusion-body { display: grid; gap: var(--sp-4); }
+.rdr-conclusion-verdict { margin: 0; color: var(--text-1); font-size: var(--t-title); font-weight: var(--fw-semibold); line-height: 1.5; }
+.rdr-conclusion-coverage { display: grid; gap: var(--sp-2); }
+.rdr-conclusion-bar { height: 8px; border-radius: var(--r-pill); background: var(--hover); overflow: hidden; }
+.rdr-conclusion-bar-fill { display: block; height: 100%; background: var(--accent); }
+.rdr-conclusion-coverage-text { display: grid; gap: 2px; font-size: var(--t-caption); color: var(--text-2); }
+.rdr-conclusion-coverage-text strong { color: var(--text-1); font-size: var(--t-footnote); }
+.rdr-conclusion-block { display: grid; gap: var(--sp-2); }
+.rdr-conclusion-head { margin: 0; color: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); letter-spacing: .03em; }
+.rdr-conclusion-picks, .rdr-conclusion-gaps { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+.rdr-conclusion-pick { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--hairline-soft); }
+.rdr-conclusion-tag { flex: none; padding: 1px 8px; border-radius: var(--r-pill); background: var(--hover); color: var(--text-2); font-size: var(--t-caption); }
+.rdr-conclusion-pick-title { flex: 1 1 240px; min-width: 0; color: var(--text-1); font-size: var(--t-footnote); }
+.rdr-conclusion-strength { flex: none; color: var(--text-1); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+.rdr-conclusion-counts { flex: none; color: var(--text-3); font-size: var(--t-caption); }
+.rdr-conclusion-open { flex: none; }
+.rdr-conclusion-gaps li { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--hairline-soft); }
+.rdr-conclusion-gap-title { flex: none; color: var(--text-1); font-size: var(--t-footnote); }
+.rdr-conclusion-gap-detail { color: var(--text-3); font-size: var(--t-caption); }
