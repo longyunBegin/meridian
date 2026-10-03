@@ -1208,3 +1208,11 @@
 .meridian-theme .review-runmodel-desc { font-size:13px; color:var(--text-2); line-height:1.6; margin:0 0 16px; }
 .meridian-theme .review-runmodel-actions { display:flex; justify-content:flex-end; }
 .meridian-theme .review-runmodel-actions .btn-primary { padding:10px 24px; }
+
+/* 收件箱已分配项：默认视觉弱化 */
+.meridian-theme .inbox-item.is-assigned { opacity: 0.55; }
+.meridian-theme .inbox-item.is-assigned:hover { opacity: 0.85; }
+.meridian-theme .inbox-item.is-assigned .inbox-title::after {
+  content: '已分配'; font-size: 11px; color: var(--text-3);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 8px;
+}
