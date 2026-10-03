@@ -120,7 +120,7 @@ try {
   check('颜色选择器两种词表下都在（7 色）', populated.colors === 7 && empty.colors === 7,
     `${populated.colors}/${empty.colors}`)
 
-  // ---- 分类管理：增删都要按契约发出 theme:update（整表覆写，不是增量） ----
+  // ---- 分类管理：增 / 改 / 删 都要按契约发出 theme:update（整表覆写，不是增量） ----
   const updateCalls = []
   const persistUpdate = stub.themeUpdate
   stub.themeUpdate = async (id, patch) => {
@@ -148,12 +148,24 @@ try {
 
   /* 重新挂载：真实应用保存后会 refresh，设置页拿到的是新词表；这里模拟同一往返。 */
   const second = await openThemeSettings(vocabTheme)
-  const rendered = [...second.ops.querySelectorAll('input[placeholder][value], input')]
-    .map((el) => el.value).filter((value) => value && value !== '添加一个关系标签')
-  second.ops.querySelector('button[aria-label^="删除"]').click()
-  await waitFor(() => updateCalls.length >= 2, '删除分类发出 theme:update')
-  const removed = updateCalls.at(-1)
+  const rendered = [...second.ops.querySelectorAll('input')]
+    .map((el) => el.value).filter(Boolean)
   check('保存后的词表在下次渲染可见（含新增项）', rendered.includes('监管变化'), JSON.stringify(rendered))
+
+  /* 改：就地改写一项，仍在原位置替换（不是"删一个再加一个"）。 */
+  const categoryInput = second.ops.querySelector('input[aria-label="原子分类第 1 项"]')
+  categoryInput.value = '技术路线（改）'
+  categoryInput.dispatchEvent(new Event('change', { bubbles: true }))
+  await waitFor(() => updateCalls.length >= 2, '改写分类发出 theme:update')
+  const edited = updateCalls.at(-1)
+  check('分类管理「改」发出 theme:update，且原位置替换',
+    JSON.stringify(edited?.patch?.config?.atomCategories) === JSON.stringify(['技术路线（改）', '关键问题', '监管变化'])
+    && JSON.stringify(edited.patch?.config?.relationLabels) === JSON.stringify(['导致', '依赖']),
+    JSON.stringify(edited?.patch))
+
+  second.ops.querySelector('button[aria-label^="删除"]').click()
+  await waitFor(() => updateCalls.length >= 3, '删除分类发出 theme:update')
+  const removed = updateCalls.at(-1)
   check('分类管理「删除」发出 theme:update，删掉首项且保留其余顺序',
     removed?.id === vocabTheme.id
     && JSON.stringify(removed.patch?.config?.atomCategories) === JSON.stringify(['关键问题', '监管变化'])
