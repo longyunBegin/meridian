@@ -591,9 +591,6 @@ async function loadConcept(theme, ledgerPane, opts) {
       h('div', { class: 'inbox-sub' }, '每项都要你确认或驳回，才会写入主题。'),
       h('span', { class: 'spacer' }),
       auditControls)
-    const flowSteps = ['① 来源已摄入', '② 抽取原子陈述', '③ 映射到主题', '④ 变更前后预览', '⑤ 确认或驳回', '⑥ 事件追加与投影更新']
-    const flow = h('div', { class: 'builder-flow-steps', 'aria-label': '建设者处理阶段' },
-      ...flowSteps.map((step) => h('span', { class: 'builder-flow-step' }, step)))
     /**
      * 按选中项的真实状态更新6步指示器
      * ① 来源已摄入：选中项存在即完成
@@ -603,25 +600,6 @@ async function loadConcept(theme, ledgerPane, opts) {
      * ⑤ 确认或驳回：entry.decision 已设置
      * ⑥ 事件追加与投影更新：已决策（事件已追加，投影已更新）
      */
-    const updateFlowSteps = (entry) => {
-      const steps = flow.querySelectorAll('.builder-flow-step')
-      // 默认：无选中时只有第1步为待开始状态
-      let doneUpTo = 0
-      if (entry) {
-        doneUpTo = 1 // 来源已摄入
-        const pipelineDone = entry.item?.enginePipeline?.status === 'done'
-        const hasMapping = entry.kind === 'proposal' && entry.result && (entry.result.recommendation || entry.result.kind)
-        const decided = Boolean(entry.decision)
-        if (pipelineDone) doneUpTo = 2
-        if (hasMapping) doneUpTo = 4 // 映射完成则预览也可用
-        if (decided) doneUpTo = 6 // 已决策则事件已追加、投影已更新
-      }
-      steps.forEach((el, i) => {
-        el.classList.toggle('is-done', i < doneUpTo)
-        el.classList.toggle('is-current', i === doneUpTo)
-        el.classList.toggle('is-ready', i === 0 && doneUpTo === 0)
-      })
-    }
     const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待审')
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
     const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
@@ -644,7 +622,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     const detail = h('section', { class: 'builder-intake-review', 'aria-label': '来源与建议审核详情' },
       h('p', { class: 'chain-note' }, '选择一条来源或建议，查看其证据、映射目标与变更预览。'))
     const body = h('div', { class: 'builder-intake-body' }, queue, detail)
-    wrap.append(head, flow, body)
+    wrap.append(head, body)
     let currentItems = []
     const persistQueueState = () => builderInboxStateByTheme.set(theme.id, { mode: queueMode, entryId: selectedEntryId })
     const resolvedReviews = () => {
@@ -782,7 +760,6 @@ async function loadConcept(theme, ledgerPane, opts) {
      */
     const renderAddAtomForm = () => {
       clear(detail)
-      updateFlowSteps(null)
       /* L2：分类来自当前主题的自定义词表，L1 不写死任何领域类型。
          词表为空时只给"未分类"，并指向主题设置里的分类管理。 */
       const themeConfig = theme.config || {}
@@ -936,7 +913,6 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     const renderSelected = (entry) => {
       clear(detail)
-      updateFlowSteps(entry)
       if (!entry) {
         detail.append(h('div', { class: 'builder-review-empty' },
           h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),

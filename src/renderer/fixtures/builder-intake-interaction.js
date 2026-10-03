@@ -307,9 +307,8 @@ import '../styles.css'
       await waitFor(() => ledgerPane.hidden, '关闭账本抽屉')
       await waitFor(() => host.querySelector('.theme-view-host .builder-intake-card'), '回到默认工作台并加载合成来源')
       await waitFor(() => host.querySelector('.builder-intake-card'), '合成来源收件箱卡片')
-      check('来源摄入步骤区明确无事实变化前提，显示不同来源与摄入时间',
-        host.querySelector('.builder-flow-steps')?.textContent.includes('来源已摄入')
-        && host.querySelector('.builder-intake-card')?.textContent.includes('来源时间')
+      check('来源摄入区明确无事实变化前提，显示不同来源与摄入时间',
+        host.querySelector('.builder-intake-card')?.textContent.includes('来源时间')
         && host.querySelector('.builder-intake-card')?.textContent.includes('系统摄入'))
       check('建设者不以人工表单冒充引擎抽取，来源原文尚未运行前没有模型候选',
         ![...host.querySelectorAll('.builder-intake-card button')].some((button) => button.textContent.includes('抽取原子陈述'))
