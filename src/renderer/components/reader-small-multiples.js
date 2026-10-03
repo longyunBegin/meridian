@@ -39,12 +39,12 @@ function sparklineSvg(spark, state) {
 }
 
 export function renderSmallMultiples(rows = [], { onFocusAtom = null, colorFor = null, sparkFor = null, selectedId = null } = {}) {
-  const section = h('section', { class: 'rdr-multiples', 'aria-label': '原子小倍数网格' },
+  const section = h('section', { class: 'rdr-multiples', 'aria-label': '观点卡片' },
     h('div', { class: 'rdr-section-head' },
-      h('strong', {}, '原子一览'),
-      h('span', { class: 'rdr-section-hint' }, '每行一个原子 · 强度趋势不可比较时如实留白 · 点卡片聚焦到图谱')))
+      h('strong', {}, '每条观点'),
+      h('span', { class: 'rdr-section-hint' }, '一行一条 · 点一下看它的来龙去脉')))
   if (!rows.length) {
-    section.append(h('p', { class: 'rdr-section-empty' }, '还没有原子。'))
+    section.append(h('p', { class: 'rdr-section-empty' }, '还没有内容。'))
     return section
   }
   const grid = h('div', { class: 'rdr-multiples-grid' })

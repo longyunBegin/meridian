@@ -16,14 +16,14 @@ function strengthText(row) {
 
 function evidenceMeta(item) {
   const parts = [item.sourceLabel, item.sourcePublishedAt, item.applicability ? `适用 ${item.applicability}` : null].filter(Boolean)
-  return parts.length ? parts.join(' · ') : '出处未记录'
+  return parts.length ? parts.join(' · ') : '没记来源'
 }
 
 export function renderArgumentOutline(rows = [], { expandedIds = null, onToggle = null, onFocusAtom = null, onOpenSource = null } = {}) {
-  const section = h('section', { class: 'rdr-outline', 'aria-label': '论证大纲' },
+  const section = h('section', { class: 'rdr-outline', 'aria-label': '理由清单' },
     h('div', { class: 'rdr-section-head' },
-      h('strong', {}, '论证大纲'),
-      h('span', { class: 'rdr-section-hint' }, '结论 → 要点 → 外部数据 · 点标题折叠/展开')))
+      h('strong', {}, '理由清单'),
+      h('span', { class: 'rdr-section-hint' }, '每条观点下挂着它的理由和来源 · 点标题展开')))
   if (!rows.length) {
     section.append(h('p', { class: 'rdr-section-empty' }, '这个主题还没有可以成篇的原子。先在图谱上建一个观点，再把外部数据挂上去。'))
     return section

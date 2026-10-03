@@ -9,10 +9,10 @@ import { h } from '../lib/dom.js'
 const STANCE_LABEL = { supports: '支持', contradicts: '挑战', unstated: '未表态' }
 
 export function renderChronicle(rows = [], { onFocusEvidence = null, onOpenSource = null } = {}) {
-  const section = h('section', { class: 'rdr-chronicle', 'aria-label': '编年史' },
+  const section = h('section', { class: 'rdr-chronicle', 'aria-label': '时间线' },
     h('div', { class: 'rdr-section-head' },
-      h('strong', {}, '编年史'),
-      h('span', { class: 'rdr-section-hint' }, '按时间读外部数据：何时来了什么、归到哪、改变了多少')))
+      h('strong', {}, '时间线'),
+      h('span', { class: 'rdr-section-hint' }, '按时间看：什么时候来了什么、归到哪里')))
   if (!rows.length) {
     section.append(h('p', { class: 'rdr-section-empty' }, '还没有外部数据。捕获或导入来源后，这里按时间倒序列出每一条。'))
     return section
@@ -24,7 +24,7 @@ export function renderChronicle(rows = [], { onFocusEvidence = null, onOpenSourc
       h('div', { class: 'rdr-chronicle-main' },
         h('button', { type: 'button', class: 'rdr-chronicle-text', onclick: () => onFocusEvidence?.(row.id) }, row.text),
         h('span', { class: 'rdr-chronicle-meta' },
-          [row.sourceLabel || '来源未记录', row.atomTitles.length ? `归入 ${row.atomTitles.join(' / ')}` : '还没归入原子'].join(' · '))),
+          [row.sourceLabel || '没记来源', row.atomTitles.length ? `归入 ${row.atomTitles.join(' / ')}` : '还没归入原子'].join(' · '))),
       h('span', { class: 'rdr-chronicle-stance' }, STANCE_LABEL[row.stance] || row.stance),
       h('span', { class: 'rdr-chronicle-delta' }, row.strengthChange || '强度未变'),
       row.url

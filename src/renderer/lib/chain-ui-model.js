@@ -108,7 +108,7 @@ const EVENT_KIND_SUMMARY = {
   'relation.declared': '声明关系',
   'correction.appended': '修正',
   'confidence.updated': '强度变化',
-  'signal.reviewed': '判决',
+  'signal.reviewed': '确认记录',
   'engine.recommendation.proposed': '模型建议',
   'settlement.recorded': '结算',
   'topic.linked': '主题关联',
@@ -154,7 +154,7 @@ export function compactEventSummary(event) {
       : Number.isFinite(after) ? `→ ${Math.round(after)}%` : '强度更新'
   } else if (row.type === 'signal.reviewed') {
     const decision = String(payload.decision || '').trim()
-    detail = decision === 'rejected' ? '驳回' : decision === 'accepted' ? '确认' : decision || '已判决'
+    detail = decision === 'rejected' ? '驳回' : decision === 'accepted' ? '确认' : decision || '已处理'
   } else if (row.type === 'relation.declared') {
     const rel = RELATION_LABEL[payload.rel] || payload.rel || '关系待识别'
     detail = payload.reviewOf ? `关系${payload.reviewDecision === 'confirmed' ? '确认' : '驳回'}`

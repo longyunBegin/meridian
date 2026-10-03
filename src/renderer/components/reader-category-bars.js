@@ -7,13 +7,13 @@
 import { h } from '../lib/dom.js'
 
 export function renderCategoryBars(rows = [], { selectedId = null, onFocusCategory = null } = {}) {
-  const section = h('section', { class: 'rdr-categories', 'aria-label': '分类聚合' },
+  const section = h('section', { class: 'rdr-categories', 'aria-label': '分类' },
     h('div', { class: 'rdr-section-head' },
-      h('strong', {}, '分类聚合'),
-      h('span', { class: 'rdr-section-hint' }, '分类维度的比较：哪个分类是重心、哪一类还缺数据')))
+      h('strong', {}, '分类'),
+      h('span', { class: 'rdr-section-hint' }, '哪一类内容最多、哪一类还没来源')))
   const usable = rows.filter((row) => row.atoms || row.evidence)
   if (!usable.length) {
-    section.append(h('p', { class: 'rdr-section-empty' }, '主题设置里还没有原子分类，或原子还没归类。分类是主题自定义的词表，可在主题设置里添加。'))
+    section.append(h('p', { class: 'rdr-section-empty' }, '还没有分类。可以在主题设置里加。'))
     return section
   }
   const maxAtoms = Math.max(...usable.map((row) => row.atoms), 1)
@@ -26,7 +26,7 @@ export function renderCategoryBars(rows = [], { selectedId = null, onFocusCatego
         h('span', { class: 'rdr-category-bar is-evidence', style: `width:${Math.round((row.evidence / maxEvidence) * 100)}%`, 'aria-hidden': 'true' })),
       h('span', { class: 'rdr-category-figures' },
         `${row.atoms} 原子 · ${row.evidence} 外部数据${row.averageStrength == null ? '' : ` · 平均强度 ${Math.round(row.averageStrength)}%`}`,
-        row.atoms && !row.evidence ? h('span', { class: 'rdr-category-gap' }, '缺数据') : null)))
+        row.atoms && !row.evidence ? h('span', { class: 'rdr-category-gap' }, '还没来源') : null)))
   }
   section.append(h('div', { class: 'rdr-category-legend' },
     h('span', {}, h('i', { class: 'rdr-category-swatch is-atoms', 'aria-hidden': 'true' }), '原子'),

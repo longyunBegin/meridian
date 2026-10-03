@@ -53,7 +53,7 @@ export function renderSynthesisAxis(model, { nodeTitle = '', onHover = null } = 
     role: 'img',
     'aria-label': nodeTitle
       ? `${nodeTitle} 的强度、外部数据与确认/修订在同一条日期轴上的合成视图`
-      : '主题的强度、外部数据与确认/修订在同一条日期轴上的合成视图',
+      : '一条时间轴：什么时候来了什么、强度怎么变',
   })
   const series = Array.isArray(model?.series) ? model.series : []
   const evidence = Array.isArray(model?.evidence) ? model.evidence : []
@@ -135,7 +135,7 @@ export function renderSynthesisAxis(model, { nodeTitle = '', onHover = null } = 
     }
     const dot = svgEl('circle', { cx: cx.toFixed(1), cy: railY, r: 2.7, fill: color, class: `rdr-axis-evidence is-${point.kind}` })
     const title = svgEl('title')
-    const kindLabel = point.kind === 'supports' ? '支持' : point.kind === 'contradicts' ? '挑战' : '未表态'
+    const kindLabel = point.kind === 'supports' ? '支持' : point.kind === 'contradicts' ? '挑战' : '还没表态'
     title.textContent = `${dateLabel(point.at)} · ${kindLabel} · ${point.label}`
     dot.append(title)
     if (typeof onHover === 'function') {
@@ -172,7 +172,7 @@ export function renderSynthesisAxis(model, { nodeTitle = '', onHover = null } = 
   axisLayer.append(svgText(dateLabel(model?.start), { x: padL, y: H - 8, 'text-anchor': 'start', class: 'rdr-axis-date' }))
   axisLayer.append(svgText(dateLabel(model?.end), { x: W - padR, y: H - 8, 'text-anchor': 'end', class: 'rdr-axis-date' }))
   if (series.length === 0) {
-    axisLayer.append(svgText('这个原子还没有强度记录：确认归因后强度才会开始累积', {
+    axisLayer.append(svgText('还没确认过，所以还没有强度', {
       x: W / 2, y: padT + (H - padT - padB) / 2, 'text-anchor': 'middle', class: 'rdr-axis-empty',
     }))
   }

@@ -426,12 +426,12 @@ async function loadConcept(theme, ledgerPane, opts) {
   const doVerdict = async (sig, decision, change = null) => {
     try {
       const response = await m.chainConfirmSignal(theme.id, sig.id, decision, change, '')
-      if (response?.ok === false) throw new Error(response.error || '判决事件未能追加')
+      if (response?.ok === false) throw new Error(response.error || '确认没能记录上')
       verdictState.set(sig.id, decision === 'accepted' ? 'accepted' : decision === 'rejected' ? 'rejected' : 'edited')
       toast(decision === 'accepted' ? '已接受 · 决定事件已追加'
         : decision === 'rejected' ? '已驳回 · 原事件保留，决定事件已追加' : '建议已修订 · 决定事件已追加')
     } catch (e) {
-      toast('判决失败：' + (e?.message || e), 'var(--red)')
+      toast('处理失败：' + (e?.message || e), 'var(--red)')
       return
     }
     builderInboxStateByTheme.set(theme.id, { mode: 'processed', entryId: `signal:${sig.id}` })
@@ -474,7 +474,7 @@ async function loadConcept(theme, ledgerPane, opts) {
 
   /* 信号卡片：1:1 对齐 demo renderSignal */
   const renderSignal = (sig, i, savedDecision = null) => {
-    const statusMap = { pending: '待判决', accepted: '已接受', rejected: '已驳回', edited: '已修订' }
+    const statusMap = { pending: '等你确认', accepted: '已确认', rejected: '已驳回', edited: '已修改' }
     const decision = verdictState.get(sig.id) || savedDecision || null
     const status = decision === 'rejected' ? 'rejected'
       : decision === 'corrected' || decision === 'edited' ? 'edited'
@@ -582,7 +582,7 @@ async function loadConcept(theme, ledgerPane, opts) {
           h('span', { class: 'lead' }, '影响'),
           impactPill),
         h('div', { class: 'verdict' },
-          h('span', { class: 'lead' }, '判决'),
+          h('span', { class: 'lead' }, '你的处理'),
           h('button', {
             type: 'button', disabled: isResolved,
             class: `verdict-btn accept${status === 'accepted' ? ' active' : ''}`,

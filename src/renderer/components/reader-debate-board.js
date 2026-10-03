@@ -14,16 +14,16 @@ function evidenceLine(item, onFocusEvidence) {
     },
       h('span', { class: 'rdr-debate-item-title' }, item.title),
       h('span', { class: 'rdr-debate-item-meta' },
-        [item.sourceLabel, item.sourcePublishedAt, item.applicability ? `适用 ${item.applicability}` : null].filter(Boolean).join(' · ') || '出处未记录')))
+        [item.sourceLabel, item.sourcePublishedAt, item.applicability ? `适用 ${item.applicability}` : null].filter(Boolean).join(' · ') || '没记来源')))
 }
 
 export function renderDebateBoard(rows = [], { onFocusEvidence = null, onFocusAtom = null } = {}) {
-  const section = h('section', { class: 'rdr-debate', 'aria-label': '双边清单' },
+  const section = h('section', { class: 'rdr-debate', 'aria-label': '正反两方' },
     h('div', { class: 'rdr-section-head' },
-      h('strong', {}, '双边清单'),
-      h('span', { class: 'rdr-section-hint' }, '支持 ⟷ 挑战并排 · 点任一条跳到该外部数据')))
+      h('strong', {}, '正反两方'),
+      h('span', { class: 'rdr-section-hint' }, '支持和反对并排 · 点一条看它是什么')))
   if (!rows.length) {
-    section.append(h('p', { class: 'rdr-section-empty' }, '还没有已表态的支持或挑战关系。挂上外部数据并在审阅时表态后，这里会并排列出双方。'))
+    section.append(h('p', { class: 'rdr-section-empty' }, '还没有人表态支持或反对。'))
     return section
   }
   for (const row of rows) {

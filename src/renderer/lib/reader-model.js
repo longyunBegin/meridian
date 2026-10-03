@@ -427,8 +427,8 @@ export function buildGapList({ nodes = [], edges = [], inboxItems = [], now = Da
     if (!linked.size && !(Number(node.evidenceCount) > 0)) {
       gaps.push({
         key: `no-evidence:${node.id}`, kind: 'no-evidence', nodeId: node.id,
-        title: titleOf(node), detail: '这个原子还没有任何外部数据',
-        todo: `为「${titleOf(node)}」补一条外部数据`,
+        title: titleOf(node), detail: '这条观点还没有任何来源',
+        todo: `为「${titleOf(node)}」补一条来源`,
       })
     }
   }
@@ -436,7 +436,7 @@ export function buildGapList({ nodes = [], edges = [], inboxItems = [], now = Da
     if (evidence.pendingReview !== true || evidence.reviewDecision) continue
     gaps.push({
       key: `pending-review:${evidence.id}`, kind: 'pending-review', nodeId: evidence.id,
-      title: titleOf(evidence), detail: '这条外部数据的归因还没人工复核',
+      title: titleOf(evidence), detail: '这条来源还没人工复核过',
       todo: `复核「${titleOf(evidence)}」的归因`,
     })
   }
@@ -453,7 +453,7 @@ export function buildGapList({ nodes = [], edges = [], inboxItems = [], now = Da
     if (!item || item.status !== 'pending' || item.kind === 'todo' || item.extractedThemeId) continue
     gaps.push({
       key: `unassigned-inbox:${item.id}`, kind: 'unassigned-inbox', nodeId: null,
-      title: String(item.title || item.text || '未归位条目').slice(0, 40),
+      title: String(item.title || item.text || '没归到观点的条目').slice(0, 40),
       detail: '收件箱里这条还没有归到任何主题',
       todo: `把「${String(item.title || item.text || '').slice(0, 24)}」归到主题`,
     })

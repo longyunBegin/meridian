@@ -177,7 +177,7 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
     && gaps.filter((gap) => gap.kind === 'unassigned-inbox').length === 1
     && gaps.every((gap) => gap.todo && gap.detail))
   check('R5 每条缺口都给出可执行的待办文案',
-    gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条外部数据'
+    gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条来源'
     && gaps.find((gap) => gap.kind === 'expired-evidence').todo.includes('更新'))
 
   /* R7 图的重新定位：邻域 / 路径 / 分类聚合 */

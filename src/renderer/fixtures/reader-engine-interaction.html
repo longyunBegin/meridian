@@ -241,7 +241,7 @@
       document.querySelector('#fixture-root').append(historicRoot, currentRoot)
       await wait()
       check('读者视图以无中心根的主题网络为主结构，并明确拒绝由支持数推导整体走向', currentRoot.querySelector('.rdr-map-panel')
-        && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('支持关系数量不等于主题整体向好'))
+        && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('来源多，不等于大家都认同'))
       /* R7：图是局部工具——默认不画全图，未选中原子时给引导；全图是显式入口。 */
       check('R7 默认不画全图：未选中原子时画布给引导',
         !currentRoot.querySelector('.rdr-map-panel .cog-network-svg')
@@ -321,7 +321,7 @@
       /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：
          没配分类的主题不该出现这个控件；配了之后按用户自己的词筛，未分类单独一档。 */
       check('主题没配原子分类时读者视图不出现分类筛选',
-        currentRoot.querySelector('select[aria-label="按原子分类筛选"]')?.hidden === true)
+        currentRoot.querySelector('select[aria-label="按分类筛选"]')?.hidden === true)
       const catNode = (id, title, seq, atomCategory) => ({
         id, nodeType: 'viewpoint', kind: 'claim', title, detail: '', currentText: title, confidence: null,
         status: 'pending', archived: false, external: false, createdSeq: seq, eventIds: [], provenanceEventIds: [],
@@ -338,7 +338,7 @@
       /* R7 之后默认不画全图，这一段要验分类筛选对画布可见帧的影响，先显式切到全图。 */
       categoryRoot.querySelector('.rdr-graph-scope.is-full').click()
       await wait()
-      const categorySelect = categoryRoot.querySelector('select[aria-label="按原子分类筛选"]')
+      const categorySelect = categoryRoot.querySelector('select[aria-label="按分类筛选"]')
       check('主题配了原子分类后出现分类筛选，含"未分类"一档', Boolean(categorySelect) && !categorySelect.hidden
         && [...categorySelect.options].map((option) => option.textContent).join() === '全部分类,技术路线,商业模式,未分类',
         categorySelect ? [...categorySelect.options].map((option) => option.textContent).join() : '(控件缺失)')
@@ -400,17 +400,17 @@
       check('分类色条按主题词表上色（分类＝主题自定义，颜色只表达属于哪一类）',
         categoryRoot.querySelectorAll('.cog-node-category').length >= 2)
 
-      /* 合成轴（设计提案 01）：强度线 × 外部数据点 × 确认/修订台阶，同一条日期轴。 */
+      /* 整体情况（设计提案 01）：强度线 × 来源点 × 确认/修订台阶，同一条日期轴。 */
       const axisEvents = [
-        { id: 'ax-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第一条外部数据' } },
+        { id: 'ax-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第一条来源' } },
         { id: 'ax-r1', seq: 2, at: '2026-09-21T00:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'ax-e1' }, to: { eventId: 'ax-v1' } } },
-        { id: 'ax-e2', seq: 3, at: '2026-09-22T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第二条外部数据' } },
+        { id: 'ax-e2', seq: 3, at: '2026-09-22T00:00:00.000Z', type: 'evidence.appended', payload: { text: '第二条来源' } },
         { id: 'ax-c1', seq: 4, at: '2026-09-23T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 62, newConfidence: 67, reason: '支持证据' } },
         { id: 'ax-c2', seq: 5, at: '2026-09-24T00:00:00.000Z', type: 'confidence.updated', payload: { nodeId: 'ax-v1', oldConfidence: 67, newConfidence: 71, reason: '又一条支持' } },
         { id: 'ax-s1', seq: 6, at: '2026-09-25T00:00:00.000Z', type: 'signal.reviewed', payload: { decision: 'accepted' } },
       ]
       const axisNode = {
-        id: 'ax-v1', nodeType: 'viewpoint', kind: 'claim', title: '合成轴原子', detail: '', currentText: '合成轴原子',
+        id: 'ax-v1', nodeType: 'viewpoint', kind: 'claim', title: '整体情况原子', detail: '', currentText: '整体情况原子',
         confidence: 71, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 2,
         confidenceHistory: [
           { at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67, reason: '支持证据' },
@@ -418,7 +418,7 @@
         ],
       }
       const axisProjection = { nodes: [axisNode], allNodes: [axisNode], edges: [], allEdges: [], integrity: { ok: true }, eventCount: axisEvents.length }
-      const axisRoot = renderReaderView({ name: '合成轴合成主题' }, {
+      const axisRoot = renderReaderView({ name: '整体情况合成主题' }, {
         loadProjection: async () => axisProjection, loadEvents: async () => axisEvents, onOpenBuilder: () => {},
       })
       document.querySelector('#fixture-root').append(axisRoot)
@@ -428,22 +428,22 @@
       axisRoot.querySelector('.cog-node')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await wait()
       const axisSvg = axisRoot.querySelector('.rdr-axis-svg')
-      check('合成轴：选中原子后强度线按 confidence 历史画成折线',
+      check('整体情况：选中原子后强度线按 confidence 历史画成折线',
         axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') === '2',
         axisSvg?.querySelector('.rdr-axis-line')?.getAttribute('data-points') || '(无线)')
-      check('合成轴：外部数据落在同一条日期轴的轨道上，按支持/未表态上色',
+      check('整体情况：来源落在同一条日期轴的轨道上，按支持/未表态上色',
         axisSvg?.querySelectorAll('.rdr-axis-evidence').length === 2
         && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-supports'))
         && Boolean(axisSvg.querySelector('.rdr-axis-evidence.is-unstated')))
-      check('合成轴：确认/修订画成台阶，标题栏如实播报计数与当前强度',
+      check('整体情况：确认/修订画成台阶，标题栏如实播报计数与当前强度',
         axisSvg?.querySelectorAll('.rdr-axis-step').length === 1
-        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('2 条外部数据')
+        && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('2 条来源')
         && (axisRoot.querySelector('.rdr-axis-caption')?.textContent || '').includes('强度 71%'))
       check('序号回放降级进折叠区，不再抢占主控制位',
         Boolean(axisRoot.querySelector('.rdr-replay-details > summary'))
         && Boolean(axisRoot.querySelector('.rdr-replay-details .rdr-history')))
 
-      /* R1 论证大纲 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
+      /* R1 理由清单 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
       const structureEvidence = (id, title, extra = {}) => ({
         id, nodeType: 'evidence', kind: 'evidence', title, currentText: title, status: 'pending', archived: false, external: false,
         createdSeq: 1, eventIds: [], provenanceEventIds: [], targetNodeIds: ['sx-v1'], evidenceCount: 0,
@@ -461,9 +461,9 @@
           ],
         },
         { id: 'sx-v2', nodeType: 'viewpoint', kind: 'claim', title: 'R1 无证据原子', currentText: 'R1 无证据原子', confidence: null, status: 'pending', archived: false, external: false, createdSeq: 2, eventIds: [], provenanceEventIds: [], evidenceCount: 0, atomCategory: '商业模式' },
-        structureEvidence('sx-e1', '支持用的外部数据', { applicability: '2020Q1' }),
-        structureEvidence('sx-e2', '挑战用的外部数据', { applicability: '2099' }),
-        structureEvidence('sx-e3', '未表态的外部数据', { evidenceRefs: [], sourceLabel: null, sourceUrl: null, sourcePublishedAt: null, applicability: null }),
+        structureEvidence('sx-e1', '支持用的来源', { applicability: '2020Q1' }),
+        structureEvidence('sx-e2', '挑战用的来源', { applicability: '2099' }),
+        structureEvidence('sx-e3', '未表态的来源', { evidenceRefs: [], sourceLabel: null, sourceUrl: null, sourcePublishedAt: null, applicability: null }),
       ]
       const structureEdges = [
         { id: 'sx-r1', from: 'sx-e1', to: 'sx-v1', rel: 'supports', reviewDecision: null, pendingReview: false },
@@ -471,14 +471,14 @@
         { id: 'sx-r3', from: 'sx-v1', to: 'sx-v2', rel: 'related', reviewDecision: null, pendingReview: false },
       ]
       const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
-      /* 编年史要按事件流读：这里让事件 id 与投影证据节点 id 对齐（真实数据就是同一批 id）。 */
+      /* 时间线要按事件流读：这里让事件 id 与投影证据节点 id 对齐（真实数据就是同一批 id）。 */
       const structureEvents = [
-        { id: 'sx-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '支持用的外部数据' } },
+        { id: 'sx-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '支持用的来源' } },
         { id: 'sx-rel1', seq: 2, at: '2026-09-20T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'sx-e1' }, to: { eventId: 'sx-v1' } } },
         { id: 'sx-c1', seq: 3, at: '2026-09-20T01:00:01.000Z', type: 'confidence.updated', payload: { nodeId: 'sx-v1', evidenceEventId: 'sx-e1', oldConfidence: 62, newConfidence: 67 } },
-        { id: 'sx-e2', seq: 4, at: '2026-09-25T00:00:00.000Z', type: 'evidence.appended', payload: { text: '挑战用的外部数据' } },
+        { id: 'sx-e2', seq: 4, at: '2026-09-25T00:00:00.000Z', type: 'evidence.appended', payload: { text: '挑战用的来源' } },
         { id: 'sx-rel2', seq: 5, at: '2026-09-25T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'contradicts', from: { eventId: 'sx-e2' }, to: { eventId: 'sx-v1' } } },
-        { id: 'sx-e3', seq: 6, at: '2026-09-26T00:00:00.000Z', type: 'evidence.appended', payload: { text: '未表态的外部数据' } },
+        { id: 'sx-e3', seq: 6, at: '2026-09-26T00:00:00.000Z', type: 'evidence.appended', payload: { text: '未表态的来源' } },
       ]
       const structureRoot = renderReaderView({ name: '大纲合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
         loadProjection: async () => structureProjection, loadEvents: async () => structureEvents, onOpenBuilder: () => {},
@@ -486,12 +486,12 @@
       })
       document.querySelector('#fixture-root').append(structureRoot)
       await wait()
-      check('R1 论证大纲：每个原子一行结论，支持/挑战/未表态三组都在',
+      check('R1 理由清单：每个原子一行结论，支持/挑战/未表态三组都在',
         structureRoot.querySelectorAll('.rdr-outline-atom').length === 2
         && structureRoot.querySelectorAll('.rdr-outline-group.is-supports').length === 2
         && structureRoot.querySelectorAll('.rdr-outline-group.is-against').length === 2
         && structureRoot.querySelectorAll('.rdr-outline-group.is-unclassified').length === 2)
-      check('R1 大纲按立场分组外部数据，带来源名、时间与「查看来源」',
+      check('R1 大纲按立场分组来源，带来源名、时间与「查看来源」',
         structureRoot.querySelectorAll('.rdr-outline-group.is-supports .rdr-outline-item').length === 1
         && structureRoot.querySelectorAll('.rdr-outline-group.is-against .rdr-outline-item').length === 1
         && (structureRoot.querySelector('.rdr-outline-item-meta')?.textContent || '').includes('示例来源')
@@ -512,8 +512,8 @@
       check('R2 点卡片聚焦该原子并联动检视器', structureRoot.querySelector('.rdr-inspector-title')?.textContent === 'R1 结论原子'
         && Boolean(structureRoot.querySelector('.rdr-multiple-card.is-selected')))
 
-      /* R3 双边清单 / R4 编年史 */
-      check('R3 双边清单并排列出支持与挑战，并标出争议行',
+      /* R3 正反两方 / R4 时间线 */
+      check('R3 正反两方并排列出支持与挑战，并标出争议行',
         structureRoot.querySelectorAll('.rdr-debate-row').length === 1
         && Boolean(structureRoot.querySelector('.rdr-debate-row.is-contested'))
         && structureRoot.querySelectorAll('.rdr-debate-col.is-supports .rdr-debate-item').length === 1
@@ -521,20 +521,20 @@
         && (structureRoot.querySelector('.rdr-debate-strength')?.textContent || '').includes('71%'))
       structureRoot.querySelector('.rdr-debate-col.is-against .rdr-debate-link')?.click()
       await wait()
-      check('R3 点某条挑战跳到该外部数据的详情',
-        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '挑战用的外部数据')
+      check('R3 点某条挑战跳到该来源的详情',
+        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '挑战用的来源')
       const chronicleItems = [...structureRoot.querySelectorAll('.rdr-chronicle-item')]
-      check('R4 编年史一行一条外部数据，带日期/来源/归入原子/立场/强度变化',
+      check('R4 时间线一行一条来源，带日期/来源/归入原子/立场/强度变化',
         chronicleItems.length === 3
         && chronicleItems[0].querySelector('.rdr-chronicle-date')?.textContent === '2026-09-26'
         && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-delta')?.textContent || '').includes('62% → 67%')
         && (structureRoot.querySelector('.rdr-chronicle-item.is-contradicts .rdr-chronicle-stance')?.textContent || '') === '挑战'
         && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('归入 R1 结论原子')
         && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('示例来源'))
-      check('R4 编年史不出现账本术语（事件序号 / 哈希）',
+      check('R4 时间线不出现账本术语（事件序号 / 哈希）',
         !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
 
-      /* R6 邻接矩阵 + ≥300 节点自动替代图 */
+      /* R6 对照表 + ≥300 节点自动替代图 */
       check('R6 矩阵行列重排后区分支持 / 挑战 / 挂上未表态',
         structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
         && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-supports'))
@@ -542,11 +542,11 @@
         && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-attached')))
       structureRoot.querySelector('.rdr-matrix-cell.is-supports .rdr-matrix-dot')?.click()
       await wait()
-      check('R6 点击矩阵单元格定位到该外部数据',
-        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '支持用的外部数据')
+      check('R6 点击矩阵单元格定位到该来源',
+        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '支持用的来源')
       structureRoot.querySelector('.rdr-matrix-mode[aria-pressed="false"]')?.click()
       await wait()
-      check('R6 可切原子 × 原子（外部数据的边不算原子间关系；对称关系两个方向都填充）',
+      check('R6 可切原子 × 原子（来源的边不算原子间关系；对称关系两个方向都填充）',
         structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
         && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-related').length === 2
         && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-empty').length === 2)
@@ -556,7 +556,7 @@
       }]
       for (let index = 0; index < 300; index++) {
         bigNodes.push({
-          id: `big-e${index}`, nodeType: 'evidence', kind: 'evidence', title: `外部数据 ${index}`, currentText: `外部数据 ${index}`,
+          id: `big-e${index}`, nodeType: 'evidence', kind: 'evidence', title: `来源 ${index}`, currentText: `来源 ${index}`,
           status: 'pending', archived: false, external: false, createdSeq: index + 2, eventIds: [], provenanceEventIds: [],
           targetNodeIds: ['big-v1'], evidenceCount: 0,
         })
@@ -577,7 +577,7 @@
         (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('路径（1 跳）')
         && (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('—相关→'),
         structureRoot.querySelector('.rdr-path-status')?.textContent || '(无)')
-      check('R7 分类聚合按分类给出原子/外部数据计数，并标出缺数据的分类',
+      check('R7 分类聚合按分类给出原子/来源计数，并标出缺数据的分类',
         structureRoot.querySelectorAll('.rdr-category-row').length === 2
         && (structureRoot.querySelector('.rdr-category-row .rdr-category-figures')?.textContent || '').includes('原子')
         && Boolean(structureRoot.querySelector('.rdr-category-gap')))
@@ -588,22 +588,22 @@
         && Boolean(bigRoot.querySelector('.rdr-matrix-degraded'))
         && bigRoot.querySelectorAll('.rdr-matrix-row').length === 1)
 
-      /* R5 缺口清单 + P1-5 回流 */
+      /* R5 还缺什么 + P1-5 回流 */
       const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
-      check('R5 缺口清单覆盖缺外部数据 / 已过期 / 未归位三类',
+      check('R5 还缺什么覆盖缺来源 / 已过期 / 未归位三类',
         gapItems.length === 3
-        && gapItems.some((el) => el.textContent.includes('缺外部数据'))
-        && gapItems.some((el) => el.textContent.includes('已过期'))
-        && gapItems.some((el) => el.textContent.includes('未归位')),
+        && gapItems.some((el) => el.textContent.includes('还没有来源'))
+        && gapItems.some((el) => el.textContent.includes('来源过期了'))
+        && gapItems.some((el) => el.textContent.includes('没归到任何观点')),
         gapItems.map((el) => el.querySelector('.rdr-gap-kind')?.textContent.trim()).join('/'))
-      check('R5 缺口清单不把没过的证据算成过期',
-        !gapItems.some((el) => el.textContent.includes('挑战用的外部数据')))
+      check('R5 还缺什么不把没过的证据算成过期',
+        !gapItems.some((el) => el.textContent.includes('挑战用的来源')))
       const todoButton = gapItems[0].querySelector('.rdr-gap-todo')
       todoButton.click()
       await wait()
       check('P1-5 加入待办写进收件箱且是 todo 类型（不触发自动抽取）',
         todoCalls.length === 1 && todoCalls[0].kind === 'todo' && todoCalls[0].extracted === false
-        && todoCalls[0].text.includes('补一条外部数据') && todoCalls[0].provenance?.platform === 'reader-gap',
+        && todoCalls[0].text.includes('补一条来源') && todoCalls[0].provenance?.platform === 'reader-gap',
         JSON.stringify(todoCalls[0] || null))
       check('P1-5 已加入待办的缺口标成"已在收件箱"', Boolean(structureRoot.querySelector('.rdr-gap-done')))
       const toastButton = [...document.querySelectorAll('.toast-btn')].pop()

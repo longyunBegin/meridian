@@ -224,7 +224,7 @@ export function renderReaderView(theme, opts = {}) {
       nodesById = new Map(historyNodes.map((node) => [node.id, node]))
       eventById = new Map(state.events.map((event) => [event.id, event]))
     }
-    const graphCanvas = h('div', { class: 'rdr-graph-canvas', 'aria-label': '原子节点图谱画布' })
+    const graphCanvas = h('div', { class: 'rdr-graph-canvas', 'aria-label': '关系图画布' })
     const inspector = h('aside', { class: 'rdr-inspector', 'aria-label': '节点、证据与来源检视', 'aria-live': 'polite' })
     const focusLabel = h('span', { class: 'rdr-focus-label', role: 'status', 'aria-live': 'polite' }, '选择任一节点查看其论证、关联与来源')
     const nodeSearch = h('input', { class: 'txt rdr-search', type: 'search', placeholder: '搜索所有节点、说明或旧名', 'aria-label': '搜索完整主题中的所有节点' })
@@ -239,7 +239,7 @@ export function renderReaderView(theme, opts = {}) {
     /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：主题没配分类就不出现，
        配了之后"未分类"单独一档，保证早先建的原子仍然找得到。 */
     const themeCategories = asArray(theme?.config?.atomCategories).map((name) => String(name || '').trim()).filter(Boolean)
-    const categoryFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按原子分类筛选', hidden: themeCategories.length === 0 },
+    const categoryFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按分类筛选', hidden: themeCategories.length === 0 },
       h('option', { value: 'all' }, '全部分类'),
       ...themeCategories.map((name) => h('option', { value: name }, name)),
       h('option', { value: UNCATEGORIZED_LABEL }, UNCATEGORIZED_LABEL))
@@ -248,7 +248,7 @@ export function renderReaderView(theme, opts = {}) {
     const pathFrom = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径起点' })
     const pathTo = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径终点' })
     const pathFind = h('button', { type: 'button', class: 'btn btn-sm rdr-path-find' }, '找路径')
-    const pathStatus = h('p', { class: 'rdr-path-status', role: 'status', 'aria-live': 'polite' }, '选两个原子，看它们之间隔着几条关系。')
+    const pathStatus = h('p', { class: 'rdr-path-status', role: 'status', 'aria-live': 'polite' }, '选两条观点，看看它们之间隔着几层关系。')
     const timeSlider = h('input', {
       class: 'rdr-time-slider', type: 'range', min: '0', max: String(Math.max(0, timeline.length - 1)), step: '1',
       value: String(Math.max(0, timeline.length - 1)),
@@ -294,7 +294,7 @@ export function renderReaderView(theme, opts = {}) {
             h('p', {}, '综合解释尚未作为独立的人工结论写入主题。这里不按支持关系数量判断整体方向；选择节点后可追溯其证据、适用时间和未决项。'),
             h('div', { class: 'rdr-read-integrity', role: integrity.ok === false ? 'alert' : 'status' }, integrity.ok === false
               ? `完整性异常 · 仅展示校验有效前缀 ${integrity.lastValidSeq || 0} 条事件`
-              : `链完整 · ${verifiedEvents.length} 条记录`),
+              : `记录完整 · ${verifiedEvents.length} 条`),
             state.selectedSeq != null ? h('p', { class: 'rdr-historical-note' }, `当前为历史回放 · 第 ${state.selectedSeq} 条之后的事件不参与此时点模型。`) : null,
             h('button', { type: 'button', class: 'btn btn-sm', onclick: () => opts.onOpenBuilder?.('network') }, '进入建设者视图')))
         return
@@ -327,7 +327,7 @@ export function renderReaderView(theme, opts = {}) {
       })
       inspector.append(
         h('div', { class: 'rdr-inspector-head' },
-          h('p', { class: 'rdr-inspector-kicker' }, `原子 · ${NODE_STATUS_LABEL[status] || status}`),
+          h('p', { class: 'rdr-inspector-kicker' }, `观点 · ${NODE_STATUS_LABEL[status] || status}`),
           h('h2', { class: 'rdr-inspector-title' }, titleOf(node)),
           detail ? h('p', { class: 'rdr-inspector-summary' }, cleanText(detail)) : h('p', { class: 'rdr-inspector-summary is-empty' }, '没有记录节点说明。'),
           // 当前强度条（对齐设计稿）
@@ -363,7 +363,7 @@ export function renderReaderView(theme, opts = {}) {
             ...pending.map((edge) => h('p', { class: 'rdr-open-item' }, `关系「${edge.rel || '未知'}」仍待人工复核。`)),
             !pending.length && status !== 'disputed' ? h('p', { class: 'rdr-muted' }, '当前没有显式记录的未决项；这不表示所有问题都已解决。') : null),
           h('section', { class: 'rdr-inspector-section' },
-            h('h3', {}, `外部数据 · ${evidenceSummary.total} 条（按时间倒序）`),
+            h('h3', {}, `来源 · ${evidenceSummary.total} 条（按时间倒序）`),
             h('p', { class: 'rdr-evidence-count-note' }, '按唯一证据节点计数；佐证/反驳徽标表示该证据与当前节点的关系方向。'),
             sortedEvidence.length ? h('div', { class: 'rdr-evidence-list-flat' }, ...sortedEvidence.map((evidence) => {
               const sourceEvent = sourceEventFor(evidence, eventById, state.events)
@@ -394,7 +394,7 @@ export function renderReaderView(theme, opts = {}) {
       searchResults.replaceChildren()
       if (!query) {
         searchResults.hidden = true
-        searchStatus.textContent = `全量检索范围：${currentNodes.length} 个节点。画布可渐进展开，搜索始终覆盖完整投影。`
+        searchStatus.textContent = `全量检索范围：${currentNodes.length} 条内容。画布可渐进展开，搜索始终覆盖完整投影。`
         return
       }
       searchResults.hidden = false
@@ -447,8 +447,8 @@ export function renderReaderView(theme, opts = {}) {
       if (matrixReplacesGraph(currentNodes.length)) {
         graphCanvas.classList.remove('is-overview')
         graphCanvas.replaceChildren(h('p', { class: 'rdr-frame-note', role: 'status' },
-          `这个主题有 ${currentNodes.length} 个节点（≥300）：图谱已自动降级为矩阵视图——力导向在千级节点上不再是可读结构，矩阵里找块状结构更快。矩阵在上方「邻接矩阵」区。`))
-        countStatus.textContent = `已降级为矩阵 · ${currentNodes.length} 个节点`
+          `这个主题有 ${currentNodes.length} 条内容（≥300）：图谱已自动降级为矩阵视图——力导向在千级节点上不再是可读结构，矩阵里找块状结构更快。矩阵在上方「邻接矩阵」区。`))
+        countStatus.textContent = `已降级为矩阵 · ${currentNodes.length} 条内容`
         lodBadge.textContent = 'LOD 点阵 · ≥300 已降级为矩阵'
         lodBadge.classList.add('is-degraded')
         return
@@ -474,9 +474,9 @@ export function renderReaderView(theme, opts = {}) {
       const scopedMatching = neighborhood ? matching.filter((node) => neighborhood.nodeIds.includes(node.id)) : matching
       if (graphScope === 'local' && !focus) {
         graphCanvas.replaceChildren(h('div', { class: 'rdr-graph-guide' },
-          h('p', {}, '图是局部工具：选一个原子，只看它的 1–2 跳邻域。要"找路径 / 看全局"时再用下面的路径查询或「全图」。'),
+          h('p', {}, '点一条观点，看它周围的关系；想看整体就点「全图」。'),
           h('button', { type: 'button', class: 'btn btn-sm rdr-graph-full-link', onclick: () => setGraphScope('full') }, '仍要看全图')))
-        countStatus.textContent = `未选择原子 · 当前主题共 ${currentNodes.length} 个节点`
+        countStatus.textContent = `未选择原子 · 当前主题共 ${currentNodes.length} 条内容`
         return
       }
       const matchIds = new Set(scopedMatching.map((node) => node.id))
@@ -725,13 +725,13 @@ export function renderReaderView(theme, opts = {}) {
 
     const toolbar = h('div', { class: 'rdr-reader-head' },
       h('div', { class: 'rdr-reader-title-row' },
-        h('div', {}, h('p', { class: 'rdr-kicker' }, '主题模型 · 读者视图'), h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题')),
-        h('span', { class: 'rdr-scope-badge' }, `${currentNodes.length} 个节点`),
-        h('button', { type: 'button', class: 'btn btn-sm rdr-builder-link', onclick: () => opts.onOpenBuilder?.('network') }, '建设者视图')),
+        h('div', {}, h('p', { class: 'rdr-kicker' }, '主题'), h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题')),
+        h('span', { class: 'rdr-scope-badge' }, `${currentNodes.length} 条内容`),
+        h('button', { type: 'button', class: 'btn btn-sm rdr-builder-link', onclick: () => opts.onOpenBuilder?.('network') }, '去整理')),
       /* 引导横幅已删除：页面本身要能直观看懂，不靠一段说明去解释它怎么读。
          只保留链完整性徽标（这是事实状态，不是说教）；那句诚实提醒移进合成轴卡片。 */
       integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
-        : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `链完整 · ${verifiedEvents.length} 条记录`))
+        : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `记录完整 · ${verifiedEvents.length} 条`))
 
     /* 全览：默认关（保持卡片原始可读尺寸），开了就把整张图缩进面板一屏——
        不需要滚动也能看全 21 个节点，代价是字变小。开关状态跟随这次挂载，不写任何数据。 */
@@ -798,7 +798,7 @@ export function renderReaderView(theme, opts = {}) {
         ? `${new Date(model.start).toISOString().slice(0, 10)} → ${new Date(model.end).toISOString().slice(0, 10)}`
         : '尚无事件'
       const parts = [
-        `${model.counts.evidence} 条外部数据（支持 ${model.counts.supports} · 挑战 ${model.counts.contradicts} · 未表态 ${model.counts.unstated}）`,
+        `${model.counts.evidence} 条来源（支持 ${model.counts.supports} · 反对 ${model.counts.contradicts} · 没表态 ${model.counts.unstated}）`,
         `${model.counts.steps} 次确认/修订`,
         span,
       ]
@@ -814,15 +814,15 @@ export function renderReaderView(theme, opts = {}) {
        一屏堆九块信息，读者没有兴趣也没有耐心——按问题分开，想看什么点什么。 */
     const sectionNavHost = h('nav', { class: 'rdr-section-nav', role: 'tablist', 'aria-label': '读者页分区' })
     const tabDefs = [
-      ['reader-axis', '合成轴'],
-      ['reader-outline', '论证大纲'],
-      ['reader-debate', '双边清单'],
-      ['reader-multiples', '原子一览'],
+      ['reader-axis', '整体情况'],
+      ['reader-outline', '理由清单'],
+      ['reader-debate', '正反两方'],
+      ['reader-multiples', '每条观点'],
       ['reader-categories', '分类'],
-      ['reader-matrix', '矩阵'],
-      ['reader-chronicle', '编年史'],
-      ['reader-gaps', '缺口'],
-      ['reader-map', '图谱'],
+      ['reader-matrix', '对照表'],
+      ['reader-chronicle', '时间线'],
+      ['reader-gaps', '还缺什么'],
+      ['reader-map', '关系图'],
     ]
     const renderSectionNav = () => {
       sectionNavHost.replaceChildren(...tabDefs.map(([id, label]) => h('button', {
@@ -850,9 +850,9 @@ export function renderReaderView(theme, opts = {}) {
       if (activeSection === 'reader-map') renderGraph()
     }
 
-    const axisBox = h('section', { id: 'reader-axis', class: 'rdr-axis-card', 'aria-label': '合成轴：强度、时间与外部数据' },
+    const axisBox = h('section', { id: 'reader-axis', class: 'rdr-axis-card', 'aria-label': '整体情况：强度、时间与来源' },
       h('div', { class: 'rdr-axis-head' },
-        h('strong', { class: 'rdr-axis-title' }, '强度 · 时间 · 外部数据（合成轴）'),
+        h('strong', { class: 'rdr-axis-title' }, '整体情况'),
         axisCaption),
       axisHost)
     /* 序号回放降级为内部细节：能力保留，主控制让给合成轴。 */
@@ -916,7 +916,7 @@ export function renderReaderView(theme, opts = {}) {
         onOpenBuilder: (gap) => opts.onOpenBuilder?.(gap.nodeId ? 'network' : 'network', gap.nodeId || undefined),
         onMarkGap: (selectedAtomId) => {
           const node = selectedAtomId ? currentNodes.find((item) => item.id === selectedAtomId) : null
-          createTodo(node ? `为「${titleOf(node)}」补一条外部数据` : '复核这个主题里说不通的关系', null)
+          createTodo(node ? `为「${titleOf(node)}」补一条来源` : '复核这个主题里说不通的关系', null)
         },
       }))
     }
@@ -1014,7 +1014,7 @@ export function renderReaderView(theme, opts = {}) {
 
     const controls = h('section', { id: 'reader-map', class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
-        h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
+        h('div', {}, h('strong', { class: 'rdr-map-heading' }, '关系图'),
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
       h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
@@ -1027,8 +1027,8 @@ export function renderReaderView(theme, opts = {}) {
         h('span', { class: 'rdr-graph-scope-group', role: 'group', 'aria-label': '图谱范围' }, graphScopeLocal, graphScopeFull),
         lodAutoButton, zoomSlider, zoomBadge, overviewButton, lodBadge),
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
-        h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关；灰色细点线：证据挂载——外部数据已挂到这个原子上，但你还没有声明它是支持还是反驳。待复核与驳回关系会保留其决定状态。'),
-        h('p', {}, '主题下的节点均为原子节点（主题拆分的第一性原理单元）。网络位置为稳定布局，不代表重要度或因果强度。'),
+        h('p', {}, '实线：支持、推导、反驳；虚线：改过版本；点线：归属、影响、依赖、时间上的关联；灰色细点线：来源挂上了这条观点，但还没说支持还是反对。'),
+        h('p', {}, '每条观点都是主题拆出来的最小单元。位置是排版结果，不代表重要程度。'),
         h('p', {}, h('strong', {}, '视觉编码：'), '节点卡片大小反映强度（越大越强）；边框与状态徽标颜色反映状态——',
           h('span', { style: `color:${READER_STATE_META.supported.textColor}` }, '已佐证'),
           ' / ',
@@ -1042,7 +1042,7 @@ export function renderReaderView(theme, opts = {}) {
           '。点击空白处可清空选择，回到整张图谱。')),
       replayDetails)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
-    axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '支持关系数量不等于主题整体向好——数量只说明有多少条外部数据被挂上来。'))
+    axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '来源多，不等于大家都认同——它只说明有多少条被挂上来。'))
     article.replaceChildren(toolbar, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
