@@ -53,6 +53,20 @@ export async function renderAudit(mid) {
         a.byGate.routeIgnored.total ? gateRow('routeIgnored', a.byGate.routeIgnored, chName, true) : null,
       ),
       h('p', { class: 'fk-foot' }, `历史累计 ${a.allTotal} 条裁决。归位忽略是用户选择，独立展示，不计入筛掉分母。`),
+      /* 建设者复核里被你驳回的决定：也在"误杀审计"这一栏——
+         它要回答的正是"这条被判掉，是不是判错了"。驳回后又被重新声明＝误杀。 */
+      a.chainReview?.total ? h('section', { class: 'fk-chain-review' },
+        h('h3', {}, `建设者里你驳回了 ${a.chainReview.total} 条复核决定`),
+        a.chainReview.reversed
+          ? h('p', { class: 'fk-caliber' }, `其中 ${a.chainReview.reversed} 条后来被重新声明——按本页口径计入误杀。`)
+          : h('p', { class: 'fk-caliber' }, '目前没有"驳回后又被重新声明"的，说明这些判断还没有被推翻。'),
+        h('ul', { class: 'fk-chain-review-list' },
+          ...a.chainReview.items.slice(0, 20).map((row) => h('li', {},
+            h('span', { class: 'fk-chain-review-kind' }, row.kind),
+            h('span', { class: 'fk-chain-review-title' }, row.title),
+            h('span', { class: 'fk-chain-review-theme' }, row.themeName || ''),
+            row.reversed ? h('b', { class: 'fk-chain-review-flag' }, '已重新确认') : null,
+            h('time', {}, String(row.at || '').slice(0, 10)))))) : null,
     ),
   ))
 }

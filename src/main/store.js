@@ -6,6 +6,7 @@ import { __testHooks as llmHooks } from './llmlog.js'
 import { ReadingStore, digest, normalizeName, observationKey, validateReading } from './reading-store.js'
 import { DatabaseSync } from 'node:sqlite'
 import { initSchema, dbToRows, rowsToDb, TABLES } from '../../service/db-schema.mjs'
+import { getEvents as getChainEvents } from './chain-events.js'
 import { dataDirectory } from './runtime-services.js'
 
 const DATA_FILE = () => join(dataDirectory(), 'meridian.json')
@@ -1075,6 +1076,50 @@ export function falseKillAudit(days = 30) {
   const byGate = Object.fromEntries(gates.map((gate) => [gate, group(recent.filter((v) => v.gate === gate), 'verdict')]))
   byGate.other = group(recent.filter((v) => !gates.includes(v.gate)), 'verdict')
   byGate.routeIgnored = group(ignoredInbox().filter((p) => Date.parse(p.ignoredAt) >= cutoff), 'proposal')
+
+  /* 建设者复核里被你驳回的决定（关系复核 / 复核信号）。
+     这些决定此前不在任何审计视图里——用户问"驳回的数据进审计哪一栏"，
+     答案是"误杀审计"，但它当时只覆盖收件箱侧的 filter verdicts。 */
+  const chainReview = { total: 0, reversed: 0, items: [] }
+  for (const theme of allThemes()) {
+    let events = []
+    try { events = getChainEvents(theme.id) || [] } catch { continue }
+    const rejections = []
+    for (const event of events) {
+      if (Date.parse(event?.at) < cutoff) continue
+      const payload = event?.payload || {}
+      if (event.type === 'signal.reviewed' && payload.decision === 'rejected') {
+        /* 标题要从**被复核的那条原始事件**上取：决定事件本身只记"驳回"，不带标题。 */
+        const original = events.find((row) => row.id === payload.signalEventId) || null
+        const source = original?.payload || {}
+        /* 被复核的原事件可能是建议（recommendation/statement 结构）或关系声明，字段各不相同。 */
+        const statement = source.statement || {}
+        const title = String(
+          source.title || source.coreInfo || source.text
+          || source.recommendation?.title || source.recommendation?.propositionTitle
+          || statement.subject || [statement.attribute, statement.value].filter(Boolean).join(' ')
+          || (source.rel ? `声明关系：${source.rel}` : '')
+          || payload.title || payload.reason || '',
+        ).trim()
+        rejections.push({ theme, event, key: null, kind: '复核信号', title: title.slice(0, 80) || '（原始事件已不可读）' })
+      } else if (event.type === 'relation.declared' && payload.reviewOf && payload.reviewDecision === 'rejected') {
+        rejections.push({ theme, event, key: `${payload.from}|${payload.to}|${payload.rel}`, kind: '关系复核', title: `${payload.rel || '关系'}（第 ${event.seq ?? '?'} 条）` })
+      }
+    }
+    for (const row of rejections) {
+      /* 驳回之后又被重新声明（同一个 from|to|rel）＝真·误杀：说明当初判错了。 */
+      const reversed = row.key
+        ? events.some((other) => other.type === 'relation.declared' && !other.payload?.reviewOf
+          && `${other.payload?.from}|${other.payload?.to}|${other.payload?.rel}` === row.key
+          && Date.parse(other.at) >= Date.parse(row.event.at))
+        : false
+      chainReview.items.push({ themeName: theme.name, kind: row.kind, title: row.title, at: row.event.at, reversed })
+      if (reversed) chainReview.reversed += 1
+    }
+  }
+  chainReview.total = chainReview.items.length
+  chainReview.items.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+
   return {
     window: days,
     allTotal: verdicts.length,
@@ -1083,6 +1128,7 @@ export function falseKillAudit(days = 30) {
     rate: recent.length ? killed.length / recent.length : 0,
     items: killed.map((v) => ({ verdict: v, node: getNode(v.promotedTo) })),
     byGate,
+    chainReview,
   }
 }
 
