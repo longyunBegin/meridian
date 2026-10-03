@@ -139,9 +139,9 @@
   border-bottom:1px solid var(--line);
   font-size: var(--t-footnote);
   cursor:pointer;
-  transition:background .12s var(--ease);
+  transition:background-color var(--dur-1) var(--ease-out-soft), transform var(--dur-1) var(--ease-out-soft);
   position:relative;
-}.meridian-ledger .row:hover{background:var(--surface-2);}.meridian-ledger .row:hover .row-action{opacity:1;}.meridian-ledger .seq{
+}.meridian-ledger .row:hover{background:var(--surface-2);}.meridian-ledger .row:hover .row-action{opacity:1;}.meridian-ledger .row:active{transform:scale(.997);}.meridian-ledger .seq{
   font-size: var(--t-caption);
   color:var(--text-3);
   font-variant-numeric:tabular-nums;

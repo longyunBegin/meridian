@@ -391,7 +391,8 @@
 .builder-flow-step.is-ready { border-color:rgba(0,122,255,.26); background:rgba(0,122,255,.07); color:var(--accent); }
 .builder-intake .inbox-scroll { flex:1; }
 .builder-intake .inbox-inner { max-width:1000px; }
-.builder-intake-card { margin:0 0 12px; padding:15px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:0 3px 12px rgba(0,0,0,.035); }
+.builder-intake-card { margin:0 0 12px; padding:15px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:0 3px 12px rgba(0,0,0,.035); transition:box-shadow var(--dur-2) var(--ease-out-soft), transform var(--dur-2) var(--ease-out-soft); }
+.builder-intake-card:hover { box-shadow:var(--sh-2); transform:translateY(-1px); }
 .builder-intake-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .builder-intake-kicker { margin:0 0 4px; color:var(--text-3); font-size: var(--t-caption); font-weight:650; letter-spacing:.04em; }
 .builder-intake-card-head h2 { margin:0; color:var(--text); font-size: var(--t-body); font-weight:650; line-height:1.4; overflow-wrap:anywhere; }
