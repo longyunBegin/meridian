@@ -6,7 +6,6 @@ import { claimEvidenceStats } from '../components/reader-claim-map.js'
 import { renderReaderClusterMap } from '../components/reader-cluster-map.js'
 import { renderReaderClaimDetail } from '../components/reader-claim-detail.js'
 import { renderReaderConclusion } from '../components/reader-conclusion.js'
-import { verifiedLedgerPrefix } from '../lib/chain-ui-model.js'
 
 const asArray = (value) => Array.isArray(value) ? value : []
 const allNodesOf = (projection) => asArray(projection?.allNodes || projection?.nodes).filter(Boolean)
@@ -17,21 +16,19 @@ const allEdgesOf = (projection) => asArray(projection?.allEdges || projection?.e
 export function renderReaderView(theme, opts = {}) {
   const root = h('div', { class: 'meridian-theme rdr-root' })
   const article = h('article', { class: 'reader-main rdr-main', 'aria-label': `${theme?.name || '主题'} · 读者视图` },
-    h('p', { class: 'rdr-loading' }, '正在读取已校验的主题网络…'))
+    h('p', { class: 'rdr-loading' }, '正在读取主题网络…'))
   root.append(article)
 
   const renderEmpty = (projection) => h('div', { class: 'rdr-empty' },
     h('p', { class: 'rdr-kicker' }, '主题范围 · 真实空投影'),
     h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题'),
-    h('p', { class: 'rdr-empty-text' }, projection?.integrity?.ok === false
-      ? '账本校验异常，当前没有可安全展示的有效节点。损坏尾部不会用于构建主题视图。'
-      : '这个主题目前没有节点。主题只限定网络范围，不会自动成为根节点，也不会生成内容。'),
+    h('p', { class: 'rdr-empty-text' }, '这个主题目前没有节点。主题只限定网络范围，不会自动成为根节点，也不会生成内容。'),
     h('p', { class: 'rdr-empty-sub' }, '建设者可从外部来源、观察或观点开始；每条关系与来源都保留为独立记录。'),
     h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpenBuilder?.('network') }, '进入建设者视图'))
 
   const render = (currentProjection, rawEvents) => {
-    const integrity = currentProjection?.integrity || {}
-    const verifiedEvents = verifiedLedgerPrefix(rawEvents, integrity)
+    // 校验已删除：直接使用全部事件，不再截断到"已验证前缀"
+    const verifiedEvents = Array.isArray(rawEvents) ? rawEvents : []
     const currentNodes = allNodesOf(currentProjection)
     const currentEdges = allEdgesOf(currentProjection)
     /* 分类来自 L2 主题自定义层（主题设置里的观点分类）：主题没配分类就没有这一档。
@@ -168,12 +165,12 @@ export function renderReaderView(theme, opts = {}) {
   Promise.all([loadProjection, loadEvents])
     .then(async ([projection, response]) => {
       const events = Array.isArray(response) ? response : response?.events || []
-      const integrity = projection?.integrity || {}
-      const validEvents = verifiedLedgerPrefix(events, integrity)
+      // 校验已删除：直接使用全部事件
+      const validEvents = events
       const requestedSeq = Number.isSafeInteger(opts.initialSequence)
         && validEvents.some((event) => event.seq === opts.initialSequence) ? opts.initialSequence : null
       if (Number.isSafeInteger(opts.initialSequence) && requestedSeq == null) {
-        throw new Error(`第 ${opts.initialSequence} 条事件不在已校验的有效前缀中。`)
+        throw new Error(`第 ${opts.initialSequence} 条事件不存在。`)
       }
       let historicalProjection = null
       if (requestedSeq != null) {

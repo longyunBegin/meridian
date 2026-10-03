@@ -17,7 +17,7 @@ import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/bui
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
 import { DIRECTION_META, NATURE_META } from '../lib/reader-model.js'
-import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, requestBuilderNodeFocus, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, RELATION_LABEL, searchGraphNodes } from '../lib/chain-ui-model.js'
+import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, requestBuilderNodeFocus, affectedNodeIdForEvent, eventsThroughSequence, compactEventSummary, RELATION_LABEL, searchGraphNodes } from '../lib/chain-ui-model.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType,
@@ -228,7 +228,8 @@ async function loadConcept(theme, ledgerPane, opts) {
       m.chainEvents(theme.id).catch(() => null),
     ])
   const events = evRes?.events || []
-  const verifiedEvents = verifiedLedgerPrefix(events)
+  // 校验已删除：直接使用全部事件
+  const verifiedEvents = events
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
   updateThemeStats(opts.themeStats, proj, events)
@@ -1235,7 +1236,7 @@ function renderLedgerPanel(pane, theme, events, handlers = {}) {
     return { syncReplay: () => {}, showEvent: () => {} }
   }
 
-  const verifiedEvents = handlers.verifiedEvents || verifiedLedgerPrefix(events)
+  const verifiedEvents = handlers.verifiedEvents || events
   const reviewedBy = new Map(verifiedEvents.filter((event) => event?.payload?.reviewOf)
     .map((event) => [event.payload.reviewOf, event]))
 
@@ -2101,7 +2102,7 @@ export async function openNodeDetail(theme, node, opts = {}) {
       proj = { ...snapshot, nodes: snapshot.allNodes || snapshot.nodes || [] }
     } else {
       const [evRes, p] = await Promise.all([m.chainEvents(theme.id), m.chainProjection(theme.id)])
-      events = verifiedLedgerPrefix(evRes?.events || [])
+      events = evRes?.events || []
       proj = { ...p, nodes: p.allNodes || p.nodes || [] }
     }
   } catch (e) {
