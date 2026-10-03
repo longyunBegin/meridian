@@ -632,18 +632,68 @@ async function loadConcept(theme, ledgerPane, opts) {
       { label: '方向未标注', rows: evidenceSummary.unclassified },
       { label: '已驳回 · 原记录保留', rows: evidenceSummary.rejected },
     ]
+    // 跨视图分工：建设者=精修层，证据流展示从收件箱归位过来的记录
+    // 每条证据显示：立场 + 权重 + 归位时间 + AI 陈述 + 来源；未读用蓝点标记
+    const evidenceReadKey = (eid) => `meridian:evidence-read:${theme.id}:${eid}`
+    const isEvidenceRead = (eid) => {
+      try { return localStorage.getItem(evidenceReadKey(eid)) === '1' } catch { return false }
+    }
+    const markEvidenceRead = (eid) => {
+      try { localStorage.setItem(evidenceReadKey(eid), '1') } catch { /* 忽略 */ }
+    }
+    const eventById = new Map((viewState.events || []).map((e) => [e.id, e]))
     const evidenceSection = h('section', { class: 'builder-node-evidence', 'aria-label': '可导航证据与来源' },
       h('div', { class: 'evolution-title' }, h('span', {}, '证据与来源'), h('span', { class: 'n' }, `${evidenceSummary.total} 条可导航证据`)),
       evidenceSummary.total ? h('div', { class: 'builder-node-evidence-groups' },
         ...evidenceGroups.filter((group) => group.rows.length).map((group) => h('div', { class: 'builder-node-evidence-group' },
           h('strong', {}, `${group.label} · ${group.rows.length}`),
-          h('ul', {}, ...group.rows.map((row) => h('li', {},
-            h('button', { type: 'button', class: 'builder-node-evidence-link', onclick: () => {
-              openNodeDetail(theme, row.source, opts).catch((error) => toast(`无法打开证据：${error?.message || error}`, 'var(--red)'))
-            } }, row.source.title || row.source.currentText || row.source.id),
-            row.source.sourceLabel ? h('span', {}, row.source.sourceLabel) : null,
-            row.relations.some((relation) => relation.pendingReview && relation.reviewDecision == null)
-              ? h('span', { class: 'cog-flag' }, '待复核') : null))))))
+          h('ul', {}, ...group.rows.map((row) => {
+            const evNode = row.source
+            const evEvent = eventById.get(evNode.id) || {}
+            const evPayload = evEvent.payload || {}
+            // 立场：从关系边取
+            const rel = row.relations[0]?.rel || 'supports'
+            const stanceLabel = rel === 'contradicts' ? '反驳' : '佐证'
+            const stanceClass = rel === 'contradicts' ? 'is-against' : 'is-support'
+            // 权重：从事件 scores 取
+            const weight = evPayload.scores?.attributionStrength ?? evPayload.scores?.effectiveStrength ?? null
+            // 归位时间：事件时间
+            const mappedAt = (() => {
+              const d = evEvent.at || evEvent.timestamp
+              if (!d) return ''
+              try { return new Date(d).toISOString().slice(0, 10) } catch { return '' }
+            })()
+            // 来源
+            const sourceLabel = evPayload.sourceLabel || evNode.sourceLabel || ''
+            const statement = evNode.currentText || evNode.title || ''
+            const unread = !isEvidenceRead(evNode.id)
+            const li = h('li', { class: `evidence-row${unread ? ' is-unread' : ''}` },
+              h('button', {
+                type: 'button', class: 'builder-node-evidence-link evidence-card',
+                onclick: () => {
+                  // 点击后标记已读，蓝点消失（跨视图分工：收件箱归位时 read=false，这里点击后 true）
+                  if (!isEvidenceRead(evNode.id)) {
+                    markEvidenceRead(evNode.id)
+                    li.classList.remove('is-unread')
+                    const dot = li.querySelector('.evidence-unread-dot')
+                    if (dot) dot.remove()
+                  }
+                  openNodeDetail(theme, evNode, opts).catch((error) => toast(`无法打开证据：${error?.message || error}`, 'var(--red)'))
+                },
+              },
+                h('div', { class: 'evidence-card-top' },
+                  unread ? h('span', { class: 'evidence-unread-dot', title: '未读' }) : null,
+                  h('span', { class: `evidence-stance ${stanceClass}` }, stanceLabel),
+                  weight != null ? h('span', { class: 'evidence-weight' }, `+${Number(weight).toFixed(2)}`) : null,
+                  mappedAt ? h('span', { class: 'evidence-date' }, `${mappedAt} 归位`) : null,
+                ),
+                h('div', { class: 'evidence-statement' }, statement),
+                sourceLabel ? h('div', { class: 'evidence-source' }, `来自：${sourceLabel}`) : null,
+              ),
+              row.relations.some((relation) => relation.pendingReview && relation.reviewDecision == null)
+                ? h('span', { class: 'cog-flag' }, '待复核') : null)
+            return li
+          })))))
         : h('p', { class: 'chain-note' }, '当前投影没有明确关联的证据节点；观点说明本身不是证据。'))
     return h('div', { style: 'display:contents' },
       h('div', { class: 'back-bar' },
@@ -731,6 +781,11 @@ async function loadConcept(theme, ledgerPane, opts) {
       ...[opts.integrityBadge, opts.ledgerButton].filter(Boolean))
     const head = h('div', { class: 'inbox-head' },
       h('div', { class: 'builder-intake-heading' },
+        // 跨视图分工：建设者=精修层，提供回到收件箱（粗筛层）的入口
+        h('button', {
+          type: 'button', class: 'builder-back-inbox',
+          onclick: () => setView('today'),
+        }, '← 收件箱'),
         h('p', { class: 'builder-intake-eyebrow' }, '建设者工作台'),
         h('div', { class: 'inbox-title' }, theme.name || '当前主题')),
       h('div', { class: 'inbox-sub' }, '外部来源先进入待审核；模型只提取原子陈述并提出映射建议。每项必须由你确认或驳回，才会追加主题事件。'),
@@ -802,7 +857,22 @@ async function loadConcept(theme, ledgerPane, opts) {
       }
       return reviews
     }
-    const buildEntries = (items) => buildWorkbenchEntries(items, buildSignals(), resolvedReviews(), verdictState)
+    // 跨视图分工：建设者=精修层，右栏只保留原子级建议（新增/修改/合并原子）
+    // 数据归因类（某条数据归到某个原子）已在收件箱处理，这里过滤掉
+    const buildEntries = (items) => {
+      const all = buildWorkbenchEntries(items, buildSignals(), resolvedReviews(), verdictState)
+      return all.filter((entry) => {
+        // 保留：legacy-signal（旧账本信号）、proposal 中的原子级（new-proposition=新增，supersedes=修改）
+        if (entry.kind === 'legacy-signal') return true
+        if (entry.kind !== 'proposal') return false
+        const rec = entry.result?.recommendation || {}
+        const kind = entry.result?.kind || rec.kind
+        if (kind === 'new-proposition') return true // 新增原子
+        if (rec.rel === 'supersedes') return true // 修改原子描述
+        // TODO: 合并原子建议（待后端支持 kind='merge'）
+        return false // 数据归因类（supports/contradicts/related）在收件箱处理
+      })
+    }
     const entryTitle = (entry) => {
       if (entry.kind === 'legacy-signal') return entry.signal.text || `待复核事件 ${entry.signal.id}`
       const item = entry.item
@@ -1180,6 +1250,20 @@ async function loadConcept(theme, ledgerPane, opts) {
     builderMode = 'node'
     renderMain()
     renderSidebar()
+    // 跨视图跳转：从收件箱"去建设者查看"过来，滚动到证据流的最新一条
+    requestAnimationFrame(() => {
+      const evidenceSection = opts.mainStage?.querySelector('.builder-node-evidence')
+      if (evidenceSection) {
+        evidenceSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        // 高亮最新证据（最后一条）
+        const rows = evidenceSection.querySelectorAll('.evidence-row')
+        const last = rows[rows.length - 1]
+        if (last) {
+          last.style.outline = '2px solid var(--accent)'
+          setTimeout(() => { last.style.outline = '' }, 2000)
+        }
+      }
+    })
   }
 
   const eventJump = consumeChainEventJump(theme.id)
