@@ -1429,3 +1429,57 @@
 .topic-chip.active{background:var(--text, #1d1d1f);color:var(--bg, #ececed);border-color:var(--text, #1d1d1f);}
 .topic-chip .chip-dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;}
 .topic-chip.active .chip-dot{background:var(--bg, #ececed) !important;}
+
+/* ============ 收件箱 v2 在今日页的镜像（作用域适配） ============
+   上面那批 inbox2-* 规则以 .meridian-theme 为根，那是窗口/读者视图的根。今日页的收件箱
+   只是页面里的一张卡：直接挂 .meridian-theme 会把窗口级底色、13px 字号带进来，而暗色变量
+   只在 .meridian-theme.rdr-root 下重定义，暗色模式会退回浅色值。所以这里把同一批规则镜像到
+   #inbox-section，变量沿用应用自身的主题变量（暗色自动跟随 :root）。 */
+#inbox-section { --line-2: var(--hairline); }
+#inbox-section .inbox2-stats { display:flex; gap:40px; margin:16px 0 20px; }
+#inbox-section .inbox2-stat { display:flex; flex-direction:column; gap:2px; }
+#inbox-section .inbox2-stat-num { font-size:32px; font-weight:700; line-height:1.1; color:var(--text-1); }
+#inbox-section .inbox2-stat-num.is-pending { color:var(--orange); }
+#inbox-section .inbox2-stat-num.is-resolved { color:var(--green); }
+#inbox-section .inbox2-stat-label { font-size:13px; color:var(--text-3); }
+
+/* 主题筛选 pills */
+#inbox-section .inbox2-theme-filter { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+#inbox-section .inbox2-filter-label { font-size:13px; color:var(--text-3); margin-right:4px; }
+#inbox-section .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:1px solid var(--line); border-radius:999px; background:var(--bg); font-size:13px; color:var(--text-2); cursor:pointer; }
+#inbox-section .inbox2-theme-pill.is-active { background:#1a1a1a; color:#fff; border-color:#1a1a1a; }
+#inbox-section .inbox2-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+#inbox-section .inbox2-dot.is-white { background:#fff; }
+
+/* 状态页签 */
+#inbox-section .inbox2-status-tabs { display:inline-flex; background:var(--bg-2); border-radius:10px; padding:3px; gap:2px; margin-bottom:16px; }
+#inbox-section .inbox2-status-tab { padding:7px 16px; border:none; border-radius:8px; background:transparent; font-size:13px; color:var(--text-2); cursor:pointer; }
+#inbox-section .inbox2-status-tab.is-active { background:var(--bg); color:var(--text-1); font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+#inbox-section .inbox2-tab-count { margin-left:6px; color:var(--text-3); font-weight:400; }
+
+/* 列表项 v2 */
+#inbox-section .inbox2-item .inbox-body { display:flex; flex-direction:column; gap:8px; padding:14px 16px; text-align:left; width:100%; }
+#inbox-section .inbox2-item-top { display:flex; justify-content:space-between; align-items:center; }
+#inbox-section .inbox2-item-source { font-size:12px; color:var(--text-3); }
+#inbox-section .inbox2-item-time { font-size:12px; color:var(--text-3); }
+#inbox-section .inbox2-item-title { font-size:15px; font-weight:600; color:var(--text-1); line-height:1.4; }
+#inbox-section .inbox2-item[data-sel="true"] .inbox2-item-title { color:var(--accent); }
+#inbox-section .inbox2-item-themes { display:flex; flex-wrap:wrap; gap:6px; }
+#inbox-section .inbox2-theme-tag { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:999px; background:color-mix(in srgb, var(--accent) 10%, transparent); font-size:12px; color:var(--text-2); }
+#inbox-section .inbox2-cross-badge { padding:4px 10px; border-radius:999px; background:var(--bg-2); font-size:12px; color:var(--text-3); }
+#inbox-section .inbox2-item-status { display:flex; gap:6px; flex-wrap:wrap; }
+#inbox-section .inbox2-badge { padding:4px 10px; border-radius:6px; font-size:12px; }
+#inbox-section .inbox2-badge.is-ok { background:color-mix(in srgb, var(--green) 12%, transparent); color:var(--green); }
+#inbox-section .inbox2-badge.is-warn { background:color-mix(in srgb, var(--orange) 12%, transparent); color:var(--orange); }
+
+/* 详情面板 v2 */
+#inbox-section .inbox2-head { padding:20px 24px 16px; }
+#inbox-section .inbox2-kicker { font-size:13px; color:var(--text-3); margin-bottom:8px; }
+#inbox-section .inbox2-title { font-size:22px; font-weight:700; line-height:1.3; margin:0 0 16px; }
+#inbox-section .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--bg-2); margin-bottom:12px; }
+#inbox-section .inbox2-belong-label { font-size:13px; color:var(--text-3); }
+#inbox-section .inbox2-belong-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:999px; font-size:13px; cursor:pointer; border:1px solid transparent; }
+#inbox-section .inbox2-belong-pill.is-current { color:#fff; font-weight:600; }
+#inbox-section .inbox2-belong-pill.is-add { border:1px dashed var(--line-2); background:transparent; color:var(--text-3); }
+#inbox-section .inbox2-belong-pill.is-add:hover { border-color:var(--accent); color:var(--accent); }
+#inbox-section .inbox2-hint { font-size:12px; color:var(--text-3); line-height:1.6; text-align:center; margin:0 0 16px; }

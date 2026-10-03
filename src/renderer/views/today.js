@@ -237,13 +237,13 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
 
   // ---- 头部：大数字统计（对齐设计稿：待处理橙色 / 已归位绿色）----
-  const statPending = h('b', { class: 'stat-num is-pending' }, '…')
-  const statLemmas = h('b', { class: 'stat-num' }, '…')
-  const statResolved = h('b', { class: 'stat-num is-resolved' }, '…')
-  const statsRow = h('div', { class: 'stats' },
-    h('div', { class: 'stat' }, statPending, h('span', { class: 'stat-label' }, '待处理')),
-    h('div', { class: 'stat' }, statLemmas, h('span', { class: 'stat-label' }, '已抽取要点')),
-    h('div', { class: 'stat' }, statResolved, h('span', { class: 'stat-label' }, '已归位')),
+  const statPending = h('b', { class: 'inbox2-stat-num is-pending' }, '…')
+  const statLemmas = h('b', { class: 'inbox2-stat-num' }, '…')
+  const statResolved = h('b', { class: 'inbox2-stat-num is-resolved' }, '…')
+  const statsRow = h('div', { class: 'inbox2-stats' },
+    h('div', { class: 'inbox2-stat' }, statPending, h('span', { class: 'inbox2-stat-label' }, '待处理')),
+    h('div', { class: 'inbox2-stat' }, statLemmas, h('span', { class: 'inbox2-stat-label' }, '已抽取要点')),
+    h('div', { class: 'inbox2-stat' }, statResolved, h('span', { class: 'inbox2-stat-label' }, '已归位')),
   )
   m.inboxStats?.().then((s) => {
     if (!s) return
@@ -253,31 +253,31 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   }).catch(() => {})
 
   // ---- 主题筛选 pills（对齐设计稿：全部主题黑底白字 + 各主题圆点）----
-  const themeFilterRow = h('div', { class: 'topic-filter' },
-    h('span', { class: 'topic-filter-label' }, '主题筛选'),
+  const themeFilterRow = h('div', { class: 'inbox2-theme-filter' },
+    h('span', { class: 'inbox2-filter-label' }, '主题筛选'),
     h('button', {
       type: 'button',
-      class: `topic-chip${inboxThemeFilter === null ? ' is-active' : ''}`,
+      class: `inbox2-theme-pill${inboxThemeFilter === null ? ' is-active' : ''}`,
       onclick: () => { inboxThemeFilter = null; renderToday(mid) },
     }, '全部主题'),
     ...liveThemes.map((t) => h('button', {
       type: 'button',
-      class: `topic-chip${inboxThemeFilter === t.id ? ' is-active' : ''}`,
+      class: `inbox2-theme-pill${inboxThemeFilter === t.id ? ' is-active' : ''}`,
       onclick: () => { inboxThemeFilter = inboxThemeFilter === t.id ? null : t.id; renderToday(mid) },
-    }, h('i', { class: 'chip-dot', style: { background: themeDotColor(t.id) } }), t.name)),
+    }, h('i', { class: 'inbox2-dot', style: { background: themeDotColor(t.id) } }), t.name)),
   )
 
   // ---- 状态页签（对齐设计稿：圆角矩形，选中白底）----
   const countAll = items.length
   const countPending = items.filter((i) => i.extracted === false).length
   const countDone = items.filter((i) => i.extracted !== false).length
-  const statusTabs = h('div', { class: 'status-tabs' },
+  const statusTabs = h('div', { class: 'inbox2-status-tabs' },
     ...[['all', '全部', countAll], ['pending', '待处理', countPending], ['done', '已处理', countDone]].map(([key, label, n]) =>
       h('button', {
         type: 'button',
-        class: `status-tab${inboxStatusFilter === key ? ' is-active' : ''}`,
+        class: `inbox2-status-tab${inboxStatusFilter === key ? ' is-active' : ''}`,
         onclick: () => { inboxStatusFilter = key; renderToday(mid) },
-      }, label, h('span', { class: 'tab-count' }, String(n)))),
+      }, label, h('span', { class: 'inbox2-tab-count' }, String(n)))),
   )
 
   // 按筛选过滤列表（不改变 items 本体，只影响展示）
@@ -667,7 +667,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
     return `${Math.floor(hours / 24)} 天前`
   })()
   const extracted = item.extracted !== false
-  return h('div', { class: `inbox-item inbox-item-v2${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
+  return h('div', { class: `inbox-item inbox2-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,
@@ -682,20 +682,20 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
       },
     },
       // 第一行：来源（左）+ 时间（右）
-      h('span', { class: 'inbox-item-v2-top' },
-        h('span', { class: 'inbox-item-v2-source' }, item.label?.kind || item.provenance?.platform || '未标注来源'),
-        h('time', { class: 'inbox-item-v2-time' }, relTime || item.createdAt?.slice(5, 16) || ''),
+      h('span', { class: 'inbox2-item-top' },
+        h('span', { class: 'inbox2-item-source' }, item.label?.kind || item.provenance?.platform || '未标注来源'),
+        h('time', { class: 'inbox2-item-time' }, relTime || item.createdAt?.slice(5, 16) || ''),
       ),
       // 标题（选中项蓝色由 CSS [data-sel="true"] 控制）
-      h('span', { class: 'inbox-item-v2-title' }, title),
+      h('span', { class: 'inbox2-item-title' }, title),
       // 主题标签 pills + 跨主题徽标
-      itemThemes.length ? h('span', { class: 'inbox-item-v2-themes' },
+      itemThemes.length ? h('span', { class: 'inbox2-item-themes' },
         ...itemThemes.map((t) => h('span', { class: 'inbox2-theme-tag' },
-          h('i', { class: 'chip-dot', style: { background: themeDotColor(t.id) } }), t.name)),
+          h('i', { class: 'inbox2-dot', style: { background: themeDotColor(t.id) } }), t.name)),
         itemThemes.length > 1 ? h('span', { class: 'inbox2-cross-badge' }, `跨 ${itemThemes.length} 个主题`) : null,
       ) : null,
       // 状态徽标：已抽取 N 条要点（绿）/ 未提取到要点（橙）
-      h('span', { class: 'inbox-item-v2-status' },
+      h('span', { class: 'inbox2-item-status' },
         extracted
           ? h('span', { class: 'inbox2-badge is-ok' }, `✓ 已抽取 ${lemmas.length} 条要点`)
           : h('span', { class: 'inbox2-badge is-warn' }, '⚠ 未提取到要点'),
@@ -788,7 +788,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
           } catch (err) { toast('切换主题失败：' + (err.message || '请重试'), 'var(--red)') }
         },
       }, isCurrent
-        ? [h('i', { class: 'chip-dot is-white' }), t.name]
+        ? [h('i', { class: 'inbox2-dot is-white' }), t.name]
         : `+ ${t.name}`)
     }),
   )
