@@ -152,14 +152,25 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
       if (custom) relationLabelsFor[rel] = custom
     }
     const relation = changeOptions(relChoices, suggestion.rel || attribution.rel, relationLabelsFor)
-    const titleInput = isNew ? h('input', { class: 'engine-review-title', type: 'text', maxlength: '180', value: suggestion.title || result.suggestedTitle || '', 'aria-label': '新观点标题' }) : null
-    const titleField = titleInput
-      ? h('label', { class: 'engine-review-field', hidden: targetSelect.value !== '__new__' }, '新原子标题', titleInput)
-      : null
-    // 目标切换时，显示/隐藏新原子标题输入
-    targetSelect.addEventListener('change', () => {
-      if (titleField) titleField.hidden = targetSelect.value !== '__new__'
-    })
+    /* 新原子标题只在目标选择器停在「＋ 新建原子」时才需要——包括 AI 没给 propositionId、
+       或目标已被归档/失效导致下拉默认落在新建的情形（那种情形下若没有输入框，点确认会抛
+       null.value）。它按需插入 DOM，所以正常归因卡的高级选项仍然只有
+       目标原子 / 关系类型 / 备注 三个控件。 */
+    const suggestedTitle = suggestion.title || result.suggestedTitle || ''
+    let titleInput = null
+    let titleInputListener = null
+    const titleField = h('label', { class: 'engine-review-field' }, '新原子标题')
+    const ensureTitleInput = () => {
+      if (!titleInput) {
+        titleInput = h('input', {
+          class: 'engine-review-title', type: 'text', maxlength: '180',
+          value: suggestedTitle, 'aria-label': '新原子标题',
+        })
+        titleInput.addEventListener('input', () => titleInputListener?.())
+        titleField.append(titleInput)
+      }
+      return titleInput
+    }
     /* 备注取代了写死的方向/性质/标签：模型至多建议一句自由文本，用户可改可删，后端不做枚举校验。
        旧账本里已写入的 change.themeTag 仅作为备注初值回填，不再作为类型字段。 */
     const suggestedNote = suggestion.change?.note || attribution.change?.note
@@ -168,6 +179,24 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
       class: 'engine-review-note', type: 'text', maxlength: '200', value: suggestedNote,
       placeholder: '可留空；例如：这条证据改写了哪一点', 'aria-label': '备注（可选）',
     })
+    /* 高级选项：默认只有 目标原子 / 关系类型 / 备注。选到「＋ 新建原子」时才把
+       新原子标题插到关系类型前面；切回已有原子就移除。 */
+    const relationField = h('label', { class: 'engine-review-field' }, '关系类型', relation)
+    const advancedOptions = h('details', { class: 'review-advanced' },
+      h('summary', {}, '高级选项'),
+      h('label', { class: 'engine-review-field' }, '目标原子', targetSelect),
+      relationField,
+      h('label', { class: 'engine-review-field' }, '备注', changeNote))
+    const attachTitleField = () => {
+      if (titleField.isConnected) return
+      ensureTitleInput()
+      advancedOptions.insertBefore(titleField, relationField)
+    }
+    targetSelect.addEventListener('change', () => {
+      if (targetSelect.value === '__new__') attachTitleField()
+      else titleField.remove()
+    })
+    if (targetSelect.value === '__new__') attachTitleField()
     const quoteVerified = statement.sourceQuoteVerified === true
     const warning = !quoteVerified
       ? h('p', { class: 'engine-review-warning', role: 'alert' }, '来源摘录未能与原文核验；为避免把模型编造内容写入账本，本条不能直接确认。')
@@ -193,7 +222,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
           : `若确认，将向「${targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '目标观点'}」追加证据与「${relLabel[relation.value] || '关系待审核'}」关系；原有记录保留。`
     }
     updateAfterPreview()
-    titleInput?.addEventListener('input', updateAfterPreview)
+    titleInputListener = updateAfterPreview
     relation.addEventListener('change', updateAfterPreview)
     const preview = h('section', { class: 'engine-before-after', 'aria-label': '变更前后预览' },
       h('div', { class: 'engine-preview-column is-before' }, h('strong', {}, '确认前 · 当前模型'), h('p', {}, beforeText)),
@@ -208,7 +237,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
         const userTarget = targetSelect.value
         const userWantsNew = userTarget === '__new__'
         if (userWantsNew) {
-          input.title = titleInput.value.trim()
+          input.title = (titleInput?.value ?? suggestedTitle).trim()
           // 明确告诉后端这是新建（覆盖 AI 的挂载建议）
           input.targetNodeId = null
         } else {
@@ -334,13 +363,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, r
         h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。'))
         : h('div', { class: 'review-change-summary' },
           h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
-      // 高级选项（折叠）
-      h('details', { class: 'review-advanced' },
-        h('summary', {}, '高级选项'),
-        h('label', { class: 'engine-review-field' }, '目标原子', targetSelect),
-        titleField,
-        h('label', { class: 'engine-review-field' }, '关系类型', relation),
-        h('label', { class: 'engine-review-field' }, '备注', changeNote)),
+      // 高级选项（折叠）：新原子标题按需挂载
+      advancedOptions,
       // 底部操作
       h('div', { class: 'review-card-foot' },
         h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),

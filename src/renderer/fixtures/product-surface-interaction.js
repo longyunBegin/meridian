@@ -257,7 +257,7 @@ extractCheckbox.checked = true
 extractCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
 document.querySelector('.inbox-extract-picked').click()
 await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxExtract'), '批量抽取')
-await waitFor(() => document.querySelector('.inbox-item[data-id="extract-synthetic-1"] .inbox-title')?.textContent.includes('合成收件箱'), '抽取后重绘')
+await waitFor(() => document.querySelector('.inbox-item[data-id="extract-synthetic-1"] .inbox2-item-title')?.textContent.includes('合成收件箱'), '抽取后重绘')
 check('批量抽取只提交明确勾选项并把投影更新到已抽取分组', fixture.calls.some((call) => call[0] === 'inboxExtract'
   && call[1].length === 1 && call[1][0] === 'extract-synthetic-1')
   && [...document.querySelectorAll('.inbox-group-label')].some((el) => el.textContent === '已抽取'))
@@ -271,10 +271,11 @@ check('批量入库仅提交已选且挂点校验通过的条目，并按其主�
 
 const routeRow = document.querySelector('.inbox-item[data-id="route-synthetic-1"] .inbox-body')
 routeRow.click()
-await waitFor(() => document.querySelector('.inbox-detail .inbox-theme-select'), '已抽取条目主题选择')
-const themeSelect = document.querySelector('.inbox-detail .inbox-theme-select')
-themeSelect.value = themes[1].id
-themeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+/* 详情重做后主题归属改成 pill（.inbox2-belong-pill）；旧的 select.inbox-theme-select 只剩死代码。 */
+await waitFor(() => document.querySelector('.inbox-detail .inbox2-belong-pill'), '已抽取条目主题选择')
+const targetThemePill = [...document.querySelectorAll('.inbox-detail .inbox2-belong-pill')]
+  .find((pill) => pill.textContent.includes(themes[1].name))
+targetThemePill.click()
 await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxSetTheme'), '收件箱主题切换')
 check('已抽取收件箱条目可以明确切换主题并调用对应桥接命令', fixture.calls.some((call) => call[0] === 'inboxSetTheme'
   && call[1] === 'route-synthetic-1' && call[2] === themes[1].id))

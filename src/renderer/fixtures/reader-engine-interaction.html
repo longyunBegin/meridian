@@ -80,48 +80,56 @@
           ],
           results: [
             { proposalEventId: 'proposal-rejected', kind: 'evidence', statement: { subject: '合成公司', attribute: 'Q2营收', value: '增长', sourceText: '合成来源摘录 A。', sourceQuoteVerified: true }, proposition: { title: '营收观点' }, recommendation: { kind: 'evidence', propositionTitle: '营收观点', rel: 'supports', strength: 0.6, effectiveStrength: 0.51, reason: '合成建议', change: { direction: 'improving', nature: 'quantitative', themeTag: '营收' } } },
-            { proposalEventId: 'proposal-evidence', kind: 'evidence', requiresTemporalReview: true, statement: { subject: '合成公司', attribute: '产品', value: '尚待核实', sourceText: '合成来源摘录 B。', sourceQuoteVerified: true }, proposition: { title: '产品观点' }, recommendation: { kind: 'evidence', propositionTitle: '产品观点', rel: 'supports', strength: 0.62, effectiveStrength: 0.527, matchScore: 0.84, reason: '合成时间窗未知', change: { direction: 'improving', nature: 'quantitative', themeTag: '产品' } } },
+            { proposalEventId: 'proposal-evidence', kind: 'evidence', requiresTemporalReview: true, statement: { subject: '合成公司', attribute: '产品', value: '尚待核实', sourceText: '合成来源摘录 B。', sourceQuoteVerified: true }, proposition: { id: 'synthetic-proposition-product', title: '产品观点' }, recommendation: { kind: 'evidence', propositionId: 'synthetic-proposition-product', propositionTitle: '产品观点', rel: 'supports', strength: 0.62, effectiveStrength: 0.527, matchScore: 0.84, reason: '合成时间窗未知', change: { direction: 'improving', nature: 'quantitative', themeTag: '产品' } } },
             { proposalEventId: 'proposal-relational', kind: 'new-proposition', suggestedTitle: '模型生成名称', statement: { subject: '供应链', attribute: '影响', value: '供需变化', sourceText: '合成关系来源摘录 C。', sourceQuoteVerified: true }, recommendation: { kind: 'new-proposition', title: '模型生成名称', rel: 'related', strength: 0.7, reason: '关系陈述仅供审核', change: { direction: 'stable', nature: 'structural', themeTag: '关系' } } },
           ],
         },
       }
       generatedPipeline = item.enginePipeline
+      /* 归因建议要挂在已有原子上才测得到"关系类型由用户修正后送交"：
+         目标原子必须出现在投影里，否则目标选择器会落到「＋ 新建原子」，
+         而新建路径的关系由后端固定为 supports，不接受用户改的关系。 */
+      const reviewProjection = { allNodes: [
+        { id: 'synthetic-proposition-product', title: '产品观点', nodeType: 'viewpoint', status: 'pending', confidence: 64 },
+      ] }
       const builderHost = document.createElement('section')
       builderHost.setAttribute('aria-label', '建设者引擎审阅')
       document.querySelector('#fixture-root').append(builderHost)
-      builderHost.append(renderEnginePipeline(item, { themeId: 'synthetic-theme' }))
+      builderHost.append(renderEnginePipeline(item, { themeId: 'synthetic-theme', projection: reviewProjection }))
       await wait()
 
-      const cards = [...builderHost.querySelectorAll('.engine-attr')]
-      check('正式引擎 renderer 输出三张可审阅卡与来源摘录', cards.length === 3
-        && cards.every((card) => card.querySelector('.engine-review-quote')))
+      const cards = [...builderHost.querySelectorAll('.review-card-v2')]
+      check(`正式引擎 renderer 输出三张可审阅卡与来源摘录（实际 ${cards.length} 张）`, cards.length === 3
+        && cards.every((card) => card.querySelector('.review-quote-text')))
       check('未知时间不静默丢弃，卡片显示时间复核提示', builderHost.textContent.includes('时间窗口')
         && builderHost.textContent.includes('时间未注明'))
-      check('所有候选都明确要求用户确认且提供驳回', cards.every((card) => card.textContent.includes('确认并追加') && card.textContent.includes('驳回建议')))
+      check('所有候选都明确要求用户确认且提供驳回', cards.every((card) => card.textContent.includes('确认并追加')
+        && [...card.querySelectorAll('button')].some((button) => button.textContent.includes('驳回'))))
 
-      cards[0].querySelectorAll('button')[1].click()
+      const byText = (root, text) => [...root.querySelectorAll('button')].find((button) => button.textContent.includes(text))
+      byText(cards[0], '驳回').click()
       await wait()
       check('驳回通过专用审核 bridge，不调用直接证据写入', bridgeCalls[0]?.eventId === 'proposal-rejected'
         && bridgeCalls[0]?.decision === 'rejected' && !decisions.some((event) => event.type === 'evidence.appended' && event.payload.proposalEventId === 'proposal-rejected'))
 
+      /* 去领域化后的契约：高级选项只剩 目标原子 / 关系类型 / 备注；备注是自由文本。 */
       const evidenceCard = cards[1]
       const relationSelect = evidenceCard.querySelector('.engine-review-select')
-      const directionSelect = evidenceCard.querySelectorAll('.engine-review-controls select')[0]
-      const natureSelect = evidenceCard.querySelectorAll('.engine-review-controls select')[1]
-      relationSelect.value = 'contradicts'; directionSelect.value = 'declining'; natureSelect.value = 'epistemic'
-      evidenceCard.querySelector('.engine-review-tag').value = '复核标签'
-      evidenceCard.querySelector('button').click()
+      const noteInput = evidenceCard.querySelector('.engine-review-note')
+      relationSelect.value = 'contradicts'
+      noteInput.value = '复核备注'
+      byText(evidenceCard, '确认并追加').click()
       await wait()
       const evidenceCall = bridgeCalls.find((call) => call.eventId === 'proposal-evidence')
-      check('关系/三层/标签的用户修正原样送交 main review command', evidenceCall?.decision === 'accepted'
-        && evidenceCall.input.rel === 'contradicts' && evidenceCall.input.change.direction === 'declining'
-        && evidenceCall.input.change.nature === 'epistemic' && evidenceCall.input.change.themeTag === '复核标签')
+      check('关系与自由备注的用户修正原样送交 main review command', evidenceCall?.decision === 'accepted'
+        && evidenceCall.input.rel === 'contradicts'
+        && JSON.stringify(evidenceCall.input.change) === JSON.stringify({ note: '复核备注' }))
       check('确认后 mock 账本追加证据、关系、置信度更新和决定', ['evidence.appended', 'relation.declared', 'confidence.updated', 'signal.reviewed']
         .every((type) => decisions.some((event) => event.type === type)))
 
       const relationCard = cards[2]
       relationCard.querySelector('.engine-review-title').value = '用户命名关系观点'
-      relationCard.querySelector('button').click()
+      byText(relationCard, '确认并追加').click()
       await wait()
       const relationCall = bridgeCalls.find((call) => call.eventId === 'proposal-relational')
       check('新关系命题名称必须经人工编辑/确认后才提交', relationCall?.input.title === '用户命名关系观点'
@@ -129,11 +137,11 @@
 
       const refreshed = document.createElement('section')
       refreshed.setAttribute('aria-label', '刷新后的引擎审阅')
-      refreshed.append(renderEnginePipeline(item, { themeId: 'synthetic-theme' }))
+      refreshed.append(renderEnginePipeline(item, { themeId: 'synthetic-theme', projection: reviewProjection }))
       document.querySelector('#fixture-root').append(refreshed)
       await wait()
-      check('重新挂载从追加 signal.reviewed 恢复接受/驳回状态且按钮禁用', [...refreshed.querySelectorAll('.engine-attr')]
-        .every((card) => card.querySelector('button').disabled && card.querySelector('.engine-review-status').textContent))
+      check('重新挂载从追加 signal.reviewed 恢复接受/驳回状态且按钮禁用', [...refreshed.querySelectorAll('.review-card-v2')]
+        .every((card) => card.classList.contains('is-done') && [...card.querySelectorAll('button')].every((button) => button.disabled)))
       check('重复点击的权限受到禁用态阻止，没有二次调用 bridge', bridgeCalls.length === 3)
 
       const generateHost = document.createElement('section')
@@ -153,7 +161,7 @@
       check('无缓存时模型运行按钮确实调用 engine:runPipeline bridge 并保存返回状态', pipelineCalls === 1
         && generateItem.enginePipeline?.status === 'done')
       generateHost.replaceChildren(renderEnginePipeline(generateItem, { themeId: 'synthetic-theme' }))
-      check('pipeline 返回后正式 renderer 显示对应建议审阅卡', generateHost.querySelectorAll('.engine-attr').length === 3)
+      check('pipeline 返回后正式 renderer 显示对应建议审阅卡', generateHost.querySelectorAll('.review-card-v2').length === 3)
 
       let openedNode = null
       const product = {
