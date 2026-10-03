@@ -141,6 +141,19 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: def
 input,
 textarea,
 select { font: inherit; color: inherit; }
+/* 表单控件统一：28px 高、6px 圆角、发丝线边框、聚焦交给全局 :focus-visible */
+input[type="text"], input[type="url"], input[type="number"], input[type="date"], input[type="search"], input[type="email"], textarea, select {
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid);
+  color: var(--text-1);
+  font-size: var(--t-body);
+}
+textarea { height: auto; padding: var(--sp-2); line-height: 1.5; }
+input[type="text"]:hover, input[type="url"]:hover, input[type="search"]:hover, textarea:hover, select:hover { border-color: var(--hairline-strong); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 /* ------------- 通用件 ------------- */
 
@@ -148,13 +161,14 @@ select { font: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
-  padding: 0 9px;
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
   border-radius: var(--r-sm);
+  background: transparent;
   font-size: var(--t-body);
-  font-weight: 600;
+  font-weight: var(--fw-medium);
   color: var(--text-2);
-  transition: background 120ms var(--ease), color 120ms var(--ease);
   white-space: nowrap;
 }
 .btn:hover { background: var(--hover); color: var(--text); }
@@ -165,7 +179,7 @@ select { font: inherit; color: inherit; }
 .btn:disabled:hover { background: none; color: var(--text-2); }
 .btn-primary:disabled, .btn-primary:disabled:hover { background: var(--accent); color: #fff; opacity: 0.45; }
 .btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { background: #0077ed; color: #fff; }
+.btn-primary:hover { background: var(--accent-strong); color: #fff; }
 .btn-icon { width: 26px; padding: 0; justify-content: center; }
 
 .icon { flex: none; display: block; }
@@ -390,9 +404,9 @@ select { font: inherit; color: inherit; }
 }
 .mid-head h1 {
   margin: 0;
-  font-size: var(--t-title);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: var(--t-title1);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-title);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -867,8 +881,8 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 .hist > i[data-by="propagation"] { background: var(--orange); opacity: 0.55; }
 
 .empty { display: grid; place-content: center; justify-items: center; gap: 10px; height: 100%; padding: 40px; text-align: center; }
-.empty h2 { margin: 0; font-size: var(--t-largeTitle); font-weight: 600; }
-.empty p { margin: 0; max-width: 320px; font-size: var(--t-body); color: var(--text-2); line-height: 1.6; }
+.empty h2 { margin: 0; font-size: var(--t-subhead); font-weight: var(--fw-semibold); }
+.empty p { margin: 0; max-width: 340px; font-size: var(--t-body); color: var(--text-2); line-height: 1.55; }
 .empty-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; width: 220px; }
 
 /* ------------- 结算 ------------- */
@@ -884,13 +898,13 @@ input[type="range"]::-webkit-slider-thumb:active { transform: scale(1.08); }
 /* 卡片容器：白底圆角，段落之间用间距而非发丝线分隔 */
 .card {
   background: var(--surface-solid);
-  border-radius: var(--r);
-  padding: 20px 24px;
-  margin-bottom: 14px;
-  box-shadow: 0 0.5px 0 var(--hairline-soft), 0 1px 3px rgba(0, 0, 0, 0.04);
+  border-radius: var(--r-lg);
+  padding: var(--sp-5) var(--sp-5);
+  margin-bottom: var(--sp-4);
+  box-shadow: var(--e-1);
 }
-.card-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
-.card-h h2 { margin: 0; font-size: var(--t-title); font-weight: 600; letter-spacing: -0.005em; }
+.card-h { display: flex; align-items: baseline; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.card-h h2 { margin: 0; font-size: var(--t-title); font-weight: var(--fw-semibold); letter-spacing: var(--ls-title); }
 .card-h .spacer { flex: 1; }
 .card-h em { margin-left: auto; font-style: normal; font-size: var(--t-caption); font-weight: 400; color: var(--text-3); font-variant-numeric: tabular-nums; }
 

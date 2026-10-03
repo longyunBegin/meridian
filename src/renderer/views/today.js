@@ -137,8 +137,8 @@ export async function renderToday(mid) {
     renderInboxWorkspace(mid, seq, allNodes),
     renderIgnoredProposals(ignored, allNodes),
 
-    // ---- 到期未结算
-    h('section', { class: 'card', id: 'due-section' },
+    // ---- 到期未结算：没有到期项时只留一行提示，不再用空态撑起一整张卡
+    due.length ? h('section', { class: 'card', id: 'due-section' },
       h('div', { class: 'card-h' },
         h('h2', {}, '到期未结算'),
         h('span', { class: 'spacer' }),
@@ -167,11 +167,10 @@ export async function renderToday(mid) {
               },
             }, '再等等'),
           ),
-        )) : h('div', { class: 'q' }, h('div', { class: 'q-body' },
-          h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '没有到期的问题。给命题设一个结算日，它就会回来找你。'),
-        )),
+        )) : null,
       ),
-    ),
+    ) : h('p', { class: 'today-empty-line' },
+      h('b', {}, '到期未结算'), ' · 没有到期的问题。给命题设一个结算日，它就会回来找你。'),
 
     // ---- 冲突（静默标记，不强制裁决）
     conflicts.length ? h('section', { class: 'card' },
@@ -795,7 +794,8 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
       return h('button', {
         type: 'button',
         class: `inbox2-belong-pill${isCurrent ? ' is-current' : ' is-add'}`,
-        style: isCurrent ? { background: themeDotColor(t.id) } : {},
+        /* 柔和色调：同一语义色 14% 底 + 该色文字。实底白字会和主按钮抢强调。 */
+        style: isCurrent ? { background: `color-mix(in srgb, ${themeDotColor(t.id)} 14%, transparent)`, color: themeDotColor(t.id) } : {},
         title: isCurrent ? '当前主题' : `切换到「${t.name}」`,
         disabled: busy || isCurrent,
         onclick: async () => {

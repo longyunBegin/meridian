@@ -1435,6 +1435,7 @@
 .meridian-theme .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border:1px solid var(--hairline); border-radius:var(--r-pill); background:var(--surface-solid); font-size:var(--t-footnote); color:var(--text-2); cursor:pointer; }
 .meridian-theme .inbox2-theme-pill:hover { background:var(--hover); color:var(--text-1); }
 /* 区块级摘要（已抽取 / 已归位 / 待处理）：12px 次要色，不再是大号彩色数字 */
+.meridian-theme .today-empty-line { margin:2px 0 var(--sp-4); color:var(--text-3); font-size:var(--t-footnote); }
 .meridian-theme .inbox2-summary { display:inline-flex; align-items:baseline; gap:6px; color:var(--text-3); font-size:var(--t-footnote); font-variant-numeric:tabular-nums; }
 .meridian-theme .inbox2-summary b { color:var(--text-1); font-weight:var(--fw-semibold); }
 .meridian-theme .inbox2-summary-sep { color:var(--text-3); }
@@ -1456,18 +1457,20 @@
 .meridian-theme .inbox2-theme-tag { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius: var(--r-pill); background:color-mix(in srgb, var(--accent) 10%, transparent); font-size: var(--t-footnote); color:var(--text-2); }
 .meridian-theme .inbox2-cross-badge { padding:4px 10px; border-radius: var(--r-pill); background:var(--bg-2); font-size: var(--t-footnote); color:var(--text-3); }
 .meridian-theme .inbox2-item-status { display:flex; gap:6px; flex-wrap:wrap; }
-.meridian-theme .inbox2-badge { padding:4px 10px; border-radius: var(--r-sm); font-size: var(--t-footnote); }
-.meridian-theme .inbox2-badge.is-ok { background:color-mix(in srgb, var(--green) 12%, transparent); color:var(--green); }
-.meridian-theme .inbox2-badge.is-warn { background:color-mix(in srgb, var(--orange) 12%, transparent); color:var(--orange); }
+/* 行内状态：不做成彩底胶囊（每行两三个彩底会把列表变成糖果罐），只留语义色文字 */
+.meridian-theme .inbox2-badge { padding:0; border-radius:0; background:transparent; font-size:var(--t-footnote); color:var(--text-3); }
+.meridian-theme .inbox2-badge.is-ok { background:transparent; color:var(--text-3); }
+.meridian-theme .inbox2-badge.is-done { background:transparent; color:var(--green); }
+.meridian-theme .inbox2-badge.is-warn { background:transparent; color:var(--orange); }
 
 /* 详情面板 v2 */
 .meridian-theme .inbox2-head { padding:20px 24px 16px; }
 .meridian-theme .inbox2-kicker { font-size: var(--t-body); color:var(--text-3); margin-bottom:8px; }
 .meridian-theme .inbox2-title { font-size: var(--t-head); font-weight: var(--fw-semibold); line-height:1.3; margin:0 0 16px; }
-.meridian-theme .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--line); border-radius: var(--r-lg); background:var(--bg-2); margin-bottom:12px; }
+.meridian-theme .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:0; border:0; border-radius:0; background:transparent; margin:4px 0 var(--sp-3); }
 .meridian-theme .inbox2-belong-label { font-size: var(--t-body); color:var(--text-3); }
-.meridian-theme .inbox2-belong-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius: var(--r-pill); font-size: var(--t-body); cursor:pointer; border:1px solid transparent; }
-.meridian-theme .inbox2-belong-pill.is-current { color:#fff; font-weight:600; }
+.meridian-theme .inbox2-belong-pill { display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border-radius:var(--r-pill); font-size:var(--t-footnote); cursor:pointer; border:1px solid transparent; }
+.meridian-theme .inbox2-belong-pill.is-current { font-weight:var(--fw-medium); }
 .meridian-theme .inbox2-belong-pill.is-add { border:1px dashed var(--line-2); background:transparent; color:var(--text-3); }
 .meridian-theme .inbox2-belong-pill.is-add:hover { border-color:var(--accent); color:var(--accent); }
 .meridian-theme .inbox2-hint { font-size: var(--t-footnote); color:var(--text-3); line-height:1.6; text-align:center; margin:0 0 16px; }
@@ -1602,6 +1605,8 @@
 #inbox-section .inbox2-filter-label { font-size: var(--t-body); color:var(--text-3); margin-right:4px; }
 #inbox-section .inbox2-theme-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border:1px solid var(--hairline); border-radius:var(--r-pill); background:var(--surface-solid); font-size:var(--t-footnote); color:var(--text-2); cursor:pointer; }
 #inbox-section .inbox2-theme-pill:hover { background:var(--hover); color:var(--text-1); }
+#inbox-section .today-empty-line { margin:2px 0 var(--sp-4); color:var(--text-3); font-size:var(--t-footnote); }
+#inbox-section .today-empty-line b { color:var(--text-2); font-weight:var(--fw-medium); }
 #inbox-section .inbox2-summary { display:inline-flex; align-items:baseline; gap:6px; color:var(--text-3); font-size:var(--t-footnote); font-variant-numeric:tabular-nums; }
 #inbox-section .inbox2-summary b { color:var(--text-1); font-weight:var(--fw-semibold); }
 #inbox-section .inbox2-summary-sep { color:var(--text-3); }
@@ -1626,7 +1631,9 @@
 #inbox-section .inbox2-theme-tag { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius: var(--r-pill); background:color-mix(in srgb, var(--accent) 10%, transparent); font-size: var(--t-footnote); color:var(--text-2); }
 #inbox-section .inbox2-cross-badge { padding:4px 10px; border-radius: var(--r-pill); background:var(--bg-2); font-size: var(--t-footnote); color:var(--text-3); }
 #inbox-section .inbox2-item-status { display:flex; gap:6px; flex-wrap:wrap; }
-#inbox-section .inbox2-badge { padding:4px 10px; border-radius: var(--r-sm); font-size: var(--t-footnote); }
+#inbox-section .inbox2-badge { padding:0; border-radius:0; background:transparent; font-size:var(--t-footnote); color:var(--text-3); }
+#inbox-section .inbox2-badge.is-done { background:transparent; color:var(--green); }
+#inbox-section .inbox2-badge.is-warn { background:transparent; color:var(--orange); }
 #inbox-section .inbox2-badge.is-ok { background:color-mix(in srgb, var(--green) 12%, transparent); color:var(--green); }
 #inbox-section .inbox2-badge.is-warn { background:color-mix(in srgb, var(--orange) 12%, transparent); color:var(--orange); }
 /* 已归位（设计稿的 done 态）：中性灰 chip，和应用自身 token 对齐（styles.css 无 --surface-3，用 --hover）。 */
@@ -1636,10 +1643,10 @@
 #inbox-section .inbox2-head { padding:20px 24px 16px; }
 #inbox-section .inbox2-kicker { font-size: var(--t-body); color:var(--text-3); margin-bottom:8px; }
 #inbox-section .inbox2-title { font-size: var(--t-head); font-weight: var(--fw-semibold); line-height:1.3; margin:0 0 16px; }
-#inbox-section .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--line); border-radius: var(--r-lg); background:var(--bg-2); margin-bottom:12px; }
+#inbox-section .inbox2-belong-pills { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:0; border:0; border-radius:0; background:transparent; margin:4px 0 var(--sp-3); }
 #inbox-section .inbox2-belong-label { font-size: var(--t-body); color:var(--text-3); }
 #inbox-section .inbox2-belong-pill { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius: var(--r-pill); font-size: var(--t-body); cursor:pointer; border:1px solid transparent; }
-#inbox-section .inbox2-belong-pill.is-current { color:#fff; font-weight:600; }
+#inbox-section .inbox2-belong-pill.is-current { font-weight:var(--fw-medium); }
 #inbox-section .inbox2-belong-pill.is-add { border:1px dashed var(--line-2); background:transparent; color:var(--text-3); }
 #inbox-section .inbox2-belong-pill.is-add:hover { border-color:var(--accent); color:var(--accent); }
 #inbox-section .inbox2-hint { font-size: var(--t-footnote); color:var(--text-3); line-height:1.6; text-align:center; margin:0 0 16px; }
