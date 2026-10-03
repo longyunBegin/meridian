@@ -1226,3 +1226,21 @@
 .meridian-theme .quick-attr-done { font-size:13px; color:var(--green); font-weight:600; }
 .meridian-theme .quick-attr-goto { font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
 .meridian-theme .quick-attr-goto:hover { text-decoration:underline; }
+
+/* 建设者顶部：回到收件箱入口 */
+.meridian-theme .builder-back-inbox { font-size:13px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0 0 6px; }
+.meridian-theme .builder-back-inbox:hover { text-decoration:underline; }
+
+/* 证据流卡片：立场 + 权重 + 归位时间 + 陈述 + 来源；未读蓝点 */
+.meridian-theme .evidence-row { list-style:none; margin-bottom:8px; }
+.meridian-theme .evidence-card { display:block; width:100%; text-align:left; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--bg); cursor:pointer; }
+.meridian-theme .evidence-card:hover { border-color:var(--accent); }
+.meridian-theme .evidence-card-top { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:12px; }
+.meridian-theme .evidence-unread-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0; }
+.meridian-theme .evidence-stance { font-weight:700; padding:1px 8px; border-radius:4px; }
+.meridian-theme .evidence-stance.is-support { color:var(--green); background:color-mix(in srgb, var(--green) 12%, transparent); }
+.meridian-theme .evidence-stance.is-against { color:var(--red); background:color-mix(in srgb, var(--red) 12%, transparent); }
+.meridian-theme .evidence-weight { color:var(--text-2); font-variant-numeric:tabular-nums; }
+.meridian-theme .evidence-date { color:var(--text-3); margin-left:auto; }
+.meridian-theme .evidence-statement { font-size:13px; line-height:1.5; margin-bottom:4px; }
+.meridian-theme .evidence-source { font-size:12px; color:var(--text-3); }
