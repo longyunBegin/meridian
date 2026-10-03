@@ -120,6 +120,25 @@ ok('settings:set 写得进', fire('settings:set', { model: 'test-model' }).model
 ok('db:stats 算得动', fire('db:stats').themes === 1)
 ok('theme:all 列得出', fire('theme:all').length === 1)
 
+console.log('\n— L2 主题自定义层：theme:update 存 theme.config —')
+const vocabTheme = store.addTheme('分类管理主题')
+ok('新主题带空的 theme.config', JSON.stringify(fire('theme:all').find((t) => t.id === vocabTheme.id)?.config)
+  === JSON.stringify({ atomCategories: [], relationLabels: [] }))
+fire('theme:update', vocabTheme.id, { config: { atomCategories: ['技术路线', '关键问题'], relationLabels: ['导致', '依赖'] } })
+const vocabRead = fire('theme:all').find((t) => t.id === vocabTheme.id)?.config
+ok('theme:update 写入分类与关系词表，theme:all 能读回', JSON.stringify(vocabRead)
+  === JSON.stringify({ atomCategories: ['技术路线', '关键问题'], relationLabels: ['导致', '依赖'] }), JSON.stringify(vocabRead))
+fire('theme:update', vocabTheme.id, { config: { atomCategories: [' 技术路线 ', '技术路线', '', '   ', 'x'.repeat(60)], relationLabels: 'not-an-array' } })
+const vocabCleaned = fire('theme:all').find((t) => t.id === vocabTheme.id)?.config
+ok('词表清洗：去空白、去重、限长 40；非法类型回落空表', vocabCleaned.atomCategories.length === 2
+  && vocabCleaned.atomCategories[0] === '技术路线' && vocabCleaned.atomCategories[1].length === 40
+  && JSON.stringify(vocabCleaned.relationLabels) === '[]', JSON.stringify(vocabCleaned))
+ok('theme:update 不传 config 时不动词表', (() => {
+  fire('theme:update', vocabTheme.id, { name: '分类管理主题（改名）' })
+  const after = fire('theme:all').find((t) => t.id === vocabTheme.id)
+  return after.name === '分类管理主题（改名）' && after.config.atomCategories.length === 2
+})())
+
 console.log('\n— 回归：抽取分流合并阈值 0.6 —')
 // 既有命题「北美云厂商Q4光模块订单大增」vs 新文本首句
 // 「北美云厂商Q4光模块订单小幅上扬」相似度恰为 0.5，落在旧阈值 0.45
