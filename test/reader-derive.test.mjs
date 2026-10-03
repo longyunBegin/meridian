@@ -1,4 +1,4 @@
-import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
+import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline, strengthSparkline, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
 let failed = 0
@@ -114,6 +114,39 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
     flat.series.length === 0 && flat.evidence.length === 2 && flat.start === Date.parse('2026-09-20T00:00:00.000Z'))
   const empty = buildSynthesisAxis({})
   check('空账本合成轴保持真实空状态', empty.evidence.length === 0 && empty.series.length === 0 && empty.start === null && empty.end === null)
+}
+
+{
+  /* R1 论证大纲 / R2 sparkline 的纯模型（图以外的有序结构：读得完、比得了量）。 */
+  const evidenceNode = (id, title, extra = {}) => ({
+    id, nodeType: 'evidence', kind: 'evidence', title, currentText: title, status: 'pending', archived: false,
+    evidenceRefs: [{ type: 'url', id: 'https://example.test/a', title: '来源' }],
+    sourceLabel: '来源', sourcePublishedAt: '2026-09-20', applicability: '2026Q3', ...extra,
+  })
+  const atom = { id: 'v1', nodeType: 'viewpoint', title: '结论原子', confidence: 71, archived: false, atomCategory: '技术路线' }
+  const byId = {
+    v1: atom,
+    e1: evidenceNode('e1', '支持数据'),
+    e2: evidenceNode('e2', '挑战数据'),
+    e3: evidenceNode('e3', '未表态数据', { evidenceRefs: [], sourceLabel: null, sourcePublishedAt: null, applicability: null }),
+  }
+  const evidenceFor = (id) => (id === 'v1'
+    ? { supports: [{ source: byId.e1 }], against: [{ source: byId.e2 }], unclassified: [{ source: byId.e3 }], both: [] }
+    : null)
+  const outline = buildArgumentOutline([atom, byId.e1, byId.e2, byId.e3], evidenceFor)
+  check('R1 大纲按支持/挑战/未表态分组，并带上出处（URL 只在 http(s) 时给）',
+    outline.length === 1 && outline[0].counts.supports === 1 && outline[0].counts.against === 1 && outline[0].counts.unclassified === 1
+    && outline[0].supports[0].url === 'https://example.test/a' && outline[0].supports[0].sourceLabel === '来源'
+    && outline[0].supports[0].applicability === '2026Q3' && outline[0].unclassified[0].url === null)
+  check('R1 大纲不算证据节点自身，缺强度时是 null 而不是 0%',
+    buildArgumentOutline([atom, byId.e1, byId.e2, byId.e3], evidenceFor).length === 1
+    && buildArgumentOutline([{ id: 'v2', nodeType: 'viewpoint', title: '无强度原子', confidence: null }], () => null)[0].strength === null
+    && buildArgumentOutline([{ id: 'v3', nodeType: 'viewpoint', title: '归档原子', archived: true }], () => null).length === 0)
+  const spark = strengthSparkline({ confidenceHistory: [{ newConfidence: 62 }, { newConfidence: 71 }] })
+  check('R2 sparkline 由 confidence 历史算折线点，单点或空历史不画线',
+    spark.enough && spark.min === 62 && spark.max === 71 && spark.points.split(' ').length === 2
+    && strengthSparkline({ confidenceHistory: [{ newConfidence: 62 }] }).enough === false
+    && strengthSparkline({}).enough === false && strengthSparkline({ confidenceHistory: [] }).points === '')
 }
 
 console.log(`\n${passed} 通过，${failed} 失败`)

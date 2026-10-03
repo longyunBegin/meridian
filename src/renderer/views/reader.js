@@ -1,14 +1,16 @@
 import { h } from '../lib/dom.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
-  graphLodLevel, GRAPH_LOD_LABEL, evidenceAttachmentEdges,
+  graphLodLevel, GRAPH_LOD_LABEL, evidenceAttachmentEdges, categoryColor,
   networkNodeType, networkNodeStatus,
   buildEventTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
-import { filterReaderNodes, nodeCategory, buildSynthesisAxis, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
+import { filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
+import { renderArgumentOutline } from '../components/reader-argument-outline.js'
+import { renderSmallMultiples } from '../components/reader-small-multiples.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -159,6 +161,8 @@ export function renderReaderView(theme, opts = {}) {
   /* 图谱缩放与 LOD（设计提案 02）：缩放 <0.75 点阵 / ≤1.15 卡片 / >1.15 卡片+标题。 */
   let zoom = 1
   let lodAuto = true
+  /* R1 论证大纲的折叠状态：只存内存（§10.3 验收要求），不写任何数据。 */
+  const outlineExpanded = new Set()
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -757,6 +761,38 @@ export function renderReaderView(theme, opts = {}) {
     const replayDetails = h('details', { class: 'rdr-replay-details' },
       h('summary', {}, '按事件序号回放 · 内部细节'), replayBox)
 
+    /* R1 论证大纲 + R2 小倍数网格（§10.2 首屏配方第 2/3 屏）：
+       图没有唯一阅读顺序、也比不了量；要"读完 / 比较"就用有序结构，图退到点开某个原子之后。 */
+    const outlineHost = h('div', { class: 'rdr-outline-host' })
+    const multiplesHost = h('div', { class: 'rdr-multiples-host' })
+    const focusAtom = (id) => {
+      const next = id && currentNodes.some((node) => node.id === id) ? id : null
+      state.selectedNodeId = next
+      if (next) outlineExpanded.add(next)
+      focusLabel.textContent = next
+        ? `已选择：${titleOf(currentNodes.find((node) => node.id === next) || {})} · 来源与关系显示在右侧`
+        : '选择任一节点查看其论证、关联与来源'
+      renderInspector()
+      renderAxis()
+      renderGraph()
+      renderStructure()
+    }
+    const renderStructure = () => {
+      const rows = buildArgumentOutline(currentNodes, (id) => evidenceForNode(state, id))
+      const nodeById = new Map(currentNodes.map((node) => [node.id, node]))
+      outlineHost.replaceChildren(renderArgumentOutline(rows, {
+        expandedIds: outlineExpanded,
+        onToggle: (id, open) => { open ? outlineExpanded.add(id) : outlineExpanded.delete(id) },
+        onFocusAtom: focusAtom,
+      }))
+      multiplesHost.replaceChildren(renderSmallMultiples(rows, {
+        selectedId: state.selectedNodeId,
+        colorFor: (category) => categoryColor(themeCategories, category),
+        sparkFor: (id) => strengthSparkline(nodeById.get(id)),
+        onFocusAtom: focusAtom,
+      }))
+    }
+
     const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
@@ -817,11 +853,12 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, multiplesHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()
     renderAxis()
+    renderStructure()
     updateHistoryStatus()
   }
 

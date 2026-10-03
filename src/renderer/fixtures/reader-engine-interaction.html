@@ -406,6 +406,64 @@
         Boolean(axisRoot.querySelector('.rdr-replay-details > summary'))
         && Boolean(axisRoot.querySelector('.rdr-replay-details .rdr-history')))
 
+      /* R1 论证大纲 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
+      const structureEvidence = (id, title, extra = {}) => ({
+        id, nodeType: 'evidence', kind: 'evidence', title, currentText: title, status: 'pending', archived: false, external: false,
+        createdSeq: 1, eventIds: [], provenanceEventIds: [], targetNodeIds: ['sx-v1'], evidenceCount: 0,
+        evidenceRefs: [{ type: 'url', id: 'https://example.test/r1-source', title: '示例来源' }],
+        sourceLabel: '示例来源', sourcePublishedAt: '2026-09-20', applicability: '2026Q3', ...extra,
+      })
+      const structureNodes = [
+        {
+          id: 'sx-v1', nodeType: 'viewpoint', kind: 'claim', title: 'R1 结论原子', currentText: 'R1 结论原子',
+          confidence: 71, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [],
+          evidenceNodeIds: ['sx-e1', 'sx-e2', 'sx-e3'], evidenceCount: 3, atomCategory: '技术路线',
+          confidenceHistory: [
+            { at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67 },
+            { at: '2026-09-24T00:00:00.000Z', oldConfidence: 67, newConfidence: 71 },
+          ],
+        },
+        { id: 'sx-v2', nodeType: 'viewpoint', kind: 'claim', title: 'R1 无证据原子', currentText: 'R1 无证据原子', confidence: null, status: 'pending', archived: false, external: false, createdSeq: 2, eventIds: [], provenanceEventIds: [], evidenceCount: 0, atomCategory: '商业模式' },
+        structureEvidence('sx-e1', '支持用的外部数据'),
+        structureEvidence('sx-e2', '挑战用的外部数据'),
+        structureEvidence('sx-e3', '未表态的外部数据', { evidenceRefs: [], sourceLabel: null, sourceUrl: null, sourcePublishedAt: null, applicability: null }),
+      ]
+      const structureEdges = [
+        { id: 'sx-r1', from: 'sx-e1', to: 'sx-v1', rel: 'supports', reviewDecision: null, pendingReview: false },
+        { id: 'sx-r2', from: 'sx-e2', to: 'sx-v1', rel: 'contradicts', reviewDecision: null, pendingReview: false },
+      ]
+      const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
+      const structureRoot = renderReaderView({ name: '大纲合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
+        loadProjection: async () => structureProjection, loadEvents: async () => [], onOpenBuilder: () => {},
+      })
+      document.querySelector('#fixture-root').append(structureRoot)
+      await wait()
+      check('R1 论证大纲：每个原子一行结论，支持/挑战/未表态三组都在',
+        structureRoot.querySelectorAll('.rdr-outline-atom').length === 2
+        && structureRoot.querySelectorAll('.rdr-outline-group.is-supports').length === 2
+        && structureRoot.querySelectorAll('.rdr-outline-group.is-against').length === 2
+        && structureRoot.querySelectorAll('.rdr-outline-group.is-unclassified').length === 2)
+      check('R1 大纲按立场分组外部数据，带来源名、时间与「查看来源」',
+        structureRoot.querySelectorAll('.rdr-outline-group.is-supports .rdr-outline-item').length === 1
+        && structureRoot.querySelectorAll('.rdr-outline-group.is-against .rdr-outline-item').length === 1
+        && (structureRoot.querySelector('.rdr-outline-item-meta')?.textContent || '').includes('示例来源')
+        && structureRoot.querySelectorAll('.rdr-outline-link').length === 2)
+      check('R1 大纲文案里不出现账本术语（事件 / seq / 哈希）',
+        !/事件|seq|哈希/.test(structureRoot.querySelector('.rdr-outline')?.textContent || ''),
+        structureRoot.querySelector('.rdr-outline')?.textContent?.slice(0, 60) || '')
+      check('R2 小倍数网格：每原子一卡，含强度条 / sparkline / 支持挑战计数 / 分类色点',
+        structureRoot.querySelectorAll('.rdr-multiple-card').length === 2
+        && Boolean(structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"] .rdr-multiple-spark polyline'))
+        && (structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"] .rdr-multiple-counts')?.textContent || '').includes('1 支持')
+        && (structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v2"] .rdr-multiple-value')?.textContent || '').includes('还没有强度')
+        && structureRoot.querySelectorAll('.rdr-multiple-cat').length === 2)
+      check('R2 没有强度历史的原子如实留白（虚线），不假装平稳',
+        Boolean(structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v2"] .rdr-multiple-spark line')))
+      structureRoot.querySelector('.rdr-multiple-card[data-atom-id="sx-v1"]')?.click()
+      await wait()
+      check('R2 点卡片聚焦该原子并联动检视器', structureRoot.querySelector('.rdr-inspector-title')?.textContent === 'R1 结论原子'
+        && Boolean(structureRoot.querySelector('.rdr-multiple-card.is-selected')))
+
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'
     } catch (error) {

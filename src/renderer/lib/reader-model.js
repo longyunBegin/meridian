@@ -1,4 +1,4 @@
-import { networkNodeStatus, networkNodeType, truncateGraphemes } from './theme-network.js'
+import { networkNodeStatus, networkNodeType, readerStateKey, truncateGraphemes } from './theme-network.js'
 
 export const DIRECTION_META = {
   improving: { label: '好转', color: 'var(--green)', icon: '↑' },
@@ -27,6 +27,8 @@ const eventDate = (event) => {
   return ms ? new Date(ms).toISOString().slice(0, 10) : '—'
 }
 const confidenceValue = (value) => {
+  /* Number(null) === 0：缺强度必须返回 null，否则会显示成"强度 0%"（与"还没有强度"是两回事）。 */
+  if (value == null || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : null
 }
@@ -102,6 +104,68 @@ export function buildSynthesisAxis({ events = [], node = null } = {}) {
 /** 原子的主题分类（L2 主题自定义层）：分类是用户自己的词，空值统一归到"未分类"。 */
 export function nodeCategory(node) {
   return String(node?.atomCategory || '').trim() || UNCATEGORIZED_LABEL
+}
+
+/** 证据行：投影节点自带出处（P0-3），这里只挑展示需要的字段。 */
+function evidenceRow(source) {
+  const refs = asArray(source?.evidenceRefs)
+  const urlRef = refs.find((ref) => ref?.type === 'url' && ref.id)
+  const candidate = String(source?.sourceUrl || urlRef?.id || '').trim()
+  let url = null
+  try { url = /^https?:$/i.test(new URL(candidate).protocol) ? candidate : null } catch { url = null }
+  return {
+    id: source?.id || '',
+    title: String(source?.title || source?.currentText || '外部数据').trim() || '外部数据',
+    text: String(source?.currentText || source?.detail || '').trim(),
+    sourceLabel: String(source?.sourceLabel || '').trim() || null,
+    sourcePublishedAt: String(source?.sourcePublishedAt || '').trim() || null,
+    applicability: String(source?.applicability || '').trim() || null,
+    url,
+  }
+}
+
+/**
+ * R1 论证大纲：结论 → 要点（支持 / 挑战 / 未表态分组）。
+ * 图没有唯一阅读顺序，大纲有；数据全部来自投影（证据节点自带出处），只做分组，不改写账本。
+ */
+export function buildArgumentOutline(nodes = [], evidenceForNodeFn = null) {
+  const rows = asArray(nodes).filter((node) => node && !node.archived && networkNodeType(node) !== 'evidence')
+  return rows.map((node) => {
+    const summary = typeof evidenceForNodeFn === 'function' ? evidenceForNodeFn(node.id) : null
+    const map = (list) => asArray(list).map((row) => evidenceRow(row?.source || row)).filter((row) => row.id)
+    const supports = map(summary?.supports)
+    const against = map(summary?.against)
+    const unclassified = map(summary?.unclassified)
+    return {
+      id: node.id,
+      title: titleOf(node),
+      state: readerStateKey(node, summary),
+      strength: confidenceValue(node.confidence),
+      category: nodeCategory(node),
+      supports, against, unclassified,
+      counts: { supports: supports.length, against: against.length, unclassified: unclassified.length },
+    }
+  })
+}
+
+/**
+ * R2 小倍数网格的 sparkline：由 confidence 历史算出折线点。
+ * 少于两个点就不画线（enough=false）——一个点连不成趋势，别硬画成"平稳"。
+ */
+export function strengthSparkline(node, { width = 72, height = 22 } = {}) {
+  const values = asArray(node?.confidenceHistory)
+    .map((row) => confidenceValue(row?.newConfidence ?? row?.oldConfidence))
+    .filter((value) => value != null)
+  if (values.length < 2) return { points: '', values, min: null, max: null, enough: false }
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = max - min || 1
+  const points = values.map((value, index) => {
+    const x = (index / (values.length - 1)) * width
+    const y = height - ((value - min) / span) * height
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  return { points, values, min, max, enough: true }
 }
 
 /** Filter only the visible graph frame; never mutate or remove ledger projection nodes. */
