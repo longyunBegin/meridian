@@ -1,4 +1,4 @@
-import { deriveReaderModel, estimateReadSeconds, filterReaderNodes } from '../src/renderer/lib/reader-model.js'
+import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
 let failed = 0
@@ -25,6 +25,16 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
     && filterReaderNodes(nodes, 'all', 'archived').map((node) => node.id).join() === 'archived')
   check('Reader 过滤只改变可见帧，不改写完整主题节点列表', nodes.map((node) => node.id).join() === originalIds
     && filterReaderNodes(nodes, 'all', 'all').length === nodes.length)
+  /* 分类筛选来自 L2 主题自定义层：按用户自己的词筛，没有分类的原子归入"未分类"。 */
+  const categorized = [
+    { id: 'tech', nodeType: 'viewpoint', title: '技术路线', atomCategory: '技术路线' },
+    { id: 'biz', nodeType: 'viewpoint', title: '商业模式', atomCategory: '商业模式' },
+    { id: 'old', nodeType: 'viewpoint', title: '早先建的原子' },
+  ]
+  check('Reader 分类筛选按主题自定义词表工作，未分类单独一档',
+    filterReaderNodes(categorized, 'all', 'all', '技术路线').map((node) => node.id).join() === 'tech'
+    && filterReaderNodes(categorized, 'all', 'all', UNCATEGORIZED_LABEL).map((node) => node.id).join() === 'old'
+    && filterReaderNodes(categorized, 'all', 'all').length === 3)
 }
 
 {

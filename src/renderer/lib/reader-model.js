@@ -31,11 +31,19 @@ const confidenceValue = (value) => {
   return Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : null
 }
 
+export const UNCATEGORIZED_LABEL = '未分类'
+
+/** 原子的主题分类（L2 主题自定义层）：分类是用户自己的词，空值统一归到"未分类"。 */
+export function nodeCategory(node) {
+  return String(node?.atomCategory || '').trim() || UNCATEGORIZED_LABEL
+}
+
 /** Filter only the visible graph frame; never mutate or remove ledger projection nodes. */
-export function filterReaderNodes(nodes = [], type = 'all', status = 'all') {
+export function filterReaderNodes(nodes = [], type = 'all', status = 'all', category = 'all') {
   if (!Array.isArray(nodes)) return []
   return nodes.filter((node) => node && (type === 'all' || networkNodeType(node) === type)
-    && (status === 'all' || networkNodeStatus(node) === status))
+    && (status === 'all' || networkNodeStatus(node) === status)
+    && (category === 'all' || nodeCategory(node) === category))
 }
 
 function liveEdges(projection) {

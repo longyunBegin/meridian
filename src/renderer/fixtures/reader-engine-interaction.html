@@ -274,6 +274,46 @@
       check('返回当前状态可恢复活动主题投影', currentRoot.querySelector('.rdr-live-button').hidden
         && currentRoot.querySelector('.rdr-inspector-title')?.textContent === '供应链驱动')
 
+      /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：
+         没配分类的主题不该出现这个控件；配了之后按用户自己的词筛，未分类单独一档。 */
+      check('主题没配原子分类时读者视图不出现分类筛选',
+        currentRoot.querySelector('select[aria-label="按原子分类筛选"]')?.hidden === true)
+      const catNode = (id, title, seq, atomCategory) => ({
+        id, nodeType: 'viewpoint', kind: 'claim', title, detail: '', currentText: title, confidence: null,
+        status: 'pending', archived: false, external: false, createdSeq: seq, eventIds: [], provenanceEventIds: [],
+        evidenceCount: 0, ...(atomCategory ? { atomCategory } : {}),
+      })
+      const categoryNodes = [catNode('cat-tech', '技术路线原子', 1, '技术路线'), catNode('cat-biz', '商业模式原子', 2, '商业模式'), catNode('cat-none', '早先建的原子', 3)]
+      const categoryProjection = { nodes: categoryNodes, allNodes: categoryNodes, edges: [], allEdges: [], integrity: { ok: true }, eventCount: 3 }
+      const categoryRoot = renderReaderView({ name: '分类合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
+        loadProjection: async () => categoryProjection, loadEvents: async () => [], onOpenBuilder: () => {},
+      })
+      categoryRoot.setAttribute('data-snapshot', 'category')
+      document.querySelector('#fixture-root').append(categoryRoot)
+      await wait()
+      const categorySelect = categoryRoot.querySelector('select[aria-label="按原子分类筛选"]')
+      check('主题配了原子分类后出现分类筛选，含"未分类"一档', Boolean(categorySelect) && !categorySelect.hidden
+        && [...categorySelect.options].map((option) => option.textContent).join() === '全部分类,技术路线,商业模式,未分类',
+        categorySelect ? [...categorySelect.options].map((option) => option.textContent).join() : '(控件缺失)')
+      check('默认不筛分类时三个原子都在画布上', categoryRoot.querySelectorAll('.cog-node').length === 3)
+      categorySelect.value = '技术路线'
+      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait()
+      check('按分类筛选后画布只留该分类的原子（只改可见帧，不从主题删除）',
+        categoryRoot.querySelectorAll('.cog-node').length === 1
+        && Boolean(categoryRoot.querySelector('.cog-node[data-node-id="cat-tech"]'))
+        && (categoryRoot.querySelector('.rdr-node-count')?.textContent || '').includes('1'))
+      categorySelect.value = '未分类'
+      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait()
+      check('配了分类之后，早先建的原子归入"未分类"仍然找得到',
+        categoryRoot.querySelectorAll('.cog-node').length === 1
+        && Boolean(categoryRoot.querySelector('.cog-node[data-node-id="cat-none"]')))
+      categorySelect.value = 'all'
+      categorySelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await wait()
+      check('切回全部分类后三个原子都回到画布上', categoryRoot.querySelectorAll('.cog-node').length === 3)
+
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'
     } catch (error) {

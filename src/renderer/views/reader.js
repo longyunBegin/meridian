@@ -6,7 +6,7 @@ import {
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
-import { filterReaderNodes, synthesisSummary } from '../lib/reader-model.js'
+import { filterReaderNodes, nodeCategory, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -211,6 +211,13 @@ export function renderReaderView(theme, opts = {}) {
     const statusFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按节点状态筛选' },
       h('option', { value: 'all' }, '全部状态'),
       ...STATUS_FILTERS.map((status) => h('option', { value: status }, NODE_STATUS_LABEL[status])))
+    /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：主题没配分类就不出现，
+       配了之后"未分类"单独一档，保证早先建的原子仍然找得到。 */
+    const themeCategories = asArray(theme?.config?.atomCategories).map((name) => String(name || '').trim()).filter(Boolean)
+    const categoryFilter = h('select', { class: 'txt rdr-filter', 'aria-label': '按原子分类筛选', hidden: themeCategories.length === 0 },
+      h('option', { value: 'all' }, '全部分类'),
+      ...themeCategories.map((name) => h('option', { value: name }, name)),
+      h('option', { value: UNCATEGORIZED_LABEL }, UNCATEGORIZED_LABEL))
     const countStatus = h('span', { class: 'rdr-node-count', role: 'status', 'aria-live': 'polite' })
     const timeSlider = h('input', {
       class: 'rdr-time-slider', type: 'range', min: '0', max: String(Math.max(0, timeline.length - 1)), step: '1',
@@ -407,11 +414,12 @@ export function renderReaderView(theme, opts = {}) {
     const renderGraph = () => {
       const type = typeFilter.value
       const status = statusFilter.value
+      const category = categoryFilter.value
       const frameNodes = state.replaying ? historyNodes : currentNodes
       const declaredFrameEdges = state.replaying ? historyEdges : currentEdges
       /* 声明关系 + 证据挂载一起参与筛选/裁剪，画布上才看得见"谁挂着谁"。 */
       const frameEdges = [...declaredFrameEdges, ...evidenceAttachmentEdges(frameNodes, declaredFrameEdges)]
-      const matching = filterReaderNodes(frameNodes, type, status)
+      const matching = filterReaderNodes(frameNodes, type, status, category)
       const selected = state.selectedNodeId && frameNodes.some((node) => node.id === state.selectedNodeId)
         ? frameNodes.find((node) => node.id === state.selectedNodeId) : null
       if (selected && !matching.some((node) => node.id === selected.id) && nodeSearch.value.trim()
@@ -445,7 +453,7 @@ export function renderReaderView(theme, opts = {}) {
           unclassified: summary?.unclassified?.length || 0,
         })
       }
-      const currentFrameNodes = filterReaderNodes(currentNodes, type, status)
+      const currentFrameNodes = filterReaderNodes(currentNodes, type, status, category)
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
       if (frame.nodes.length) drawThemeNetwork(drawProjection, {
@@ -631,6 +639,7 @@ export function renderReaderView(theme, opts = {}) {
     }
     typeFilter.addEventListener('change', onFilterChange)
     statusFilter.addEventListener('change', onFilterChange)
+    categoryFilter.addEventListener('change', onFilterChange)
 
     const toolbar = h('div', { class: 'rdr-reader-head' },
       h('div', { class: 'rdr-reader-title-row' },
@@ -649,7 +658,7 @@ export function renderReaderView(theme, opts = {}) {
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
-      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter),
+      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
       searchResults, searchStatus,
       h('div', { class: 'rdr-focus-bar' }, focusLabel),
       graphCanvas,
