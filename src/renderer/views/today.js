@@ -225,11 +225,25 @@ function renderIgnoredProposals(items, nodes) {
 
 function renderInboxWorkspace(mid, seq, allNodes) {
   const items = inboxItems
+  // 收件箱统计：待处理 / 已抽取要点 / 已归位（粗筛层的三个关键数字）
+  const statsRow = h('div', { class: 'inbox-stats-row' },
+    h('span', { class: 'inbox-stat' }, '待处理 ', h('b', { class: 'inbox-stat-pending' }, '…')),
+    h('span', { class: 'inbox-stat' }, '已抽取要点 ', h('b', { class: 'inbox-stat-lemmas' }, '…')),
+    h('span', { class: 'inbox-stat' }, '已归位 ', h('b', { class: 'inbox-stat-resolved', style: { color: 'var(--green)' } }, '…')),
+  )
+  // 异步拉取统计
+  m.inboxStats?.().then((s) => {
+    if (!s) return
+    statsRow.querySelector('.inbox-stat-pending').textContent = String(s.pending ?? '—')
+    statsRow.querySelector('.inbox-stat-lemmas').textContent = String(s.lemmas ?? '—')
+    statsRow.querySelector('.inbox-stat-resolved').textContent = String(s.resolved ?? '—')
+  }).catch(() => {})
   const section = h('section', { class: 'card inbox-workspace', id: 'inbox-section' },
     h('div', { class: 'card-h inbox-workspace-head' },
       h('h2', {}, '待确认'),
       h('span', { class: 'spacer' }), h('em', {}, `${inboxTotal} 条待审阅`),
     ),
+    statsRow,
     inboxLoading ? h('div', { class: 'inbox-capture-status', role: 'status' },
       h('span', { class: 'hud-dot' }), '正在解析新内容，你可以继续审阅其他信息。') : null,
   )
@@ -262,11 +276,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn btn-primary inbox-import-picked',
     onclick: () => resolve(splitPicked().importable, 'accept'),
   }, '批量入库')
-  // 批量抽取主题选择器：默认「自动」（命题最多的主题）；手动指定后，
+  // 批量抽取主题选择器：默认「自动」（要点最多的主题）；手动指定后，
   // 本次抽取的条目都记到该主题下，后续入库跟着条目自己的主题走。
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
   const extractThemePick = h('select', {
-    class: 'inbox-extract-theme', title: '抽取主题：默认自动（命题最多的主题），可手动指定',
+    class: 'inbox-extract-theme', title: '抽取主题：默认自动（要点最多的主题），可手动指定',
   }, h('option', { value: '' }, '自动主题'),
     ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
   const extractPicked = h('button', {
@@ -374,7 +388,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
           total += result.results.length
           for (const item of group) { picked.delete(item.id); overrides.delete(overrideKey(item.id, tid)) }
         }
-        toast(`${total} 条命题已入库`)
+        toast(`${total} 条要点已归位`)
       } else if (action === 'extract') {
         const themeId = extractThemePick.value || undefined
         const res = await runExtract(chosen.map((item) => item.id), themeId)
@@ -606,7 +620,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
           ? h('span', {}, item.matchScore > 0
             ? `命中 ${item.matchScore.toFixed(2)} · 未达阈值`
             : (item.skipped === 'low-quality' ? '低质来源 · 未抽取' : '标签库未匹配'))
-          : h('span', {}, `${lemmas.length} 条命题`),
+          : h('span', {}, `${lemmas.length} 条要点`),
         item.extracted !== false && lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
         item.extracted !== false && lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
         resolving.has(item.id) ? h('span', {}, '处理中…') : null,
@@ -726,19 +740,19 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         h('p', { class: 'inbox-detail-note' }, unextractedNote(item)),
         h('p', { class: 'inbox-detail-note' }, '原文已留在本地。勾选后点「抽取所选」，或直接点分组旁的「抽取这 N 条」。'),
       ) : h('section', { class: 'inbox-detail-section' },
-        h('h4', { class: 'inbox-section-title' }, `提取的命题 · ${lemmas.length}`),
+        h('h4', { class: 'inbox-section-title' }, `提取的要点 · ${lemmas.length}`),
         lemmas.length ? h('ol', { class: 'inbox-proposals' },
           ...lemmas.map((lemma) => h('li', {},
             h('span', {}, lemma.title),
             h('div', { class: 'inbox-proposal-meta' },
               h('span', {}, lemma.action === 'merge'
-                ? `合并到「${allNodes.find((node) => node.id === lemma.mergeInto)?.title || '已有命题'}」`
-                : '新增命题'),
+                ? `合并到「${allNodes.find((node) => node.id === lemma.mergeInto)?.title || '已有要点'}」`
+                : '新增要点'),
               h('span', {}, lemma.action === 'merge' ? '保留原置信度与挂点' : `建议置信度 ${Math.round(lemma.confidence ?? 50)}`),
               lemma.conflicts?.length ? h('span', { class: 'cf' }, `${lemma.conflicts.length} 项冲突`) : null,
             ),
           )),
-        ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的命题。你可以忽略，或补充原文后重新捕获。'),
+        ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的要点。你可以忽略，或补充原文后重新捕获。'),
       ),
       // 确认归位：图已删，归位 = 挂到认知链。提案草稿搬进这里，一处确认。
       (editable || (theme && !unextracted)) ? h('section', { class: 'inbox-detail-section' },
@@ -772,11 +786,11 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
             },
           }), confValue,
         ) : null,
-        editable && lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增命题；未调整时保留各自建议。') : null,
+        editable && lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增要点；未调整时保留各自建议。') : null,
       ) : null,
     ),
     h('footer', { class: 'inbox-detail-actions' },
-      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : unextracted ? '未抽取 · 原文已留档' : `${lemmas.length} 条命题待核对`),
+      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : unextracted ? '未抽取 · 原文已留档' : `${lemmas.length} 条要点待核对`),
       h('button', { class: 'btn inbox-reject', disabled: busy, onclick: () => onResolve([item], 'reject') }, '忽略'),
       confirm,
     ),

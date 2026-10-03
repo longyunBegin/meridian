@@ -1216,3 +1216,13 @@
   content: '已分配'; font-size: 11px; color: var(--text-3);
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin-left: 8px;
 }
+
+/* 收件箱统计行：待处理 / 已抽取要点 / 已归位 */
+.meridian-theme .inbox-stats-row { display:flex; gap:20px; padding:8px 16px; font-size:13px; color:var(--text-2); border-bottom:1px solid var(--line); }
+.meridian-theme .inbox-stat b { font-weight:700; color:var(--text-1); margin-left:4px; }
+
+/* 归位反馈：已归位 → 主题 · 原子 · 立场 + 去建设者查看 */
+.meridian-theme .quick-attr-feedback { display:flex; align-items:center; gap:12px; padding:10px 0; }
+.meridian-theme .quick-attr-done { font-size:13px; color:var(--green); font-weight:600; }
+.meridian-theme .quick-attr-goto { font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
+.meridian-theme .quick-attr-goto:hover { text-decoration:underline; }
