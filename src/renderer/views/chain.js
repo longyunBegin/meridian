@@ -80,7 +80,7 @@ const TYPE_LABEL = {
   'node.renamed': '节点改名',
   'node.invalidated': '节点失效',
   'evidence.appended': '证据追加',
-  'claim.created': '命题创建',
+  'claim.created': '原子创建',
   'inference.created': '推断创建',
   'relation.declared': '关系声明',
   'correction.appended': '更正',
@@ -1204,7 +1204,7 @@ const firstAffectedNode = affectedNodeIdForEvent
 
 const EVENT_KIND_LABEL = {
   'evidence.appended': '新增证据',
-  'claim.created': '新增命题',
+  'claim.created': '新增原子',
   'inference.created': '新增推断',
   'relation.declared': '关系声明',
   'correction.appended': '追加更正事件',
@@ -2670,16 +2670,16 @@ function renderNodeEvidence(lineage, opts) {
       const node = (state.nodes || []).find((n) => n.id === ref.id)
       return h('div', { class: 'chain-evidence-wrap' },
         h('button', {
-          type: 'button', class: 'chain-evidence', title: node ? '在右栏查看命题详情' : '该历史命题当前未解析',
+          type: 'button', class: 'chain-evidence', title: node ? '在右栏查看原子详情' : '该历史命题当前未解析',
           disabled: !node,
           onclick: () => { closeNodeDetail(); selectNode(ref.id) },
         },
-          h('span', { class: 'chain-evidence-type' }, '旧命题'),
+          h('span', { class: 'chain-evidence-type' }, '旧原子'),
           h('span', { class: `chain-evidence-id${node ? '' : ' is-unresolved'}` }, node?.title || ref.title || '来源未解析'),
           h('span', { class: 'chain-evidence-conf' }, node ? '对象已解析 · 来源真实性未核验' : '引用未解析 · 仅保存原始引用名')),
-        !node ? h('details', { class: 'chain-technical' }, h('summary', {}, '技术详情 · 原始命题 ID'),
+        !node ? h('details', { class: 'chain-technical' }, h('summary', {}, '技术详情 · 原始原子 ID'),
           h('p', { class: 'chain-note' }, String(ref.id || '未记录')),
-          ref.id ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(ref.id, '命题 ID') }, '复制命题 ID') : null) : null)
+          ref.id ? h('button', { type: 'button', class: 'cog-copy-btn', onclick: () => copyLedgerReference(ref.id, '命题 ID') }, '复制原子 ID') : null) : null)
     }
     const label = ref.type === 'reading' ? '读数' : '收件箱条目'
     return h('div', { class: 'chain-evidence-wrap' },
@@ -2767,7 +2767,7 @@ function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
     wrap.append(h('p', { class: 'chain-note' }, '该条目没有可用主题，无法快速归因。'))
     return wrap
   }
-  const propSelect = h('select', { class: 'txt', 'aria-label': '目标命题' },
+  const propSelect = h('select', { class: 'txt', 'aria-label': '目标原子' },
     h('option', { value: '' }, '正在加载命题…'))
   let stance = 'supports'
   const stanceSeg = h('div', { class: 'cog-seg', role: 'group', 'aria-label': '支持或反驳' })
@@ -2801,21 +2801,21 @@ function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
     const rows = Array.isArray(list) ? list : []
     propSelect.innerHTML = ''
     if (!rows.length) {
-      propSelect.append(h('option', { value: '' }, '该主题暂无命题'))
+      propSelect.append(h('option', { value: '' }, '该主题暂无原子'))
       confirmBtn.disabled = true
       return
     }
-    propSelect.append(h('option', { value: '' }, '选择目标命题…'))
-    for (const p of rows) propSelect.append(h('option', { value: p.id }, p.name || '未命名命题'))
+    propSelect.append(h('option', { value: '' }, '选择目标原子…'))
+    for (const p of rows) propSelect.append(h('option', { value: p.id }, p.name || '未命名原子'))
   }).catch(() => {
     propSelect.innerHTML = ''
-    propSelect.append(h('option', { value: '' }, '命题加载失败'))
+    propSelect.append(h('option', { value: '' }, '原子加载失败'))
     confirmBtn.disabled = true
   })
   confirmBtn.addEventListener('click', async () => {
     const propId = propSelect.value
     const text = textInput.value.trim()
-    if (!propId) { error.hidden = false; error.textContent = '请选择目标命题。'; propSelect.focus(); return }
+    if (!propId) { error.hidden = false; error.textContent = '请选择目标原子。'; propSelect.focus(); return }
     if (!text) { error.hidden = false; error.textContent = '请填写证据内容。'; textInput.focus(); return }
     error.hidden = true
     confirmBtn.disabled = true
@@ -2828,7 +2828,7 @@ function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
       if (res?.ok === false) throw new Error(res.error || '写入失败')
       /* 标记条目已归因 */
       await m.inboxResolve?.(item.id, 'accept').catch(() => null)
-      toast(stance === 'supports' ? '已连接到命题（支持）' : '已连接到命题（反驳）')
+      toast(stance === 'supports' ? '已连接到原子（支持）' : '已连接到原子（反驳）')
       onDone?.(res)
     } catch (e) {
       error.hidden = false
