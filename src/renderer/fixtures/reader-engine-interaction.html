@@ -299,24 +299,13 @@
       currentRoot.querySelector('.rdr-graph-scope.is-full').click()
       await wait()
 
-      const slider = currentRoot.querySelector('.rdr-time-slider')
-      slider.value = '0'; slider.dispatchEvent(new Event('change', { bubbles: true }))
-      await wait()
-      const compare = currentRoot.querySelector('.rdr-compare-button')
-      compare.click(); await wait()
-      check('时间线可按事件序号只读回放并与当前投影对比', compare.getAttribute('aria-pressed') === 'true'
-        && currentRoot.querySelector('.rdr-history-caption')?.textContent.includes('第 1 条'))
-      const play = currentRoot.querySelector('.rdr-play-button')
-      const beforePlaybackCaption = currentRoot.querySelector('.rdr-history-caption')?.textContent
-      play.click()
-      const playbackAdvanced = await waitFor(() => currentRoot.querySelector('.rdr-history-caption')?.textContent !== beforePlaybackCaption, 1800)
-      const playbackState = JSON.stringify({ disabled: play.disabled, pressed: play.getAttribute('aria-pressed'), before: beforePlaybackCaption, after: currentRoot.querySelector('.rdr-history-caption')?.textContent })
-      check('播放按校验事件时点推进历史投影', playbackAdvanced, playbackAdvanced ? '' : playbackState)
-      if (play.getAttribute('aria-pressed') === 'true') play.click()
-      check('暂停可中止自动回放且恢复播放标签', play.getAttribute('aria-pressed') === 'false' && play.textContent === '播放')
-      currentRoot.querySelector('.rdr-live-button').click(); await wait()
-      check('返回当前状态可恢复活动主题投影', currentRoot.querySelector('.rdr-live-button').hidden
-        && currentRoot.querySelector('.rdr-inspector-title')?.textContent === '供应链驱动')
+      /* 用户决定：读者页不要时间回放（播放 / 与当前对比 / 返回当前模型）。
+         回放 UI 已从界面移除，这里改为断言"回放块不可见"；原来的 4 条行为断言
+         （时间线对比 / 播放推进 / 暂停 / 返回当前状态）随功能一起下线——
+         通过数会因此减少，这是覆盖范围变化，不是回归。
+         注意：回放块内部 DOM 暂留（下一步连代码一起清），所以不断言元素不存在。 */
+      check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
+        Boolean(currentRoot.querySelector('.rdr-replay-details')?.hidden))
 
       /* 分类筛选来自 L2 主题自定义层（主题设置里的原子分类）：
          没配分类的主题不该出现这个控件；配了之后按用户自己的词筛，未分类单独一档。 */
