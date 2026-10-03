@@ -1851,6 +1851,10 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
         focusLabel.textContent = node ? `已选择：${node.title || '节点'} · 详情显示在右侧` : '选择一个节点'
         renderPointInspector(currentFocus)
         handlers.onNodeSelect?.(node)
+        // 点节点直接弹出详情（用户期望：单击即看详情，不用再点"完整详情"按钮）
+        if (node && !node._notYetCreated && typeof opts.onOpen === 'function') {
+          opts.onOpen(node, { onEvidence: opts.onEvidence })
+        }
       },
     }
     if (frame.nodes.length) drawThemeNetwork(frameProjection, { ...graphOptions, maxComparisonNodes: 8 }, graphCanvas)
