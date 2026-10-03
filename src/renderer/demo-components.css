@@ -911,8 +911,8 @@
 
 /* Builder intake and recommendation audit trail. */
 .builder-intake {display:flex; flex-direction:column; min-width:0; min-height:100%; }
-.builder-intake .inbox-head {padding-top:22px; }
-.builder-flow-steps {display:flex; flex-wrap:wrap; gap:6px; padding:0 36px 12px; }
+.builder-intake .inbox-head {padding-top:var(--sp-3); }
+.builder-flow-steps {display:flex; flex-wrap:wrap; gap:4px; padding:0 var(--sp-5) var(--sp-2); }
 .builder-flow-step {padding:4px 8px; border:1px solid var(--line); border-radius: var(--r-pill); color:var(--text-3); font-size: var(--t-caption); }
 .builder-flow-step.is-ready {border-color:rgba(0,122,255,.26); background:rgba(0,122,255,.07); color:var(--accent); }
 .builder-intake .inbox-scroll {flex:1; }
@@ -966,8 +966,14 @@
 
 /* Updated prototype: persistent queue at left, one selected source/revision at right. */
 .meridian-theme .builder-intake {display:grid; grid-template-rows:auto auto minmax(0,1fr); min-width:0; min-height:0; height:100%; }
-.meridian-theme .builder-intake .inbox-head {padding:20px 24px 12px; }
-.meridian-theme .builder-intake .builder-flow-steps {padding:0 24px 12px; border-bottom:1px solid var(--line); }
+.meridian-theme .builder-intake .inbox-head {padding:var(--sp-3) var(--sp-5) var(--sp-2); }
+/* 建设者头部：一行放完标题 / 说明 / 控件（原来三行，把工作台推到 358px 以下） */
+.meridian-theme .builder-head-row {display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+.meridian-theme .builder-head-row .builder-intake-heading {display:flex; align-items:baseline; gap:var(--sp-2); min-width:0; }
+.meridian-theme .builder-head-row .builder-intake-eyebrow {margin:0; }
+.meridian-theme .builder-head-row .inbox-sub {margin:0; padding-left:var(--sp-3); border-left:1px solid var(--hairline); }
+.meridian-theme .builder-head-row .builder-audit-actions {margin-left:auto; display:flex; align-items:center; gap:var(--sp-2); }
+.meridian-theme .builder-intake .builder-flow-steps {padding:0 var(--sp-5) var(--sp-2); border-bottom:1px solid var(--hairline); }
 .meridian-theme .builder-intake-body {display:grid; grid-template-columns:minmax(250px,30%) minmax(0,1fr); min-width:0; min-height:0; }
 .meridian-theme .builder-intake-queue {min-width:0; min-height:0; overflow:auto; border-right:1px solid var(--line); background:var(--bg); }
 .meridian-theme .builder-queue-head {position:sticky; top:0; z-index:2; display:grid; gap:9px; padding:12px; border-bottom:1px solid var(--line); background:var(--surface); }
@@ -1398,8 +1404,6 @@
 .meridian-theme .quick-attr-goto:hover {text-decoration:underline; }
 
 /* 建设者顶部：回到收件箱入口 */
-.meridian-theme .builder-back-inbox {font-size: var(--t-body); color:var(--accent); background:none; border:none; cursor:pointer; padding:0 0 6px; }
-.meridian-theme .builder-back-inbox:hover {text-decoration:underline; }
 
 /* 证据流卡片：立场 + 权重 + 归位时间 + 陈述 + 来源；未读蓝点 */
 .meridian-theme .evidence-row {list-style:none; margin-bottom:8px; }

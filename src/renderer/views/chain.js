@@ -780,16 +780,14 @@ async function loadConcept(theme, ledgerPane, opts) {
     const wrap = h('div', { class: 'builder-intake' })
     const auditControls = h('div', { class: 'builder-audit-actions' },
       ...[opts.integrityBadge, opts.ledgerButton].filter(Boolean))
-    const head = h('div', { class: 'inbox-head' },
+    /* 顶部压成一行：标题 + 阶段说明 + 校验/账本控件同一行。
+       原来标题、说明、控件各占一行，头部 145px，工作台被推到 358px 以下。 */
+    const head = h('div', { class: 'inbox-head builder-head-row' },
       h('div', { class: 'builder-intake-heading' },
-        // 跨视图分工：建设者=精修层，提供回到收件箱（粗筛层）的入口
-        h('button', {
-          type: 'button', class: 'builder-back-inbox',
-          onclick: () => setView('today'),
-        }, '← 收件箱'),
         h('p', { class: 'builder-intake-eyebrow' }, '建设者工作台'),
         h('div', { class: 'inbox-title' }, theme.name || '当前主题')),
-      h('div', { class: 'inbox-sub' }, '外部来源先进入待审核；模型只提取原子陈述并提出映射建议。每项必须由你确认或驳回，才会追加主题事件。'),
+      h('div', { class: 'inbox-sub' }, '每项都要你确认或驳回，才会写入主题。'),
+      h('span', { class: 'spacer' }),
       auditControls)
     const flowSteps = ['① 来源已摄入', '② 抽取原子陈述', '③ 映射到主题', '④ 变更前后预览', '⑤ 确认或驳回', '⑥ 事件追加与投影更新']
     const flow = h('div', { class: 'builder-flow-steps', 'aria-label': '建设者处理阶段' },
