@@ -65,12 +65,33 @@
   --material-thin: saturate(180%) blur(20px);
   --material-thick: saturate(180%) blur(30px);
 
-  /* 动效：短、可预期；缓动统一 ease-out，回弹只给"新增/出现" */
-  --dur-1: 120ms;
-  --dur-2: 180ms;
-  --dur-3: 260ms;
-  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.3, 0.44, 1);
+  /* —— 质感令牌（useLayouts 风格）：统一圆角 / 细边 / 柔和多层阴影 / 表面 —— */
+  /* 圆角语义别名：卡片、控件、胶囊（真值复用上面的 --r-*，避免第二处真相） */
+  --r-card: var(--r-lg);
+  --r-control: var(--r-sm);
+  /* 细边：一律 1px 发丝线；分区用更淡的 --hairline-soft */
+  --hairline-soft: rgba(0, 0, 0, 0.05);
+  /* 阴影三级：静止 / 悬浮 / 浮层——柔和、大扩散、低透明度，禁止黑重投影 */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --sh-2: 0 6px 16px -2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --sh-3: 0 20px 44px -8px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.06);
+  /* 表面：默认底 / 抬升面 / 浮层（浮层才用玻璃，列表不用保性能） */
+  --surface-rest: var(--surface-solid);
+  --surface-raised: var(--surface);
+  --glass-float: blur(12px) saturate(1.2);
+
+  /* 动效令牌：统一"跟手、轻盈、可关闭"——useLayouts 风格。
+     缓动三档 + 时值三档 + 入场逐项延迟。回弹只给"新增/出现"，不做常态。 */
+  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.36, 1);   /* 常规进出 */
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);     /* 轻微回弹（按钮/卡片悬浮） */
+  --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);     /* 展开/收起 */
+  --dur-1: 100ms;   /* 悬浮/按压等即时反馈 */
+  --dur-2: 160ms;   /* 展开/收起/切换 */
+  --dur-3: 240ms;   /* 面板/抽屉/大块进入 */
+  --stagger-1: 28ms; /* 列表/卡片入场逐项延迟 */
+  /* 兼容别名：历史代码用 --ease-out / --ease-spring，统一收敛到上面的真值 */
+  --ease-out: var(--ease-out-soft);
+  --ease: var(--ease-in-out-soft);
 
   /* 焦点环：键盘可见，鼠标不打扰 */
   --focus-ring: 0 0 0 3px rgba(0, 113, 227, 0.32);
@@ -105,9 +126,13 @@
   :root {
     --hairline: rgba(255, 255, 255, 0.1);
     --hairline-strong: rgba(255, 255, 255, 0.16);
+    --hairline-soft: rgba(255, 255, 255, 0.06);
     --e-1: 0 1px 2px rgba(0, 0, 0, 0.4);
     --e-2: 0 6px 18px rgba(0, 0, 0, 0.45);
     --e-3: 0 18px 44px rgba(0, 0, 0, 0.55);
+    --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.28);
+    --sh-2: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.28);
+    --sh-3: 0 18px 44px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
     --accent: #0a84ff;
     --accent-strong: #409cff;
     --accent-soft: rgba(10, 132, 255, 0.18);
@@ -158,10 +183,11 @@ button, a, [role="button"], summary, .btn, select, input[type="range"]{
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: var(--r-pill);
-}::-webkit-scrollbar-thumb:hover{ background-color: rgba(0, 0, 0, 0.3); }/* 动效可关闭：系统开了"减少动态效果"就全部退化为瞬时 */
+}::-webkit-scrollbar-thumb:hover{ background-color: rgba(0, 0, 0, 0.3); }/* 动效可关闭：系统开了"减少动态效果"就全部退化为瞬时（含逐项延迟） */
 @media (prefers-reduced-motion: reduce){
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
@@ -172,3 +198,100 @@ button, a, [role="button"], summary, .btn, select, input[type="range"]{
 button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-queue-tab, .rdr-section-nav-item{
   min-height: 28px;
 }
+
+/* ============================================================
+   useLayouts 风格：入场/回弹工具类 + 关键帧
+   只动 transform / opacity，不触发重排；全套在 reduced-motion 下退化为瞬时。
+   用法：给容器加 .u-stagger > * 自动逐项延迟；或直接给元素加 .u-rise / .u-pop / .u-fade。
+   ============================================================ */
+@keyframes u-rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes u-pop-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+@keyframes u-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes u-swipe-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes u-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+@keyframes u-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+.u-rise{ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; }
+.u-pop{ animation: u-pop-in var(--dur-2) var(--ease-spring) both; }
+.u-fade{ animation: u-fade-in var(--dur-2) var(--ease-out-soft) both; }
+.u-swipe{ animation: u-swipe-in var(--dur-2) var(--ease-out-soft) both; }
+.u-toast{ animation: u-toast-in var(--dur-2) var(--ease-spring) both; }
+
+/* 逐项入场：按兄弟序号错开 --stagger-1；上限 20 项，超出不再加延迟（保持克制）。 */
+.u-stagger > *:nth-child(1){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 0); }
+.u-stagger > *:nth-child(2){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 1); }
+.u-stagger > *:nth-child(3){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 2); }
+.u-stagger > *:nth-child(4){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 3); }
+.u-stagger > *:nth-child(5){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 4); }
+.u-stagger > *:nth-child(6){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 5); }
+.u-stagger > *:nth-child(7){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 6); }
+.u-stagger > *:nth-child(8){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 7); }
+.u-stagger > *:nth-child(9){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 8); }
+.u-stagger > *:nth-child(10){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 9); }
+.u-stagger > *:nth-child(11){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 10); }
+.u-stagger > *:nth-child(12){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 11); }
+.u-stagger > *:nth-child(13){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 12); }
+.u-stagger > *:nth-child(14){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 13); }
+.u-stagger > *:nth-child(15){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 14); }
+.u-stagger > *:nth-child(16){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 15); }
+.u-stagger > *:nth-child(17){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 16); }
+.u-stagger > *:nth-child(18){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 17); }
+.u-stagger > *:nth-child(19){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 18); }
+.u-stagger > *:nth-child(20){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 19); }
+.u-stagger > *:nth-child(n+21){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; }
+
+/* 数字变化：u-pop 的轻量版，只对数值节点使用；不做滚动数字（保持克制）。 */
+.u-num-bump{ animation: u-pop-in var(--dur-1) var(--ease-spring) both; }
+
+/* 统一状态配方：只在这一处定义"可交互元素"的 hover / active / disabled 语气。
+   组件层按需复用，避免各写各的导致手感不一。
+   按钮 = 抬升；卡片 = 阴影 + 微缩放；列表行 = 底色淡入（不位移，密集列表不跳）；chip = 渐变强调。 */
+[data-interactive], .is-clickable, .btn, .card, .node-card, .nav-item, .row, .theme-item, .chip, .tag, .inbox-item, .vault-item,
+[aria-selected="true"]{
+  transition: background-color var(--dur-1) var(--ease-out-soft),
+    color var(--dur-1) var(--ease-out-soft),
+    border-color var(--dur-1) var(--ease-out-soft),
+    box-shadow var(--dur-2) var(--ease-out-soft),
+    opacity var(--dur-1) var(--ease-out-soft),
+    transform var(--dur-1) var(--ease-out-soft);
+}
+/* 按钮：hover 轻微提亮 + 抬升；ignoring dense-list rows */
+.btn:hover:not(:disabled), [data-interactive]:hover:not(:disabled), .is-clickable:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--sh-2);
+  filter: brightness(1.02);
+}
+/* 卡片：hover 阴影抬升 + 微缩放（1.006），弹簧手感 */
+.card:hover, .node-card:hover{ transform: scale(1.006); box-shadow: var(--sh-2); }
+/* 列表行：hover 只淡入底色，不位移、不加阴影——密集列表不跳动 */
+.row:hover, .nav-item:hover, .theme-item:hover, .inbox-item:hover, .vault-item:hover, .chip:hover, .tag:hover{
+  background-color: var(--hover);
+}
+/* 按压：回压，弹簧回收 */
+[data-interactive]:active:not(:disabled), .is-clickable:active, .btn:active:not(:disabled){
+  transform: translateY(0) scale(0.985);
+  transition-duration: var(--dur-1);
+}
+/* 选中：3px 左侧色条滑入（宽度 0→3px），不用 border-left 突变。
+   用 .is-selected 主动声明——只有明确表示"当前列表项被选中"的地方才加，
+   避免 ARIA 语义（tab/option 等）被统一渲染成左色条。 */
+.is-selected{ position: relative; }
+.is-selected::before{
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px;
+  width: 0; border-radius: var(--r-pill); background: var(--accent);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-2) var(--ease-out-soft), width var(--dur-2) var(--ease-out-soft);
+}
+.is-selected.is-on::before{ width: 3px; transform: scaleX(1); }
+/* 禁用：降透明度、去动效 */
+[data-interactive]:disabled, .is-clickable[disabled], .btn:disabled{
+  opacity: 0.42; cursor: default; transform: none; box-shadow: none; filter: none;
+}
+/* 骨架屏：轻微 shimmer，1.4s 循环，只在加载态出现 */
+.u-skeleton{
+  border-radius: var(--r-control);
+  background: linear-gradient(90deg, var(--hover) 25%, var(--active) 37%, var(--hover) 63%);
+  background-size: 400% 100%;
+  animation: u-shimmer 1.4s var(--ease-in-out-soft) infinite;
+}
+
