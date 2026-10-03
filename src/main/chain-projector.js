@@ -222,14 +222,20 @@ export function projectEvents(events) {
   // Renames and invalidations alter only projections at/after their event; the
   // append-only event list remains the authoritative name and validity history.
   for (const e of events) {
-    if (e.type !== 'node.renamed' && e.type !== 'node.invalidated') continue
+    if (e.type !== 'node.renamed' && e.type !== 'node.invalidated' && e.type !== 'node.categorized') continue
     const p = e.payload || {}
     for (const node of nodes.values()) {
       if (node.external || node.id !== p.nodeId || node.sourceRef !== p.sourceRef) continue
       node.provenanceEventIds ||= [...node.eventIds]
       if (!node.provenanceEventIds.includes(e.id)) node.provenanceEventIds.push(e.id)
       if (!node.eventIds.includes(e.id)) node.eventIds.push(e.id)
-      if (e.type === 'node.renamed') {
+      if (e.type === 'node.categorized') {
+        /* 归类：追加式，保留历史分类（旧分类不删）。 */
+        node.categoryHistory ||= []
+        node.categoryHistory.push({ eventId: e.id, seq: e.seq, at: e.at, category: p.category })
+        node.atomCategory = p.category || null
+        node.categorizedAt = e.at || null
+      } else if (e.type === 'node.renamed') {
         node.nameHistory ||= []
         node.nameHistory.push({ eventId: e.id, seq: e.seq, at: e.at, previousTitle: p.previousTitle, title: p.newTitle })
         node.originalTitle ??= p.previousTitle
@@ -549,6 +555,22 @@ export function createProjectedNode(themeId, input = {}) {
       ...(String(input.atomCategory || '').trim() ? { atomCategory: String(input.atomCategory).trim().slice(0, 40) } : {}),
       ...(String(input.applicability || '').trim() ? { applicability: String(input.applicability).trim().slice(0, 160) } : {}),
     },
+  })
+}
+
+/** Categorize a live node by appending its new category (append-only; history kept). */
+export function categorizeProjectedNode(themeId, nodeId, category) {
+  const value = String(category || '').trim().slice(0, 24)
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能改分类')
+  if (String(node.atomCategory || '') === value) throw new Error('分类没有变化')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.categorized',
+    payload: { nodeId: node.id, sourceRef: node.sourceRef, category: value },
   })
 }
 

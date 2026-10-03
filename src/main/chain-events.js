@@ -24,6 +24,7 @@ export const EVENT_TYPES = [
   'evidence.appended', // 新证据挂载
   'node.created', // 通用网络节点：五种稳定类型
   'node.renamed', // 改名只追加事件，保留旧名
+  'node.categorized', // 观点归类：追加式，保留历史分类（红区改动，用户已明确批准）
   'node.invalidated', // 失效只追加事件，历史节点保留
   'claim.created', // 主张创建（用户 authored）
   'inference.created', // 推断创建（LLM 提议 + 用户确认）
@@ -186,6 +187,7 @@ function verifyEvents(events, themeId) {
   const correctionHead = new Map()
   const archiveState = new Map()
   const titleBySourceRef = new Map()
+  const categoryBySourceRef = new Map() // 观点分类当前值（用于校验「无变化」）
   const nodeIdBySourceRef = new Map()
   const invalidatedSourceRefs = new Set()
   const reviewedRelations = new Set()
@@ -211,6 +213,7 @@ function verifyEvents(events, themeId) {
         return { ok: false, index: i, lastValidSeq: i, reason: '节点说明必须为文本' }
       }
       titleBySourceRef.set(p.sourceRef, p.title)
+      categoryBySourceRef.set(p.sourceRef, String(p.atomCategory || ''))
       nodeIdBySourceRef.set(p.sourceRef, e.id)
     }
     if (e.type === 'claim.created' || e.type === 'inference.created' || e.type === 'evidence.appended') {
@@ -243,6 +246,15 @@ function verifyEvents(events, themeId) {
         return { ok: false, index: i, lastValidSeq: i, reason: '改名事件目标、旧名或新名非法' }
       }
       titleBySourceRef.set(p.sourceRef, p.newTitle)
+    }
+    if (e.type === 'node.categorized') {
+      const current = categoryBySourceRef.get(p.sourceRef) || ''
+      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
+        || !textId(p.sourceRef) || typeof p.category !== 'string' || p.category.length > 24
+        || p.category === current || invalidatedSourceRefs.has(p.sourceRef)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '分类事件目标或分类值非法' }
+      }
+      categoryBySourceRef.set(p.sourceRef, p.category)
     }
     if (e.type === 'node.invalidated') {
       if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)

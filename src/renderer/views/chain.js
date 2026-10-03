@@ -2319,7 +2319,7 @@ function renderNodeHistoryTimeline(events, opts) {
 
 function renderNodeLifecycleControls(theme, node, opts) {
   const disclosure = h('details', { class: 'cog-action-disclosure cog-node-lifecycle' },
-    h('summary', {}, '改名或标记失效（追加事件）'))
+    h('summary', {}, '改名、改分类或标记失效（追加事件）'))
   const renameTitle = h('input', { class: 'txt', type: 'text', maxlength: '180', required: true, value: node.title || '', 'aria-label': '新节点名称' })
   const renameReason = h('input', { class: 'txt', type: 'text', maxlength: '500', placeholder: '改名原因（可选）', 'aria-label': '改名原因' })
   const renameError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
@@ -2342,6 +2342,39 @@ function renderNodeLifecycleControls(theme, node, opts) {
     } catch (error) {
       renameError.hidden = false
       renameError.textContent = error.message || String(error)
+      submit.disabled = false
+    }
+  })
+  /* 归类：分类来自主题自定义词表（主题设置 → 分类管理）——这是"能被归类"的那条轴，
+     读者页的图谱就是按它成簇的。同样走追加事件（node.categorized），旧分类保留在历史里。 */
+  const categoryOptions = Array.isArray(theme?.config?.atomCategories) ? theme.config.atomCategories : []
+  const categorySelect = h('select', { class: 'txt', 'aria-label': '观点分类' },
+    h('option', { value: '' }, '未分类'),
+    ...categoryOptions.map((name) => h('option', { value: name }, name)))
+  categorySelect.value = String(node.atomCategory || '')
+  const categoryError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+  const categoryHint = categoryOptions.length
+    ? h('p', { class: 'cog-entry-note' }, '分类来自「主题设置 → 分类管理」；改分类只追加事件，旧分类保留在历史里。')
+    : h('p', { class: 'cog-entry-note' }, '这个主题还没有分类词表——先到「主题设置 → 分类管理」里添加。')
+  const categoryForm = h('form', { class: 'cog-entry-form' },
+    h('label', { class: 'cog-entry-field' }, h('span', {}, '分类'), categorySelect),
+    categoryHint,
+    categoryError,
+    h('button', { type: 'submit', class: 'btn', disabled: categoryOptions.length === 0 }, '追加归类事件'))
+  categoryForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const submit = categoryForm.querySelector('button[type="submit"]')
+    submit.disabled = true
+    categoryError.hidden = true
+    try {
+      const result = await m.chainCategorizeNode(theme.id, node.id, categorySelect.value)
+      if (result?.ok === false) throw new Error(result.error || '归类未完成')
+      toast(categorySelect.value ? `已归类为「${categorySelect.value}」` : '已取消分类')
+      closeNodeDetail()
+      opts.onChanged?.()
+    } catch (error) {
+      categoryError.hidden = false
+      categoryError.textContent = error.message || String(error)
       submit.disabled = false
     }
   })
@@ -2430,7 +2463,7 @@ function renderNodeLifecycleControls(theme, node, opts) {
       submit.disabled = false
     }
   })
-  disclosure.append(...[correctionDisclosure, renameForm, invalidateForm].filter(Boolean))
+  disclosure.append(...[categoryForm, correctionDisclosure, renameForm, invalidateForm].filter(Boolean))
   return h('section', { class: 'chain-dsect cog-action-section' }, disclosure)
 }
 
