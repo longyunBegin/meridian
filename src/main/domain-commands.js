@@ -708,7 +708,15 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       value: '28%',
       timeWindow: '2026Q3',
       type: 'hard',
-      quote: text,
+      sourceText: text,  // 后端用 sourceText 做原文验证
+    }
+    const mockStatement2 = {
+      subject: 'Sivers Semiconductors',
+      attribute: '硅光技术渗透率',
+      value: '35%',
+      timeWindow: '2026Q3',
+      type: 'soft',
+      sourceText: text,
     }
     // 找一个现有的原子作为归因目标（没有就建议新建）
     let targetProp = null
@@ -721,6 +729,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       }
     } catch { /* ignore */ }
     const results = []
+    // 案例1：归因到已有原子（支持）
     if (targetProp) {
       results.push({
         kind: 'evidence',
@@ -736,25 +745,25 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         metaCount: 0,
         metaMultiplier: 1,
       })
-    } else {
-      results.push({
-        kind: 'new-proposition',
-        statement: mockStatement,
-        match: null,
-        proposition: null,
-        suggestedTitle: mockStatement.subject + '·' + mockStatement.attribute,
-        attribution: {
-          rel: 'related',
-          strength: 1,
-          reason: 'Mock 数据：未找到匹配的原子，建议新建',
-          change: { direction: 'stable', nature: 'structural', themeTag: mockStatement.attribute.slice(0, 20) },
-        },
-        metaCount: 0,
-        metaMultiplier: 1,
-      })
     }
+    // 案例2：建议新增原子（无匹配目标）
+    results.push({
+      kind: 'new-proposition',
+      statement: mockStatement2,
+      match: null,
+      proposition: null,
+      suggestedTitle: mockStatement2.subject + '·' + mockStatement2.attribute,
+      attribution: {
+        rel: 'related',
+        strength: 1,
+        reason: 'Mock 数据：未找到匹配的原子，建议新建',
+        change: { direction: 'stable', nature: 'structural', themeTag: mockStatement2.attribute.slice(0, 20) },
+      },
+      metaCount: 0,
+      metaMultiplier: 1,
+    })
     return {
-      statements: [mockStatement],
+      statements: [mockStatement, mockStatement2],
       results,
       diagnostics: [],
       metaCount: 0,
