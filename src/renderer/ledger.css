@@ -60,13 +60,13 @@
 }
 .meridian-ledger .status-check {
   display:flex;align-items:center;gap:6px;
-  color:var(--green);
+  color: var(--green-text);
   letter-spacing:-.003em;
   flex:0 0 auto;
 }
 .meridian-ledger .status-check .ic {
   width:14px;height:14px;border-radius:50%;
-  background:rgba(48,209,88,.14);color:var(--green);
+  background:rgba(48,209,88,.14);color: var(--green-text);
   display:flex;align-items:center;justify-content:center;
   font-size: var(--t-caption);font-weight: var(--fw-semibold);
 }
@@ -208,13 +208,13 @@
 .meridian-ledger .kind .kdot {
   width:6px;height:6px;border-radius:50%;flex:0 0 auto;
 }
-.meridian-ledger .kind.k-evidence {color:var(--orange);}
+.meridian-ledger .kind.k-evidence {color: var(--orange-text);}
 .meridian-ledger .kind.k-evidence .kdot {background:var(--orange);}
 .meridian-ledger .kind.k-claim {color:var(--accent);}
 .meridian-ledger .kind.k-claim .kdot {background:var(--accent);}
-.meridian-ledger .kind.k-relation {color:var(--purple);}
+.meridian-ledger .kind.k-relation {color: var(--purple-text);}
 .meridian-ledger .kind.k-relation .kdot {background:var(--purple);}
-.meridian-ledger .kind.k-correction {color:var(--red);}
+.meridian-ledger .kind.k-correction {color: var(--red-text);}
 .meridian-ledger .kind.k-correction .kdot {background:var(--red);}
 .meridian-ledger .kind.k-settlement {color:var(--cyan);}
 .meridian-ledger .kind.k-settlement .kdot {background:var(--cyan);}

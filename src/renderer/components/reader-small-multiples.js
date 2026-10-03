@@ -61,7 +61,7 @@ export function renderSmallMultiples(rows = [], { onFocusAtom = null, colorFor =
       h('span', { class: 'rdr-multiple-top' },
         catColor ? h('span', { class: 'rdr-multiple-cat', style: `background:${catColor}`, title: `分类：${row.category}`, 'aria-hidden': 'true' }) : null,
         h('strong', { class: 'rdr-multiple-title' }, row.title),
-        h('span', { class: 'rdr-multiple-state', style: `color:${state.color}` }, state.label)),
+        h('span', { class: 'rdr-multiple-state', style: `color:${state.textColor}` }, state.label)),
       h('span', { class: 'rdr-multiple-meter' },
         h('span', { class: 'rdr-multiple-bar', 'aria-hidden': 'true' },
           h('span', { class: 'rdr-multiple-bar-fill', style: `width:${strength == null ? 0 : strength}%;background:${state.color}` })),

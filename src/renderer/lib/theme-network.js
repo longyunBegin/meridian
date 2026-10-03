@@ -75,14 +75,16 @@ export const GRAPH_LOD_LABEL = { dots: '点阵', cards: '卡片', 'cards-labels'
  * 陌生主题第一眼要看的是"哪里被佐证、哪里被挑战、哪里还没动过"——
  * 而节点自身的 status 往往全是"待复核"，那个维度对读者没有信息量。
  */
+/* color = 填充/圆点/描边用的鲜亮系统色；textColor = 把这个语义当"文字"放在浅底上用的深色
+   （systemGreen 在白底只有约 1.9:1，直接当文字不达标）。text = 彩色底上的文字色。 */
 export const READER_STATE_META = {
-  supported: { label: '已佐证', color: '#34c759', text: '#08240f' },
-  challenged: { label: '受挑战', color: '#ff3b30', text: '#ffffff' },
-  contested: { label: '有争议', color: '#ff9500', text: '#1d1d1f' },
-  evidenced: { label: '有证据·未表态', color: '#0a84ff', text: '#ffffff' },
-  unevaluated: { label: '未评估', color: '#8e8e93', text: '#ffffff' },
-  archived: { label: '已归档', color: '#8390a0', text: '#ffffff' },
-  invalidated: { label: '已失效', color: '#ad756a', text: '#ffffff' },
+  supported: { label: '已佐证', color: '#34c759', textColor: '#1a7f37', text: '#08240f' },
+  challenged: { label: '受挑战', color: '#ff3b30', textColor: '#c0261c', text: '#ffffff' },
+  contested: { label: '有争议', color: '#ff9500', textColor: '#a35800', text: '#1d1d1f' },
+  evidenced: { label: '有证据·未表态', color: '#0a84ff', textColor: '#0066cc', text: '#ffffff' },
+  unevaluated: { label: '未评估', color: '#8e8e93', textColor: '#6e6e73', text: '#ffffff' },
+  archived: { label: '已归档', color: '#8390a0', textColor: '#5f6b7a', text: '#ffffff' },
+  invalidated: { label: '已失效', color: '#ad756a', textColor: '#7a4a42', text: '#ffffff' },
 }
 
 /** 一个原子的读者状态。summary 用 evidenceForNode() 的口径（supports/against/both/unclassified）。 */

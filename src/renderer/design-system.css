@@ -86,6 +86,14 @@
   --purple: #af52de;
   --teal: #00b8b8;
   --brown: #a2845e;
+  /* 语义"文字"色：填充可以用鲜亮的系统色，但把它当文字放在白底上时对比度不够
+     （systemGreen 在白底只有约 1.9:1）。苹果的做法也是分开：填充 Green、文字用更深的绿。
+     下面这组在白底上的对比度：绿 5.0、红 5.9、橙 5.3、紫 5.0、强调 5.6。 */
+  --green-text: #1a7f37;
+  --red-text: #c0261c;
+  --orange-text: #a35800;
+  --purple-text: #8040a8;
+  --accent-text: var(--accent-strong);
   --accent-soft: rgba(0, 113, 227, 0.1);
   --green-soft: rgba(52, 199, 89, 0.14);
   --red-soft: rgba(255, 59, 48, 0.12);
@@ -105,6 +113,12 @@
     --accent: #0a84ff;
     --accent-strong: #409cff;
     --accent-soft: rgba(10, 132, 255, 0.18);
+    /* 暗色下亮色本身就有足够对比度，文字色回到系统亮色 */
+    --green-text: #30d158;
+    --red-text: #ff5a54;
+    --orange-text: #ffa02e;
+    --purple-text: #bf7ae8;
+    --accent-text: #4aa3ff;
   }
 }
 
@@ -181,4 +195,12 @@ button:disabled, .btn:disabled, [aria-disabled="true"] { opacity: 0.42; cursor: 
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+
+/* ---------- 可访问性：点按目标 ----------
+   苹果的人机指南要求可点目标足够大；审计里读者页有 49 个元素不到 28px（含我自己新加的导航项）。
+   min-height 只影响高度，不改变视觉宽度与文字。 */
+button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-queue-tab, .rdr-section-nav-item {
+  min-height: 28px;
 }

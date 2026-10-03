@@ -33,7 +33,7 @@ function vocabularyEditor({ label, hint, values, placeholder, onSave }) {
       input,
       h('button', {
         type: 'button', class: 'btn btn-icon', 'aria-label': `删除 ${value}`, title: '删除',
-        style: { color: 'var(--red)' },
+        style: { color: 'var(--red-text)' },
         onclick: () => onSave(values.filter((_, i) => i !== index)),
       }, '×')))
   })
@@ -126,7 +126,7 @@ function renderThemeOpsSection(theme) {
         await refresh()
       } }, '保存'),
     ),
-    h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red)' }, onclick: async () => {
+    h('button', { class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)', color: 'var(--red-text)' }, onclick: async () => {
       const ok = await confirmToast(`删除主题「${theme.name}」？\n\n将删除该主题下所有内容，此操作不可撤销。`, '删除主题')
       if (!ok) return
       await m.removeTheme(theme.id)
