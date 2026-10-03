@@ -152,7 +152,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
         : null
     const quote = h('blockquote', { class: 'engine-review-quote' }, statement.sourceText || '（缺少来源摘录）')
     const beforeText = isNew
-      ? '当前投影中尚未创建这条建议命题。'
+      ? '当前投影中尚未创建这条建议原子。'
       : targetNode
         ? `${targetNode.title || '未命名节点'}：${targetNode.currentText || targetNode.detail || '当前没有保存说明。'}`
         : `建议目标「${suggestion.propositionTitle || result.proposition?.title || '未映射'}」尚未定位到当前投影。`
