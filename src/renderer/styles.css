@@ -1664,8 +1664,9 @@ body.tauri-macos{
 .rdr-cluster-link { stroke: var(--hairline); stroke-width: 1; stroke-opacity: .5; }
 .rdr-cluster-bg-circle { fill-opacity: .05; stroke-width: 1; stroke-opacity: .45; }
 .rdr-cluster-bg-label { fill: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); }
-.rdr-cluster-bubble { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: scale 180ms ease; }
-.rdr-cluster-bubble:hover, .rdr-cluster-bubble:focus-visible { scale: 1.15; }
+.rdr-cluster-bubble { cursor: pointer; }
+.rdr-cluster-bubble .rdr-cluster-circle { transition: stroke-width 120ms ease, fill-opacity 120ms ease; }
+.rdr-cluster-bubble:hover .rdr-cluster-circle, .rdr-cluster-bubble:focus-visible .rdr-cluster-circle { stroke-width: 3; fill-opacity: .32; }
 .rdr-cluster-glint { opacity: .16; pointer-events: none; }
 .rdr-cluster-bubble .rdr-cluster-circle { fill-opacity: .22; }
 .rdr-cluster-bubble-label { fill: var(--text-2); font-size: var(--t-caption); opacity: 0; transition: opacity 120ms ease; }
