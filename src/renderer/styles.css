@@ -1971,14 +1971,6 @@ body.tauri-macos .app {
 .cog-verify-btn {flex: none; }
 
 /* 账本重构：按"谁做的"分堆 + 搜索 + 主操作＝看这条改变了什么 */
-.cog-ledger-filters { display:flex; flex-wrap:wrap; gap:6px; padding:0 14px 8px; }
-.cog-ledger-filter { display:inline-flex; align-items:center; gap:6px; min-height:28px; padding:0 12px; border:1px solid transparent; border-radius:var(--r-pill); background:var(--hover); color:var(--text-2); font-size:var(--t-footnote); font-weight:var(--fw-medium); cursor:pointer; }
-.cog-ledger-filter:hover { color:var(--text-1); }
-.cog-ledger-filter.is-active { background:var(--surface-solid); color:var(--text-1); box-shadow:var(--e-1); }
-.cog-ledger-filter-count { color:var(--text-3); font-variant-numeric:tabular-nums; }
-.cog-ledger-filter.is-active .cog-ledger-filter-count { color:var(--text-2); }
-.cog-ledger-search { display:block; width:calc(100% - 28px); margin:0 14px 8px; }
-.cog-ledger-nomatch { margin:8px 14px; color:var(--text-3); font-size:var(--t-footnote); }
 .cog-event-open { margin-right:4px; }
 .cog-ledger-colhead {font-size: var(--t-caption); color: var(--text-3); margin: 12px 0 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
 .cog-ledger-list {display: flex; flex-direction: column; gap: 10px; }
@@ -2287,7 +2279,6 @@ body.tauri-macos .app {
 /* ------------- 认知链 · 因果路径（三层） ------------- */
 .chain-path-h {margin: 4px 0 18px; }
 .chain-kicker {font-size: var(--t-title); font-weight: 600; color: var(--text-1); }
-.chain-counts {margin-top: 4px; font-size: var(--t-body); color: var(--text-3); }
 .chain-hint {margin-top: 6px; font-size: var(--t-caption); color: var(--text-3); }
 
 /* 展示分层：层只是页面分组，层间用发丝线分隔，不表示因果 */
@@ -2714,7 +2705,6 @@ body.tauri-macos .app {
 .chain-path-h.cog-global-toolbar {position:sticky; top:0; z-index:60; display:flex; align-items:center; justify-content:space-between; gap:14px; min-height:58px; margin:0 0 12px; padding:9px 12px; background:color-mix(in srgb,var(--surface-solid) 94%,transparent); border:1px solid var(--hairline); border-radius:var(--r); box-shadow:0 3px 14px rgba(0,0,0,.06); backdrop-filter:blur(12px); }
 .cog-global-brand {display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 14px; min-width:0; }
 .cog-global-brand .chain-kicker {margin:0; white-space:nowrap; }
-.cog-global-brand .chain-counts {margin:0; color:var(--text-2); font-size:var(--t-caption); }
 .cog-global-actions {display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:7px; }
 .cog-integrity-badge {display:inline-flex; align-items:center; min-height:32px; padding:5px 9px; border:1px solid transparent; border-radius:999px; font-size:var(--t-caption); font-weight:700; line-height:1.35; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .cog-integrity-badge.is-pending {color:var(--text-2); background:var(--bg-1); border-color:var(--hairline); }

@@ -111,7 +111,6 @@ export function renderChainSection(theme, opts = {}) {
   const drawerTitleId = `${drawerId}-title`
   const integrityBadge = h('span', { class: 'cog-integrity-badge is-pending', role: 'status', 'aria-live': 'polite', 'data-ledger-status': '' }, '账本校验中…')
   const addNodeBtn = h('button', { type: 'button', class: 'btn', disabled: true }, '＋ 添加节点')
-  const addEvidenceBtn = h('button', { type: 'button', class: 'btn', disabled: true }, '＋ 补充信号')
   const concept = h('div', { class: 'cog-concept cog-reading-layout' })
   const ledgerBackdrop = h('div', { class: 'cog-ledger-backdrop', hidden: true, 'aria-hidden': 'true' })
   const ledgerPane = h('aside', {
@@ -164,8 +163,8 @@ export function renderChainSection(theme, opts = {}) {
   const toolbar = h('header', { class: 'chain-path-h cog-global-toolbar' },
     h('div', { class: 'cog-global-brand' },
       h('div', { class: 'chain-kicker' }, '主题建设'),
-      h('div', { class: 'chain-counts', 'data-cog-counts': '' }, '正在读取事件…')),
-    h('div', { class: 'cog-global-actions' }, addNodeBtn, addEvidenceBtn, integrityBadge, ledgerButton))
+      ),
+    h('div', { class: 'cog-global-actions' }, addNodeBtn, integrityBadge, ledgerButton))
   const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, toolbar, concept, historyFooter)
   const viewOpts = {
     ...opts,
@@ -178,7 +177,6 @@ export function renderChainSection(theme, opts = {}) {
     onViewAtSequence: opts.onViewAtSequence,
     onReturnLive: opts.onReturnLive,
     addNodeBtn,
-    addEvidenceBtn,
     integrityBadge,
     ledgerButton,
     onChanged: () => {
@@ -258,26 +256,10 @@ async function loadConcept(theme, ledgerPane, opts) {
     opts.addNodeBtn.title = writeBlocked ? '事件账本校验异常，不能追加节点' : ''
     opts.addNodeBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'node', opts)
   }
-  if (opts.addEvidenceBtn) {
-    const canAttachEvidence = projectedNodes(viewState.projection).some((node) => !node.archived && !node.invalidated
-      && !node.external && networkNodeType(node) !== 'evidence')
-    opts.addEvidenceBtn.disabled = writeBlocked || !canAttachEvidence
-    opts.addEvidenceBtn.title = writeBlocked ? '事件账本校验异常，不能追加证据'
-      : canAttachEvidence ? '' : '请先添加一个原子节点，再补充信号'
-    opts.addEvidenceBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'evidence', opts)
-  }
   updateThemeStats(opts.themeStats, proj, events)
   let ledgerController = null
   const sectionEl = ledgerPane.closest('.chain-section')
-  const countsEl = sectionEl?.querySelector('[data-cog-counts]')
   const scopedNodes = Array.isArray(proj.nodes) ? proj.nodes : projectedNodes(proj)
-  // 统一为原子节点计数（不再按类型区分）
-  const atomCount = scopedNodes.filter((node) => !node.external).length
-  if (countsEl) {
-    countsEl.textContent = atomCount
-      ? `原子 ${atomCount} · ${events.length} 事件${scopedNodes.some((node) => node.external) ? ' · 含外部引用' : ''}`
-      : '暂无节点'
-  }
   const integrityBadge = sectionEl?.querySelector('[data-ledger-status]')
   const updateIntegrityBadge = (current = proj.integrity, validCount = validPrefixSeq, rawCount = events.length) => {
     if (!integrityBadge) return
@@ -1309,32 +1291,8 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       } finally { integrityBox.disabled = false }
     },
   }, integrityLabel, integrityHint)
-  /* 账本要回答的是"谁在什么时候改了什么"，所以先按"谁做的"分堆，而不是按事件类型平铺。 */
-  const BUCKETS = [['all', '全部'], ['mine', '你做的'], ['engine', '机器提的'], ['source', '来源流入']]
-  const bucketOf = (record) => {
-    if (record?.actor === 'user') return 'mine'
-    if (record?.type === 'engine.recommendation.proposed' || /engine|agent/.test(String(record?.actor || ''))) return 'engine'
-    return 'source'
-  }
-  let bucket = 'all'
+  /* 搜索用；分堆已去掉，只保留关键字过滤 */
   let query = ''
-  const countOf = (key) => (key === 'all' ? events.length : events.filter((record) => bucketOf(record) === key).length)
-  const filterChips = BUCKETS.map(([key, label]) => h('button', {
-    type: 'button', class: `cog-ledger-filter${key === bucket ? ' is-active' : ''}`, 'aria-pressed': String(key === bucket),
-    dataset: { bucket: key },
-    onclick: () => { bucket = key; syncFilters(); page = 1; renderPage(currentViewState) },
-  }, label, h('span', { class: 'cog-ledger-filter-count' }, String(countOf(key)))))
-  const filters = h('div', { class: 'cog-ledger-filters', role: 'group', 'aria-label': '按谁做的筛选' }, ...filterChips)
-  const syncFilters = () => {
-    for (const chip of filterChips) {
-      const key = chip.dataset.bucket
-      const active = key === bucket
-      chip.classList.toggle('is-active', active)
-      chip.setAttribute('aria-pressed', String(active))
-      const count = chip.querySelector('.cog-ledger-filter-count')
-      if (count) count.textContent = String(countOf(key))
-    }
-  }
   const search = h('input', {
     type: 'search', class: 'cog-ledger-search', placeholder: '在这本账里找…', 'aria-label': '在账本里搜索',
     oninput: (event) => { query = String(event.target.value || '').trim().toLowerCase().replace(/外部数据/g, '来源').replace(/原子/g, '观点'); page = 1; renderPage(currentViewState) },
@@ -1361,12 +1319,11 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
     h('p', { class: 'cog-ledger-sub' }, '只追加，不覆盖：更正、归档、恢复与复核都会留下新记录。'),
     h('div', { class: 'cog-integrity-row' }, integrityBox),
     handlers.replayControls || null,
-    filters,
     search,
     h('p', { class: 'cog-ledger-colhead' }, '从早到晚 · 每页 40 条'),
   )
   if (!events.length) {
-    pane.append(h('div', { class: 'cog-ledger-empty' }, '还没有账本事件。创建原子或补充信号后，操作会按顺序记录在这里。'))
+    pane.append(h('div', { class: 'cog-ledger-empty' }, '还没有账本事件。创建节点后，操作会按顺序记录在这里。'))
     return { syncReplay: () => {}, showEvent: () => {} }
   }
 
@@ -1391,7 +1348,6 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
     }
     clear(list)
     const filtered = ordered.filter(({ record }) => {
-      if (bucket !== 'all' && bucketOf(record) !== bucket) return false
       if (!query) return true
       /* 搜索要跨口径：读者侧叫"观点/来源"，建设者侧叫"原子/外部数据"，两边搜都要命中。 */
       const haystack = `${compactEventSummary(record) || ''} ${record?.payload?.title || ''} ${record?.payload?.text || ''} ${EVENT_KIND_LABEL[record?.type] || ''}`
@@ -1638,7 +1594,6 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   const filterBar = h('div', { class: 'cog-network-filters', role: 'group', 'aria-label': '网络筛选' }, typeFilter, statusFilter)
   const guidanceId = `${opts.ledgerTitleId || 'cog-ledger'}-evidence-guidance`
   const addNode = h('button', { type: 'button', class: 'btn btn-primary', 'aria-describedby': guidanceId, onclick: () => openEntryDialog(theme, proj, 'node', opts) }, '＋ 添加节点')
-  const addEvidence = h('button', { type: 'button', class: 'btn', 'aria-describedby': guidanceId, onclick: () => openEntryDialog(theme, proj, 'evidence', opts) }, '补充信号')
   const evidenceGuidance = h('span', { id: guidanceId, class: 'cog-write-guidance', role: 'status', 'aria-live': 'polite' })
   const help = h('details', { class: 'cog-graph-help' },
     h('summary', {}, '网络范围、关系与校验说明'),
@@ -1651,7 +1606,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     h('div', { class: 'cog-graph-intro' },
       h('div', { class: 'cog-graph-title-line' }, h('span', { class: 'cog-ledger-num cog-graph-num' }, '网络'), h('div', { class: 'cog-graph-title' }, '主题认知网络')),
       h('p', { class: 'cog-graph-caption' }, '关系随主题和时间演变；不预设阅读路线、中心节点或结论。')),
-    h('div', { class: 'cog-graph-actions' }, addNode, addEvidence, evidenceGuidance))
+    h('div', { class: 'cog-graph-actions' }, addNode, evidenceGuidance))
   /* 搜索与筛选收进折叠：默认只呈现网络本体，复杂度是用户要来的。 */
   const searchTools = h('details', { class: 'cog-graph-tools' },
     h('summary', {}, '搜索与筛选'),
@@ -1905,9 +1860,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
         h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '节点历史'), h('strong', {}, `${history.length} 条相关事件`))),
       h('p', { class: 'cog-point-inspector-note' }, '状态与来源按已有记录展示；账本完整性只说明事件链一致，不代表内容或来源已经证实。'),
       h('div', { class: 'cog-point-inspector-actions' },
-        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpen?.(node, detailOptions) }, '完整详情与操作'),
-        !node.archived && !node.invalidated && !node.external && currentView.selectedSeq == null && nodeType !== 'evidence'
-          ? h('button', { type: 'button', class: 'btn', onclick: () => openEntryDialog(theme, projection, 'evidence', opts) }, '补充信号') : null),
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpen?.(node, detailOptions) }, '完整详情与操作')),
       !node.archived && !node.invalidated && !node.external && currentView.selectedSeq == null && projection.integrity?.ok
         ? renderNodeLifecycleControls(theme, node, opts) : null,
       firstEvent && typeof opts.onJumpToEvent === 'function'
@@ -2034,10 +1987,6 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       : projection.integrity?.ok === false ? '事件账本校验异常，不能追加记录' : ''
     const choices = projectedNodes(projection).filter((node) => !node.archived && !node.invalidated
       && !node.external && networkNodeType(node) !== 'evidence')
-    addEvidence.disabled = replaying || projection.integrity?.ok === false
-    addEvidence.title = replaying ? '历史回放为只读；返回当前投影后才能补充信号'
-      : projection.integrity?.ok === false ? '事件账本校验异常，不能追加记录'
-        : choices.length ? '' : '请先添加一个原子节点，再补充信号'
     evidenceGuidance.textContent = replaying || projection.integrity?.ok === false ? '历史回放或账本校验异常时，写入和复核已禁用。'
       : choices.length ? '' : '当前没有可关联的原子节点。'
   }
@@ -2059,7 +2008,7 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
   const previousFocus = document.activeElement
   closeNodeDetail()
   const typeChoices = NETWORK_NODE_TYPES.filter((type) => type !== 'evidence')
-  const heading = isEvidence ? '补充信号' : '添加网络节点'
+  const heading = '添加网络节点'
   const backdrop = h('div', { class: 'chain-drawer-backdrop show cog-entry-backdrop' })
   const dialog = h('section', { class: 'cog-entry-dialog show', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cog-entry-title', tabindex: '-1' })
   const typeSelect = h('select', { class: 'txt', 'aria-label': '节点类型' },
