@@ -372,7 +372,7 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
     }
     rowTop[row + 1] = rowTop[row] + Math.max(64, Math.round(tallest + 32), Math.round(gapY * 0.6))
   }
-  const height = Math.max(420, Math.round(rowTop[rowCount] + 40))
+  let height = Math.max(420, Math.round(rowTop[rowCount] + 40))
   /* 蛇形填网格：偶数行左→右、奇数行右→左，DFS 相邻节点永不跨行跳变。 */
   dfsOrder.forEach((id, i) => {
     const row = Math.floor(i / columns)
@@ -478,5 +478,14 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
     point.x = Math.max(dim.w / 2 + 8, Math.min(width - dim.w / 2 - 8, point.x))
     point.y = Math.max(dim.h / 2 + 8, Math.min(height - dim.h / 2 - 8, point.y))
   }
+  /* 高度收敛到实际内容：力导会把手底下的节点往上拉，按网格行数算的高度会剩一截空白
+     （实测 86px，纯粹是多余滚动）。位置不变，只是不再留空。 */
+  let contentBottom = 0
+  for (const node of rows) {
+    const point = pos.get(node.id)
+    const dim = size.get(node.id)
+    contentBottom = Math.max(contentBottom, point.y + (dim?.h || 0) / 2)
+  }
+  height = Math.max(420, Math.round(contentBottom + 32))
   return { pos, size, width, height }
 }

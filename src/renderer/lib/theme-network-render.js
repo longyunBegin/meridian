@@ -327,6 +327,20 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
         x: -dimensions.w / 2 + 12, y: dimensions.h / 2 - 5, class: 'cog-node-comparison-label',
       }))
     }
+    /* 渐进披露：信号计数只画在当前选中的那个原子上（demo 的"N 条信号 · N 支持 / N 挑战"），
+       而不是 21 张卡片全摊开数字。未表态单独列出——那正是"证据已挂上、还没表态"的量。 */
+    const counts = opts.readerCounts?.get?.(node.id)
+    if (counts && opts.focusNodeId === node.id && type !== 'evidence') {
+      const parts = []
+      if (counts.supports > 0) parts.push(`支持 ${counts.supports}`)
+      if (counts.challenges > 0) parts.push(`挑战 ${counts.challenges}`)
+      if (counts.unclassified > 0) parts.push(`未表态 ${counts.unclassified}`)
+      if (parts.length) {
+        group.append(svgText(parts.join(' · '), {
+          x: 0, y: dimensions.h / 2 + 15, 'text-anchor': 'middle', class: 'cog-node-counts',
+        }))
+      }
+    }
     const title = svgEl('title')
     title.textContent = `${meta.label} · ${node.title || '未命名节点'} · ${pillLabel}${node.originalTitle ? ` · 旧名：${node.originalTitle}` : ''}`
     group.append(title)

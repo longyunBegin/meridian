@@ -432,8 +432,19 @@ export function renderReaderView(theme, opts = {}) {
         ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges,
         allEdges: [...historyEdges, ...evidenceAttachmentEdges(historyNodes, historyEdges)],
       }
-      /* 每个原子的读者状态（已佐证/受挑战/有争议/未评估）：颜色由它决定，而不是节点自身的复核状态。 */
-      const readerStates = new Map(frame.nodes.map((node) => [node.id, readerStateKey(node, evidenceForNode(state, node.id))]))
+      /* 每个原子的读者状态（已佐证/受挑战/有争议/有证据未表态/未评估）：颜色由它决定；
+         信号计数只在被选中的那个原子上画到画布上（渐进披露，不让 21 张卡片都摊开数字）。 */
+      const readerStates = new Map()
+      const readerCounts = new Map()
+      for (const node of frame.nodes) {
+        const summary = evidenceForNode(state, node.id)
+        readerStates.set(node.id, readerStateKey(node, summary))
+        readerCounts.set(node.id, {
+          supports: (summary?.supports?.length || 0) + (summary?.both?.length || 0),
+          challenges: (summary?.against?.length || 0) + (summary?.both?.length || 0),
+          unclassified: summary?.unclassified?.length || 0,
+        })
+      }
       const currentFrameNodes = filterReaderNodes(currentNodes, type, status)
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
@@ -441,6 +452,7 @@ export function renderReaderView(theme, opts = {}) {
         networkLayout: ensureLayout(),
         focusNodeId: state.selectedNodeId,
         readerStates,
+        readerCounts,
         /* 证据压成紧凑数据点，让观点原子成为视觉主体（建设者画布不受影响）。 */
         compactEvidence: true,
         searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
