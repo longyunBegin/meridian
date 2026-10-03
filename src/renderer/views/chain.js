@@ -748,70 +748,12 @@ async function loadConcept(theme, ledgerPane, opts) {
       opts.addNodeBtn?.click()
     }
     addNode.addEventListener('click', addManualOpinion)
-    const openSourceCapture = () => {
-      const overlay = h('div', { class: 'cog-modal-overlay' })
-      const dialog = h('div', { class: 'cog-modal builder-source-capture', role: 'dialog', 'aria-modal': 'true', 'aria-label': '接入外部来源' })
-      const titleInput = h('input', { class: 'txt', maxlength: '180', placeholder: '来源标题（选填）', 'aria-label': '来源标题' })
-      const sourceInput = h('input', { class: 'txt', maxlength: '180', placeholder: '来源名称（选填）', 'aria-label': '来源名称' })
-      const urlInput = h('input', { class: 'txt', type: 'url', placeholder: 'https://…（选填，仅作出处记录）', 'aria-label': '来源链接' })
-      const bodyInput = h('textarea', { class: 'txt cog-modal-textarea', rows: '7', placeholder: '粘贴来源原文或可审核摘录（必填）', 'aria-label': '来源原文或摘录' })
-      const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
-      const close = () => overlay.remove()
-      const save = h('button', { type: 'button', class: 'btn btn-primary' }, '保存到待处理')
-      save.addEventListener('click', async () => {
-        const text = bodyInput.value.trim()
-        if (!text) { error.hidden = false; error.textContent = '请粘贴来源原文或摘录；不会只凭标题或 URL 生成建议。'; bodyInput.focus(); return }
-        let sourceUrl = ''
-        if (urlInput.value.trim()) {
-          try {
-            const parsed = new URL(urlInput.value.trim())
-            if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('仅支持 http(s) 来源链接。')
-            sourceUrl = parsed.href
-          } catch (failure) { error.hidden = false; error.textContent = failure.message || '请输入有效的 http(s) 来源链接。'; urlInput.focus(); return }
-        }
-        save.disabled = true
-        error.hidden = true
-        const id = `manual-source-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
-        const title = titleInput.value.trim() || text.replace(/\s+/g, ' ').slice(0, 90)
-        const sourceLabel = sourceInput.value.trim() || (sourceUrl ? new URL(sourceUrl).host : '用户接入来源')
-        try {
-          if (typeof m.inboxUpsertItem !== 'function') throw new Error('当前客户端尚未提供只入待审队列的来源接口。')
-          const result = await m.inboxUpsertItem({
-            id, title, text, kind: 'external-source', extracted: false,
-            extractedThemeId: theme.id, createdAt: new Date().toISOString(),
-            provenance: { platform: '用户接入', sourceLabel, ...(sourceUrl ? { url: sourceUrl } : {}) },
-          })
-          if (result?.ok === false) throw new Error(result.error || '来源保存失败')
-          queueMode = 'pending'
-          selectedEntryId = `source:${id}`
-          persistQueueState()
-          toast('来源已放入待处理队列；主题投影未更改')
-          close()
-          await loadInbox()
-        } catch (failure) {
-          error.hidden = false
-          error.textContent = failure?.message || String(failure)
-          save.disabled = false
-        }
-      })
-      dialog.append(
-        h('div', { class: 'cog-modal-head' }, h('h3', { class: 'cog-modal-title' }, '接入外部来源'),
-          h('button', { type: 'button', class: 'cog-modal-close', 'aria-label': '关闭', onclick: close }, '×')),
-        h('p', { class: 'cog-modal-target' }, '原文/摘录只会进入待审核收件箱。此入口不会自动抓取 URL、创建观点或写入主题事实。'),
-        titleInput, sourceInput, urlInput, bodyInput, error,
-        h('div', { class: 'cog-modal-actions' }, h('button', { type: 'button', class: 'btn', onclick: close }, '取消'), save))
-      overlay.append(dialog)
-      overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close() })
-      document.body.append(overlay)
-      bodyInput.focus()
-    }
-    const addSource = h('button', { type: 'button', class: 'btn btn-sm builder-queue-source', onclick: openSourceCapture }, '＋ 接入外部来源')
     const queueList = h('div', { class: 'builder-queue-list', role: 'listbox', 'aria-label': '待处理来源、建议与旧账本信号', tabindex: '0' },
       h('p', { class: 'chain-note' }, '正在加载…'))
     const queue = h('aside', { class: 'builder-intake-queue', 'aria-label': '来源与建议队列' },
       h('div', { class: 'builder-queue-head' },
         h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab),
-        addSource, addNode),
+        addNode),
       queueList)
     const detail = h('section', { class: 'builder-intake-review', 'aria-label': '来源与建议审核详情' },
       h('p', { class: 'chain-note' }, '选择一条来源或建议，查看其证据、映射目标与变更预览。'))
@@ -857,7 +799,6 @@ async function loadConcept(theme, ledgerPane, opts) {
         queueList.append(h('p', { class: 'builder-queue-empty' }, queueMode === 'processed'
           ? '这里会保留已确认或已驳回的建议。' : entries.length ? '当前没有待处理来源、建议或旧信号。' : '收件箱中暂无来源；可以接入一条来源，或手工录入观点。'))
         if (queueMode === 'pending' && !entries.length) queueList.append(h('div', { class: 'builder-empty-actions' },
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: openSourceCapture }, '接入外部来源'),
           h('button', { type: 'button', class: 'btn btn-sm', onclick: addManualOpinion }, '手工录入观点')))
         selectedEntryId = null
         persistQueueState()

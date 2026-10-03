@@ -128,10 +128,7 @@ export function renderTheme(mid) {
   const builderTab = h('button', { type: 'button', class: 'theme-view-tab', role: 'tab', 'aria-selected': 'false', tabindex: '-1' }, '建设者')
   const viewSwitch = h('div', { class: 'theme-view-switch', role: 'tablist', 'aria-label': '主题视图' }, readerTab, builderTab)
   const leading = h('div', { class: 'theme-reference-leading' },
-    h('button', { type: 'button', class: 'theme-reference-back', 'aria-label': '返回应用导航', onclick: () => setView('today') }, '‹'),
-    h('div', { class: 'theme-reference-brand' },
-      h('img', { src: './assets/icons/icon-64.png', alt: '' }),
-      h('div', {}, h('strong', {}, 'Meridian'), h('span', {}, '主题工作区'))))
+    h('button', { type: 'button', class: 'theme-reference-back', 'aria-label': '返回应用导航', onclick: () => setView('today') }, '‹'))
   const head = h('header', { class: 'mid-head hairline-b theme-reference-head' })
 
   const openOpts = {
