@@ -1082,3 +1082,12 @@
 .meridian-theme .atom-dialog-foot { display:flex; justify-content:space-between; align-items:center; margin-top:24px; padding-top:16px; border-top:1px solid var(--line); }
 .meridian-theme .atom-foot-note { font-size:12px; color:var(--text-2); }
 .meridian-theme .atom-foot-actions { display:flex; gap:10px; }
+
+/* 新增原子对话框：连接现有节点 */
+.meridian-theme .atom-connect-row { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.meridian-theme .atom-label-inline { font-size:13px; color:var(--text-2); }
+.meridian-theme .atom-rel-select { padding:6px 10px; font-size:13px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.meridian-theme .atom-connect-list { max-height:160px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:8px; }
+.meridian-theme .atom-connect-item { display:flex; align-items:center; gap:8px; padding:6px 8px; font-size:13px; cursor:pointer; border-radius:6px; }
+.meridian-theme .atom-connect-item:hover { background:var(--hover); }
+.meridian-theme .atom-connect-item input[type="checkbox"] { width:16px; height:16px; }
