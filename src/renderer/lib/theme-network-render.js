@@ -283,7 +283,10 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
         ? `${meta.label}：${node.title || '未命名'}；此节点在所选历史时点之后新增，仅供比较`
         : `${meta.label}：${node.title || '未命名'}；状态：${pillLabel}${node.external ? '；外部引用，尚未解析' : ''}${node._comparison?.currentTitle ? `；当前名称：${node._comparison.currentTitle}` : ''}。按 Enter 或空格选择节点并查看详情。`,
     })
-    group.style.opacity = unavailable ? (node._notYetCreated ? '0.36' : '0.68') : '1'
+    /* 只给"不可用"节点写内联透明度：以前这里无条件写 '1'，内联样式盖掉了 CSS 的
+       .cog-node[data-focus="false"]{opacity:.12}，导致邻域聚焦时节点根本没暗下去
+       （只有连线生效）。可用节点留空，让 CSS 决定。 */
+    group.style.opacity = unavailable ? (node._notYetCreated ? '0.36' : '0.68') : ''
     const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : (readerMeta?.color || meta.color)
     group.append(svgEl('rect', {
       x: -dimensions.w / 2, y: -dimensions.h / 2, width: dimensions.w, height: dimensions.h, rx: 13,

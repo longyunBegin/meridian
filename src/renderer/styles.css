@@ -2454,10 +2454,11 @@ body.tauri-macos .app {
 .cog-graph-help-body .cog-legend { margin:4px 0 0; gap:8px 14px; }
 .cog-svg { overflow:visible; }
 .cog-node { transition:opacity .16s ease; }
-.cog-node[data-focus="false"] { opacity:.17; }
+/* 邻域聚焦（设计提案 04）：点节点只点亮一跳邻域，其余降到 12% 透明度；空白处点击复原。 */
+.cog-node[data-focus="false"] { opacity:.12; }
 .cog-node.is-selected rect { stroke:var(--accent)!important; stroke-width:3!important; }
 .cog-edge { transition:opacity .16s ease; }
-.cog-edge[data-focus="false"] { opacity:.1; }
+.cog-edge[data-focus="false"] { opacity:.12; }
 .cog-edge-label { opacity:0; pointer-events:none; transition:opacity .14s ease; }
 .cog-edge-label.is-visible { opacity:1; }
 .cog-svg[data-show-derived="false"] .cog-edge-derives:not(.is-review):not(.is-confirmed):not(.is-rejected),
