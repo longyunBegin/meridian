@@ -615,6 +615,15 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
   appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [extractUnmatched, clearUnmatched]) })
 
+  // 设计稿区分两种空：一条都没有（上面已处理）与"当前筛选下没有"。
+  // 后者以前是白板，看起来像加载失败或数据没了。
+  if (!visibleItems.length) {
+    list.append(h('div', { class: 'inbox-empty-state', role: 'status' },
+      h('strong', {}, '这里没有条目'),
+      h('p', {}, '试试切换筛选或主题。'),
+    ))
+  }
+
   // 分页：只渲染前 inboxLimit 条。全量渲染时上千条 DOM 本身就是卡顿源。
   const remaining = Math.max(0, inboxTotal - inboxItems.length)
   const loadMore = remaining > 0 ? h('button', {
@@ -639,7 +648,10 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     detail,
   ))
   updateBatch()
-  select(selectedInboxId)
+  /* 当前筛选下没有可见条目时不要继续显示被筛掉那条的详情——列表说"没有"、右边却摊着
+     一条记录，用户会以为筛选没生效。 */
+  if (visibleItems.length) select(selectedInboxId)
+  else renderInboxDetail(detail, null, allNodes, resolve, updateBatch, () => select(selectedInboxId))
   return section
 }
 
@@ -716,6 +728,14 @@ function unextractedNote(item) {
 
 function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rerender) {
   clear(panel)
+  /* 没有选中项时给占位，而不是让详情列空白（也兜住"当前筛选把选中项滤掉了"这种情形）。 */
+  if (!item) {
+    panel.append(h('div', { class: 'inbox-empty-state', role: 'status' },
+      h('strong', {}, '选择一条数据查看详情'),
+      h('p', {}, '左侧列表按捕获时间排列，↑↓ 可以切换。'),
+    ))
+    return
+  }
   // 条目级主题：勾选、挂点下拉、归位图、入库都跟着条目自己的主题走，
   // 与渲染层当前主题无关——今日收件箱是全局的。
   const themeNodes = itemThemeNodes(item)
