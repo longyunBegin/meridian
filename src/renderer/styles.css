@@ -1959,6 +1959,12 @@ body.tauri-macos .app {
 .cog-ledger-badge {margin-left: auto; font-size: var(--t-caption); letter-spacing: .08em; color: var(--green-text); background: #ecfdf5; border-radius: 999px; padding: 3px 10px; font-weight: 700; }
 .cog-ledger-sub {font-size: var(--t-caption); color: var(--text-2); margin: 8px 0 0; }
 .cog-integrity-row {display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+/* 校验徽标＝可点动作：点一下重新校验（能力保留，去掉并排按钮） */
+.cog-integrity.is-action { display:inline-flex; align-items:center; gap:8px; min-height:28px; cursor:pointer; font-family:inherit; text-align:left; }
+.cog-integrity.is-action:hover { filter:brightness(0.985); }
+.cog-integrity.is-action:disabled { opacity:.7; cursor:default; }
+.cog-integrity-hint { color:var(--text-3); font-size:var(--t-caption); }
 .cog-integrity {flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: var(--r); padding: 8px 10px; font-size: var(--t-caption); line-height: 1.45; }
 .cog-integrity.is-ok {color: var(--green-text); background: #f0fdf4; border-color: #86efac; }
 .cog-integrity.is-error {color: var(--red-text); background: #fef2f2; border-color: #fca5a5; }

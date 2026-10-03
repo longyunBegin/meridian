@@ -1437,33 +1437,36 @@ function ledgerText(value, fallback = '—') {
 
 function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   clear(pane)
-  const integrityBox = h('div', {
-    class: `cog-integrity ${integrity?.ok ? 'is-ok' : 'is-error'}`,
-    role: integrity?.ok ? 'status' : 'alert', 'aria-live': 'polite',
-  }, integrityText(integrity))
-  const verifyButton = h('button', {
-    type: 'button', class: 'btn cog-verify-btn',
-      onclick: async () => {
-        verifyButton.disabled = true
-        integrityBox.textContent = '正在重新校验…'
-        try {
-          const result = await m.chainVerify(theme.id)
-          const checked = result?.integrity
-          integrityBox.setAttribute('class', `cog-integrity ${checked?.ok ? 'is-ok' : 'is-error'}`)
-          integrityBox.setAttribute('role', checked?.ok ? 'status' : 'alert')
-          integrityBox.textContent = integrityText(checked)
-          handlers.onIntegrityChange?.(checked,
-            Number.isSafeInteger(checked?.lastValidSeq) ? checked.lastValidSeq
-              : Number.isSafeInteger(checked?.count) ? checked.count : events.length,
-            events.length)
-        } catch (error) {
-          integrityBox.setAttribute('class', 'cog-integrity is-error')
-          integrityBox.setAttribute('role', 'alert')
-          integrityBox.textContent = `校验失败 · ${error?.message || error}`
-          handlers.onIntegrityChange?.({ ok: false, reason: error?.message || String(error) }, 0, events.length)
-        } finally { verifyButton.disabled = false }
+  /* 完整性本来就在每次投影时自动校验（projectionResult 里跑 verifyEvents），
+     所以不需要一个并排的大按钮。把动作收进徽标本身：点一下重新校验，能力保留、噪声去掉。 */
+  const integrityLabel = h('span', { class: 'cog-integrity-text', role: integrity?.ok ? 'status' : 'alert', 'aria-live': 'polite' }, integrityText(integrity))
+  const integrityHint = h('span', { class: 'cog-integrity-hint' }, '点一下重新校验')
+  const integrityBox = h('button', {
+    type: 'button', class: `cog-integrity is-action ${integrity?.ok ? 'is-ok' : 'is-error'}`,
+    title: '点一下重新校验哈希链：它只证明记录没被改动过，不证明内容为真',
+    onclick: async () => {
+      integrityBox.disabled = true
+      integrityLabel.textContent = '正在重新校验…'
+      try {
+        const result = await m.chainVerify(theme.id)
+        const checked = result?.integrity
+        integrityBox.setAttribute('class', `cog-integrity is-action ${checked?.ok ? 'is-ok' : 'is-error'}`)
+        integrityLabel.setAttribute('role', checked?.ok ? 'status' : 'alert')
+        integrityLabel.textContent = integrityText(checked)
+        integrityHint.textContent = '刚刚校验过'
+        handlers.onIntegrityChange?.(checked,
+          Number.isSafeInteger(checked?.lastValidSeq) ? checked.lastValidSeq
+            : Number.isSafeInteger(checked?.count) ? checked.count : events.length,
+          events.length)
+      } catch (error) {
+        integrityBox.setAttribute('class', 'cog-integrity is-action is-error')
+        integrityLabel.setAttribute('role', 'alert')
+        integrityLabel.textContent = `校验失败 · ${error?.message || error}`
+        integrityHint.textContent = '点一下重试'
+        handlers.onIntegrityChange?.({ ok: false, reason: error?.message || String(error) }, 0, events.length)
+      } finally { integrityBox.disabled = false }
     },
-  }, '重新校验')
+  }, integrityLabel, integrityHint)
   /* 账本要回答的是"谁在什么时候改了什么"，所以先按"谁做的"分堆，而不是按事件类型平铺。 */
   const BUCKETS = [['all', '全部'], ['mine', '你做的'], ['engine', '机器提的'], ['source', '来源流入']]
   const bucketOf = (record) => {
@@ -1514,7 +1517,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       h('span', { class: 'cog-ledger-badge' }, '只追加'),
       h('button', { type: 'button', class: 'btn cog-ledger-close', 'aria-label': '关闭账本抽屉', onclick: handlers.onClose }, '关闭')),
     h('p', { class: 'cog-ledger-sub' }, '只追加，不覆盖：更正、归档、恢复与复核都会留下新记录。'),
-    h('div', { class: 'cog-integrity-row' }, integrityBox, verifyButton),
+    h('div', { class: 'cog-integrity-row' }, integrityBox),
     handlers.replayControls || null,
     filters,
     search,
