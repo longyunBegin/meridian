@@ -1,5 +1,32 @@
 import { h, toast } from '../lib/dom.js'
 
+/**
+ * 前端贝叶斯置信度预览（与后端 engine-confidence.js 公式一致）
+ * 支持：new = old + (1-old) × strength × 0.3
+ * 反驳：new = old - old × strength × 0.5
+ */
+function previewConfidence(old, strength, rel) {
+  if (old == null || !Number.isFinite(old)) return null
+  const s = Math.max(0, Math.min(1, Number(strength) || 0))
+  const o = Math.max(0, Math.min(1, old > 1 ? old / 100 : old))
+  let next
+  if (rel === 'supports') next = o + (1 - o) * s * 0.3
+  else if (rel === 'contradicts') next = o - o * s * 0.5
+  else return o
+  return Math.max(0, Math.min(1, next))
+}
+
+/** 生成短来源 ID（IN-014 风格） */
+function shortSourceId(item) {
+  const id = String(item.id || '')
+  // 从 ID 中提取数字部分，或用 hash 生成
+  const num = id.replace(/\D/g, '').slice(-3).padStart(3, '0')
+  if (num && num !== '000') return `IN-${num}`
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0
+  return `IN-${String(Math.abs(hash) % 900 + 100)}`
+}
+
 export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe' },
@@ -148,23 +175,106 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
         result.reviewDecision = 'rejected'; status.textContent = '已驳回'; card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'rejected' })
       } catch (cause) { toast(`未能驳回：${cause?.message || cause}`, 'var(--red)'); confirm.disabled = false; reject.disabled = false }
     })
-    const card = h('li', { class: 'engine-attr' },
-      h('div', { class: 'engine-attr-main' },
-        kindLabel,
-        h('span', { class: 'engine-attr-prop' }, isNew ? (suggestion.title || result.suggestedTitle || '待命名观点') : (suggestion.propositionTitle || result.proposition?.title || '待选择观点')),
-        status),
-      h('div', { class: 'engine-attr-reason' }, suggestion.reason || attribution.reason || ''),
-      h('div', { class: 'engine-attr-sub' }, h('span', {}, `归因把握 ${(Number(suggestion.strength ?? attribution.strength) * 100).toFixed(0)}%`),
-        Number.isFinite(suggestion.effectiveStrength) && ['supports', 'contradicts'].includes(suggestion.rel)
-          ? h('span', { class: 'engine-attr-strength' }, `置信度更新强度 ${(suggestion.effectiveStrength * 100).toFixed(0)}%`) : null,
-        Number.isFinite(suggestion.matchScore) ? h('span', {}, `匹配 ${(suggestion.matchScore * 100).toFixed(0)}%`) : null),
-      quote, warning, preview,
-      isNew ? h('label', { class: 'engine-review-field' }, '建议新观点', titleInput) : h('label', { class: 'engine-review-field' }, '关系类型', relation),
-      h('div', { class: 'engine-review-controls' },
-        h('label', { class: 'engine-review-field' }, '方向', direction),
-        h('label', { class: 'engine-review-field' }, '性质', nature),
-        h('label', { class: 'engine-review-field' }, '标签', themeTag)),
-      h('div', { class: 'draft-actions' }, confirm, reject))
+    // === 新版待审卡片：按数据流转设计（截图信息架构） ===
+    const shortId = shortSourceId(item)
+    const sourceTitle = item.title || statement.subject || '未命名来源'
+    const sourceLabel = item.provenance?.sourceLabel || item.provenance?.platform || '未标注来源'
+    const publishTime = (() => {
+      const d = item.provenance?.publishedAt || item.createdAt
+      if (!d) return '未记录'
+      try { return new Date(d).toISOString().slice(0, 10) } catch { return '未记录' }
+    })()
+    const sourceDesc = String(item.text || '').replace(/\s+/g, ' ').slice(0, 120)
+    const extractedQuote = statement.sourceText || ''
+    const targetTitle = targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '未映射目标'
+    const polarity = relation.value || suggestion.rel || 'related'
+    const polarityLabel = { supports: '支持', contradicts: '反驳', derives: '推导', supersedes: '修订', related: '相关' }[polarity] || polarity
+    const weight = Number(suggestion.effectiveStrength ?? suggestion.strength ?? attribution.strength ?? 0.5)
+    // 当前强度与信号统计
+    const curConf = targetNode ? Number(targetNode.confidence ?? 50) : null
+    const curConfPct = curConf != null ? Math.round(curConf > 1 ? curConf : curConf * 100) : null
+    // 预览计算（贝叶斯）
+    const newConf = curConf != null && ['supports', 'contradicts'].includes(polarity)
+      ? previewConfidence(curConf, weight, polarity) : null
+    const newConfPct = newConf != null ? Math.round(newConf * 100) : null
+    // 变化描述
+    const changeDesc = isNew
+      ? `将新增原子「${suggestion.title || result.suggestedTitle || '待命名'}」；来源 ${shortId}。`
+      : polarity === 'contradicts'
+        ? `为「${targetTitle}」追加一条挑战信号；来源 ${shortId}。`
+        : polarity === 'supports'
+          ? `为「${targetTitle}」追加一条支持信号；来源 ${shortId}。`
+          : `为「${targetTitle}」追加一条「${polarityLabel}」关系；来源 ${shortId}。`
+
+    const card = h('li', { class: 'review-card-v2' },
+      // 头部
+      h('div', { class: 'review-card-head' },
+        h('span', { class: 'review-card-kicker' }, `外部数据归因 · ${shortId}`),
+        h('span', { class: 'review-badge-pending' }, '待人工确认')),
+      // 来源卡片
+      h('div', { class: 'review-source-card' },
+        h('div', { class: 'review-source-title-row' },
+          h('strong', {}, sourceTitle),
+          h('span', { class: 'review-source-id' }, shortId)),
+        h('div', { class: 'review-source-meta' },
+          h('span', {}, '来源 '), h('b', {}, sourceLabel),
+          h('span', { class: 'review-meta-sep' }, '发布时间 '), h('b', {}, publishTime)),
+        sourceDesc ? h('p', { class: 'review-source-desc' }, sourceDesc) : null,
+        extractedQuote ? h('div', { class: 'review-quote-box' },
+          h('div', { class: 'review-quote-label' }, '抽取结果 · 原文线索'),
+          h('p', { class: 'review-quote-text' }, `“${extractedQuote}”`)) : null),
+      warning,
+      // 建议归因
+      h('div', { class: 'review-section' },
+        h('div', { class: 'review-section-head' },
+          h('strong', {}, '建议归因'),
+          h('span', { class: 'review-badge-ai' }, 'AI 建议 · 未确认')),
+        h('div', { class: 'review-attr-row' },
+          h('div', { class: 'review-attr-card' },
+            h('span', { class: 'review-attr-label' }, '目标原子'),
+            h('span', { class: 'review-attr-target' },
+              h('span', { class: 'review-dot', style: `background:${targetNode?.color || '#14b8a6'}` }),
+              targetTitle)),
+          h('span', { class: 'review-attr-arrow' }, '→'),
+          h('div', { class: 'review-attr-card' },
+            h('span', { class: 'review-attr-label' }, '极性 / 权重'),
+            h('span', {},
+              h('span', { class: `review-polarity is-${polarity}` }, polarityLabel),
+              h('span', { class: 'review-weight' }, ` 权重 ${weight.toFixed(2)}`))))),
+      // 确认后变化预览
+      !isNew && curConfPct != null ? h('div', { class: 'review-section' },
+        h('div', { class: 'review-section-head' },
+          h('strong', {}, '确认后变化预览'),
+          h('span', { class: 'review-preview-note' }, '以下仅为预览 · 当前模型未改变')),
+        h('div', { class: 'review-preview-row' },
+          h('div', { class: 'review-preview-card' },
+            h('span', { class: 'review-attr-label' }, '● 当前原子强度'),
+            h('p', {}, `${targetTitle}：强度 ${curConfPct}%`)),
+          h('div', { class: 'review-preview-card is-after' },
+            h('span', { class: 'review-attr-label' }, '● 确认后'),
+            h('p', {}, newConfPct != null
+              ? `${targetTitle}：强度将变为 ${newConfPct}%`
+              : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）`))),
+        h('div', { class: 'review-change-summary' },
+          h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
+        h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。'))
+        : h('div', { class: 'review-change-summary' },
+          h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
+      // 高级选项（折叠）
+      h('details', { class: 'review-advanced' },
+        h('summary', {}, '高级选项'),
+        isNew ? h('label', { class: 'engine-review-field' }, '建议新观点', titleInput) : h('label', { class: 'engine-review-field' }, '关系类型', relation),
+        h('div', { class: 'engine-review-controls' },
+          h('label', { class: 'engine-review-field' }, '方向', direction),
+          h('label', { class: 'engine-review-field' }, '性质', nature),
+          h('label', { class: 'engine-review-field' }, '标签', themeTag))),
+      // 底部操作
+      h('div', { class: 'review-card-foot' },
+        h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),
+        h('div', { class: 'review-foot-actions' }, reject, confirm)))
+    // 更新按钮文本
+    confirm.textContent = '确认并追加'
+    reject.textContent = '驳回'
     confirm.disabled = !result.proposalEventId || !quoteVerified
     reject.disabled = !result.proposalEventId
     if (result.reviewDecision === 'rejected') { status.textContent = '已驳回'; confirm.disabled = true; reject.disabled = true; card.classList.add('is-done') }
