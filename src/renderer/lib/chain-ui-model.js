@@ -95,19 +95,27 @@ export function paginate(items, page = 1, pageSize = 40) {
   }
 }
 
+/* P0-4：14 类事件各一句人话模板。用户不该在账本列表里看到 `claim.created` 这种机器名。 */
 const EVENT_KIND_SUMMARY = {
+  'claim.created': '新增观点',
+  'inference.created': '新增推断',
   'node.created': '新增节点',
   'node.renamed': '改名',
   'node.invalidated': '失效',
-  'evidence.appended': '新增证据',
-  'claim.created': '新增主张',
-  'inference.created': '新增推断',
-  'relation.declared': '关系声明',
-  'correction.appended': '追加更正',
-  'settlement.recorded': '结算记录',
   'node.archived': '归档',
-  'node.restored': '追加恢复',
+  'node.restored': '恢复',
+  'evidence.appended': '追加证据',
+  'relation.declared': '声明关系',
+  'correction.appended': '修正',
+  'confidence.updated': '强度变化',
+  'signal.reviewed': '判决',
+  'engine.recommendation.proposed': '模型建议',
+  'settlement.recorded': '结算',
   'topic.linked': '主题关联',
+}
+const RELATION_LABEL = {
+  supports: '支持', contradicts: '挑战', derives: '推导', supersedes: '修订', related: '相关',
+  influences: '影响', depends_on: '依赖', part_of: '归属', precedes: '时间先于',
 }
 const SOURCE_KIND_SUMMARY = {
   'primary-data': '一手数据', primary: '一手数据', '一手数据': '一手数据',
@@ -132,17 +140,35 @@ export function compactEventSummary(event) {
     ? payload.evidenceRefs.find((ref) => ref?.title)?.title : ''
   let detail = ''
   if (row.type === 'evidence.appended') {
-    detail = sourceKind || source || reference || payload.text || payload.reason || payload.title
+    /* "追加证据：…（来源 Y）" —— 来源名与正文都给，读的人才知道这条数据是什么、从哪来。 */
+    const body = payload.text || payload.reason || reference || payload.title || ''
+    detail = [body, source ? `（${source}）` : sourceKind ? `（${sourceKind}）` : ''].join('')
   } else if (row.type === 'correction.appended') {
-    detail = payload.newValue || payload.reason || '观点版本更正'
+    const oldValue = String(payload.oldValue || '').trim()
+    const newValue = String(payload.newValue || payload.reason || '').trim()
+    detail = oldValue && newValue ? `${oldValue} → ${newValue}` : newValue || '观点版本更正'
+  } else if (row.type === 'confidence.updated') {
+    const before = Number(payload.oldConfidence ?? payload.before)
+    const after = Number(payload.newConfidence ?? payload.after)
+    detail = Number.isFinite(before) && Number.isFinite(after) ? `${Math.round(before)}% → ${Math.round(after)}%`
+      : Number.isFinite(after) ? `→ ${Math.round(after)}%` : '强度更新'
+  } else if (row.type === 'signal.reviewed') {
+    const decision = String(payload.decision || '').trim()
+    detail = decision === 'rejected' ? '驳回' : decision === 'accepted' ? '确认' : decision || '已判决'
   } else if (row.type === 'relation.declared') {
+    const rel = RELATION_LABEL[payload.rel] || payload.rel || '关系待识别'
     detail = payload.reviewOf ? `关系${payload.reviewDecision === 'confirmed' ? '确认' : '驳回'}`
-      : payload.rel || '关系待识别'
+      : [rel, String(payload.reason || '').trim()].filter(Boolean).join(' · ')
+  } else if (row.type === 'engine.recommendation.proposed') {
+    const statement = payload.statement || {}
+    detail = [payload.recommendation?.title, statement.subject, statement.attribute, statement.value].filter(Boolean).join(' ') || '待审阅建议'
+  } else if (row.type === 'node.renamed') {
+    detail = [payload.previousTitle || payload.oldTitle, payload.title || payload.newTitle].filter(Boolean).join(' → ')
   } else {
     detail = payload.title || payload.coreInfo || payload.text || payload.reason || source || sourceKind
   }
   const ordinal = Number.isSafeInteger(row.seq) ? `第 ${row.seq} 条` : '事件记录'
-  return `${ordinal} · ${kind}${detail ? ` · ${shortSummary(detail)}` : ''}`
+  return `${ordinal} · ${kind}${detail ? `：${shortSummary(detail)}` : ''}`
 }
 
 /** Filter all projected node metadata used by the graph search; never mutates the projection. */

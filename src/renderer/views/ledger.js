@@ -165,7 +165,7 @@ export async function renderLedger(container, theme) {
     if (g.ok) {
       statusCheckEl.append(
         h('span', { class: 'ic' }, '✓'),
-        h('span', { class: 'lbl' }, '校验通过 ·'),
+        h('span', { class: 'lbl' }, '链完整 ·'),
         totalCountEl,
         h('span', { class: 'lbl' }, '条事件'))
       footNoteEl.textContent = '追加序列连续 · 无缺口'
@@ -335,7 +335,7 @@ export async function renderLedger(container, theme) {
       const res = await m.chainVerify(theme.id)
       state.integrity = res?.integrity || null
       renderIntegrity()
-      showToast(state.integrity?.ok ? `校验通过 · ${state.events.length} 条事件` : '校验失败')
+      showToast(state.integrity?.ok ? `链完整 · ${state.events.length} 条事件` : '校验失败')
     } catch (err) {
       state.integrity = { ok: false, reason: err?.message || String(err) }
       renderIntegrity()

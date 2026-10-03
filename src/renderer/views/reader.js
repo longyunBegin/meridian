@@ -88,7 +88,7 @@ function renderSourceRecord(node, event, { onLocateEvent, stanceLabel } = {}) {
   const m = globalThis.window?.meridian || {}
   const sourceLink = url ? h('button', {
     type: 'button', class: 'btn btn-sm rdr-source-open', onclick: () => m.openExternal?.(url),
-  }, '打开来源') : null
+  }, '查看来源') : null
   return h('article', { class: 'rdr-evidence-card', 'data-evidence-id': node?.id || '' },
     h('div', { class: 'rdr-evidence-top' },
       h('span', { class: 'rdr-evidence-kind' }, '证据'),
@@ -271,7 +271,7 @@ export function renderReaderView(theme, opts = {}) {
             h('p', {}, '综合解释尚未作为独立的人工结论写入主题。这里不按支持关系数量判断整体方向；选择节点后可追溯其证据、适用时间和未决项。'),
             h('div', { class: 'rdr-read-integrity', role: integrity.ok === false ? 'alert' : 'status' }, integrity.ok === false
               ? `完整性异常 · 仅展示校验有效前缀 ${integrity.lastValidSeq || 0} 条事件`
-              : `事件完整性校验通过 · ${verifiedEvents.length} 条有效事件`),
+              : `链完整 · ${verifiedEvents.length} 条记录`),
             state.selectedSeq != null ? h('p', { class: 'rdr-historical-note' }, `当前为历史回放 · 第 ${state.selectedSeq} 条之后的事件不参与此时点模型。`) : null,
             h('button', { type: 'button', class: 'btn btn-sm', onclick: () => opts.onOpenBuilder?.('network') }, '进入建设者视图')))
         return
@@ -538,7 +538,7 @@ export function renderReaderView(theme, opts = {}) {
       if (!state.replaying || !point) {
         historyCaption.textContent = ''
         timeStatus.textContent = integrity.ok === false
-          ? `当前模型 · 仅展示通过校验的 ${verifiedEvents.length} 条事件；损坏尾部已隔离。`
+          ? `当前模型 · 仅展示链完整前缀的 ${verifiedEvents.length} 条记录；损坏尾部已隔离。`
           : `当前模型 · ${verifiedEvents.length} 条已校验事件。`
       } else {
         const index = timeline.findIndex((item) => item.seq === point.seq)
@@ -686,7 +686,7 @@ export function renderReaderView(theme, opts = {}) {
         h('div', {}, h('strong', {}, '如何阅读这张图'),
           h('p', {}, '主题只界定范围，不是中心节点。节点、论证关系与弱关联共同构成当前模型；支持关系数量不等于主题整体向好。选择节点，可回到证据、适用时间、来源摄入记录和未决项。')),
         integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
-          : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `已校验 · ${verifiedEvents.length} 条事件`)))
+          : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `链完整 · ${verifiedEvents.length} 条记录`)))
 
     /* 全览：默认关（保持卡片原始可读尺寸），开了就把整张图缩进面板一屏——
        不需要滚动也能看全 21 个节点，代价是字变小。开关状态跟随这次挂载，不写任何数据。 */

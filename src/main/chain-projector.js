@@ -26,6 +26,24 @@ function evidenceRefKey(ref) {
   return JSON.stringify([String(ref.type).trim(), String(ref.id).trim()])
 }
 
+/** http(s) 判定（P0-2）：账本只接受可打开的链接，写入侧就挡住 javascript: 之类脏 ref。 */
+function isHttpUrl(value) {
+  const text = String(value || '').trim()
+  if (!text) return false
+  try { return /^https?:$/.test(new URL(text).protocol) } catch { return false }
+}
+
+/**
+ * 脏 ref 判定：只挡"带非 http(s) 协议头"的值（javascript: / data: / file: …）。
+ * 不带协议头的普通标识符（如 'source-1'、lemma id）不是 URL，按原样保留——
+ * 挂载路径历史上就在用这种引用，不能因为收紧协议就把它们判成脏数据。
+ */
+function isDirtyUrlRef(value) {
+  const text = String(value || '').trim()
+  if (!text || isHttpUrl(text)) return false
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(text)
+}
+
 /** Preserve first-seen order; for duplicate keys, retain the first ref and fill a missing title. */
 function uniqueEvidenceRefs(refs) {
   const ordered = new Map()
@@ -165,6 +183,15 @@ export function projectEvents(events) {
       currentText: p.text || p.reason || '',
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || null,
+      /* P0-3：投影证据节点也要带出处。否则任何从投影出发的 UI（图谱证据节点、检视器、
+         未来的快照/回放）都拿不到 URL 与来源，回放出来的模型就失去溯源。 */
+      evidenceRefs: uniqueEvidenceRefs(p.evidenceRefs || []),
+      sourceLabel: String(p.sourceLabel || '').trim() || null,
+      sourceUrl: String(p.sourceUrl || '').trim() || null,
+      sourcePublishedAt: p.sourcePublishedAt || null,
+      sourceFetchedAt: p.sourceFetchedAt || null,
+      ingestedAt: p.ingestedAt || null,
+      applicability: String(p.applicability || '').trim() || null,
       targetNodeIds: explicitEvidenceTargetIds(p),
       eventIds: [e.id],
       provenanceEventIds: [e.id],
@@ -621,7 +648,8 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
   const evidenceId = `evt:evidence:${randomUUID()}`
   const sourceRef = `manual-evidence:${evidenceId}`
   const sourceUrl = String(input.url || '').trim()
-  const evidenceRefs = sourceUrl
+  /* 手工补证也要过 http(s) 判定（P0-2）：脏 ref 不进账本，显示层兜底不是写入侧的理由。 */
+  const evidenceRefs = isHttpUrl(sourceUrl)
     ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
     : []
   const reason = String(input.reason || '').trim()
@@ -716,7 +744,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   if (decision !== 'rejected') {
     if (!sourceQuote || !sourceQuoteVerified) throw new Error('原文摘录无法与来源核验，不能将它作为证据追加')
     const sourceUrl = String(proposal.payload.sourceUrl || '').trim()
-    const validUrl = (() => { try { return /^https?:$/.test(new URL(sourceUrl).protocol) } catch { return false } })()
+    const validUrl = isHttpUrl(sourceUrl)
     const evidenceId = stableId('evidence')
     const sourceRef = `engine-recommendation:${recommendationId}`
     const sourceLabel = String(proposal.payload.sourceLabel || '').trim()
@@ -936,7 +964,8 @@ export function mountDraftToEvents(themeId, payload = {}) {
   const rawEvidenceRefs = [
     ...(payload.inboxId ? [{ type: 'inbox', id: payload.inboxId, title: payload.inboxTitle || '' }] : []),
     ...(Array.isArray(payload.evidenceRefs) ? payload.evidenceRefs : []),
-  ]
+    /* url 类 ref 不允许脏协议（P0-2）；其余类型与普通标识符照旧保留。 */
+  ].filter((ref) => !isObj(ref) || ref.type !== 'url' || !isDirtyUrlRef(ref.id))
   // Keep the old deterministic identity available for already-written inbox mounts.
   const legacyEvidenceRefs = [...new Map(rawEvidenceRefs
     .filter((r) => isObj(r) && r.type && r.id)
@@ -1034,6 +1063,14 @@ export function mountDraftToEvents(themeId, payload = {}) {
             text: evidenceText, reason: String(payload.evidence || ''),
             evidenceRefs: refsForNewEvent, sourceKind: 'mount',
             sourceRef: payload.inboxId ? `inbox:${payload.inboxId}` : `mount:${stableId}`,
+            /* 出处随事件走（P0-1）：收件箱条目有 30 天 TTL，账本不能靠它活着。
+               快照/回放从投影出发也要拿得到 URL（P0-3 依赖这些字段落进 payload）。 */
+            ...(isHttpUrl(payload.sourceUrl) ? { sourceUrl: String(payload.sourceUrl).trim() } : {}),
+            ...(String(payload.sourceLabel || '').trim() ? { sourceLabel: String(payload.sourceLabel).trim() } : {}),
+            ...(payload.sourcePublishedAt ? { sourcePublishedAt: payload.sourcePublishedAt } : {}),
+            ...(payload.sourceFetchedAt ? { sourceFetchedAt: payload.sourceFetchedAt } : {}),
+            ...(payload.ingestedAt ? { ingestedAt: payload.ingestedAt } : {}),
+            ...(String(payload.applicability || '').trim() ? { applicability: String(payload.applicability).trim().slice(0, 160) } : {}),
           }
           /* 三层演化数据：如果 payload 带有 change，直接写入事件 */
           if (payload.change && typeof payload.change === 'object') {

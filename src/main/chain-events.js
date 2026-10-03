@@ -222,6 +222,18 @@ function verifyEvents(events, themeId) {
         nodeIdBySourceRef.set(sourceRef, e.id)
       }
     }
+    /* P0-2：url 类 ref 不允许脏协议（javascript: / data: / file: …）。
+       只挡"带协议头且不是 http(s)"的值——不带协议头的普通标识符（lemma id、'source-1'）
+       不是 URL，历史挂载就在用，收口时按原样保留。 */
+    if (e.type === 'evidence.appended' && Array.isArray(p.evidenceRefs)) {
+      for (const ref of p.evidenceRefs) {
+        if (!ref || typeof ref !== 'object' || ref.type !== 'url') continue
+        const id = String(ref.id || '').trim()
+        const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(id)
+        if (!scheme || /^https?:$/i.test(scheme[0])) continue
+        return { ok: false, index: i, lastValidSeq: i, reason: `url 类引用必须是 http(s)，收到 ${scheme[0]}` }
+      }
+    }
     if (e.type === 'node.renamed') {
       const previous = titleBySourceRef.get(p.sourceRef)
       if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)

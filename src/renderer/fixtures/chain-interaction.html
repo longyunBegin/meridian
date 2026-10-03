@@ -178,7 +178,7 @@
         && document.querySelectorAll('.cog-node[data-kind="evidence"]').length === 0 && rootEdges.length === 0,
         `可视主张 ${graphNodesInSvg}，证据 0，主题边 ${rootEdges.length}`)
       check('主题统计来自当前投影和事件数据，账本完整性与观点确认分开显示', statValue('points') === '33'
-        && statValue('evidence') === '31' && statValue('events') === '681' && statValue('integrity') === '校验通过')
+        && statValue('evidence') === '31' && statValue('events') === '681' && statValue('integrity') === '链完整')
       const chainTab = document.querySelector('.cog-theme-tab[aria-controls$="chain-panel"]')
       const overviewTab = document.querySelector('.cog-theme-tab[aria-controls$="overview-panel"]')
       overviewTab?.click()
@@ -200,7 +200,7 @@
       const ledgerButton = document.querySelector('.cog-ledger-open')
       const ledgerDrawer = document.querySelector('.cog-ledger-drawer')
       const integrityBadge = document.querySelector('[data-ledger-status]')
-      check('顶栏常驻通过态徽标正确报告 681 条事件', integrityBadge?.textContent === '✓ 681 事件 · 校验通过'
+      check('顶栏常驻通过态徽标正确报告 681 条事件', integrityBadge?.textContent === '✓ 681 条事件 · 链完整（内容真伪由你判断）'
         && integrityBadge.getAttribute('role') === 'status')
       ledgerButton?.click()
       check('账本按钮打开含版本滑杆的抽屉并标记展开', !ledgerDrawer?.hidden
@@ -379,7 +379,7 @@
       const invalidBadge = document.querySelector('#invalid-fixture [data-ledger-status]')
       check('损坏账本不会显示绿勾并在顶栏呈警告态', invalidBadge?.classList.contains('is-error')
         && invalidBadge?.getAttribute('role') === 'alert' && invalidBadge?.textContent.includes('⚠ 680 / 681')
-        && !invalidBadge?.textContent.includes('校验通过'))
+        && !invalidBadge?.textContent.includes('链完整'))
     } catch (error) {
       check('fixture 执行无未捕获异常', false, error?.stack || String(error))
     }

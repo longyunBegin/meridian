@@ -628,5 +628,56 @@ ok('有效前缀回放可回到未判决旧信号，不提前泄露未来决定'
   && !beforeSignalProjection.allEdges.find((edge) => edge.eventId === pendingRelationSignal.id)?.reviewDecision
   && !beforeSignalReviewAgain.allNodes.find((node) => node.id === pendingEvidenceSignal.id)?.reviewEventId)
 ok('旧信号复核后哈希链完整', ev.verifyChain(signalTheme.id).ok)
+
+/* —— P0-1 / P0-2 / P0-3：出处随事件走、脏 ref 不进门、投影带 refs —— */
+const provenanceTheme = store.addTheme('出处保真测试')
+pj.mountDraftToEvents(provenanceTheme.id, {
+  inboxId: 'inbox-prov-1', inboxTitle: '带来源的收件箱条目', newSegmentName: '有出处的判断',
+  evidence: '原文摘录',
+  evidenceRefs: [
+    { type: 'url', id: 'https://example.com/report?a=1', title: '示例来源' },
+    { type: 'url', id: 'javascript:alert(1)', title: '脏 ref' },
+  ],
+  sourceUrl: 'https://example.com/report?a=1',
+  sourceLabel: '示例来源',
+  sourcePublishedAt: '2026-09-20',
+  sourceFetchedAt: '2026-09-28T02:00:00.000Z',
+  ingestedAt: '2026-09-29T03:00:00.000Z',
+})
+const provenanceEvents = ev.getEvents(provenanceTheme.id)
+const mountedEvidence = provenanceEvents.find((e) => e.type === 'evidence.appended')
+ok('P0-1 挂载事件自带 URL 与来源元数据（不依赖收件箱条目存活）',
+  mountedEvidence?.payload?.sourceUrl === 'https://example.com/report?a=1'
+  && mountedEvidence.payload.sourceLabel === '示例来源'
+  && mountedEvidence.payload.sourcePublishedAt === '2026-09-20'
+  && mountedEvidence.payload.sourceFetchedAt === '2026-09-28T02:00:00.000Z'
+  && mountedEvidence.payload.ingestedAt === '2026-09-29T03:00:00.000Z'
+  && mountedEvidence.payload.evidenceRefs.some((ref) => ref.type === 'url' && ref.id === 'https://example.com/report?a=1'))
+ok('P0-2 脏协议 ref 写不进账本（javascript: 被挡在写入侧）',
+  !JSON.stringify(provenanceEvents).includes('javascript:')
+  && ev.verifyChain(provenanceTheme.id).ok)
+const provenanceProjection = pj.getChainProjection(provenanceTheme.id)
+const projectionEvidence = provenanceProjection.allNodes.find((node) => node.nodeType === 'evidence')
+ok('P0-3 投影证据节点带 evidenceRefs 与来源（快照/回放不丢出处）',
+  projectionEvidence?.evidenceRefs?.some((ref) => ref.type === 'url' && ref.id === 'https://example.com/report?a=1')
+  && projectionEvidence.sourceUrl === 'https://example.com/report?a=1'
+  && projectionEvidence.sourceLabel === '示例来源')
+const protocolTheme = store.addTheme('手工补证协议测试')
+const protocolTarget = pj.createProjectedNode(protocolTheme.id, { nodeType: 'viewpoint', title: '手工补证目标' })
+const dirtyManual = pj.appendEvidenceToProjectedNode(protocolTheme.id, protocolTarget.id, {
+  text: '脏链接证据', url: 'javascript:alert(1)', sourceLabel: '脏来源',
+})
+const dirtyEvents = ev.getEvents(protocolTheme.id).filter((e) => e.type === 'evidence.appended')
+const cleanManual = pj.appendEvidenceToProjectedNode(protocolTheme.id, protocolTarget.id, {
+  text: '合法链接证据', url: 'https://example.org/paper', sourceLabel: '合法来源',
+})
+const cleanEvents = ev.getEvents(protocolTheme.id).filter((e) => e.type === 'evidence.appended')
+ok('P0-2 手工补证同样过 http(s) 判定：脏的不产生 url ref，合法的正常入库',
+  dirtyManual?.ok !== false && cleanManual?.ok !== false
+  && dirtyEvents.length === 1 && dirtyEvents[0].payload.evidenceRefs.length === 0
+  && cleanEvents.length === 2
+  && cleanEvents[1].payload.evidenceRefs.some((ref) => ref.id === 'https://example.org/paper')
+  && ev.verifyChain(protocolTheme.id).ok)
+
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

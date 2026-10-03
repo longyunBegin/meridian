@@ -203,7 +203,7 @@ function updateThemeStats(stats, projection, events) {
   const points = nodes.filter((node) => !node.external && networkNodeType(node) !== 'evidence').length
   const evidence = nodes.filter((node) => !node.external && networkNodeType(node) === 'evidence').length
   const eventCount = Number.isSafeInteger(projection?.eventCount) ? projection.eventCount : events.length
-  const integrity = projection?.integrity?.ok === true ? '校验通过'
+  const integrity = projection?.integrity?.ok === true ? '链完整'
     : projection?.integrity?.ok === false ? '校验异常' : '待校验'
   const values = { points, evidence, events: eventCount, integrity }
   for (const [key, value] of Object.entries(values)) {
@@ -286,9 +286,10 @@ async function loadConcept(theme, ledgerPane, opts) {
     integrityBadge.classList.toggle('is-error', !valid)
     integrityBadge.setAttribute('role', valid ? 'status' : 'alert')
     integrityBadge.textContent = valid
-      ? `✓ ${validCount} 事件 · 校验通过`
-      : `⚠ ${validCount} / ${rawCount} 事件 · 校验异常`
-    integrityBadge.title = valid ? '追加式账本完整性校验通过' : integrityText(current || { ok: false })
+      /* P0-4：哈希链只能证明"没被改动过"，不能证明内容为真——措辞必须与代码注释的立场一致。 */
+      ? `✓ ${validCount} 条事件 · 链完整（内容真伪由你判断）`
+      : `⚠ ${validCount} / ${rawCount} 条事件 · 校验异常`
+    integrityBadge.title = valid ? '追加式账本：哈希链完整，内容真伪由你判断' : integrityText(current || { ok: false })
   }
   updateIntegrityBadge()
   ledgerController = renderLedgerPanel(ledgerPane, theme, events, proj.integrity, {
@@ -1338,7 +1339,7 @@ function eventSummary(e, titleOf) {
 
 /** 追加式完整性账本面板：事件序列只增不改，更正追加新事件。 */
 function integrityText(integrity) {
-  if (integrity?.ok) return `校验通过 · ${integrity.count} 条事件`
+  if (integrity?.ok) return `链完整 · ${integrity.count} 条事件`
   const seq = Number.isInteger(integrity?.index) ? `第 ${integrity.index + 1} 条` : '账本'
   return `校验失败 · ${seq} · ${integrity?.reason || '格式不可读'} · 仅投影已验证前缀 ${integrity?.lastValidSeq || 0} 条`
 }
@@ -3204,7 +3205,18 @@ export function renderProposalDraft(item, existingSegments = [], opts = {}) {
         newValue: newInput.value.trim(),
         evidence: evInput.value.trim(),
         falsifier: falInput.value.trim(),
-        evidenceRefs: [{ type: 'inbox', id: item.id, title: item.title }, ...lemmaRefs],
+        evidenceRefs: [
+          { type: 'inbox', id: item.id, title: item.title },
+          /* 挂载路径必须自带出处：收件箱有 30 天 TTL，账本不能依赖条目存活（P0-1）。 */
+          ...(item.provenance?.url ? [{ type: 'url', id: item.provenance.url, title: item.provenance.sourceLabel || item.title }] : []),
+          ...lemmaRefs,
+        ],
+        sourceUrl: item.provenance?.url || '',
+        sourceLabel: item.provenance?.sourceLabel || item.provenance?.platform || '',
+        sourcePublishedAt: item.provenance?.publishedAt || item.provenance?.sourcePublishedAt || null,
+        sourceFetchedAt: item.provenance?.fetchedAt || null,
+        ingestedAt: item.capturedAt || item.createdAt || null,
+        applicability: coreInput.value.trim(),
       })
       if (res?.ok) {
         item.chainDraft = { ...item.chainDraft, status: 'mounted', mountedAt: new Date().toISOString().slice(0, 10) }

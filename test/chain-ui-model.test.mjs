@@ -90,7 +90,7 @@ const event681 = compactEventSummary({
   id: 'event-681', seq: 681, type: 'evidence.appended',
   payload: { sourceKind: 'primary-data', text: '年报披露的实际订单数量' },
 })
-ok('第 681 条事件可折叠为有信息的一行摘要', event681 === '第 681 条 · 新增证据 · 一手数据', event681)
+ok('第 681 条事件可折叠为有信息的一行摘要', event681 === '第 681 条 · 追加证据：年报披露的实际订单数量（一手数据）', event681)
 const ledger681 = Array.from({ length: 681 }, (_, i) => ({ id: `event-${i + 1}`, seq: i + 1 }))
 const visited681 = []
 for (let page = 1; page <= Math.ceil(ledger681.length / LEDGER_PAGE_SIZE); page++) {
