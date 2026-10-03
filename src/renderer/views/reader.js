@@ -485,6 +485,18 @@ export function renderReaderView(theme, opts = {}) {
             return other ? { id: otherId, title: other.title, rel: edge.rel } : null
           })
           .filter(Boolean),
+        /* 每条证据的权重（=该条证据的强度）：记在 evidence.appended 的载荷里，
+           这里按事件 id 建表，供信息卡的证据流逐条显示（人定的会标 manual）。 */
+        weights: (() => {
+          const map = new Map()
+          for (const event of state.events || []) {
+            if (event?.type !== 'evidence.appended') continue
+            const value = Number(event.payload?.effectiveStrength)
+            if (!Number.isFinite(value)) continue
+            map.set(event.id, { value, manual: event.payload?.strengthSource === 'manual' })
+          }
+          return map
+        })(),
         onOpenRelation: openClaimDetail,
         onClose: closeClaimDetail,
       }))
