@@ -230,7 +230,8 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const dimensions = layout.size.get(node.id)
     if (!point || !dimensions) continue
     const type = networkNodeType(node)
-    const meta = NODE_TYPE_META[type]
+    // 统一为原子节点视觉：不再按类型区分形状颜色
+    const meta = NODE_TYPE_META.viewpoint
     const status = node._notYetCreated ? 'pending' : networkNodeStatus(node)
     const statusLabel = node._notYetCreated ? '后续新增' : NODE_STATUS_LABEL[status] || status
     const unavailable = Boolean(node.archived || node.invalidated || node._notYetCreated)
