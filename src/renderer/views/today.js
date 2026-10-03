@@ -2,7 +2,6 @@ import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndViewTheme } from '../app.js'
 import { confColor, nodePath, inferInboxThemeId, inboxRouteValid, splitInboxPicked } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
-import { renderProposalDraft } from './chain.js'
 
 const m = window.meridian
 
@@ -949,40 +948,8 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
           }),
         ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的要点。你可以忽略，或补充原文后重新捕获。'),
       ),
-      // 确认归位：图已删，归位 = 挂到认知链。提案草稿搬进这里，一处确认。
-      (editable || (theme && !unextracted)) ? h('section', { class: 'inbox-detail-section' },
-        h('h4', { class: 'inbox-section-title' }, '确认归位'),
-        editable ? h('div', { class: 'draft-theme-row' },
-          h('span', { class: 'draft-label' }, '主题'), themeSelect,
-          theme ? null : h('span', { class: 'inbox-detail-note' }, '该条目没有可用主题，无法入库。')) : null,
-        theme && !unextracted ? renderProposalDraft(item, [],
-          {
-            themeId: itemThemeId(item), bare: true,
-            loadExisting: async () => {
-              try {
-                const proj = await m.chainProjection(itemThemeId(item))
-                return (proj.nodes || [])
-                  .filter((n) => n.kind === 'claim' || n.kind === 'inference')
-                  .map((n) => ({ id: n.id, name: n.title }))
-              } catch { return [] }
-            },
-            onDraft: () => rerender ? rerender() : onRouteChange(),
-            onMounted: () => { rerender ? rerender() : onRouteChange(); refresh() },
-          }) : null,
-        editable ? h('div', { class: 'inbox-confidence' },
-          h('label', { for: 'inbox-confidence' }, '置信度'),
-          h('input', {
-            id: 'inbox-confidence', class: 'prop-slider inbox-conf-slider', type: 'range',
-            min: 0, max: 100, value: conf, disabled: busy,
-            oninput: (e) => {
-              const value = Number(e.target.value)
-              overrides.set(ovKey(item), { ...overrides.get(ovKey(item)), confidence: value })
-              confValue.value = String(value)
-            },
-          }), confValue,
-        ) : null,
-        editable && lemmas.length > 1 ? h('p', { class: 'inbox-detail-note' }, '调整后应用于本条信息中的新增要点；未调整时保留各自建议。') : null,
-      ) : null,
+      // 「确认归位」旧区块已删除：逐条要点的归位 UI 已在上面的 .prop 卡片里（选主题→选原子→立场→确认），
+      // 整条级别的 renderProposalDraft 草稿与之功能重复，不再需要。
     ),
     h('footer', { class: 'inbox-detail-actions' },
       h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : unextracted ? '未抽取 · 原文已留档' : `${lemmas.length} 条要点待核对`),
