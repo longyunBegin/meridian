@@ -368,6 +368,14 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     if (event.target?.closest?.('.cog-node')) return
     setFocus(null, true)
   })
+  /* 键盘等价操作：焦点在任一节点上按 Esc 也清空选择。
+     否则只用键盘的读者选中节点后就退不出来（搜索框的 Esc 由它自己的处理器处理，不冲突）。 */
+  svg.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    if (!activeId) return
+    event.preventDefault()
+    setFocus(null, true)
+  })
   if (opts.focusNodeId && nodesById.has(opts.focusNodeId) && !nodesById.get(opts.focusNodeId)._notYetCreated) {
     setFocus(opts.focusNodeId)
   }
