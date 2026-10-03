@@ -242,6 +242,15 @@
       await wait()
       check('读者视图以无中心根的主题网络为主结构，并明确拒绝由支持数推导整体走向', currentRoot.querySelector('.rdr-map-panel')
         && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('支持关系数量不等于主题整体向好'))
+      /* R7：图是局部工具——默认不画全图，未选中原子时给引导；全图是显式入口。 */
+      check('R7 默认不画全图：未选中原子时画布给引导',
+        !currentRoot.querySelector('.rdr-map-panel .cog-network-svg')
+        && Boolean(currentRoot.querySelector('.rdr-graph-guide')))
+      currentRoot.querySelector('.rdr-graph-scope.is-full').click()
+      await wait()
+      check('R7「全图」是显式入口：切换后才画完整网络',
+        Boolean(currentRoot.querySelector('.rdr-map-panel .cog-network-svg')))
+      const fullGraphNodes = currentRoot.querySelectorAll('.cog-node').length
       check('有方向论证、版本修订与弱主题关联采用三种视觉分层', currentRoot.querySelector('.cog-edge-supports.is-argument')
         && currentRoot.querySelector('.cog-edge-influences.is-association')
         && currentRoot.querySelector('.cog-edge-supersedes.is-revision[data-group="revision"]')?.getAttribute('marker-end')?.includes('supersedes'))
@@ -271,6 +280,24 @@
       searchResult.click(); await wait()
       ;[...currentRoot.querySelectorAll('.rdr-node-identity button')].find((button) => button.textContent.includes('在建设者视图定位'))?.click()
       check('读者可用相同节点 ID 在建设者中定位', openedNode === 'network:vp-driver')
+      /* R7 局部邻域：已选中原子时只画它的 1–2 跳邻域；清空选择回到引导（图是局部工具）。 */
+      currentRoot.querySelector('.rdr-graph-scope.is-local').click()
+      await wait()
+      const localNodes = currentRoot.querySelectorAll('.cog-node').length
+      /* 这份 fixture 的图很小且全连通，局部＝全图；"严格子集"由单测（graphNeighborhood）
+         与 dev 实测（21 节点主题只呈现邻域）覆盖，这里断言模式确实被标成局部。 */
+      check(`R7 局部模式把画布收窄到已选原子的邻域（局部 ${localNodes} / 全图 ${fullGraphNodes}）`,
+        localNodes > 0 && localNodes <= fullGraphNodes
+        && (currentRoot.querySelector('.rdr-node-count')?.textContent || '').includes('局部邻域'))
+      currentRoot.querySelector('.rdr-map-panel .cog-network-svg')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await wait()
+      check('R7 清空选择后回到引导（不再默认画全图）',
+        !currentRoot.querySelector('.cog-node') && Boolean(currentRoot.querySelector('.rdr-graph-guide')))
+      /* 后面的回放用例依赖"已选中 vp-driver"，这里用原子卡把选择恢复回来。 */
+      currentRoot.querySelector('.rdr-multiple-card[data-atom-id="vp-driver"]')?.click()
+      await wait()
+      currentRoot.querySelector('.rdr-graph-scope.is-full').click()
+      await wait()
 
       const slider = currentRoot.querySelector('.rdr-time-slider')
       slider.value = '0'; slider.dispatchEvent(new Event('change', { bubbles: true }))
@@ -307,6 +334,9 @@
       })
       categoryRoot.setAttribute('data-snapshot', 'category')
       document.querySelector('#fixture-root').append(categoryRoot)
+      await wait()
+      /* R7 之后默认不画全图，这一段要验分类筛选对画布可见帧的影响，先显式切到全图。 */
+      categoryRoot.querySelector('.rdr-graph-scope.is-full').click()
       await wait()
       const categorySelect = categoryRoot.querySelector('select[aria-label="按原子分类筛选"]')
       check('主题配了原子分类后出现分类筛选，含"未分类"一档', Boolean(categorySelect) && !categorySelect.hidden
@@ -393,6 +423,8 @@
       })
       document.querySelector('#fixture-root').append(axisRoot)
       await wait()
+      axisRoot.querySelector('.rdr-graph-scope.is-full').click()
+      await wait()
       axisRoot.querySelector('.cog-node')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await wait()
       const axisSvg = axisRoot.querySelector('.rdr-axis-svg')
@@ -436,6 +468,7 @@
       const structureEdges = [
         { id: 'sx-r1', from: 'sx-e1', to: 'sx-v1', rel: 'supports', reviewDecision: null, pendingReview: false },
         { id: 'sx-r2', from: 'sx-e2', to: 'sx-v1', rel: 'contradicts', reviewDecision: null, pendingReview: false },
+        { id: 'sx-r3', from: 'sx-v1', to: 'sx-v2', rel: 'related', reviewDecision: null, pendingReview: false },
       ]
       const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
       /* 编年史要按事件流读：这里让事件 id 与投影证据节点 id 对齐（真实数据就是同一批 id）。 */
@@ -513,9 +546,10 @@
         structureRoot.querySelector('.rdr-inspector-title')?.textContent === '支持用的外部数据')
       structureRoot.querySelector('.rdr-matrix-mode[aria-pressed="false"]')?.click()
       await wait()
-      check('R6 可切原子 × 原子（外部数据的边不算原子间关系，矩阵为空）',
+      check('R6 可切原子 × 原子（外部数据的边不算原子间关系；对称关系两个方向都填充）',
         structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
-        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-empty').length === 4)
+        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-related').length === 2
+        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-empty').length === 2)
       const bigNodes = [{
         id: 'big-v1', nodeType: 'viewpoint', kind: 'claim', title: '大主题原子', detail: '', currentText: '大主题原子',
         confidence: 60, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 300,
@@ -533,6 +567,20 @@
       })
       document.querySelector('#fixture-root').append(bigRoot)
       await wait()
+      const pathSelects = [...structureRoot.querySelectorAll('.rdr-path-select')]
+      check('R7 路径查询默认列了主题里的原子', pathSelects.length === 2 && pathSelects[0].options.length === 2)
+      pathSelects[0].value = 'sx-v1'
+      pathSelects[1].value = 'sx-v2'
+      structureRoot.querySelector('.rdr-path-find').click()
+      await wait()
+      check('R7 找路径给出真实关系链',
+        (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('路径（1 跳）')
+        && (structureRoot.querySelector('.rdr-path-status')?.textContent || '').includes('—相关→'),
+        structureRoot.querySelector('.rdr-path-status')?.textContent || '(无)')
+      check('R7 分类聚合按分类给出原子/外部数据计数，并标出缺数据的分类',
+        structureRoot.querySelectorAll('.rdr-category-row').length === 2
+        && (structureRoot.querySelector('.rdr-category-row .rdr-category-figures')?.textContent || '').includes('原子')
+        && Boolean(structureRoot.querySelector('.rdr-category-gap')))
       check('R6 ≥300 节点时图谱位置自动换成矩阵并如实标注（不假装画完了）',
         !bigRoot.querySelector('.rdr-map-panel .cog-network-svg')
         && (bigRoot.querySelector('.rdr-frame-note')?.textContent || '').includes('已自动降级为矩阵')

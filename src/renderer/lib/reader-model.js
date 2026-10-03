@@ -218,6 +218,110 @@ export function buildAdjacencyMatrix({ nodes = [], edges = [], mode = 'atom-evid
  */
 export const GRAPH_TO_MATRIX_THRESHOLD = 300
 
+/**
+ * R7 图的重新定位（§10.0/§10.3）：图不是主题的主视图，而是**局部工具**——
+ * 选中原子后只画它的 1–2 跳邻域；"找路径 / 看邻域"才是图真正擅长的。
+ */
+export function graphNeighborhood({ nodes = [], edges = [], focusId = null, hops = 2 } = {}) {
+  const ids = new Set(asArray(nodes).map((node) => node?.id).filter(Boolean))
+  if (!focusId || !ids.has(focusId)) return { focusId: null, nodeIds: [], truncated: false }
+  const adjacency = new Map()
+  for (const edge of asArray(edges)) {
+    if (!edge || !ids.has(edge.from) || !ids.has(edge.to) || edge.reviewDecision === 'rejected') continue
+    if (!adjacency.has(edge.from)) adjacency.set(edge.from, new Set())
+    if (!adjacency.has(edge.to)) adjacency.set(edge.to, new Set())
+    adjacency.get(edge.from).add(edge.to)
+    adjacency.get(edge.to).add(edge.from)
+  }
+  const depth = Math.max(1, Math.floor(Number(hops) || 1))
+  const seen = new Set([focusId])
+  let frontier = [focusId]
+  for (let level = 0; level < depth; level++) {
+    const next = []
+    for (const id of frontier) {
+      for (const neighbor of adjacency.get(id) || []) {
+        if (seen.has(neighbor)) continue
+        seen.add(neighbor)
+        next.push(neighbor)
+      }
+    }
+    frontier = next
+    if (!frontier.length) break
+  }
+  return { focusId, nodeIds: [...seen], truncated: seen.size < ids.size }
+}
+
+/** 两原子之间的最短路径（无向 BFS）：图真正擅长的问题，保留下来。 */
+export function shortestNodePath({ edges = [], from = null, to = null, maxHops = 6 } = {}) {
+  if (!from || !to) return { found: false, nodeIds: [], edges: [], reason: '缺少起点或终点' }
+  if (from === to) return { found: true, nodeIds: [from], edges: [], reason: '同一点' }
+  const adjacency = new Map()
+  for (const edge of asArray(edges)) {
+    if (!edge || edge.reviewDecision === 'rejected') continue
+    if (!adjacency.has(edge.from)) adjacency.set(edge.from, [])
+    if (!adjacency.has(edge.to)) adjacency.set(edge.to, [])
+    adjacency.get(edge.from).push({ neighbor: edge.to, edge })
+    adjacency.get(edge.to).push({ neighbor: edge.from, edge })
+  }
+  const limit = Math.max(1, Math.floor(Number(maxHops) || 6))
+  const back = new Map([[from, null]])
+  let frontier = [from]
+  for (let level = 0; level < limit && frontier.length; level++) {
+    const next = []
+    for (const id of frontier) {
+      for (const { neighbor, edge } of adjacency.get(id) || []) {
+        if (back.has(neighbor)) continue
+        back.set(neighbor, { from: id, edge })
+        if (neighbor === to) {
+          const nodeIds = [to]
+          const pathEdges = []
+          let cursor = to
+          while (back.get(cursor)) {
+            const step = back.get(cursor)
+            pathEdges.unshift(step.edge)
+            nodeIds.unshift(step.from)
+            cursor = step.from
+          }
+          return { found: true, nodeIds, edges: pathEdges, reason: '' }
+        }
+        next.push(neighbor)
+      }
+    }
+    frontier = next
+  }
+  return { found: false, nodeIds: [], edges: [], reason: `在 ${limit} 跳内没有找到路径` }
+}
+
+/** 分类聚合（§10.3 R7）：分类维度的比较视图——每个分类有多少原子、挂了多少外部数据、平均强度。 */
+export function buildCategoryAggregation({ nodes = [], categories = [] } = {}) {
+  const live = asArray(nodes).filter((node) => node && !node.archived)
+  const atoms = live.filter((node) => networkNodeType(node) !== 'evidence')
+  const evidence = live.filter((node) => networkNodeType(node) === 'evidence')
+  const order = asArray(categories).map((name) => String(name || '').trim()).filter(Boolean)
+  const rows = new Map()
+  const ensure = (category) => {
+    if (!rows.has(category)) rows.set(category, { category, atoms: 0, evidence: 0, strengthSum: 0, strengthCount: 0 })
+    return rows.get(category)
+  }
+  for (const name of order) ensure(name)
+  for (const atom of atoms) {
+    const row = ensure(nodeCategory(atom))
+    row.atoms += 1
+    const strength = confidenceValue(atom.confidence)
+    if (strength != null) { row.strengthSum += strength; row.strengthCount += 1 }
+  }
+  const atomCategory = new Map(atoms.map((atom) => [atom.id, nodeCategory(atom)]))
+  for (const item of evidence) {
+    const targets = asArray(item.targetNodeIds).filter((id) => atomCategory.has(id))
+    const bucket = targets.length ? ensure(atomCategory.get(targets[0])) : ensure(UNCATEGORIZED_LABEL)
+    bucket.evidence += 1
+  }
+  return [...rows.values()]
+    .filter((row) => row.atoms || row.evidence)
+    .map((row) => ({ ...row, averageStrength: row.strengthCount ? row.strengthSum / row.strengthCount : null }))
+    .sort((a, b) => b.atoms - a.atoms || b.evidence - a.evidence || String(a.category).localeCompare(String(b.category)))
+}
+
 export function matrixReplacesGraph(nodeCount) {
   return Number(nodeCount) >= GRAPH_TO_MATRIX_THRESHOLD
 }

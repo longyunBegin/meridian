@@ -10,6 +10,7 @@ import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline,
   buildGapList, buildDebateBoard, buildChronicle, buildAdjacencyMatrix, matrixReplacesGraph,
+  graphNeighborhood, shortestNodePath, buildCategoryAggregation,
   synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
@@ -19,6 +20,7 @@ import { renderGapList } from '../components/reader-gaps.js'
 import { renderDebateBoard } from '../components/reader-debate-board.js'
 import { renderChronicle } from '../components/reader-chronicle.js'
 import { renderAdjacencyMatrix } from '../components/reader-matrix.js'
+import { renderCategoryBars } from '../components/reader-category-bars.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -171,6 +173,8 @@ export function renderReaderView(theme, opts = {}) {
   let lodAuto = true
   /* R1 论证大纲的折叠状态：只存内存（§10.3 验收要求），不写任何数据。 */
   const outlineExpanded = new Set()
+  /* R7：图是局部工具——默认 'local'（选中原子才画 1–2 跳邻域），'full' 是显式入口。 */
+  let graphScope = 'local'
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -238,6 +242,11 @@ export function renderReaderView(theme, opts = {}) {
       ...themeCategories.map((name) => h('option', { value: name }, name)),
       h('option', { value: UNCATEGORIZED_LABEL }, UNCATEGORIZED_LABEL))
     const countStatus = h('span', { class: 'rdr-node-count', role: 'status', 'aria-live': 'polite' })
+    /* R7 路径查询：图真正擅长的"两原子之间怎么走"。 */
+    const pathFrom = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径起点' })
+    const pathTo = h('select', { class: 'txt rdr-path-select', 'aria-label': '路径终点' })
+    const pathFind = h('button', { type: 'button', class: 'btn btn-sm rdr-path-find' }, '找路径')
+    const pathStatus = h('p', { class: 'rdr-path-status', role: 'status', 'aria-live': 'polite' }, '选两个原子，看它们之间隔着几条关系。')
     const timeSlider = h('input', {
       class: 'rdr-time-slider', type: 'range', min: '0', max: String(Math.max(0, timeline.length - 1)), step: '1',
       value: String(Math.max(0, timeline.length - 1)),
@@ -457,17 +466,30 @@ export function renderReaderView(theme, opts = {}) {
       if (selected && !matching.some((node) => node.id === selected.id) && nodeSearch.value.trim()
         && state.searchLocatedNodeId === selected.id) matching.push(selected)
       const focus = selected && matching.some((node) => node.id === selected.id) ? selected : null
-      const matchIds = new Set(matching.map((node) => node.id))
+      /* R7：局部模式下把画布收窄到选中原子的 1–2 跳邻域；未选中且非全图时给引导，不画全图。 */
+      const neighborhood = graphScope === 'local' && focus
+        ? graphNeighborhood({ nodes: frameNodes, edges: frameEdges, focusId: focus.id, hops: 2 }) : null
+      const scopedMatching = neighborhood ? matching.filter((node) => neighborhood.nodeIds.includes(node.id)) : matching
+      if (graphScope === 'local' && !focus) {
+        graphCanvas.replaceChildren(h('div', { class: 'rdr-graph-guide' },
+          h('p', {}, '图是局部工具：选一个原子，只看它的 1–2 跳邻域。要"找路径 / 看全局"时再用下面的路径查询或「全图」。'),
+          h('button', { type: 'button', class: 'btn btn-sm rdr-graph-full-link', onclick: () => setGraphScope('full') }, '仍要看全图')))
+        countStatus.textContent = `未选择原子 · 当前主题共 ${currentNodes.length} 个节点`
+        return
+      }
+      const matchIds = new Set(scopedMatching.map((node) => node.id))
       const candidateEdges = frameEdges.filter((edge) => matchIds.has(edge.from) && matchIds.has(edge.to))
-      const frame = selectGraphWindow({ nodes: matching, allNodes: matching, edges: candidateEdges }, {
+      const frame = selectGraphWindow({ nodes: scopedMatching, allNodes: scopedMatching, edges: candidateEdges }, {
         focusNodeId: focus?.id || null, maxNodes: GRAPH_FRAME_NODE_LIMIT, maxEdges: GRAPH_FRAME_EDGE_LIMIT,
       })
       graphCanvas.replaceChildren()
       const shown = frame.nodes.length
-      countStatus.textContent = `画布 ${shown} / ${matching.length} 个节点（当前主题共 ${currentNodes.length} 个）`
-      if (matching.length > shown) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' },
-        `画布逐步展开，当前呈现 ${shown} 个局部节点；另有 ${matching.length - shown} 个匹配节点。可在上方全量搜索或缩小筛选，不会从主题中删除记录。`))
-      if (!matching.length) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' }, '没有节点符合筛选。调整类型或状态以查看完整网络。'))
+      countStatus.textContent = neighborhood
+        ? `局部邻域 ${shown} / ${matching.length} 个节点（当前主题共 ${currentNodes.length} 个）`
+        : `画布 ${shown} / ${scopedMatching.length} 个节点（当前主题共 ${currentNodes.length} 个）`
+      if (scopedMatching.length > shown) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' },
+        `画布逐步展开，当前呈现 ${shown} 个局部节点；另有 ${scopedMatching.length - shown} 个匹配节点。可在上方全量搜索或缩小筛选，不会从主题中删除记录。`))
+      if (!scopedMatching.length) graphCanvas.append(h('p', { class: 'rdr-frame-note', role: 'status' }, '没有节点符合筛选。调整类型或状态以查看完整网络。'))
       const drawProjection = {
         ...state.projection, nodes: frame.nodes, allNodes: historyNodes, edges: frame.edges,
         allEdges: [...historyEdges, ...evidenceAttachmentEdges(historyNodes, historyEdges)],
@@ -735,6 +757,21 @@ export function renderReaderView(theme, opts = {}) {
       renderGraph()
     })
     const lodBadge = h('span', { class: 'rdr-lod-badge', role: 'status' })
+    /* R7：局部邻域 / 全图 显式切换；未选中原子时画布给引导而不是全图。 */
+    const setGraphScope = (scope) => {
+      graphScope = scope === 'full' ? 'full' : 'local'
+      graphScopeLocal.setAttribute('aria-pressed', String(graphScope === 'local'))
+      graphScopeFull.setAttribute('aria-pressed', String(graphScope === 'full'))
+      renderGraph()
+    }
+    const graphScopeLocal = h('button', {
+      type: 'button', class: 'btn btn-sm rdr-graph-scope is-local', 'aria-pressed': String(graphScope === 'local'),
+      onclick: () => setGraphScope('local'),
+    }, '局部邻域')
+    const graphScopeFull = h('button', {
+      type: 'button', class: 'btn btn-sm rdr-graph-scope is-full', 'aria-pressed': String(graphScope === 'full'),
+      onclick: () => setGraphScope('full'),
+    }, '全图')
     const lodAutoButton = h('button', {
       type: 'button', class: 'btn btn-sm rdr-lod-auto', 'aria-pressed': String(lodAuto),
       onclick: () => {
@@ -791,6 +828,7 @@ export function renderReaderView(theme, opts = {}) {
     const chronicleHost = h('div', { class: 'rdr-chronicle-host' })
     /* R6 邻接矩阵：行＝原子、列＝外部数据（可切原子×原子）；≥300 节点时图自动换成它。 */
     const matrixHost = h('div', { class: 'rdr-matrix-host' })
+    const categoryHost = h('div', { class: 'rdr-category-host' })
     let matrixMode = 'atom-evidence'
     const todoKeys = new Set()
     let inboxCache = null
@@ -852,7 +890,42 @@ export function renderReaderView(theme, opts = {}) {
       renderGraph()
       renderStructure()
     }
+    /* R7 路径查询：两原子之间隔着什么。真正的图问题，保留下来。 */
+    const PATH_REL_LABEL = { supports: '支持', contradicts: '挑战', derives: '推导', supersedes: '修订', related: '相关', 'evidence-attached': '挂载' }
+    const renderPathOptions = () => {
+      const atoms = currentNodes.filter((node) => networkNodeType(node) !== 'evidence')
+      for (const select of [pathFrom, pathTo]) {
+        const previous = select.value
+        select.replaceChildren(...atoms.map((node) => h('option', { value: node.id }, titleOf(node))))
+        if (atoms.some((node) => node.id === previous)) select.value = previous
+      }
+      if (atoms.length > 1 && (!pathTo.value || pathFrom.value === pathTo.value)) pathTo.value = atoms[1].id
+      pathFind.disabled = atoms.length < 2
+    }
+    pathFind.addEventListener('click', () => {
+      const result = shortestNodePath({ edges: allEdgesOf(currentProjection), from: pathFrom.value, to: pathTo.value })
+      if (!result.found) {
+        pathStatus.textContent = `没找到路径：${result.reason}。`
+        return
+      }
+      const chain = result.nodeIds.map((id, index) => {
+        const name = titleOf(currentNodes.find((node) => node.id === id) || {})
+        if (index === 0) return name
+        const rel = result.edges[index - 1]?.rel
+        return `—${PATH_REL_LABEL[rel] || rel || '关联'}→ ${name}`
+      })
+      pathStatus.textContent = `路径（${result.edges.length} 跳）：${chain.join(' ')}`
+      /* 路径超过 2 跳就把图切到全图，否则局部邻域里看不到整条路。 */
+      if (result.edges.length > 2) setGraphScope('full')
+      else {
+        state.selectedNodeId = result.nodeIds[0]
+        renderInspector()
+        renderGraph()
+      }
+    })
+
     const renderStructure = () => {
+      renderPathOptions()
       const rows = buildArgumentOutline(currentNodes, (id) => evidenceForNode(state, id))
       const nodeById = new Map(currentNodes.map((node) => [node.id, node]))
       outlineHost.replaceChildren(renderArgumentOutline(rows, {
@@ -864,6 +937,10 @@ export function renderReaderView(theme, opts = {}) {
         onFocusEvidence: focusAtom,
         onFocusAtom: focusAtom,
       }))
+      categoryHost.replaceChildren(renderCategoryBars(
+        buildCategoryAggregation({ nodes: currentNodes, categories: themeCategories }),
+        { selectedId: state.selectedNodeId },
+      ))
       matrixHost.replaceChildren(renderAdjacencyMatrix(
         buildAdjacencyMatrix({ nodes: currentNodes, edges: allEdgesOf(currentProjection), mode: matrixMode }),
         {
@@ -893,10 +970,14 @@ export function renderReaderView(theme, opts = {}) {
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
       h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
+      h('div', { class: 'rdr-path-row' }, h('span', { class: 'rdr-path-label' }, '路径查询'), pathFrom, h('span', {}, '→'), pathTo, pathFind),
+      pathStatus,
       searchResults, searchStatus,
       h('div', { class: 'rdr-focus-bar' }, focusLabel),
       graphCanvas,
-      h('div', { class: 'rdr-graph-foot' }, lodAutoButton, zoomSlider, zoomBadge, overviewButton, lodBadge),
+      h('div', { class: 'rdr-graph-foot' },
+        h('span', { class: 'rdr-graph-scope-group', role: 'group', 'aria-label': '图谱范围' }, graphScopeLocal, graphScopeFull),
+        lodAutoButton, zoomSlider, zoomBadge, overviewButton, lodBadge),
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
         h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关；灰色细点线：证据挂载——外部数据已挂到这个原子上，但你还没有声明它是支持还是反驳。待复核与驳回关系会保留其决定状态。'),
         h('p', {}, '主题下的节点均为原子节点（主题拆分的第一性原理单元）。网络位置为稳定布局，不代表重要度或因果强度。'),
@@ -947,7 +1028,7 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, matrixHost, chronicleHost, gapsHost, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()

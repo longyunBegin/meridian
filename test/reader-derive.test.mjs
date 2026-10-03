@@ -1,7 +1,7 @@
 import {
   deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline,
   strengthSparkline, buildGapList, buildDebateBoard, buildChronicle, buildAdjacencyMatrix, matrixReplacesGraph,
-  parseApplicabilityEnd, UNCATEGORIZED_LABEL,
+  graphNeighborhood, shortestNodePath, buildCategoryAggregation, parseApplicabilityEnd, UNCATEGORIZED_LABEL,
 } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
@@ -179,6 +179,36 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
   check('R5 每条缺口都给出可执行的待办文案',
     gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条外部数据'
     && gaps.find((gap) => gap.kind === 'expired-evidence').todo.includes('更新'))
+
+  /* R7 图的重新定位：邻域 / 路径 / 分类聚合 */
+  const r7Nodes = [
+    { id: 'n1', nodeType: 'viewpoint', title: '甲', atomCategory: '技术路线', confidence: 70 },
+    { id: 'n2', nodeType: 'viewpoint', title: '乙', atomCategory: '技术路线', confidence: 50 },
+    { id: 'n3', nodeType: 'viewpoint', title: '丙', atomCategory: '商业模式' },
+    { id: 'n4', nodeType: 'viewpoint', title: '孤立原子' },
+    { id: 'n5', nodeType: 'evidence', title: '证据', targetNodeIds: ['n1'] },
+  ]
+  const r7Edges = [
+    { id: 'e12', from: 'n1', to: 'n2', rel: 'related' },
+    { id: 'e23', from: 'n2', to: 'n3', rel: 'related' },
+    { id: 'e15', from: 'n5', to: 'n1', rel: 'supports' },
+  ]
+  const hop1 = graphNeighborhood({ nodes: r7Nodes, edges: r7Edges, focusId: 'n1', hops: 1 })
+  const hop2 = graphNeighborhood({ nodes: r7Nodes, edges: r7Edges, focusId: 'n1', hops: 2 })
+  check('R7 邻域按跳数收敛，孤立原子不在邻域里',
+    hop1.nodeIds.join() === 'n1,n2,n5' && hop2.nodeIds.join() === 'n1,n2,n5,n3'
+    && !hop2.nodeIds.includes('n4') && hop2.truncated === true
+    && graphNeighborhood({ nodes: r7Nodes, edges: r7Edges, focusId: null }).nodeIds.length === 0)
+  const path = shortestNodePath({ edges: r7Edges, from: 'n1', to: 'n3' })
+  check('R7 两原子之间给出最短关系链（无路径时如实说明）',
+    path.found && path.nodeIds.join(' → ') === 'n1 → n2 → n3' && path.edges.length === 2
+    && shortestNodePath({ edges: r7Edges, from: 'n1', to: 'n4' }).found === false
+    && shortestNodePath({ edges: r7Edges, from: 'n1', to: 'n4' }).reason.includes('没有找到路径'))
+  const aggregation = buildCategoryAggregation({ nodes: r7Nodes, categories: ['技术路线', '商业模式'] })
+  check('R7 分类聚合给出每类原子数 / 外部数据数 / 平均强度，未分类单独成行',
+    aggregation.map((row) => row.category).join() === '技术路线,商业模式,未分类'
+    && aggregation[0].atoms === 2 && aggregation[0].evidence === 1 && aggregation[0].averageStrength === 60
+    && aggregation[2].atoms === 1 && aggregation[2].averageStrength === null)
 
   /* R6 邻接矩阵：块状结构 + 规模规则 */
   const matrixNodes = [
