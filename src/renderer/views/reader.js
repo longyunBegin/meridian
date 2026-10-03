@@ -5,7 +5,7 @@ import {
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
-import { filterReaderNodes } from '../lib/reader-model.js'
+import { filterReaderNodes, synthesisSummary } from '../lib/reader-model.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -601,7 +601,32 @@ export function renderReaderView(theme, opts = {}) {
         h('p', {}, '节点按概念、对象、事件、观点、证据区分。网络位置为稳定布局，不代表重要度或因果强度。')),
       replayBox)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
-    article.replaceChildren(toolbar, workspace)
+    // 综合理解横幅：最强共识与最大分歧（对齐设计稿）
+    let synthesisBanner = null
+    try {
+      const summary = synthesisSummary(currentNodes)
+      if (summary && (summary.strongest || summary.mostDisputed)) {
+        const parts = []
+        parts.push(`当前 ${summary.nodeCount} 个原子节点中，`)
+        if (summary.strongest) {
+          parts.push(`最强共识是「${summary.strongest.title}」(强度 ${summary.strongest.strength}%)；`)
+        }
+        if (summary.mostDisputed) {
+          parts.push(`最大分歧是「${summary.mostDisputed.title}」(支持 ${summary.mostDisputed.support} · 挑战 ${summary.mostDisputed.challenge})。`)
+        }
+        parts.push('拖动底部时间条可以看强度如何随外部数据累积变化。')
+        synthesisBanner = h('div', { class: 'rdr-synthesis-banner', role: 'status' },
+          h('span', { class: 'rdr-synthesis-banner-mark', 'aria-hidden': 'true' }, '✳'),
+          h('div', {},
+            h('strong', {}, '当前综合理解 · 从原子节点自动投影'),
+            h('p', {}, parts.join('')),
+            h('div', { class: 'rdr-synthesis-pills' },
+              h('span', { class: 'rdr-pill' }, `时间窗口 ${new Date().getFullYear()}`),
+              h('span', { class: 'rdr-pill' }, `${summary.nodeCount} 原子节点`),
+              h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
+      }
+    } catch { /* 横幅计算失败不阻塞主视图 */ }
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), workspace)
     renderSearch()
     renderInspector()
     renderGraph()

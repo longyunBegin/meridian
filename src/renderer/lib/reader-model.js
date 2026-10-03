@@ -266,3 +266,65 @@ export const estimateReadSeconds = (model) => {
     + model.nodesByDirection.stable.length + model.nodesByDirection.undetermined.length
   return Math.max(30, Math.round(20 + nodeCount * 8 + model.turningPoints.length * 6))
 }
+
+/**
+ * 计算综合理解横幅数据：最强共识与最大分歧
+ * @param {Array} nodes - 投影节点列表
+ * @param {Function} evidenceForNode - 获取节点证据的函数
+ * @returns {Object|null} { strongest, mostDisputed, nodeCount } 或 null
+ */
+export function synthesisSummary(nodes = [], evidenceForNodeFn = null) {
+  const viewpoints = nodes.filter(n => n && !n.archived && (n.nodeType === 'viewpoint' || n.kind === 'claim'));
+  if (!viewpoints.length) return null;
+
+  let strongest = null;
+  let maxStrength = -1;
+  let mostDisputed = null;
+  let minDiff = Infinity;
+  let maxTotal = -1;
+
+  for (const node of viewpoints) {
+    const strength = Number(node.confidence ?? node.strength ?? 0);
+    // 最强共识：强度最高
+    if (strength > maxStrength) {
+      maxStrength = strength;
+      strongest = node;
+    }
+    // 最大分歧：支持与挑战最接近且总量最大
+    let support = 0, challenge = 0;
+    if (evidenceForNodeFn) {
+      try {
+        const summary = evidenceForNodeFn({ projection: { nodes } }, node.id);
+        support = (summary.supports?.length || 0) + (summary.both?.length || 0);
+        challenge = (summary.against?.length || 0) + (summary.both?.length || 0);
+      } catch { /* 忽略 */ }
+    } else {
+      // 降级：用 evidenceCount 估算
+      const total = node.evidenceCount || 0;
+      support = Math.round(total / 2);
+      challenge = total - support;
+    }
+    const diff = Math.abs(support - challenge);
+    const total = support + challenge;
+    if (total > 0 && (diff < minDiff || (diff === minDiff && total > maxTotal))) {
+      minDiff = diff;
+      maxTotal = total;
+      mostDisputed = { node, support, challenge };
+    }
+  }
+
+  return {
+    nodeCount: viewpoints.length,
+    strongest: strongest ? {
+      id: strongest.id,
+      title: titleOf(strongest),
+      strength: Math.round(maxStrength),
+    } : null,
+    mostDisputed: mostDisputed ? {
+      id: mostDisputed.node.id,
+      title: titleOf(mostDisputed.node),
+      support: mostDisputed.support,
+      challenge: mostDisputed.challenge,
+    } : null,
+  };
+}
