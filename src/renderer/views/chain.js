@@ -11,7 +11,7 @@
  * 公理1：本视图只读投影，不创建/修改/删除 lemma，不改 confidence，不代审批。
  */
 import { h, clear, mount, toast } from '../lib/dom.js'
-import { renderEnginePipeline } from '../components/engine-review.js'
+import { renderEnginePipeline, renderReviewTraceBar } from '../components/engine-review.js'
 import { renderEvidenceComposer } from '../components/evidence-relation-editor.js'
 import { renderBuilderHistoryTimeline } from '../components/builder-history-timeline.js'
 import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/builder-workbench.js'
@@ -1154,26 +1154,38 @@ async function loadConcept(theme, ledgerPane, opts) {
       }
       if (entry.kind === 'legacy-signal') {
         const signalIndex = buildSignals().findIndex((signal) => signal.id === entry.signal.id)
+        const signal = entry.signal
         const resolved = Boolean(entry.decision)
         const decisionLabel = entry.decision === 'rejected' ? '已驳回'
-          : entry.decision === 'corrected' ? '已修订' : entry.decision ? '已确认' : '未决'
-        detail.append(h('article', { class: 'builder-intake-card builder-legacy-signal' },
+          : entry.decision === 'corrected' ? '已修订' : entry.decision ? '已确认' : '等你确认'
+        const suggested = signal.suggestedNode || '未归属'
+        /* 与"外部数据归因 / AI 建议"共用同一套卡片结构：
+           同一件事不该有两套 UI（用户反馈："建设者工作台为什么会有不一样的"）。 */
+        detail.append(h('article', { class: 'builder-intake-card builder-legacy-signal', 'data-entry-kind': 'legacy-signal' },
           h('header', { class: 'builder-intake-card-head' },
-            h('div', {}, h('p', { class: 'builder-intake-kicker' }, resolved ? '历史账本信号 · 已处理' : '历史账本信号 · 仍待人工复核'),
-              h('h2', {}, entry.signal.text || `待复核事件 ${entry.signal.id}`)),
-            h('span', { class: 'builder-intake-state' }, decisionLabel)),
-          h('p', { class: 'builder-legacy-note' }, resolved
-            ? '原始信号与既有决定均保持不变；以下展示追加的审核决定，原事件可在审计账本查看。'
-            : '原事件保持不变；确认、修订或驳回会追加 signal.reviewed 决定事件。'),
-          h('dl', { class: 'builder-source-meta' },
-            h('div', {}, h('dt', {}, '建议归属'), h('dd', {}, entry.signal.suggestedNode || '未归属')),
-            h('div', {}, h('dt', {}, '来源'), h('dd', {}, entry.signal.source || '未记录')),
-            h('div', {}, h('dt', {}, '事件 ID'), h('dd', {}, entry.signal.id))),
-          renderSignal(entry.signal, signalIndex, entry.decision),
-          h('button', { type: 'button', class: 'btn btn-sm builder-legacy-audit', onclick: () => {
-            opts.openLedger?.()
-            ledgerController?.showEvent(entry.signal.id)
-          } }, '在审计账本查看原始事件')))
+            h('div', {}, h('p', { class: 'builder-intake-kicker' }, `账本里的旧信号 · ${resolved ? '已处理' : '等你确认'}`),
+              h('h2', {}, signal.text || `待复核事件 ${signal.id}`)),
+            h('span', { class: `builder-intake-state${resolved ? ' is-ready' : ''}` }, decisionLabel)),
+          h('div', { class: 'review-change-summary' },
+            h('strong', {}, '将产生的变化：'),
+            resolved
+              ? '原始事件保持不变；下面是当时追加的审核决定。'
+              : `确认后：这条信号作为「${signal.suggestedDir || '支持'}」记到「${suggested}」上，并追加一条确认记录；驳回则保持未表态。原始事件不会改动。`),
+          renderReviewTraceBar([
+            { label: '建议归属', value: suggested, missing: !signal.suggestedNode },
+            { label: '方向', value: signal.suggestedDir || '支持' },
+            { label: '来源', value: signal.source, missing: !signal.source },
+            { label: '事件时间', value: signal.at ? String(signal.at).slice(0, 10) : '', missing: !signal.at },
+            { label: '事件 ID', value: signal.id },
+          ]),
+          renderSignal(signal, signalIndex, entry.decision),
+          h('details', { class: 'builder-source-body' },
+            h('summary', {}, '技术细节与审计入口'),
+            h('p', {}, '原事件保持不变；确认、修订或驳回都会追加一条 signal.reviewed 决定事件，可回放、可追溯。'),
+            h('button', { type: 'button', class: 'btn btn-sm builder-legacy-audit', onclick: () => {
+              opts.openLedger?.()
+              ledgerController?.showEvent(signal.id)
+            } }, '在审计账本查看原始事件'))))
         return
       }
       detail.append(renderIntakeItem(entry.item, entry))

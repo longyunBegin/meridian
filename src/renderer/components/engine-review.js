@@ -276,18 +276,13 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     const fetchedAt = item.provenance?.fetchedAt || null
     const ingestedAt = item.createdAt || item.capturedAt || item.provenance?.capturedAt || null
     const applicability = String(item.applicability || statement.timeWindow || '').trim()
-    const traceBar = h('div', { class: 'review-trace-bar', 'aria-label': '溯源' },
-      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源名称'), h('b', {}, sourceLabel)),
-      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源链接'),
-        sourceUrl
-          ? h('button', { type: 'button', class: 'review-trace-link', title: sourceUrl, onclick: () => m.openExternal?.(sourceUrl) }, '↗ 查看来源')
-          : h('b', { class: 'is-missing' }, '未记录')),
-      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源发布时间'),
-        h('b', { class: publishTime === '未记录' ? 'is-missing' : '' }, publishTime)),
-      h('span', { class: 'review-trace-slot' }, h('i', {}, '抓取 / 摄入'),
-        h('b', {}, `${fetchedAt ? String(fetchedAt).slice(0, 10) : '未记录'} / ${ingestedAt ? String(ingestedAt).slice(0, 10) : '未记录'}`)),
-      h('span', { class: 'review-trace-slot' }, h('i', {}, '适用时间'),
-        h('b', { class: applicability ? '' : 'is-missing' }, applicability || '未记录')))
+    const traceBar = renderReviewTraceBar([
+      { label: '来源名称', value: sourceLabel },
+      { label: '来源链接', url: sourceUrl },
+      { label: '来源发布时间', value: publishTime, missing: publishTime === '未记录' },
+      { label: '抓取 / 摄入', value: `${fetchedAt ? String(fetchedAt).slice(0, 10) : '未记录'} / ${ingestedAt ? String(ingestedAt).slice(0, 10) : '未记录'}` },
+      { label: '适用时间', value: applicability, missing: !applicability },
+    ])
     const targetTitle = targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '未映射目标'
     const polarity = relation.value || suggestion.rel || 'related'
     const polarityLabel = { supports: '支持', contradicts: '反驳', derives: '推导', supersedes: '修订', related: '相关' }[polarity] || polarity
@@ -414,4 +409,20 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     }
   }).catch(() => {})
   return wrap
+}
+
+
+/**
+ * 复核卡片的溯源条：五个格子（来源名称 / 来源链接 / 发布时间 / 抓取摄入 / 适用时间）。
+ * 抽出来是为了让"外部数据归因/AI 建议"与"账本里的旧信号"用**同一套结构**——
+ * 同一件事不该有两套 UI（用户反馈："建设者工作台为什么会有不一样的"）。
+ */
+export function renderReviewTraceBar(slots = []) {
+  const m = globalThis.window?.meridian || {}
+  return h('div', { class: 'review-trace-bar', 'aria-label': '溯源' },
+    ...slots.map((slot) => h('span', { class: 'review-trace-slot' },
+      h('i', {}, slot.label),
+      slot.url
+        ? h('button', { type: 'button', class: 'review-trace-link', title: slot.url, onclick: () => m.openExternal?.(slot.url) }, '↗ 查看来源')
+        : h('b', { class: slot.missing ? 'is-missing' : '' }, slot.value || '未记录'))))
 }
