@@ -718,35 +718,65 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       type: 'soft',
       sourceText: text,
     }
-    // 找一个现有的原子作为归因目标（没有就建议新建）
-    let targetProp = null
+    const mockStatement3 = {
+      subject: 'Sivers Semiconductors',
+      attribute: '产能利用率',
+      value: '92%',
+      timeWindow: '2026Q3',
+      type: 'hard',
+      sourceText: text,
+    }
+    // 找现有的原子作为归因目标
+    let targetAtom = null
+    let secondAtom = null
     try {
       const proj = getChainProjection(themeId)
       const candidates = (proj.nodes || []).filter((n) => !n.archived && !n.invalidated && !n.external)
-      if (candidates.length) {
+      if (candidates.length > 0) {
         const c = candidates[0]
-        targetProp = { id: c.id, title: c.title, status: c.status }
+        targetAtom = { id: c.id, title: c.title, status: c.status }
+      }
+      if (candidates.length > 1) {
+        const c2 = candidates[1]
+        secondAtom = { id: c2.id, title: c2.title, status: c2.status }
       }
     } catch { /* ignore */ }
     const results = []
-    // 案例1：归因到已有原子（支持）
-    if (targetProp) {
+    // 案例1：信号归因到已有原子（支持）
+    if (targetAtom) {
       results.push({
         kind: 'evidence',
         statement: mockStatement,
-        match: { propositionId: targetProp.id, score: 0.85 },
+        match: { propositionId: targetAtom.id, score: 0.85 },
         attribution: {
           rel: 'supports',
           strength: 0.7,
-          reason: 'Mock 数据：该信号支持目标原子的当前理解',
+          reason: 'Mock：该信号支持目标原子的当前理解',
           change: { direction: 'improving', nature: 'quantitative', themeTag: '营收结构' },
         },
-        proposition: targetProp,
+        proposition: targetAtom,
         metaCount: 0,
         metaMultiplier: 1,
       })
     }
-    // 案例2：建议新增原子（无匹配目标）
+    // 案例2：信号归因到已有原子（反驳）
+    if (secondAtom) {
+      results.push({
+        kind: 'evidence',
+        statement: mockStatement3,
+        match: { propositionId: secondAtom.id, score: 0.78 },
+        attribution: {
+          rel: 'contradicts',
+          strength: 0.6,
+          reason: 'Mock：该信号与目标原子的当前理解存在分歧',
+          change: { direction: 'declining', nature: 'quantitative', themeTag: '产能瓶颈' },
+        },
+        proposition: secondAtom,
+        metaCount: 0,
+        metaMultiplier: 1,
+      })
+    }
+    // 案例3：建议新增原子（无匹配目标）
     results.push({
       kind: 'new-proposition',
       statement: mockStatement2,
@@ -756,14 +786,14 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       attribution: {
         rel: 'related',
         strength: 1,
-        reason: 'Mock 数据：未找到匹配的原子，建议新建',
+        reason: 'Mock：未找到匹配的原子，建议新建原子节点',
         change: { direction: 'stable', nature: 'structural', themeTag: mockStatement2.attribute.slice(0, 20) },
       },
       metaCount: 0,
       metaMultiplier: 1,
     })
     return {
-      statements: [mockStatement, mockStatement2],
+      statements: [mockStatement, mockStatement2, mockStatement3],
       results,
       diagnostics: [],
       metaCount: 0,
