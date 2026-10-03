@@ -2319,7 +2319,7 @@ function renderNodeHistoryTimeline(events, opts) {
 
 function renderNodeLifecycleControls(theme, node, opts) {
   const disclosure = h('details', { class: 'cog-action-disclosure cog-node-lifecycle' },
-    h('summary', {}, '改名、改分类或标记失效（追加事件）'))
+    h('summary', {}, '改名、改分类、设定强度或标记失效（追加事件）'))
   const renameTitle = h('input', { class: 'txt', type: 'text', maxlength: '180', required: true, value: node.title || '', 'aria-label': '新节点名称' })
   const renameReason = h('input', { class: 'txt', type: 'text', maxlength: '500', placeholder: '改名原因（可选）', 'aria-label': '改名原因' })
   const renameError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
@@ -2342,6 +2342,40 @@ function renderNodeLifecycleControls(theme, node, opts) {
     } catch (error) {
       renameError.hidden = false
       renameError.textContent = error.message || String(error)
+      submit.disabled = false
+    }
+  })
+  /* 强度：0–100。走既有的 confidence.updated 事件（该类型早已批准），带 source:'manual' 便于区分
+     "模型算出来的"与"人定的"；此前没有记录时，前值如实按 0 记录并在理由里写明。 */
+  const strengthInput = h('input', {
+    class: 'txt', type: 'number', min: '0', max: '100', step: '1',
+    value: Number.isFinite(Number(node.confidence)) ? String(Math.round(Number(node.confidence))) : '',
+    placeholder: '0–100', 'aria-label': '观点强度',
+  })
+  const strengthReason = h('input', { class: 'txt', type: 'text', maxlength: '200', placeholder: '设定理由（可选）', 'aria-label': '强度设定理由' })
+  const strengthError = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+  const strengthForm = h('form', { class: 'cog-entry-form' },
+    h('label', { class: 'cog-entry-field' }, h('span', {}, '强度（0–100）'), strengthInput),
+    h('label', { class: 'cog-entry-field' }, h('span', {}, '理由（可选）'), strengthReason),
+    h('p', { class: 'cog-entry-note' }, Number.isFinite(Number(node.confidence))
+      ? `当前强度 ${Math.round(Number(node.confidence))}%；设定会追加一条置信度更新事件，历史保留。`
+      : '这条观点目前没有强度记录；设定后会以你给的值作为起点，之后证据落账会继续更新它。'),
+    strengthError,
+    h('button', { type: 'submit', class: 'btn' }, '追加强度事件'))
+  strengthForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const submit = strengthForm.querySelector('button[type="submit"]')
+    submit.disabled = true
+    strengthError.hidden = true
+    try {
+      const result = await m.chainSetConfidence(theme.id, node.id, strengthInput.value, strengthReason.value.trim())
+      if (result?.ok === false) throw new Error(result.error || '设定未完成')
+      toast(`已设定强度 ${Math.round(Number(strengthInput.value))}%`)
+      closeNodeDetail()
+      opts.onChanged?.()
+    } catch (error) {
+      strengthError.hidden = false
+      strengthError.textContent = error.message || String(error)
       submit.disabled = false
     }
   })
@@ -2463,7 +2497,7 @@ function renderNodeLifecycleControls(theme, node, opts) {
       submit.disabled = false
     }
   })
-  disclosure.append(...[categoryForm, correctionDisclosure, renameForm, invalidateForm].filter(Boolean))
+  disclosure.append(...[strengthForm, categoryForm, correctionDisclosure, renameForm, invalidateForm].filter(Boolean))
   return h('section', { class: 'chain-dsect cog-action-section' }, disclosure)
 }
 

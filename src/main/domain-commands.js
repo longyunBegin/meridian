@@ -39,7 +39,7 @@ import { estimateStrength } from './engine-confidence.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
-  createProjectedNode, renameProjectedNode, categorizeProjectedNode, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
+  createProjectedNode, renameProjectedNode, categorizeProjectedNode, setProjectedConfidence, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -629,6 +629,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:createNode', (themeId, payload) => ({ ok: true, event: createProjectedNode(themeId, payload) }))
   commands.register('chain:renameNode', (themeId, nodeId, title, reason) => ({ ok: true, event: renameProjectedNode(themeId, nodeId, title, reason) }))
   commands.register('chain:categorizeNode', (themeId, nodeId, category) => ({ ok: true, event: categorizeProjectedNode(themeId, nodeId, category) }))
+  commands.register('chain:setConfidence', (themeId, nodeId, value, reason) => ({ ok: true, event: setProjectedConfidence(themeId, nodeId, value, reason) }))
   commands.register('chain:correctNode', (themeId, nodeId, input) => ({ ok: true, event: correctProjectedNode(themeId, nodeId, input) }))
   commands.register('chain:invalidateNode', (themeId, nodeId, reason) => ({ ok: true, event: invalidateProjectedNode(themeId, nodeId, reason) }))
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))

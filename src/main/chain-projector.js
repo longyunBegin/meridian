@@ -558,6 +558,37 @@ export function createProjectedNode(themeId, input = {}) {
   })
 }
 
+/** 建设者手动设定某条观点的强度：追加一条 confidence.updated（该类型早已批准，不新增事件类型）。
+ *  手动值带 source:'manual' 便于区分"模型算出来的"与"人定的"；此前没有强度记录时如实记 oldConfidence:0
+ *  并在理由里写明，不假装历史上有过某个值。 */
+export function setProjectedConfidence(themeId, nodeId, value, reason = '') {
+  const next = Math.round(Number(value))
+  if (!Number.isFinite(next) || next < 0 || next > 100) throw new Error('强度必须是 0–100 的整数')
+  const integrity = verifyChain(themeId)
+  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
+  const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能设定强度')
+  const hasCurrent = Number.isFinite(Number(node.confidence))
+  const before = hasCurrent ? Math.round(Number(node.confidence)) : 0
+  if (hasCurrent && before === next) throw new Error('强度没有变化')
+  const note = String(reason || '').trim()
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'confidence.updated',
+    payload: {
+      nodeId: node.id,
+      oldConfidence: before,
+      newConfidence: next,
+      source: 'manual',
+      reason: [
+        hasCurrent ? '用户手动设定强度' : '用户手动设定强度（此前没有强度记录，前值按 0 记录）',
+        note,
+      ].filter(Boolean).join('：'),
+    },
+  })
+}
+
 /** Categorize a live node by appending its new category (append-only; history kept). */
 export function categorizeProjectedNode(themeId, nodeId, category) {
   const value = String(category || '').trim().slice(0, 24)

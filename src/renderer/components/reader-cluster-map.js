@@ -140,10 +140,14 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
       transform: `translate(${point.x} ${point.y})`,
       'aria-label': `观点「${row.node.title || '未命名观点'}」：支持 ${row.support} · 反对 ${row.challenge} · 独立来源 ${row.sources} 家（${meta.label}）`,
     })
-    bubble.append(svgEl('circle', { r: point.r, class: 'rdr-cluster-circle', fill: meta.color, stroke: meta.color }))
+    /* 强度体现：气泡填充浓度 ∝ 强度（没有强度记录时用 CSS 的默认淡填充，不假造）。 */
+    bubble.append(svgEl('circle', {
+      r: point.r, class: 'rdr-cluster-circle', fill: meta.color, stroke: meta.color,
+      ...(row.strength ? { style: `fill-opacity:${(0.15 + Math.min(100, row.strength) / 100 * 0.6).toFixed(2)}` } : {}),
+    }))
     bubble.append(svgText(short(row.node), { class: 'rdr-cluster-bubble-label', y: point.r + 12, 'text-anchor': 'middle' }))
     const tip = svgEl('title', {})
-    tip.textContent = `${row.node.title || '未命名观点'}\n支持 ${row.support} · 反对 ${row.challenge} · 独立来源 ${row.sources} 家\n${meta.label}：${meta.hint}`
+    tip.textContent = `${row.node.title || '未命名观点'}\n强度 ${row.strength ? `${row.strength}%` : '未记录'} · 支持 ${row.support} · 反对 ${row.challenge} · 独立来源 ${row.sources} 家\n${meta.label}：${meta.hint}`
     bubble.append(tip)
     if (typeof onOpenClaim === 'function') {
       bubble.addEventListener('click', () => onOpenClaim(row.node.id))
