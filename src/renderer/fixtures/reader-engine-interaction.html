@@ -111,6 +111,10 @@
       await wait()
       check('驳回通过专用审核 bridge，不调用直接证据写入', bridgeCalls[0]?.eventId === 'proposal-rejected'
         && bridgeCalls[0]?.decision === 'rejected' && !decisions.some((event) => event.type === 'evidence.appended' && event.payload.proposalEventId === 'proposal-rejected'))
+      check('驳回后 live region 播报决定（role=status，视觉隐藏但确实在 DOM 里）',
+        cards[0].querySelector('.engine-review-status')?.getAttribute('role') === 'status'
+        && (cards[0].querySelector('.engine-review-status')?.textContent || '').includes('已驳回'),
+        cards[0].querySelector('.engine-review-status')?.textContent || '(无)')
 
       /* 去领域化后的契约：高级选项只剩 目标原子 / 关系类型 / 备注；备注是自由文本。 */
       const evidenceCard = cards[1]
@@ -124,6 +128,9 @@
       check('关系与自由备注的用户修正原样送交 main review command', evidenceCall?.decision === 'accepted'
         && evidenceCall.input.rel === 'contradicts'
         && JSON.stringify(evidenceCall.input.change) === JSON.stringify({ note: '复核备注' }))
+      check('确认后 live region 播报已确认',
+        (evidenceCard.querySelector('.engine-review-status')?.textContent || '').includes('已确认'),
+        evidenceCard.querySelector('.engine-review-status')?.textContent || '(无)')
       check('确认后 mock 账本追加证据、关系、置信度更新和决定', ['evidence.appended', 'relation.declared', 'confidence.updated', 'signal.reviewed']
         .every((type) => decisions.some((event) => event.type === type)))
 

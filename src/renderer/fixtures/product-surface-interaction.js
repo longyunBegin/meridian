@@ -5,6 +5,8 @@ window.__MERIDIAN_TEST_SKIP_BOOT__ = true
 const themes = [
   { id: 'synthetic-theme-a', name: '合成主题 A', tags: [] },
   { id: 'synthetic-theme-b', name: '合成主题 B', tags: [] },
+  /* 没有任何条目归属的主题：用来验"当前筛选下为空"的空态。 */
+  { id: 'synthetic-theme-c', name: '合成主题 C', tags: [] },
 ]
 const nodes = [
   { id: 'synthetic-viewpoint-a', themeId: themes[0].id, title: '合成观点 A', type: 'hypothesis', kind: 'claim', confidence: 72, status: 'live' },
@@ -246,6 +248,21 @@ check('收件箱区分待抽取、未匹配与已抽取分组', [...document.que
   && [...document.querySelectorAll('.inbox-group-label')].some((el) => el.textContent === '未匹配')
   && [...document.querySelectorAll('.inbox-group-label')].some((el) => el.textContent === '已抽取'))
 
+/* 设计稿区分"一条都没有"与"当前筛选下没有"：后者左列给「这里没有条目」、右列给「选择一条数据查看详情」，
+   而不是留一块白板 + 继续展示被筛掉那条的详情。 */
+const themeChip = (text) => [...document.querySelectorAll('#inbox-section .inbox2-theme-pill')]
+  .find((el) => el.textContent.includes(text))
+themeChip('合成主题 C').click()
+await waitFor(() => document.querySelector('#inbox-section .inbox-list .inbox-empty-state'), '筛选后为空态')
+{
+  const listEmpty = document.querySelector('#inbox-section .inbox-list .inbox-empty-state')?.textContent.replace(/\s+/g, ' ').trim() || ''
+  const detailEmpty = document.querySelector('#inbox-section .inbox-detail .inbox-empty-state')?.textContent.replace(/\s+/g, ' ').trim() || ''
+  check('筛选后为空：列表给「这里没有条目」并提示切换筛选', listEmpty.includes('这里没有条目') && listEmpty.includes('试试切换筛选或主题'), listEmpty)
+  check('筛选后为空：详情不再展示被筛掉的条目，改为未选中占位', detailEmpty.includes('选择一条数据查看详情'), detailEmpty)
+}
+themeChip('全部主题').click()
+await waitFor(() => document.querySelector('#inbox-section .inbox2-item'), '切回全部主题')
+
 const readingInboxRow = document.querySelector('.inbox-item[data-id="reading-synthetic-1"] .inbox-body')
 readingInboxRow.click()
 await waitFor(() => document.querySelector('.inbox-detail .inbox-reading-value'), '待归位读数详情')
@@ -284,6 +301,11 @@ check('已抽取收件箱条目可以明确切换主题并调用对应桥接命�
   && call[1] === 'route-synthetic-1' && call[2] === themes[1].id))
 check('已归位的条目在列表行给出 done 态徽标与数量', [...document.querySelectorAll('.inbox-item[data-id="route-synthetic-1"] .inbox2-badge.is-done')]
   .some((el) => el.textContent.includes('已归位 1 条')))
+{
+  const kicker = document.querySelector('#inbox-section .inbox2-kicker')?.textContent.trim() || ''
+  check('详情眉标的时间是相对时间，而不是原始 ISO 时间戳',
+    /(刚刚|\d+ (分钟|小时|天)前|时间未记录)$/.test(kicker), kicker)
+}
 const sourceLink = document.querySelector('.inbox-detail .inbox-source-link')
 sourceLink?.click()
 check('查看来源链接调用受控外部打开桥接，不在 fixture 导航外网', fixture.calls.some((call) => call[0] === 'openExternal'
