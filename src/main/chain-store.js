@@ -364,13 +364,18 @@ export function setReadingMap(themeId, map = {}) {
 /* ------------------------------------------------------------------ */
 
 export function getInboxItem(inboxId) {
-  return load().inbox.find((i) => i.id === inboxId) || null
+  const data = load()
+  // 先查新格式，再兼容旧格式 inboxItems（与 allInbox 保持一致）
+  return data.inbox.find((i) => i.id === inboxId)
+    || (data.inboxItems || []).find((i) => i.id === inboxId)
+    || null
 }
 
 /** 存/清提案草稿。draft 为 null 时清除。 */
 export function setInboxChainDraft(inboxId, draft) {
   const db = load()
   const item = db.inbox.find((i) => i.id === inboxId)
+    || (db.inboxItems || []).find((i) => i.id === inboxId)
   if (!item) throw new Error('收件箱条目不存在')
   if (draft == null) delete item.chainDraft
   else item.chainDraft = { ...(draft && typeof draft === 'object' ? draft : {}) }
@@ -381,6 +386,7 @@ export function setInboxChainDraft(inboxId, draft) {
 export function setInboxEnginePipeline(inboxId, pipeline) {
   const db = load()
   const item = db.inbox.find((i) => i.id === inboxId)
+    || (db.inboxItems || []).find((i) => i.id === inboxId)
   if (!item) throw new Error('收件箱条目不存在')
   if (pipeline == null) delete item.enginePipeline
   else item.enginePipeline = { ...(pipeline && typeof pipeline === 'object' ? pipeline : {}) }
