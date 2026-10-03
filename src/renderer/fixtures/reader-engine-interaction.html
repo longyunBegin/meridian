@@ -320,39 +320,8 @@
       check('R4 时间线不出现账本术语（事件序号 / 哈希）',
         !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
 
-      /* R5 还缺什么 + P1-5 回流 */
-      const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
-      check('R5 还缺什么覆盖缺来源 / 已过期 / 未归位三类',
-        gapItems.length === 3
-        && gapItems.some((el) => el.textContent.includes('还没有来源'))
-        && gapItems.some((el) => el.textContent.includes('来源过期了'))
-        && gapItems.some((el) => el.textContent.includes('没归到任何观点')),
-        gapItems.map((el) => el.querySelector('.rdr-gap-kind')?.textContent.trim()).join('/'))
-      check('R5 还缺什么不把没过的证据算成过期',
-        !gapItems.some((el) => el.textContent.includes('挑战用的来源')))
-      const todoButton = gapItems[0].querySelector('.rdr-gap-todo')
-      todoButton.click()
-      await wait()
-      check('P1-5 加入待办写进收件箱且是 todo 类型（不触发自动抽取）',
-        todoCalls.length === 1 && todoCalls[0].kind === 'todo' && todoCalls[0].extracted === false
-        && todoCalls[0].text.includes('补一条来源') && todoCalls[0].provenance?.platform === 'reader-gap',
-        JSON.stringify(todoCalls[0] || null))
-      check('P1-5 已加入待办的缺口标成"已在收件箱"', Boolean(structureRoot.querySelector('.rdr-gap-done')))
-      const toastButton = [...document.querySelectorAll('.toast-btn')].pop()
-      check('P1-5 回流提示带撤销按钮', toastButton?.textContent === '撤销')
-      toastButton?.click()
-      await wait()
-      check('P1-5 撤销把刚建的待办移出收件箱',
-        inboxResolved.length === 1 && inboxResolved[0].id === todoCalls[0].id && inboxResolved[0].action === 'reject'
-        && !structureRoot.querySelector('.rdr-gap-done'))
-      /* 「标记缺口」需要一个选中原子：点分簇清单里的那条观点（图与平面卡片都已下线）。 */
-      structureRoot.querySelector('.rdr-cluster-claim[data-claim-id="sx-v1"]')?.click()
-      await wait()
-      structureRoot.querySelector('.rdr-gap-mark').click()
-      await wait()
-      check('P1-5「标记缺口」对选中原子记一条待办',
-        todoCalls.length === 2 && todoCalls[1].text.includes('R1 结论原子'),
-        JSON.stringify(todoCalls[1] || null))
+      /* 用户决定：读者页不再展示「还缺什么」面板（要求精简），对应的 R5 / P1-5 断言随之下线。
+         缺口能力本身仍在（buildGapList 与收件箱待办通道未动），只是不再占读者页版面。 */
 
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'

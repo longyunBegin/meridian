@@ -2,6 +2,7 @@ import { h } from '../lib/dom.js'
 import { svgEl } from '../lib/theme-network-render.js'
 import { strengthSparkline } from '../lib/reader-model.js'
 import { CLAIM_STATES } from './reader-claim-map.js'
+import { RELATION_LABEL } from '../lib/chain-ui-model.js'
 
 /**
  * 第 ①③ 层「单条下钻」：就地展开在地图下方（读者不丢上下文）。
@@ -36,7 +37,7 @@ const urlOf = (row) => {
   try { return /^https?:$/.test(new URL(raw).protocol) ? raw : '' } catch { return '' }
 }
 
-export function renderReaderClaimDetail({ node, stats = {}, rows = {}, onClose } = {}) {
+export function renderReaderClaimDetail({ node, stats = {}, rows = {}, relations = [], onOpenRelation, onClose } = {}) {
   const support = stats.support || 0
   const challenge = stats.challenge || 0
   const both = rows?.both?.length || 0
@@ -44,7 +45,7 @@ export function renderReaderClaimDetail({ node, stats = {}, rows = {}, onClose }
   const total = Math.max(1, stated)
   const meta = CLAIM_STATES[stats.state] || CLAIM_STATES.none
 
-  const receipt = [...(rows?.supports || []), ...(rows?.against || []), ...(rows?.both || [])]
+  const receipt = [...(rows?.supports || []), ...(rows?.against || []), ...(rows?.both || []), ...(rows?.unclassified || [])]
   const hasWeight = receipt.some((row) => row?.edge?.weight != null)
   const unclassified = rows?.unclassified?.length || 0
   const rejected = rows?.rejected?.length || 0
@@ -63,10 +64,11 @@ export function renderReaderClaimDetail({ node, stats = {}, rows = {}, onClose }
 
   const receiptRow = (row) => {
     const isAgainst = (rows?.against || []).includes(row)
+    const isUnstated = (rows?.unclassified || []).includes(row)
     const isBoth = (rows?.both || []).includes(row)
     const url = urlOf(row)
     return h('li', { class: `rdr-detail-receipt-row${isAgainst ? ' is-against' : ''}` },
-      h('span', { class: 'rdr-detail-receipt-dir' }, isBoth ? '± 两边' : isAgainst ? '− 反对' : '+ 支持'),
+      h('span', { class: 'rdr-detail-receipt-dir' }, isBoth ? '± 两边' : isAgainst ? '− 反对' : isUnstated ? '· 未表态' : '+ 支持'),
       h('span', { class: 'rdr-detail-receipt-source' }, row?.source?.title || '（未命名来源）'),
       h('span', { class: 'rdr-detail-receipt-label' }, row?.source?.provenance?.sourceLabel || row?.source?.sourceLabel || '来源未标注'),
       h('span', { class: 'rdr-detail-receipt-when' }, whenOf(row)),
@@ -91,15 +93,28 @@ export function renderReaderClaimDetail({ node, stats = {}, rows = {}, onClose }
         h('span', { class: 'rdr-detail-scale-label' }, '反对'),
         h('span', { class: 'rdr-detail-scale-bar' }, h('span', { class: 'rdr-detail-scale-fill is-against', style: `width:${Math.round((challenge / total) * 100)}%` })),
         h('span', { class: 'rdr-detail-scale-count' }, String(challenge))),
+      h('div', { class: 'rdr-detail-scale-row' },
+        h('span', { class: 'rdr-detail-scale-label' }, '未表态'),
+        h('span', { class: 'rdr-detail-scale-bar' }, h('span', { class: 'rdr-detail-scale-fill is-unstated', style: `width:${Math.round((unclassified / Math.max(1, stated + unclassified)) * 100)}%` })),
+        h('span', { class: 'rdr-detail-scale-count' }, String(unclassified))),
       h('p', { class: 'rdr-detail-caliber' },
         `独立来源 ${stats.sources || 0} 家（按来源名去重：同一家媒体发多条只算 1 家）。`
         + (both ? ` 其中 ${both} 条同时给了支持和反对。` : '')
         + (unclassified ? ` 另有 ${unclassified} 条挂载但未表态，不计入天平。` : '')
         + (rejected ? ` 有 ${rejected} 条表态已被驳回，不计入。` : ''))),
 
-    /* ③ 证据收据 */
+    /* 相关原子：这条观点在账本里真实连着的其它观点（可为空）。 */
+    relations.length ? h('div', { class: 'rdr-detail-relations' },
+      h('h4', { class: 'rdr-detail-subhead' }, `相关原子 · ${relations.length}`),
+      h('ul', { class: 'rdr-detail-rel-list' }, ...relations.map((rel) => h('li', {},
+        h('span', { class: `rdr-detail-rel-label is-${rel.rel}` }, RELATION_LABEL?.[rel.rel] || rel.rel || '关系'),
+        onOpenRelation
+          ? h('button', { type: 'button', class: 'rdr-detail-rel-target', onclick: () => onOpenRelation(rel.id) }, String(rel.title || '未命名观点'))
+          : h('span', {}, String(rel.title || '未命名观点')))))) : null,
+
+    /* ③ 证据收据（完整证据流：支持 / 反对 / 两边 / 未表态） */
     h('div', { class: 'rdr-detail-receipt' },
-      h('h4', { class: 'rdr-detail-subhead' }, `证据收据 · ${receipt.length} 笔`),
+      h('h4', { class: 'rdr-detail-subhead' }, `证据流 · ${receipt.length} 笔`),
       receipt.length
         ? h('ul', { class: 'rdr-detail-receipt-list' }, ...receipt.map(receiptRow))
         : h('p', { class: 'rdr-detail-caliber' }, '这条观点还没有任何已表态的来源。'),

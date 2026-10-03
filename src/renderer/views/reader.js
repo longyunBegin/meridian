@@ -476,6 +476,16 @@ export function renderReaderView(theme, opts = {}) {
         node,
         stats: claimEvidenceStats(node, rowsOfClaim),
         rows: rowsOfClaim(id),
+        /* 相关原子：这条观点的真实关系（relation.declared；已驳回的边在上游已过滤）。 */
+        relations: currentEdges
+          .filter((edge) => edge && (edge.from === id || edge.to === id))
+          .map((edge) => {
+            const otherId = edge.from === id ? edge.to : edge.from
+            const other = claimNodes.find((row) => row.id === otherId) || null
+            return other ? { id: otherId, title: other.title, rel: edge.rel } : null
+          })
+          .filter(Boolean),
+        onOpenRelation: openClaimDetail,
         onClose: closeClaimDetail,
       }))
       detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -562,14 +572,13 @@ export function renderReaderView(theme, opts = {}) {
       /* 其余面板（合成轴 / 理由清单 / 小倍数 / 正反两方 / 时间线 / 对照表 / 分类 / 缺口 / 检视器）
          保留能力，但收进**一行折叠**——可见区域保持 demo 式的精简，页面不再被它们占满。 */
       /* 还缺什么：三个构造器里数据最实的一个（11 条、三类），也最回答"哪里不确定"——提到可见区。 */
-      block('还缺什么', gapsHost),
       /* 「更多视图」只留两个看得懂的：
          · 时间线：这主题是怎么长出来的（事件时间戳齐全）
          · 理由清单：每个观点凭什么（来源按立场分组）
          移除：整体情况（强度历史为空，画出来是空图）、分类聚合（主题没配分类，只有"未分类"一行）、
          正反两方（与理由清单同源同轴）、小倍数（每卡都显示"还没有强度"、分类色点也没数据）、
          对照表（用户反馈"完全看不懂"，且与理由清单同一份数据）。 */
-      moreView('更多视图', outlineHost, chronicleHost, workspace))
+      moreView('更多视图', outlineHost, chronicleHost))
     /* 面板在折叠区里也必须先渲染（fixture 与无障碍都按 DOM 断言/读取）。 */
     renderInspector()
     renderStructure()

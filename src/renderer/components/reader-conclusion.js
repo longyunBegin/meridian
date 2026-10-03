@@ -63,22 +63,37 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
   /* 最值得先看的 5 条：排序口径写在页面上，每张卡都写「为什么排这里」。
      顺序 = 读者最该先知道的：① 两边都有人（争议）② 一个来源都没有（空洞）
      ③ 只有一家来源（脆弱）④ 独立来源最多（最有据）。全部从真实数据推；强度为空就不显示。 */
+  /* 七彩：按排名给每张卡一个色相，作为左侧色条与徽标色（视觉上区分名次）。 */
+  const RAINBOW = [
+    'hsl(357 76% 60%)', 'hsl(28 92% 58%)', 'hsl(45 92% 52%)',
+    'hsl(142 62% 45%)', 'hsl(199 85% 52%)', 'hsl(262 68% 62%)', 'hsl(322 70% 58%)',
+  ]
   const scored = claims.map((node) => {
     const s = countsFor(node)
     const stated = s.support + s.challenge
     const both = s.support > 0 && s.challenge > 0
     const gap = stated === 0
     const single = !gap && s.sources <= 1
-    const score = both
-      ? 100 - Math.abs(s.support - s.challenge) * 10 + Math.min(20, stated * 4)
-      : gap ? 80 : single ? 60 : 40 + Math.min(20, s.sources * 5)
-    const reason = both
-      ? (s.support === s.challenge
-        ? `反对与支持一样多（${s.support} : ${s.challenge}）`
-        : `两边都有证据（支持 ${s.support} · 反对 ${s.challenge}）`)
-      : gap ? '一个来源都还没有'
-        : single ? `只有 1 家来源（${s.support ? '支持' : '反对'} ${stated} 条）`
-          : `${s.sources} 家独立来源、没有反对`
+    /* 三因子（用户指定）：变化幅度 · 证据密度 · 临界状态——都只从真实数据取。 */
+    const history = Array.isArray(node?.confidenceHistory) ? node.confidenceHistory : []
+    const last = history.length ? history[history.length - 1] : null
+    const swing = last && Number.isFinite(Number(last.newConfidence)) && Number.isFinite(Number(last.oldConfidence))
+      ? Math.abs(Number(last.newConfidence) - Number(last.oldConfidence))
+      : 0
+    const density = stated * 6 + s.sources * 8
+    const critical = both ? 60 - Math.abs(s.support - s.challenge) * 12 : gap ? 50 : single ? 30 : 10
+    const score = critical + density + swing * 1.5
+    const reason = [
+      both
+        ? (s.support === s.challenge
+          ? `反对与支持一样多（${s.support} : ${s.challenge}）`
+          : `两边都有证据（支持 ${s.support} · 反对 ${s.challenge}）`)
+        : gap ? '一个来源都还没有'
+          : single ? `只有 1 家来源（${s.support ? '支持' : '反对'} ${stated} 条）`
+            : `${s.sources} 家独立来源、没有反对`,
+      s.stated ? `证据密度：已表态 ${s.stated} 条 · 独立来源 ${s.sources} 家` : null,
+      swing ? `最近变化 ±${Math.round(swing)}` : null,
+    ].filter(Boolean).join(' · ')
     const rawStrength = Number(node.confidence ?? node.strength)
     return {
       node, support: s.support, challenge: s.challenge, sources: s.sources, score, reason,
@@ -88,11 +103,12 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
   }).sort((a, b) => b.score - a.score || String(a.node?.id).localeCompare(String(b.node?.id)))
   const picks = scored.slice(0, 5)
 
-  const pickRow = (pick) => {
+  const pickRow = (pick, index) => {
+    const accent = RAINBOW[index % RAINBOW.length]
     const bits = []
     if (pick.support || pick.challenge) bits.push(`支持 ${pick.support} · 反对 ${pick.challenge}`)
     if (pick.sources) bits.push(`独立来源 ${pick.sources} 家`)
-    return h('li', { class: 'rdr-conclusion-pick' },
+    return h('li', { class: 'rdr-conclusion-pick', style: { '--rdr-pick-accent': accent } },
       h('span', { class: 'rdr-conclusion-tag' }, pick.tag),
       h('span', { class: 'rdr-conclusion-pick-title' }, pick.node?.title || '未命名观点'),
       pick.strength ? h('span', { class: 'rdr-conclusion-strength' }, `强度 ${pick.strength}%`) : null,
@@ -109,6 +125,6 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
   return h('div', { class: 'rdr-conclusion-body' },
     h('div', { class: 'rdr-conclusion-block' },
       h('h2', { class: 'rdr-conclusion-head' }, '当前最该看的 5 个'),
-      h('p', { class: 'rdr-conclusion-caliber' }, '先看两边都有证据的和一个来源都没有的，再看只有单一来源的。'),
-      h('ul', { class: 'rdr-conclusion-picks' }, ...picks.map(pickRow))))
+      h('p', { class: 'rdr-conclusion-caliber' }, '按变化幅度 · 证据密度 · 临界状态综合排序（变化幅度需要强度历史，没有历史时不计入）。'),
+      h('ul', { class: 'rdr-conclusion-picks' }, ...picks.map((pick, index) => pickRow(pick, index)))))
 }

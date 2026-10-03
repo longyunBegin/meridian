@@ -1551,3 +1551,14 @@ body.tauri-macos{
 .rdr-cluster-row-state.is-contested { color: var(--red-text); }
 .rdr-cluster-row-state.is-single { color: var(--orange-text); }
 .rdr-cluster-row-state.is-settled { color: var(--green-text); }
+
+/* 读者页：Top 5 七彩区分 + 信息卡（未表态 / 相关原子 / 证据流） */
+.rdr-conclusion-pick { border-left: 3px solid var(--rdr-pick-accent, var(--accent)); }
+.rdr-conclusion-pick .rdr-conclusion-tag { background: color-mix(in srgb, var(--rdr-pick-accent, var(--accent)) 14%, transparent); color: var(--text-1); }
+.rdr-detail-scale-fill.is-unstated { background: var(--text-3); }
+.rdr-detail-relations { display: grid; gap: var(--sp-2); }
+.rdr-detail-rel-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.rdr-detail-rel-list li { display: flex; align-items: baseline; gap: var(--sp-2); padding: 6px 0; border-top: 1px solid var(--hairline-soft); font-size: var(--t-caption); }
+.rdr-detail-rel-label { flex: none; padding: 1px 8px; border-radius: var(--r-pill); background: var(--hover); color: var(--text-2); }
+.rdr-detail-rel-target { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 0; color: var(--accent); font-size: var(--t-caption); text-align: left; cursor: pointer; }
+.rdr-detail-receipt-dir { min-width: 46px; }
