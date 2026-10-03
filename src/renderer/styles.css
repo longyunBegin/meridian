@@ -2754,10 +2754,10 @@ body.tauri-macos .app {
 
 
 /* Theme-first cognition graph: focused, full-width workspace replaces the global navigation shell. */
-.app[data-view="theme"] { grid-template-columns:minmax(0,1fr); }
-.app[data-view="theme"] > .sidebar,
+.app[data-view="theme"] { grid-template-columns:240px minmax(0,1fr); }
+/* App 左导航在主题视图下保持可见（用户要求） */
 .app[data-view="theme"] .meridian-theme > .builder > .sidebar { display:none !important; }
-.app[data-view="theme"] > .mid { grid-column:1; min-width:0; }
+.app[data-view="theme"] > .mid { grid-column:2; min-width:0; }
 .app[data-view="theme"] > .inspect,
 .app[data-view="theme"] .inspect { display:none !important; }
 .theme-topic-meta { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 18px 0; }
