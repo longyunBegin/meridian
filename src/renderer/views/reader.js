@@ -1,7 +1,8 @@
 import { h } from '../lib/dom.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
-  networkNodeType, networkNodeStatus, evidenceAttachmentEdges,
+  graphLodLevel, GRAPH_LOD_LABEL, evidenceAttachmentEdges,
+  networkNodeType, networkNodeStatus,
   buildEventTimeline, layoutThemeNetwork, timelineChangeSummary, truncateGraphemes,
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
@@ -154,6 +155,9 @@ export function renderReaderView(theme, opts = {}) {
   let refreshGeneration = 0
   /* 全览开关（面板装不下一屏时用）：挂在 reader 视图闭包上，跨多次 render 保持。 */
   let overviewMode = false
+  /* 图谱缩放与 LOD（设计提案 02）：缩放 <0.75 点阵 / ≤1.15 卡片 / >1.15 卡片+标题。 */
+  let zoom = 1
+  let lodAuto = true
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -460,13 +464,34 @@ export function renderReaderView(theme, opts = {}) {
       const currentFrameNodes = filterReaderNodes(currentNodes, type, status, category)
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
+      /* LOD 级别按"实际渲染比例"算：显示全图时取 fit 比例，否则取 缩放 × 容器宽 / 布局宽。
+         这样窗口变窄、点了显示全图、拖了缩放，画多少文字都跟着走（提案 02）。 */
+      const activeLayout = ensureLayout()
+      const canvasWidth = graphCanvas.clientWidth || 0
+      const canvasHeight = graphCanvas.clientHeight || 0
+      const effectiveScale = canvasWidth > 0
+        ? (overviewMode
+          ? Math.min(canvasWidth / activeLayout.width, (canvasHeight || activeLayout.height) / activeLayout.height)
+          : (canvasWidth * zoom) / activeLayout.width)
+        : zoom
+      const lodLevel = (lodAuto && !activeLayout.heavy) ? graphLodLevel(effectiveScale) : 'cards-labels'
+      const drawnLevel = activeLayout.heavy ? 'dots' : lodLevel
+      lodBadge.textContent = activeLayout.heavy
+        ? `LOD ${GRAPH_LOD_LABEL[drawnLevel]} · ≥600 已降级为网格布局`
+        : `LOD ${GRAPH_LOD_LABEL[drawnLevel]}`
+      lodBadge.classList.toggle('is-degraded', Boolean(activeLayout.heavy))
       if (frame.nodes.length) drawThemeNetwork(drawProjection, {
-        networkLayout: ensureLayout(),
+        networkLayout: activeLayout,
         focusNodeId: state.selectedNodeId,
         readerStates,
         readerCounts,
         /* 证据压成紧凑数据点，让观点原子成为视觉主体（建设者画布不受影响）。 */
         compactEvidence: true,
+        lodLevel,
+        /* 读者画布用分类色条 + 状态描边表达含义；状态文字徽标只在"卡片+标题"档出现
+           （文字是最贵的东西，低 LOD 一律不出字）。 */
+        statusPill: lodLevel === 'cards-labels',
+        atomCategories: themeCategories,
         searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
         historyContext: { events: state.events, projection: state.projection, selectedSeq: state.selectedSeq },
         compareCurrent: Boolean(state.compareCurrent && state.replaying),
@@ -480,6 +505,10 @@ export function renderReaderView(theme, opts = {}) {
           renderGraph()
         },
       }, graphCanvas)
+      /* 缩放＝把 SVG 按比例放大/缩小（布局与 viewBox 不变，容器负责滚动）；
+         显示全图时交给 CSS 的 fit 规则，不写内联宽度。 */
+      const drawnSvg = graphCanvas.querySelector('.cog-network-svg')
+      if (drawnSvg) drawnSvg.style.width = overviewMode ? '' : `${Math.round(zoom * 100)}%`
       if (state.searchLocatedNodeId && nodeSearch.value.trim()) {
         const currentLayout = ensureLayout()
         const point = currentLayout.pos.get(state.searchLocatedNodeId)
@@ -664,20 +693,43 @@ export function renderReaderView(theme, opts = {}) {
       onclick: () => {
         overviewMode = !overviewMode
         overviewButton.setAttribute('aria-pressed', String(overviewMode))
-        overviewButton.textContent = overviewMode ? '全览 · 开' : '全览'
+        overviewButton.textContent = overviewMode ? '显示全图 · 开' : '显示全图'
         graphCanvas.classList.toggle('is-overview', overviewMode)
+        renderGraph()
       },
-    }, overviewMode ? '全览 · 开' : '全览')
+    }, overviewMode ? '显示全图 · 开' : '显示全图')
+    /* 缩放与 LOD（设计提案 02）：缩放决定画多少文字；LOD 自动＝按缩放分级，手动＝始终出标题。 */
+    const zoomBadge = h('span', { class: 'rdr-zoom-badge' }, `${zoom.toFixed(2)}×`)
+    const zoomSlider = h('input', {
+      type: 'range', class: 'rdr-zoom-slider', min: '0.4', max: '2', step: '0.05',
+      value: String(zoom), 'aria-label': '图谱缩放',
+    })
+    zoomSlider.addEventListener('input', () => {
+      zoom = Number(zoomSlider.value) || 1
+      zoomBadge.textContent = `${zoom.toFixed(2)}×`
+      renderGraph()
+    })
+    const lodBadge = h('span', { class: 'rdr-lod-badge', role: 'status' })
+    const lodAutoButton = h('button', {
+      type: 'button', class: 'btn btn-sm rdr-lod-auto', 'aria-pressed': String(lodAuto),
+      onclick: () => {
+        lodAuto = !lodAuto
+        lodAutoButton.setAttribute('aria-pressed', String(lodAuto))
+        lodAutoButton.textContent = lodAuto ? 'LOD 自动' : 'LOD 手动'
+        renderGraph()
+      },
+    }, lodAuto ? 'LOD 自动' : 'LOD 手动')
 
     const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
-      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter, overviewButton),
+      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
       searchResults, searchStatus,
       h('div', { class: 'rdr-focus-bar' }, focusLabel),
       graphCanvas,
+      h('div', { class: 'rdr-graph-foot' }, lodAutoButton, zoomSlider, zoomBadge, overviewButton, lodBadge),
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
         h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关；灰色细点线：证据挂载——外部数据已挂到这个原子上，但你还没有声明它是支持还是反驳。待复核与驳回关系会保留其决定状态。'),
         h('p', {}, '主题下的节点均为原子节点（主题拆分的第一性原理单元）。网络位置为稳定布局，不代表重要度或因果强度。'),

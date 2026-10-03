@@ -45,6 +45,32 @@ export const NODE_STATUS_LABEL = {
 }
 
 /**
+ * 分类色（设计提案 ④）：分类是主题自定义的词表，颜色只表达"属于哪一类"，
+ * 不绑领域类型——所以按词表顺序取色，词表变了颜色跟着走。
+ */
+export const CATEGORY_COLORS = ['#0a84ff', '#30b0c7', '#af52de', '#ff9500', '#34c759', '#ff375f', '#5e5ce6', '#8e8e93']
+
+export function categoryColor(categories = [], category = '') {
+  const name = String(category || '').trim()
+  if (!name) return null
+  const index = (Array.isArray(categories) ? categories : []).map((item) => String(item || '').trim()).indexOf(name)
+  return CATEGORY_COLORS[(index >= 0 ? index : CATEGORY_COLORS.length - 1) % CATEGORY_COLORS.length]
+}
+
+/**
+ * 图谱 LOD（设计提案 02）：缩放 <0.75 只画点（不画字）；0.75–1.15 画卡片不画字；
+ * >1.15 才出标题。文字是 SVG/canvas 里最贵的东西。≥600 节点强制点阵。
+ */
+export function graphLodLevel(scale, heavy = false) {
+  if (heavy) return 'dots'
+  const value = Number(scale)
+  if (!Number.isFinite(value) || value < 0.75) return 'dots'
+  return value <= 1.15 ? 'cards' : 'cards-labels'
+}
+
+export const GRAPH_LOD_LABEL = { dots: '点阵', cards: '卡片', 'cards-labels': '卡片+标题' }
+
+/**
  * 读者视角的状态：由账本里的证据与关系推导，而不是节点自身的复核状态。
  * 陌生主题第一眼要看的是"哪里被佐证、哪里被挑战、哪里还没动过"——
  * 而节点自身的 status 往往全是"待复核"，那个维度对读者没有信息量。
@@ -355,15 +381,21 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   /* 边距与间距跟着画布宽度走：面板窄（读者视图常只有 ~500px）时若还用 112px 边距 + 188px 列距，
      只能塞下两列、整张图被拉成一长条；自适应后能塞三列，卡片也保持原始可读尺寸。
      宽度 ≥1120 时这些值等于原来的常量，宽画布行为不变。 */
-  const marginX = Math.round(Math.min(112, Math.max(56, width * 0.1)))
-  const gapY = Math.round(Math.min(116, Math.max(104, width * 0.104)))
-  const gapX = Math.round(Math.min(188, Math.max(148, (width - marginX * 2) / 3.6)))
-  const columns = Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
+  /* 规模降级（设计提案 03）：≥600 节点放弃力导向松弛与干涉消除，纯网格密排——
+     如实降级，而不是卡死或假装画完了。调用方拿 heavy 去把画布切成点阵并标注。 */
+  const heavy = count > 600
+  const marginX = heavy ? 16 : Math.round(Math.min(112, Math.max(56, width * 0.1)))
+  const gapY = heavy ? 16 : Math.round(Math.min(116, Math.max(104, width * 0.104)))
+  const gapX = heavy ? 26 : Math.round(Math.min(188, Math.max(148, (width - marginX * 2) / 3.6)))
+  const columns = heavy
+    ? Math.max(1, Math.min(count, Math.floor(width / gapX)))
+    : Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
   const rowCount = Math.ceil(count / columns)
   /* 行高按该行最高卡片取步进：证据数据点只有 38px 高，若还按统一的 104px 走，
      纯证据行会白留一大截高度（21 节点时能差出 ~140px 的空白）。 */
   const rowTop = [62]
   for (let row = 0; row < rowCount; row++) {
+    if (heavy) { rowTop[row + 1] = rowTop[row] + gapY; continue }
     let tallest = 0
     for (let col = 0; col < columns; col++) {
       const node = dfsOrder[row * columns + col]
@@ -383,7 +415,7 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       y: Math.max(56, Math.min(height - 48, rowTop[row])),
     })
   })
-  const iterations = Math.max(24, Math.min(80, Math.round(5200 / Math.max(1, Math.sqrt(count)))))
+  const iterations = heavy ? 0 : Math.max(24, Math.min(80, Math.round(5200 / Math.max(1, Math.sqrt(count)))))
   for (let iteration = 0; iteration < iterations; iteration++) {
     const cooling = 1 - iteration / iterations
     const fx = new Map(rows.map((node) => [node.id, 0]))
@@ -443,7 +475,7 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   }
 
   // Final deterministic collision pass; this affects the initial layout only, never replay.
-  for (let pass = 0; pass < 24; pass++) {
+  for (let pass = 0; pass < (heavy ? 0 : 24); pass++) {
     let moved = false
     for (let i = 0; i < rows.length; i++) {
       const a = rows[i]
@@ -487,5 +519,5 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
     contentBottom = Math.max(contentBottom, point.y + (dim?.h || 0) / 2)
   }
   height = Math.max(420, Math.round(contentBottom + 32))
-  return { pos, size, width, height }
+  return { pos, size, width, height, heavy }
 }

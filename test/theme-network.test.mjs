@@ -2,7 +2,7 @@ import {
   NETWORK_NODE_TYPES, ARGUMENT_RELATIONS, REVISION_RELATIONS, ASSOCIATION_RELATIONS, NODE_TYPE_META, RELATION_META,
   networkNodeType, networkNodeStatus, truncateGraphemes, splitNetworkTitle, nodeTitleCharsPerLine,
   buildDensityTimeline, buildEventTimeline, timelinePointForDay, timelineChangeSummary, layoutThemeNetwork,
-  evidenceAttachmentEdges, readerStateKey, READER_STATE_META,
+  evidenceAttachmentEdges, readerStateKey, READER_STATE_META, graphLodLevel, GRAPH_LOD_LABEL, categoryColor, CATEGORY_COLORS,
 } from '../src/renderer/lib/theme-network.js'
 
 let passed = 0
@@ -169,6 +169,24 @@ check('节点尺寸随强度变化，布局间距同步跟随', (() => {
   return strong.w > mid.w && mid.w > weak.w
     && weak.w === Math.round(156 * 0.84) && strong.w === Math.round(156 * 1.16)
 })())
+
+/* —— 设计提案 02/03/④：LOD 分级、规模降级、分类色 —— */
+check('LOD 阈值与提案一致：<0.75 点阵，0.75–1.15 卡片，>1.15 卡片+标题',
+  graphLodLevel(0.5) === 'dots' && graphLodLevel(0.75) === 'cards' && graphLodLevel(1) === 'cards'
+  && graphLodLevel(1.15) === 'cards' && graphLodLevel(1.2) === 'cards-labels'
+  && graphLodLevel(Number.NaN) === 'dots' && GRAPH_LOD_LABEL.dots === '点阵')
+check('≥600 节点强制点阵并如实标记降级', graphLodLevel(2, true) === 'dots'
+  && (() => {
+    const many = Array.from({ length: 620 }, (_, i) => ({ id: `h${i}`, nodeType: 'viewpoint' }))
+    const started = performance.now()
+    const laid = layoutThemeNetwork(many, [], 1120)
+    return laid.heavy === true && laid.pos.size === 620 && performance.now() - started < 5000
+  })())
+check('分类色按主题词表顺序取，未配置归类为灰（颜色只表达属于哪一类）',
+  categoryColor(['技术路线', '商业模式'], '技术路线') === CATEGORY_COLORS[0]
+  && categoryColor(['技术路线', '商业模式'], '商业模式') === CATEGORY_COLORS[1]
+  && categoryColor(['技术路线'], '没配过的分类') === CATEGORY_COLORS[CATEGORY_COLORS.length - 1]
+  && categoryColor([], '任意') !== null && categoryColor(['技术路线'], '') === null)
 
 console.log(`\n${passed} 通过，${failed} 失败`)
 process.exit(failed ? 1 : 0)

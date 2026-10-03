@@ -1,6 +1,6 @@
 import {
   NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
-  networkNodeType, networkNodeStatus, splitNetworkTitle, nodeTitleCharsPerLine,
+  categoryColor, networkNodeType, networkNodeStatus, splitNetworkTitle, nodeTitleCharsPerLine,
 } from './theme-network.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -252,6 +252,10 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     if (notify && (!node || !node._notYetCreated)) opts.onFocusNode?.(node || null)
   }
 
+  /* LOD 分级（设计提案 02/03）：点阵 / 卡片 / 卡片+标题。默认完整渲染，调用方按缩放传级别。 */
+  const lodLevel = opts.lodLevel || 'cards-labels'
+  const showCards = lodLevel !== 'dots'
+  const showLabels = lodLevel === 'cards-labels'
   for (const node of nodes) {
     const point = layout.pos.get(node.id)
     const dimensions = layout.size.get(node.id)
@@ -288,12 +292,28 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
        （只有连线生效）。可用节点留空，让 CSS 决定。 */
     group.style.opacity = unavailable ? (node._notYetCreated ? '0.36' : '0.68') : ''
     const stroke = node.invalidated ? '#ad756a' : node.archived ? '#8390a0' : (readerMeta?.color || meta.color)
+    /* 设计提案 02/03：LOD 分级。点阵＝只有点（点径随强度）；卡片＝有卡片无文字；
+       卡片+标题＝完整。默认（调用方没给 lodLevel）保持原来的完整渲染，建设者画布不受影响。 */
+    const dotRadius = Math.max(3.5, 4 + (Math.max(0, Math.min(100, Number(node.confidence ?? node.strength ?? 50))) / 100) * 7)
+    if (!showCards) {
+      group.append(svgEl('circle', { cx: 0, cy: 0, r: dotRadius, fill: stroke, class: 'cog-node-dot' }))
+    } else {
     group.append(svgEl('rect', {
       x: -dimensions.w / 2, y: -dimensions.h / 2, width: dimensions.w, height: dimensions.h, rx: 13,
       fill: canvasPalette().card, stroke, 'stroke-width': node._notYetCreated ? 1 : 1.6,
       'stroke-dasharray': unavailable ? '5 4' : 'none',
       class: 'cog-node-card',
     }))
+    /* 左侧分类色条（设计提案 ④）：分类是主题自定义词表，颜色只表达"属于哪一类"。 */
+    const catColor = typeof opts.categoryColorFor === 'function'
+      ? opts.categoryColorFor(node.atomCategory)
+      : categoryColor(opts.atomCategories, node.atomCategory)
+    if (catColor) {
+      group.append(svgEl('rect', {
+        x: -dimensions.w / 2 + 5, y: -dimensions.h / 2 + 5, width: 3, height: Math.max(8, dimensions.h - 10),
+        rx: 1.5, fill: catColor, class: 'cog-node-category',
+      }))
+    }
     /* 证据在读者画布上压成紧凑"数据点"：单行短标签、不挂状态徽标（14 张全标"未评估"
        只是噪声），身份由外形和它与观点的连线表达。只用 opts.compactEvidence 开启，
        建设者画布保持原样。 */
@@ -304,7 +324,8 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const strengthScale = 0.7 + (Math.max(0, Math.min(100, Number(node.confidence ?? node.strength ?? 50))) / 100) * 0.6
     appendTypeGlyph(group, type, glyphX, glyphY, compact ? 0.55 : strengthScale)
     /* 类型文字标签已移除：形状 + 颜色已足够区分，label 只保留在无障碍文本与图例中。 */
-    const showPill = node._notYetCreated || (!compact && Boolean(readerMeta)) || status !== 'pending'
+    const showPill = showLabels && opts.statusPill !== false
+      && (node._notYetCreated || (!compact && Boolean(readerMeta)) || status !== 'pending')
     if (showPill) {
       const pillWidth = Math.max(44, Math.min(68, pillLabel.length * 10 + 13))
       const pillX = dimensions.w / 2 - pillWidth - 7
@@ -315,25 +336,26 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     const titleLines = compact
       ? splitNetworkTitle(node.title || '数据', nodeTitleCharsPerLine(dimensions.w - 26, 10.5, 20), 1)
       : splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w, 11, 28), 2)
-    titleLines.forEach((line, index) => group.append(svgText(line, {
+    if (showLabels) titleLines.forEach((line, index) => group.append(svgText(line, {
       x: -dimensions.w / 2 + (compact ? 21 : 12),
       y: compact ? 4 : titleLines.length === 1 ? 5 : -1 + index * 15,
       class: `cog-node-title${compact ? ' is-compact' : ''}`,
     })))
-    if (node._comparison?.currentTitle) {
+    if (showLabels && node._comparison?.currentTitle) {
       const comparisonText = `当前：${node._comparison.currentTitle}`
       group.append(svgText(splitNetworkTitle(comparisonText, nodeTitleCharsPerLine(dimensions.w, 11, 28), 1)[0], {
         x: -dimensions.w / 2 + 12, y: dimensions.h / 2 - 5, class: 'cog-node-comparison-label',
       }))
-    } else if (node._comparison?.currentStatus) {
+    } else if (showLabels && node._comparison?.currentStatus) {
       group.append(svgText(`当前状态：${NODE_STATUS_LABEL[node._comparison.currentStatus] || node._comparison.currentStatus}`, {
         x: -dimensions.w / 2 + 12, y: dimensions.h / 2 - 5, class: 'cog-node-comparison-label',
       }))
     }
+    }
     /* 渐进披露：信号计数只画在当前选中的那个原子上（demo 的"N 条信号 · N 支持 / N 挑战"），
        而不是 21 张卡片全摊开数字。未表态单独列出——那正是"证据已挂上、还没表态"的量。 */
     const counts = opts.readerCounts?.get?.(node.id)
-    if (counts && opts.focusNodeId === node.id && type !== 'evidence') {
+    if (counts && showCards && opts.focusNodeId === node.id && type !== 'evidence') {
       const parts = []
       if (counts.supports > 0) parts.push(`支持 ${counts.supports}`)
       if (counts.challenges > 0) parts.push(`挑战 ${counts.challenges}`)

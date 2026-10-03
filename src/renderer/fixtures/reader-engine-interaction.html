@@ -327,6 +327,32 @@
         !categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview')
         && overviewToggle.getAttribute('aria-pressed') === 'false')
 
+      /* LOD 分级（设计提案 02）：缩放决定画多少文字；文字是 SVG 里最贵的东西。 */
+      const lodBadge = categoryRoot.querySelector('.rdr-lod-badge')
+      const zoomSlider = categoryRoot.querySelector('.rdr-zoom-slider')
+      const lodAuto = categoryRoot.querySelector('.rdr-lod-auto')
+      const zoomTo = async (value) => { zoomSlider.value = String(value); zoomSlider.dispatchEvent(new Event('input', { bubbles: true })); await wait() }
+      await zoomTo(2)
+      check(`放大到 2.00× 出标题（徽标 ${lodBadge.textContent.trim()}）`,
+        lodBadge.textContent.includes('卡片+标题')
+        && categoryRoot.querySelectorAll('.cog-node-title').length === 3
+        && categoryRoot.querySelectorAll('.cog-node-card').length === 3)
+      await zoomTo(0.4)
+      check(`缩到 0.40× 只剩点阵（徽标 ${lodBadge.textContent.trim()}）`,
+        lodBadge.textContent.includes('点阵')
+        && categoryRoot.querySelectorAll('.cog-node-dot').length === 3
+        && categoryRoot.querySelectorAll('.cog-node-card').length === 0
+        && categoryRoot.querySelectorAll('.cog-node-title').length === 0)
+      await zoomTo(2)
+      lodAuto.click(); await wait()
+      await zoomTo(0.4)
+      check('LOD 手动＝不再按缩放抑制文字（缩到 0.40× 仍出标题）',
+        lodBadge.textContent.includes('卡片+标题') && categoryRoot.querySelectorAll('.cog-node-title').length === 3)
+      lodAuto.click(); await wait()
+      await zoomTo(1)
+      check('分类色条按主题词表上色（分类＝主题自定义，颜色只表达属于哪一类）',
+        categoryRoot.querySelectorAll('.cog-node-category').length >= 2)
+
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'
     } catch (error) {
