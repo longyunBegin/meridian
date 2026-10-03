@@ -1552,3 +1552,33 @@ body.tauri-macos{
 .rdr-map-legend-dot { width: 12px; height: 12px; border: 2px solid var(--text-3); border-radius: var(--r-pill); }
 .rdr-map-legend-desc { color: var(--text-3); }
 .rdr-map-empty { color: var(--text-2); font-size: var(--t-footnote); }
+
+/* 读者页第 ①③ 层：单条下钻（天平 + 证据收据 + 强度变化） */
+.rdr-detail { margin: 0 0 var(--sp-4); padding: var(--sp-4) var(--sp-5); border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--hairline)); border-radius: var(--r-lg); background: var(--surface); }
+.rdr-detail:empty { display: none; }
+.rdr-detail-body { display: grid; gap: var(--sp-4); }
+.rdr-detail-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); }
+.rdr-detail-title { flex: 1 1 240px; margin: 0; color: var(--text-1); font-size: var(--t-title); font-weight: var(--fw-semibold); }
+.rdr-detail-state { flex: none; padding: 1px 8px; border-radius: var(--r-pill); background: var(--hover); color: var(--text-2); font-size: var(--t-caption); }
+.rdr-detail-close { flex: none; }
+.rdr-detail-scale { display: grid; gap: 6px; }
+.rdr-detail-scale-row { display: flex; align-items: center; gap: var(--sp-2); }
+.rdr-detail-scale-label { flex: none; width: 34px; color: var(--text-2); font-size: var(--t-caption); }
+.rdr-detail-scale-bar { flex: 1 1 auto; height: 10px; border-radius: var(--r-pill); background: var(--hover); overflow: hidden; }
+.rdr-detail-scale-fill { display: block; height: 100%; }
+.rdr-detail-scale-fill.is-support { background: var(--green); }
+.rdr-detail-scale-fill.is-against { background: var(--red); }
+.rdr-detail-scale-count { flex: none; width: 22px; color: var(--text-1); font-size: var(--t-caption); text-align: right; font-variant-numeric: tabular-nums; }
+.rdr-detail-caliber { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
+.rdr-detail-subhead { margin: 0; color: var(--text-2); font-size: var(--t-caption); font-weight: var(--fw-semibold); }
+.rdr-detail-receipt-list { display: grid; gap: var(--sp-2); margin: var(--sp-2) 0 0; padding: 0; list-style: none; }
+.rdr-detail-receipt-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--hairline-soft); font-size: var(--t-caption); }
+.rdr-detail-receipt-dir { flex: none; color: var(--green-text); font-weight: var(--fw-semibold); }
+.rdr-detail-receipt-row.is-against .rdr-detail-receipt-dir { color: var(--red-text); }
+.rdr-detail-receipt-source { flex: 1 1 220px; min-width: 0; color: var(--text-1); }
+.rdr-detail-receipt-label, .rdr-detail-receipt-when, .rdr-detail-receipt-review, .rdr-detail-receipt-weight { flex: none; color: var(--text-3); }
+.rdr-detail-receipt-link { flex: none; color: var(--accent); }
+.rdr-detail-spark-block { display: grid; gap: var(--sp-2); }
+.rdr-detail-spark { display: flex; align-items: center; gap: var(--sp-3); }
+.rdr-detail-spark-canvas { width: 220px; height: 40px; }
+.rdr-detail-spark-text { margin: 0; color: var(--text-3); font-size: var(--t-caption); }

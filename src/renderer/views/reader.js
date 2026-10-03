@@ -13,7 +13,8 @@ import {
   graphNeighborhood, shortestNodePath, buildCategoryAggregation,
   synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
-import { renderReaderClaimMap } from '../components/reader-claim-map.js'
+import { renderReaderClaimMap, claimEvidenceStats } from '../components/reader-claim-map.js'
+import { renderReaderClaimDetail } from '../components/reader-claim-detail.js'
 import { renderReaderConclusion } from '../components/reader-conclusion.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import { renderArgumentOutline } from '../components/reader-argument-outline.js'
@@ -1063,21 +1064,45 @@ export function renderReaderView(theme, opts = {}) {
         evidenceForNode: (id) => evidenceForNode(state, id),
         onOpenClaim: focusAtom,
       }))
-    /* 第 ② 层「观点地图」：常显，紧跟结论页（三层下钻的第二层）。
-       位置复用 layoutThemeNetwork；大小/颜色口径写在组件图例上。 */
     const claimNodes = currentNodes.filter((node) => node && !node.archived
       && (node.nodeType === 'viewpoint' || node.kind === 'claim'))
     const mapGaps = buildGapList({ nodes: currentNodes, edges: currentEdges, inboxItems: inboxCache || [] })
+    const rowsOfClaim = (id) => { try { return evidenceForNode(state, id) || {} } catch { return {} } }
+
+    /* 第 ①③ 层「单条下钻」：就地展开在地图下方（读者不丢上下文）。
+       口径与地图共用 claimEvidenceStats（不另写一份，避免两处说法分叉）。 */
+    let detailClaimId = null
+    const detailHost = h('div', { class: 'rdr-detail' })
+    const closeClaimDetail = () => {
+      detailClaimId = null
+      detailHost.replaceChildren()
+    }
+    const openClaimDetail = (id) => {
+      const node = claimNodes.find((row) => row.id === id) || null
+      if (!node) return
+      detailClaimId = id
+      state.selectedNodeId = id
+      detailHost.replaceChildren(renderReaderClaimDetail({
+        node,
+        stats: claimEvidenceStats(node, rowsOfClaim),
+        rows: rowsOfClaim(id),
+        onClose: closeClaimDetail,
+      }))
+      detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+
+    /* 第 ② 层「观点地图」：常显，紧跟结论页（三层下钻的第二层）。
+       位置复用 layoutThemeNetwork；大小/颜色口径写在组件图例上。 */
     const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点地图' },
       renderReaderClaimMap({
         claims: claimNodes,
         edges: currentEdges,
         gaps: mapGaps,
-        evidenceForNode: (id) => evidenceForNode(state, id),
+        evidenceForNode: rowsOfClaim,
         selectedId: state.selectedNodeId,
-        onOpenClaim: focusAtom,
+        onOpenClaim: openClaimDetail,
       }))
-    article.replaceChildren(toolbar, conclusionBox, mapBox, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
+    article.replaceChildren(toolbar, conclusionBox, mapBox, detailHost, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()

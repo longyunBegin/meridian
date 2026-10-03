@@ -1,0 +1,113 @@
+import { h } from '../lib/dom.js'
+import { svgEl } from '../lib/theme-network-render.js'
+import { strengthSparkline } from '../lib/reader-model.js'
+import { CLAIM_STATES } from './reader-claim-map.js'
+
+/**
+ * 第 ①③ 层「单条下钻」：就地展开在地图下方（读者不丢上下文）。
+ *
+ * ① 天平：支持/反对的条数与独立来源家数（按来源名去重，口径写在界面上）。
+ * ③ 证据收据：逐笔可核对——方向、来源、时间、复核状态、原文链接。
+ *    诚实边界：**边上没有 weight 字段**（实测 `(无 weight)`），所以这里不给"权重"这一列，
+ *    并明说"账本里没有记录权重"，而不是拿别的数冒充权重。
+ * 强度曲线：复用 strengthSparkline（reader-model）。没有强度记录（confidence=null，中性）
+ *    时如实说"画不出曲线（不是强度为 0）"，不画一条假的平线。
+ */
+
+const relLabel = (rel) => (rel === 'contradicts' ? '反对' : rel === 'supports' ? '支持' : rel || '关系')
+
+const reviewLabel = (edge) => {
+  if (!edge) return '未记录'
+  if (edge.reviewDecision === 'rejected') return '已驳回（不计入天平）'
+  if (edge.reviewDecision) return '已确认'
+  if (edge.pendingReview) return '待人工复核'
+  return '已记录'
+}
+
+const whenOf = (row) => {
+  const raw = row?.source?.sourcePublishedAt || row?.source?.provenance?.publishedAt
+    || row?.source?.provenance?.fetchedAt || row?.source?.createdAt || null
+  if (!raw) return '时间未记录'
+  try { return String(raw).slice(0, 10) } catch { return '时间未记录' }
+}
+
+const urlOf = (row) => {
+  const raw = String(row?.source?.sourceUrl || row?.source?.provenance?.url || '').trim()
+  try { return /^https?:$/.test(new URL(raw).protocol) ? raw : '' } catch { return '' }
+}
+
+export function renderReaderClaimDetail({ node, stats = {}, rows = {}, onClose } = {}) {
+  const support = stats.support || 0
+  const challenge = stats.challenge || 0
+  const both = rows?.both?.length || 0
+  const stated = support + challenge
+  const total = Math.max(1, stated)
+  const meta = CLAIM_STATES[stats.state] || CLAIM_STATES.none
+
+  const receipt = [...(rows?.supports || []), ...(rows?.against || []), ...(rows?.both || [])]
+  const hasWeight = receipt.some((row) => row?.edge?.weight != null)
+  const unclassified = rows?.unclassified?.length || 0
+  const rejected = rows?.rejected?.length || 0
+
+  /* 强度曲线：复用 reader-model 的 strengthSparkline，画不出来就直说。 */
+  const spark = (() => { try { return strengthSparkline(node, { width: 220, height: 40 }) } catch { return null } })()
+  const sparkFigure = spark?.enough
+    ? h('div', { class: 'rdr-detail-spark' },
+      (() => {
+        const svg = svgEl('svg', { viewBox: '0 0 220 40', class: 'rdr-detail-spark-canvas', role: 'img', 'aria-label': `强度变化：最低 ${spark.min}，最高 ${spark.max}` })
+        svg.append(svgEl('polyline', { points: spark.points, fill: 'none', stroke: 'var(--accent)', 'stroke-width': '2' }))
+        return svg
+      })(),
+      h('span', { class: 'rdr-detail-spark-text' }, `强度 ${spark.min}–${spark.max}（${spark.values.length} 次记录）`))
+    : h('p', { class: 'rdr-detail-spark-text' }, '账本里还没有这条观点的强度记录，画不出曲线——没有记录不等于强度为 0。')
+
+  const receiptRow = (row) => {
+    const isAgainst = (rows?.against || []).includes(row)
+    const isBoth = (rows?.both || []).includes(row)
+    const url = urlOf(row)
+    return h('li', { class: `rdr-detail-receipt-row${isAgainst ? ' is-against' : ''}` },
+      h('span', { class: 'rdr-detail-receipt-dir' }, isBoth ? '± 两边' : isAgainst ? '− 反对' : '+ 支持'),
+      h('span', { class: 'rdr-detail-receipt-source' }, row?.source?.title || '（未命名来源）'),
+      h('span', { class: 'rdr-detail-receipt-label' }, row?.source?.provenance?.sourceLabel || row?.source?.sourceLabel || '来源未标注'),
+      h('span', { class: 'rdr-detail-receipt-when' }, whenOf(row)),
+      h('span', { class: 'rdr-detail-receipt-review' }, relLabel(row?.edge?.rel) + ' · ' + reviewLabel(row?.edge)),
+      hasWeight ? h('span', { class: 'rdr-detail-receipt-weight' }, `权重 ${Number(row?.edge?.weight).toFixed(2)}`) : null,
+      url ? h('a', { class: 'rdr-detail-receipt-link', href: url, target: '_blank', rel: 'noreferrer noopener' }, '原文 ↗') : null)
+  }
+
+  return h('div', { class: 'rdr-detail-body' },
+    h('div', { class: 'rdr-detail-head' },
+      h('h3', { class: 'rdr-detail-title' }, node?.title || '未命名观点'),
+      h('span', { class: `rdr-detail-state is-${stats.state || 'none'}` }, meta.label),
+      onClose ? h('button', { type: 'button', class: 'btn btn-sm rdr-detail-close', onclick: onClose }, '收起') : null),
+
+    /* ① 天平 */
+    h('div', { class: 'rdr-detail-scale' },
+      h('div', { class: 'rdr-detail-scale-row' },
+        h('span', { class: 'rdr-detail-scale-label' }, '支持'),
+        h('span', { class: 'rdr-detail-scale-bar' }, h('span', { class: 'rdr-detail-scale-fill is-support', style: `width:${Math.round((support / total) * 100)}%` })),
+        h('span', { class: 'rdr-detail-scale-count' }, String(support))),
+      h('div', { class: 'rdr-detail-scale-row' },
+        h('span', { class: 'rdr-detail-scale-label' }, '反对'),
+        h('span', { class: 'rdr-detail-scale-bar' }, h('span', { class: 'rdr-detail-scale-fill is-against', style: `width:${Math.round((challenge / total) * 100)}%` })),
+        h('span', { class: 'rdr-detail-scale-count' }, String(challenge))),
+      h('p', { class: 'rdr-detail-caliber' },
+        `独立来源 ${stats.sources || 0} 家（按来源名去重：同一家媒体发多条只算 1 家）。`
+        + (both ? ` 其中 ${both} 条同时给了支持和反对。` : '')
+        + (unclassified ? ` 另有 ${unclassified} 条挂载但未表态，不计入天平。` : '')
+        + (rejected ? ` 有 ${rejected} 条表态已被驳回，不计入。` : ''))),
+
+    /* ③ 证据收据 */
+    h('div', { class: 'rdr-detail-receipt' },
+      h('h4', { class: 'rdr-detail-subhead' }, `证据收据 · ${receipt.length} 笔`),
+      receipt.length
+        ? h('ul', { class: 'rdr-detail-receipt-list' }, ...receipt.map(receiptRow))
+        : h('p', { class: 'rdr-detail-caliber' }, '这条观点还没有任何已表态的来源。'),
+      hasWeight
+        ? null
+        : h('p', { class: 'rdr-detail-caliber' }, '账本里没有记录每条来源的权重，所以这里不给权重——宁可少一列，也不拿别的数冒充。')),
+
+    h('div', { class: 'rdr-detail-spark-block' },
+      h('h4', { class: 'rdr-detail-subhead' }, '强度变化'),
+      sparkFigure))
+}
