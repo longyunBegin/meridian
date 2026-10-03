@@ -771,9 +771,19 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       const title = String(input.title || recommendation.title || '').trim()
       if (!title || title.length > 180) throw new Error('新命题标题必须为 1–180 个字符')
       const nodeId = stableId('node')
+      /* 观点以引擎算好的强度落账：estimateStrength 的结果（0-1）存成 0-100。
+         没有这一步，后续 relation.declared 的强度更新会因 old == null 直接返回 null，
+         观点永远停在"没有强度记录"——读者页的强度与强度曲线也就永远画不出来。
+         只认 effectiveStrength：老事件里没有这个字段就保持 null，不拿 strength 冒充。 */
+      /* 注意 Number(null) === 0：必须先判 null/undefined，否则"没有强度"会被写成"强度 0"。 */
+      const rawEffective = recommendation.effectiveStrength
+      const initialConfidence = rawEffective == null || !Number.isFinite(Number(rawEffective))
+        ? null
+        : Math.round(Math.max(0, Math.min(1, Number(rawEffective))) * 100)
       drafts.push({ id: nodeId, actor: 'user', type: 'node.created', payload: {
         nodeType: 'viewpoint', title, detail: sourceQuote, status: 'pending',
         sourceKind: 'engine-reviewed', sourceRef,
+        ...(initialConfidence == null ? {} : { confidence: initialConfidence }),
       } })
       drafts.push({ id: evidenceId, actor: 'user', type: 'evidence.appended', payload: evidencePayload })
       drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {

@@ -882,9 +882,14 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       const strength = Number.isFinite(attribution.strength) ? Math.max(0, Math.min(1, attribution.strength)) : 0
       const metaMultiplier = Number.isFinite(result.metaMultiplier) ? Math.max(0, Math.min(1, result.metaMultiplier)) : 1
       const sourceUrl = String(item.provenance?.url || item.url || '').trim()
-      const effectiveStrength = kind === 'evidence'
-        ? estimateStrength({ isHardFact: normalizedStatement.type === 'hard', hasUrl: isUrl(sourceUrl), attributionStrength: strength, metaMultiplier })
-        : null
+      /* 两种建议都要算 effectiveStrength：
+         - evidence：这条来源对既有观点的力度；
+         - new-proposition：这条来源支撑"新建观点"的初始力度——观点将以它为初始强度落账，
+           否则 updateConfidence 会因 old == null 而永远不生效（强度与强度曲线永远是空的）。 */
+      const effectiveStrength = estimateStrength({
+        isHardFact: normalizedStatement.type === 'hard', hasUrl: isUrl(sourceUrl),
+        attributionStrength: strength, metaMultiplier,
+      })
       const recommendation = {
         kind, title, propositionId: proposition?.id || null, propositionTitle: proposition?.title || '', rel,
         strength, effectiveStrength, reason: String(attribution.reason || ''), change,
