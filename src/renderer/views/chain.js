@@ -772,8 +772,8 @@ async function loadConcept(theme, ledgerPane, opts) {
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
     const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
     const addManualOpinion = () => {
-      // 打开新增原子对话框（对齐设计稿）
-      openAddAtomDialog(theme, viewState.projection, opts)
+      // 在右侧详情区内联渲染新增原子表单（非弹窗）
+      renderAddAtomForm()
     }
     addNode.addEventListener('click', addManualOpinion)
     const queueCount = h('span', { class: 'builder-queue-count' }, '0')
@@ -907,6 +907,163 @@ async function loadConcept(theme, ledgerPane, opts) {
       const titleEl = head.querySelector('.inbox-title')
       if (titleEl && items.length) titleEl.append(h('span', { class: 'live' }))
       renderQueue()
+    }
+    /**
+     * 在右侧详情区内联渲染新增原子表单（非弹窗，对齐设计稿截图）
+     */
+    const renderAddAtomForm = () => {
+      clear(detail)
+      updateFlowSteps(null)
+      const typeOptions = [
+        { label: '技术路线', nodeType: 'concept' },
+        { label: '关键问题', nodeType: 'viewpoint' },
+        { label: '制造条件', nodeType: 'object' },
+        { label: '外部条件', nodeType: 'object' },
+        { label: '产业事件', nodeType: 'event' },
+        { label: '观点', nodeType: 'viewpoint' },
+        { label: '争议观点', nodeType: 'viewpoint', status: 'disputed' },
+        { label: '证据', nodeType: 'evidence' },
+        { label: '待验证工艺', nodeType: 'object' },
+      ]
+      const colorOptions = [
+        { name: '紫', value: '#a855f7' }, { name: '青', value: '#14b8a6' },
+        { name: '绿', value: '#22c55e' }, { name: '橙', value: '#f59e0b' },
+        { name: '蓝', value: '#2563eb' }, { name: '红', value: '#ef4444' },
+        { name: '灰', value: '#6b7280' },
+      ]
+      let selectedType = typeOptions[0]
+      let selectedColor = colorOptions[4]
+      const selectedNodeIds = new Set()
+      let selectedRel = 'supports'
+
+      const titleInput = h('input', { class: 'txt atom-form-input', type: 'text', maxlength: '180', placeholder: '例如：界面稳定是关键约束', 'aria-label': '原子名称' })
+      const descInput = h('textarea', { class: 'txt atom-form-textarea', rows: '4', placeholder: '例如：材料本体性能不能单独说明可用性……', 'aria-label': '当前理解' })
+      const timeInput = h('input', { class: 'txt atom-form-input', type: 'text', maxlength: '20', value: String(new Date().getFullYear()), 'aria-label': '时间起点' })
+      const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
+
+      const typePills = h('div', { class: 'atom-form-pills' })
+      for (const opt of typeOptions) {
+        const pill = h('button', { type: 'button', class: `atom-form-pill${opt === selectedType ? ' is-selected' : ''}` }, opt.label)
+        pill.addEventListener('click', () => {
+          selectedType = opt
+          typePills.querySelectorAll('.atom-form-pill').forEach((p) => p.classList.remove('is-selected'))
+          pill.classList.add('is-selected')
+        })
+        typePills.append(pill)
+      }
+
+      const colorPicker = h('div', { class: 'atom-form-colors' })
+      for (const color of colorOptions) {
+        const dot = h('button', {
+          type: 'button', class: `atom-form-dot${color === selectedColor ? ' is-selected' : ''}`,
+          style: `background:${color.value}`, 'aria-label': `颜色${color.name}`, title: color.name,
+        })
+        dot.addEventListener('click', () => {
+          selectedColor = color
+          colorPicker.querySelectorAll('.atom-form-dot').forEach((d) => d.classList.remove('is-selected'))
+          dot.classList.add('is-selected')
+        })
+        colorPicker.append(dot)
+      }
+
+      // 连接现有节点（可选）
+      const connectableNodes = projectedNodes(viewState.projection).filter((n) => !n.archived && !n.invalidated)
+      const relSelect = h('select', { class: 'txt atom-form-rel', 'aria-label': '关系类型' },
+        ...['supports', 'contradicts', 'derives', 'related'].map((v) =>
+          h('option', { value: v, selected: v === selectedRel },
+            { supports: '支持', contradicts: '反驳', derives: '推导', related: '相关' }[v])))
+      relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
+      const nodeList = h('div', { class: 'atom-form-nodelist' })
+      if (connectableNodes.length) {
+        for (const node of connectableNodes.slice(0, 20)) {
+          const cb = h('input', { type: 'checkbox', class: 'atom-form-check', id: `af-${node.id}` })
+          cb.addEventListener('change', () => {
+            if (cb.checked) selectedNodeIds.add(node.id)
+            else selectedNodeIds.delete(node.id)
+            label.classList.toggle('is-checked', cb.checked)
+          })
+          const label = h('label', { class: 'atom-form-nodeitem', for: `af-${node.id}` }, cb,
+            h('span', { class: 'atom-form-nodetitle' }, node.title || node.id))
+          nodeList.append(label)
+        }
+      } else {
+        nodeList.append(h('p', { class: 'atom-form-empty' }, '当前主题暂无可连接的节点，新原子将为孤立节点。'))
+      }
+
+      const doSave = async () => {
+        const title = titleInput.value.trim()
+        if (!title) { error.hidden = false; error.textContent = '请填写原子名称（一句话，不可再分）。'; titleInput.focus(); return }
+        saveBtn.disabled = true
+        error.hidden = true
+        try {
+          const result = await m.chainCreateNode(theme.id, {
+            nodeType: selectedType.nodeType, title, detail: descInput.value.trim(),
+            status: selectedType.status || 'pending', applicability: timeInput.value.trim(),
+            color: selectedColor.value, atomLabel: selectedType.label,
+          })
+          if (result?.ok === false) throw new Error(result.error || '保存未完成')
+          const newNodeId = result.node?.id || result.id
+          if (newNodeId && selectedNodeIds.size > 0 && typeof m.chainDeclareRelation === 'function') {
+            for (const targetId of selectedNodeIds) {
+              try { await m.chainDeclareRelation(theme.id, newNodeId, targetId, selectedRel) }
+              catch (e) { console.warn('关系追加失败:', e) }
+            }
+            toast(`已新增原子「${title}」，并连接到 ${selectedNodeIds.size} 个节点`)
+          } else {
+            toast(`已新增原子「${title}」（孤立节点）`)
+          }
+          selectedEntryId = null
+          persistQueueState()
+          renderQueue()
+          opts.onChanged?.()
+        } catch (e) {
+          error.hidden = false
+          error.textContent = e.message || String(e)
+          saveBtn.disabled = false
+        }
+      }
+      const doCancel = () => {
+        selectedEntryId = null
+        persistQueueState()
+        renderQueue()
+      }
+
+      const saveBtn = h('button', { type: 'button', class: 'btn btn-primary', onclick: doSave }, '新增原子')
+      detail.append(
+        h('div', { class: 'atom-form-card' },
+          h('div', { class: 'atom-form-head' },
+            h('span', { class: 'atom-badge' }, '新建'),
+            h('h3', {}, '新增原子节点')),
+          h('div', { class: 'atom-form-field' },
+            h('div', { class: 'atom-form-labelrow' },
+              h('span', { class: 'atom-form-label' }, '原子名称'),
+              h('span', { class: 'atom-form-hint' }, '一句话 · 不可再分')),
+            titleInput),
+          h('div', { class: 'atom-form-field' },
+            h('div', { class: 'atom-form-labelrow' },
+              h('span', { class: 'atom-form-label' }, '当前理解'),
+              h('span', { class: 'atom-form-hint' }, '用一两句话说明这个原子现在指什么')),
+            descInput),
+          h('div', { class: 'atom-form-2col' },
+            h('div', { class: 'atom-form-field' },
+              h('span', { class: 'atom-form-label' }, '类型'), typePills),
+            h('div', { class: 'atom-form-field' },
+              h('span', { class: 'atom-form-label' }, '时间起点'), timeInput)),
+          h('div', { class: 'atom-form-field' },
+            h('span', { class: 'atom-form-label' }, '颜色'), colorPicker),
+          h('div', { class: 'atom-form-field' },
+            h('div', { class: 'atom-form-labelrow' },
+              h('span', { class: 'atom-form-label' }, '连接到现有节点'),
+              h('span', { class: 'atom-form-hint' }, '可选；不选则为孤立节点')),
+            h('div', { class: 'atom-form-relrow' }, h('span', {}, '关系'), relSelect),
+            nodeList),
+          error,
+          h('div', { class: 'atom-form-foot' },
+            h('span', { class: 'atom-form-note' }, '新增原子会改变图谱结构。'),
+            h('div', { class: 'atom-form-actions' },
+              h('button', { type: 'button', class: 'btn', onclick: doCancel }, '取消'),
+              saveBtn))))
+      requestAnimationFrame(() => titleInput.focus())
     }
     const renderSelected = (entry) => {
       clear(detail)
@@ -1982,192 +2139,6 @@ function openEntryDialog(theme, proj, mode, opts, defaultNodeType = 'viewpoint')
  * 新增原子节点对话框（对齐设计稿）
  * 为读者的主题认知网络新增一个原子节点
  */
-function openAddAtomDialog(theme, proj, opts) {
-  const previousFocus = document.activeElement
-  // 可连接的现有节点（排除已归档/失效）
-  const connectableNodes = projectedNodes(proj).filter((node) => !node.archived && !node.invalidated)
-  // 类型选项（设计稿）→ 底层节点类型映射
-  const typeOptions = [
-    { label: '技术路线', nodeType: 'concept' },
-    { label: '关键问题', nodeType: 'viewpoint' },
-    { label: '制造条件', nodeType: 'object' },
-    { label: '外部条件', nodeType: 'object' },
-    { label: '产业事件', nodeType: 'event' },
-    { label: '观点', nodeType: 'viewpoint' },
-    { label: '争议观点', nodeType: 'viewpoint', status: 'disputed' },
-    { label: '证据', nodeType: 'evidence' },
-    { label: '待验证工艺', nodeType: 'object' },
-  ]
-  const colorOptions = [
-    { name: '紫', value: '#a855f7' },
-    { name: '青', value: '#14b8a6' },
-    { name: '绿', value: '#22c55e' },
-    { name: '橙', value: '#f59e0b' },
-    { name: '蓝', value: '#2563eb' },
-    { name: '红', value: '#ef4444' },
-    { name: '灰', value: '#6b7280' },
-  ]
-  let selectedType = typeOptions[0]
-  let selectedColor = colorOptions[4] // 默认蓝色
-
-  const backdrop = h('div', { class: 'chain-drawer-backdrop show cog-entry-backdrop' })
-  const dialog = h('section', { class: 'cog-entry-dialog show atom-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'atom-dialog-title', tabindex: '-1' })
-
-  const titleInput = h('input', { class: 'txt atom-input', type: 'text', maxlength: '180', placeholder: '例如：界面稳定是关键约束', 'aria-label': '原子名称' })
-  const descInput = h('textarea', { class: 'txt atom-textarea', rows: '4', placeholder: '例如：材料本体性能不能单独说明可用性……', 'aria-label': '当前理解' })
-  const timeInput = h('input', { class: 'txt atom-input', type: 'text', maxlength: '20', value: String(new Date().getFullYear()), 'aria-label': '时间起点' })
-  const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
-
-  // 类型选择 pills
-  const typePills = h('div', { class: 'atom-type-pills' })
-  for (const opt of typeOptions) {
-    const pill = h('button', { type: 'button', class: `atom-type-pill${opt === selectedType ? ' is-selected' : ''}` }, opt.label)
-    pill.addEventListener('click', () => {
-      selectedType = opt
-      typePills.querySelectorAll('.atom-type-pill').forEach((p) => p.classList.remove('is-selected'))
-      pill.classList.add('is-selected')
-    })
-    typePills.append(pill)
-  }
-
-  // 颜色选择
-  const colorPicker = h('div', { class: 'atom-color-picker' })
-  for (const color of colorOptions) {
-    const dot = h('button', {
-      type: 'button', class: `atom-color-dot${color === selectedColor ? ' is-selected' : ''}`,
-      style: `background:${color.value}`, 'aria-label': `颜色${color.name}`, title: color.name,
-    })
-    dot.addEventListener('click', () => {
-      selectedColor = color
-      colorPicker.querySelectorAll('.atom-color-dot').forEach((d) => d.classList.remove('is-selected'))
-      dot.classList.add('is-selected')
-    })
-    colorPicker.append(dot)
-  }
-
-  const close = () => {
-    document.removeEventListener('keydown', onKey)
-    backdrop.remove(); dialog.remove()
-    if (previousFocus?.isConnected) previousFocus.focus()
-  }
-  const onKey = (event) => {
-    if (event.key === 'Escape') { close(); return }
-  }
-
-  const save = async () => {
-    const title = titleInput.value.trim()
-    if (!title) { error.hidden = false; error.textContent = '请填写原子名称（一句话，不可再分）。'; titleInput.focus(); return }
-    const saveBtn = dialog.querySelector('[data-atom-save]')
-    saveBtn.disabled = true
-    error.hidden = true
-    try {
-      const result = await m.chainCreateNode(theme.id, {
-        nodeType: selectedType.nodeType,
-        title,
-        detail: descInput.value.trim(),
-        status: selectedType.status || 'pending',
-        applicability: timeInput.value.trim(),
-        color: selectedColor.value,
-        atomLabel: selectedType.label, // 保存显示用的原子类型标签
-      })
-      if (result?.ok === false) throw new Error(result.error || '保存未完成')
-      const newNodeId = result.node?.id || result.id
-      // 追加与所选现有节点的关系（可选；不选则为孤立节点）
-      if (newNodeId && selectedNodeIds.size > 0 && typeof m.chainDeclareRelation === 'function') {
-        for (const targetId of selectedNodeIds) {
-          try {
-            await m.chainDeclareRelation(theme.id, newNodeId, targetId, selectedRel)
-          } catch (relError) {
-            console.warn('关系追加失败:', relError)
-          }
-        }
-        toast(`已新增原子「${title}」，并连接到 ${selectedNodeIds.size} 个节点`)
-      } else {
-        toast(`已新增原子「${title}」（孤立节点）`)
-      }
-      close()
-      opts.onChanged?.()
-    } catch (saveError) {
-      error.hidden = false
-      error.textContent = saveError.message || String(saveError)
-      saveBtn.disabled = false
-    }
-  }
-
-  // 连接现有节点（可选；不选则为孤立节点）
-  const relOptions = [
-    { value: 'supports', label: '支持' },
-    { value: 'contradicts', label: '反驳' },
-    { value: 'derives', label: '推导' },
-    { value: 'related', label: '相关' },
-  ]
-  let selectedRel = 'supports'
-  const relSelect = h('select', { class: 'txt atom-rel-select', 'aria-label': '关系类型' },
-    ...relOptions.map((o) => h('option', { value: o.value, selected: o.value === selectedRel }, o.label)))
-  relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
-  const nodeCheckboxes = h('div', { class: 'atom-node-list' })
-  const selectedNodeIds = new Set()
-  if (connectableNodes.length) {
-    for (const node of connectableNodes.slice(0, 20)) { // 最多显示20个
-      const cb = h('input', { type: 'checkbox', id: `atom-connect-${node.id}`, value: node.id, class: 'atom-node-check' })
-      cb.addEventListener('change', () => {
-        if (cb.checked) selectedNodeIds.add(node.id)
-        else selectedNodeIds.delete(node.id)
-        // 更新选中态样式
-        label.classList.toggle('is-checked', cb.checked)
-      })
-      const label = h('label', { class: 'atom-node-item', for: `atom-connect-${node.id}` }, cb,
-        h('span', { class: 'atom-node-title' }, node.title || node.id))
-      nodeCheckboxes.append(label)
-    }
-  } else {
-    nodeCheckboxes.append(h('p', { class: 'atom-empty-note' }, '当前主题暂无可连接的节点，新原子将为孤立节点。'))
-  }
-
-  dialog.append(
-    h('header', { class: 'atom-dialog-head-v2' },
-      h('div', { class: 'atom-head-left' },
-        h('span', { class: 'atom-badge' }, '新建'),
-        h('h3', { id: 'atom-dialog-title' }, '新增原子节点')),
-      h('button', { type: 'button', class: 'atom-close-btn', 'aria-label': '关闭', onclick: close }, '×')),
-    h('div', { class: 'atom-body' },
-      h('div', { class: 'atom-field-v2' },
-        h('label', { class: 'atom-label-v2' }, '原子名称',
-          h('span', { class: 'atom-hint-v2' }, '一句话 · 不可再分')),
-        titleInput),
-      h('div', { class: 'atom-field-v2' },
-        h('label', { class: 'atom-label-v2' }, '当前理解',
-          h('span', { class: 'atom-hint-v2' }, '用一两句话说明这个原子现在指什么')),
-        descInput),
-      h('div', { class: 'atom-field-v2' },
-        h('span', { class: 'atom-label-v2' }, '类型'),
-        typePills),
-      h('div', { class: 'atom-row-2col' },
-        h('div', { class: 'atom-field-v2' },
-          h('label', { class: 'atom-label-v2' }, '时间起点'),
-          timeInput),
-        h('div', { class: 'atom-field-v2' },
-          h('span', { class: 'atom-label-v2' }, '颜色'),
-          colorPicker)),
-      h('div', { class: 'atom-field-v2' },
-        h('span', { class: 'atom-label-v2' }, '连接到现有节点',
-          h('span', { class: 'atom-hint-v2' }, '可选；不选则为孤立节点')),
-        h('div', { class: 'atom-rel-row' },
-          h('span', { class: 'atom-rel-label' }, '关系'),
-          relSelect),
-        nodeCheckboxes),
-      error),
-    h('footer', { class: 'atom-foot-v2' },
-      h('span', { class: 'atom-foot-note' }, '新增原子会改变图谱结构。'),
-      h('div', { class: 'atom-foot-actions' },
-        h('button', { type: 'button', class: 'btn', onclick: close }, '取消'),
-        h('button', { type: 'button', class: 'btn btn-primary', 'data-atom-save': '', onclick: save }, '新增原子')))
-  )
-  backdrop.addEventListener('click', close)
-  document.body.append(backdrop, dialog)
-  document.addEventListener('keydown', onKey)
-  requestAnimationFrame(() => titleInput.focus())
-}
 
 function renderLegend() {
   const sample = (color, dashed, arrow = true) => {
