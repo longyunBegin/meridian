@@ -12,7 +12,7 @@
  * 但一律引用这里的变量。
  */
 
-:root {
+:root{
   /* 字阶：对齐 macOS 常用档位（11 / 12 / 13 / 15 / 17 / 20 / 24 / 28） */
   --t-caption: 11px;
   --t-footnote: 12px;
@@ -100,10 +100,8 @@
   --orange-soft: rgba(255, 149, 0, 0.14);
   --purple-soft: rgba(175, 82, 222, 0.14);
   --teal-soft: rgba(0, 184, 184, 0.14);
-}
-
-/* 暗色：同一套语义，只换材质与中性阶 */
-@media (prefers-color-scheme: dark) {
+}/* 暗色：同一套语义，只换材质与中性阶 */
+@media (prefers-color-scheme: dark){
   :root {
     --hairline: rgba(255, 255, 255, 0.1);
     --hairline-strong: rgba(255, 255, 255, 0.16);
@@ -120,89 +118,57 @@
     --purple-text: #bf7ae8;
     --accent-text: #4aa3ff;
   }
-}
-
-/* ---------- 全局基线 ---------- */
+}/* ---------- 全局基线 ---------- */
 /* 有些面板自带 display:flex，会把原生 [hidden] 的 display:none 覆盖掉——按 tab 显示/隐藏必须可靠 */
-[hidden] { display: none !important; }
-html {
+[hidden]{ display: none !important; }html{
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-}
-
-body {
+}body{
   font-family: var(--font);
   font-size: var(--t-body);
   line-height: var(--lh-body);
   letter-spacing: var(--ls-body);
-}
-
-h1, h2, h3, h4 {
+}h1, h2, h3, h4{
   letter-spacing: var(--ls-title);
   line-height: var(--lh-tight);
   font-weight: var(--fw-semibold);
-}
-
-/* 数字对齐：账本/统计/强度这类数值列对齐后，观感立刻"工程化"变"产品化" */
-.tnum, [data-numeric],
-.rdr-node-count, .rdr-multiple-value, .rdr-chronicle-date, .rdr-chronicle-delta,
-.rdr-gap-kind, .rdr-axis-tick, .rdr-axis-date, .stat, .stats {
+}/* 数字对齐：账本/统计/强度这类数值列对齐后，观感立刻"工程化"变"产品化" */
+.tnum, [data-numeric], .rdr-multiple-value, .rdr-chronicle-date, .rdr-chronicle-delta, .rdr-gap-kind, .rdr-axis-tick, .rdr-axis-date, .stat, .stats{
   font-variant-numeric: tabular-nums;
-}
-
-::selection { background: var(--accent-soft); }
-
-/* 键盘焦点统一：鼠标点击不留描边，Tab 走查一定看得见 */
-:focus { outline: none; }
-:focus-visible {
+}::selection{ background: var(--accent-soft); }/* 键盘焦点统一：鼠标点击不留描边，Tab 走查一定看得见 */
+:focus{ outline: none; }:focus-visible{
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--r-sm);
-}
-button:focus-visible, a:focus-visible, [role="button"]:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+}button:focus-visible, a:focus-visible, [role="button"]:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible{
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-/* 交互默认：所有可点元素共享同一套过渡与按压反馈 */
-button, a, [role="button"], summary, .btn, select, input[type="range"] {
+}/* 交互默认：所有可点元素共享同一套过渡与按压反馈 */
+button, a, [role="button"], summary, .btn, select, input[type="range"]{
   transition: background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
     border-color var(--dur-1) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out),
     opacity var(--dur-1) var(--ease-out),
     transform var(--dur-1) var(--ease-out);
-}
-button:active, [role="button"]:active, .btn:active { transform: scale(0.985); }
-button:disabled, .btn:disabled, [aria-disabled="true"] { opacity: 0.42; cursor: default; transform: none; }
-
-/* 滚动条：覆盖式、细、悬停才明显（苹果的滚动条不会喧宾夺主） */
-* { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
+}button:active, [role="button"]:active, .btn:active{ transform: scale(0.985); }button:disabled, .btn:disabled, [aria-disabled="true"]{ opacity: 0.42; cursor: default; transform: none; }/* 滚动条：覆盖式、细、悬停才明显（苹果的滚动条不会喧宾夺主） */
+*{ scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }::-webkit-scrollbar{ width: 10px; height: 10px; }::-webkit-scrollbar-track{ background: transparent; }::-webkit-scrollbar-thumb{
   background-color: rgba(0, 0, 0, 0.18);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: var(--r-pill);
-}
-::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.3); }
-
-/* 动效可关闭：系统开了"减少动态效果"就全部退化为瞬时 */
-@media (prefers-reduced-motion: reduce) {
+}::-webkit-scrollbar-thumb:hover{ background-color: rgba(0, 0, 0, 0.3); }/* 动效可关闭：系统开了"减少动态效果"就全部退化为瞬时 */
+@media (prefers-reduced-motion: reduce){
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
-}
-
-
-/* ---------- 可访问性：点按目标 ----------
+}/* ---------- 可访问性：点按目标 ----------
    苹果的人机指南要求可点目标足够大；审计里读者页有 49 个元素不到 28px（含我自己新加的导航项）。
    min-height 只影响高度，不改变视觉宽度与文字。 */
-button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-queue-tab, .rdr-section-nav-item {
+button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-queue-tab, .rdr-section-nav-item{
   min-height: 28px;
 }
