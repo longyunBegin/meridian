@@ -1671,10 +1671,10 @@
 .meridian-theme .rdr-gaps,
 .editorial > .card,
 #inbox-section.card {
-  animation: md-rise var(--dur-3) var(--ease-out) both;
+  animation: md-rise var(--dur-3) var(--ease-out);
 }
 .meridian-theme .rdr-outline-atom > .rdr-outline-body,
 .meridian-theme .review-card-v2,
-.toast {animation: md-fade var(--dur-2) var(--ease-out) both; }
+.toast {animation: md-fade var(--dur-2) var(--ease-out); }
 /* 分段控件的选中项平滑移动而不是跳变 */
 .theme-view-tab, .inbox2-status-tab {transition: background-color var(--dur-2) var(--ease-out), color var(--dur-1) var(--ease-out), box-shadow var(--dur-2) var(--ease-out); }
