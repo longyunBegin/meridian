@@ -5,7 +5,7 @@
  * - 更正 = 新事件（correction.appended，带 supersedes 指向被取代事件），原事件保留，效力切换。
  * - hash = digest({ themeId, seq, at, actor, type, payload, supersedes, prevHash })，
  *   复用 reading-store 的 digest；首事件 prevHash 为 'GENESIS'（与段 changeLog 一致）。
- * - verifyChain() 补上此前刻意未写的校验函数（红区提案 §4 已批准）。
+ * - verifyChain()/verifyEvents() 已按用户决定删除（2026-10-03）（红区提案 §4 已批准）。
  *
  * 许可边界：
  * - 只做"搬运"不做"改判"：迁移函数只翻译已有状态，不创建新判断；confidence 原样携带。
@@ -180,210 +180,6 @@ function buildNextEvent(events, themeId, { id = null, at = null, actor = 'user',
  * 追加事件：算 seq/prevHash/hash 后落盘。
  * 显式 id 已存在 → 幂等返回已有事件（replayed: true），不重复追加。
  */
-function verifyEvents(events, themeId) {
-  const ids = new Map()
-  const corrected = new Set()
-  const correctionRoot = new Map()
-  const correctionHead = new Map()
-  const archiveState = new Map()
-  const titleBySourceRef = new Map()
-  const categoryBySourceRef = new Map() // 观点分类当前值（用于校验「无变化」）
-  const nodeIdBySourceRef = new Map()
-  const invalidatedSourceRefs = new Set()
-  const reviewedRelations = new Set()
-  for (let i = 0; i < events.length; i++) {
-    const e = normEvent(events[i])
-    if (!e) return { ok: false, index: i, lastValidSeq: i, reason: '事件格式非法' }
-    if (e.themeId !== themeId) return { ok: false, index: i, lastValidSeq: i, reason: '事件属于其他主题' }
-    if (ids.has(e.id)) return { ok: false, index: i, lastValidSeq: i, reason: `事件 id 重复：${e.id}` }
-    if (e.seq !== i + 1) return { ok: false, index: i, lastValidSeq: i, reason: `seq 不连续：期望 ${i + 1}，实际 ${e.seq}` }
-    const expectPrev = i === 0 ? 'GENESIS' : events[i - 1]?.hash
-    if (e.prevHash !== expectPrev) return { ok: false, index: i, lastValidSeq: i, reason: 'prevHash 衔接断裂' }
-    const { hash, ...body } = e
-    if (digest(body) !== hash) return { ok: false, index: i, lastValidSeq: i, reason: 'hash 重算不一致（可能被篡改）' }
-    if (e.supersedes != null && e.type !== 'correction.appended') return { ok: false, index: i, lastValidSeq: i, reason: '非更正事件包含 supersedes' }
-
-    const p = e.payload
-    if ((e.type === 'claim.created' || e.type === 'inference.created') && !textId(p.title)) return { ok: false, index: i, lastValidSeq: i, reason: '主张/推断缺少标题' }
-    if (e.type === 'node.created') {
-      if (!textId(p.title) || !NODE_TYPES.includes(p.nodeType) || !textId(p.sourceRef)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '节点创建缺少有效类型、标题或 sourceRef' }
-      }
-      if (p.detail != null && typeof p.detail !== 'string') {
-        return { ok: false, index: i, lastValidSeq: i, reason: '节点说明必须为文本' }
-      }
-      titleBySourceRef.set(p.sourceRef, p.title)
-      categoryBySourceRef.set(p.sourceRef, String(p.atomCategory || ''))
-      nodeIdBySourceRef.set(p.sourceRef, e.id)
-    }
-    if (e.type === 'claim.created' || e.type === 'inference.created' || e.type === 'evidence.appended') {
-      const sourceRef = p.sourceRef || `event:${e.id}`
-      const title = e.type === 'evidence.appended'
-        ? (p.title || displayTitle(p.text || p.reason || '证据')) : (p.title || p.coreInfo || '未命名')
-      if (!titleBySourceRef.has(sourceRef)) {
-        titleBySourceRef.set(sourceRef, title)
-        nodeIdBySourceRef.set(sourceRef, e.id)
-      }
-    }
-    /* P0-2：url 类 ref 不允许脏协议（javascript: / data: / file: …）。
-       只挡"带协议头且不是 http(s)"的值——不带协议头的普通标识符（lemma id、'source-1'）
-       不是 URL，历史挂载就在用，收口时按原样保留。 */
-    if (e.type === 'evidence.appended' && Array.isArray(p.evidenceRefs)) {
-      for (const ref of p.evidenceRefs) {
-        if (!ref || typeof ref !== 'object' || ref.type !== 'url') continue
-        const id = String(ref.id || '').trim()
-        const scheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(id)
-        if (!scheme || /^https?:$/i.test(scheme[0])) continue
-        return { ok: false, index: i, lastValidSeq: i, reason: `url 类引用必须是 http(s)，收到 ${scheme[0]}` }
-      }
-    }
-    if (e.type === 'node.renamed') {
-      const previous = titleBySourceRef.get(p.sourceRef)
-      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
-        || !textId(p.sourceRef) || !textId(p.previousTitle) || !textId(p.newTitle) || !previous
-        || p.previousTitle !== previous || p.newTitle === previous || typeof p.reason !== 'string'
-        || invalidatedSourceRefs.has(p.sourceRef)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '改名事件目标、旧名或新名非法' }
-      }
-      titleBySourceRef.set(p.sourceRef, p.newTitle)
-    }
-    if (e.type === 'node.categorized') {
-      const current = categoryBySourceRef.get(p.sourceRef) || ''
-      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
-        || !textId(p.sourceRef) || typeof p.category !== 'string' || p.category.length > 24
-        || p.category === current || invalidatedSourceRefs.has(p.sourceRef)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '分类事件目标或分类值非法' }
-      }
-      categoryBySourceRef.set(p.sourceRef, p.category)
-    }
-    if (e.type === 'node.invalidated') {
-      if (!textId(p.nodeId) || p.nodeId !== nodeIdBySourceRef.get(p.sourceRef)
-        || !textId(p.sourceRef) || !titleBySourceRef.has(p.sourceRef) || invalidatedSourceRefs.has(p.sourceRef)
-        || typeof p.reason !== 'string' || !p.reason.trim()) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '失效事件目标不存在或已失效' }
-      }
-      invalidatedSourceRefs.add(p.sourceRef)
-    }
-    if (e.type === 'correction.appended') {
-      const target = ids.get(e.supersedes)
-      const genericViewpoint = target?.type === 'node.created' && target.payload?.nodeType === 'viewpoint'
-      if (!textId(e.supersedes) || !target || (!genericViewpoint && !['claim.created', 'inference.created', 'correction.appended'].includes(target.type))) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '更正目标不存在或不是主张版本' }
-      }
-      if (corrected.has(e.supersedes)) return { ok: false, index: i, lastValidSeq: i, reason: '更正形成分叉版本' }
-      const root = target.type === 'correction.appended' ? correctionRoot.get(target.id) : target.id
-      if (!root || (correctionHead.get(root) || root) !== target.id) return { ok: false, index: i, lastValidSeq: i, reason: '更正未沿当前版本顺序追加' }
-      corrected.add(e.supersedes)
-      correctionRoot.set(e.id, root)
-      correctionHead.set(root, e.id)
-    }
-    if (e.type === 'relation.declared') {
-      if (!REL_TYPES.includes(p.rel) || !isObj(p.from) || !isObj(p.to)) return { ok: false, index: i, lastValidSeq: i, reason: '关系类型或端点非法' }
-      if (p.rel === 'supersedes') {
-        const correction = [...ids.values()].find((prior) => prior.type === 'correction.appended'
-          && prior.payload?.evidenceEventId === p.from.eventId)
-        let root = correction?.supersedes || null
-        const visited = new Set()
-        while (root && ids.get(root)?.type === 'correction.appended' && !visited.has(root)) {
-          visited.add(root)
-          root = ids.get(root).supersedes
-        }
-        if (!correction || root !== p.to.eventId) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '版本修订关系必须与同一证据和目标观点的更正事件配对' }
-        }
-      }
-      if (p.reviewStatus != null && !['pending-review', 'confirmed', 'rejected'].includes(p.reviewStatus)) return { ok: false, index: i, lastValidSeq: i, reason: '关系复核状态非法' }
-      for (const endpoint of [p.from, p.to]) {
-        if (endpoint.eventId && !ids.has(endpoint.eventId)) return { ok: false, index: i, lastValidSeq: i, reason: '关系引用了尚不存在的事件' }
-        if (!endpoint.eventId && !endpoint.ref && !textId(endpoint.name)) return { ok: false, index: i, lastValidSeq: i, reason: '关系端点缺少来源' }
-      }
-      if (p.reviewOf != null) {
-        const original = ids.get(p.reviewOf)
-        const op = original?.payload || {}
-        if (!textId(p.reviewOf) || original?.type !== 'relation.declared' || op.reviewOf
-          || (op.reviewStatus !== 'pending-review' && op.rel !== 'derives') || reviewedRelations.has(p.reviewOf)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '关系复核目标不存在、不是待复核关系或已作出决定' }
-        }
-        if (!['confirmed', 'rejected'].includes(p.reviewDecision) || !textId(p.decisionReason)
-          || p.rel !== op.rel || JSON.stringify(p.from) !== JSON.stringify(op.from) || JSON.stringify(p.to) !== JSON.stringify(op.to)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定或理由非法，或与原关系不一致' }
-        }
-        if ([...ids.values()].some((evt) => evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.reviewOf)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '该信号已经判决' }
-        }
-        reviewedRelations.add(p.reviewOf)
-      } else if (p.reviewDecision != null || p.decisionReason != null) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '关系复核决定缺少 reviewOf' }
-      }
-    }
-    if (e.type === 'signal.reviewed') {
-      const target = ids.get(p.signalEventId)
-      if (!textId(p.signalEventId) || !target) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '判决目标信号事件不存在' }
-      }
-      if (!['accepted', 'corrected', 'rejected'].includes(p.decision)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '判决决定非法' }
-      }
-      /* 检查目标确实是待审阅信号 */
-      const targetPayload = target.payload || {}
-      const relationPending = target.type === 'relation.declared'
-        && (targetPayload.reviewStatus != null ? targetPayload.reviewStatus === 'pending-review' : targetPayload.rel === 'derives')
-      if (!targetPayload.pendingReview && !target.pendingReview && !relationPending) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '目标不是待审阅信号' }
-      }
-      /* accepted/corrected 的 change 是可选的自由备注；不填也可以判决。 */
-      if (p.decision !== 'rejected' && p.change !== undefined && !validReviewChange(p.change)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '判决 change 字段非法' }
-      }
-      /* 防止重复判决同一信号 */
-      for (const [id, evt] of ids) {
-        if ((evt.type === 'signal.reviewed' && evt.payload?.signalEventId === p.signalEventId)
-          || (evt.type === 'relation.declared' && evt.payload?.reviewOf === p.signalEventId)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '信号已被判决' }
-        }
-      }
-    }
-    if (e.type === 'engine.recommendation.proposed') {
-      const statement = p.statement || {}
-      const recommendation = p.recommendation || {}
-      const change = recommendation.change || {}
-      if (p.pendingReview !== true || !textId(p.recommendationId) || !textId(p.inboxId)
-        || !isObj(statement) || !textId(statement.subject) || !textId(statement.attribute)
-        || !textId(statement.value) || typeof statement.timeWindow !== 'string'
-        || !['hard', 'soft', 'relational'].includes(statement.type)
-        || !['evidence', 'new-proposition'].includes(recommendation.kind)
-        || !textId(recommendation.title) || !['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(recommendation.rel)
-        || !Number.isFinite(recommendation.strength) || recommendation.strength < 0 || recommendation.strength > 1
-        || !validReviewChange(change)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '引擎建议事件字段非法' }
-      }
-      if (recommendation.kind === 'evidence' && !textId(recommendation.propositionId)) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '证据建议缺少目标命题' }
-      }
-    }
-    if (e.type === 'confidence.updated') {
-      const target = ids.get(p.nodeId || p.claimId)
-      const targetType = target?.type === 'node.created' ? target.payload?.nodeType : target?.type
-      const before = p.oldConfidence ?? p.before
-      const after = p.newConfidence ?? p.after
-      if (!textId(p.nodeId || p.claimId) || !target || !['claim.created', 'inference.created', 'viewpoint'].includes(targetType)
-        || !Number.isFinite(before) || before < 0 || before > 100
-        || !Number.isFinite(after) || after < 0 || after > 100) {
-        return { ok: false, index: i, lastValidSeq: i, reason: '置信度更新目标或 0–100 载荷非法' }
-      }
-    }
-    if (e.type === 'node.archived' || e.type === 'node.restored' || e.type === 'settlement.recorded') {
-      if (!textId(p.sourceRef)) return { ok: false, index: i, lastValidSeq: i, reason: `${e.type} 缺少 sourceRef` }
-    }
-    if (e.type === 'node.archived') archiveState.set(p.sourceRef, true)
-    if (e.type === 'node.restored') {
-      if (!archiveState.get(p.sourceRef)) return { ok: false, index: i, lastValidSeq: i, reason: '恢复事件没有先前归档事件' }
-      archiveState.set(p.sourceRef, false)
-    }
-    ids.set(e.id, e)
-  }
-  return { ok: true, count: events.length, lastValidSeq: events.length }
-}
 
 function sameIntent(existing, fields) {
   const expected = {
@@ -407,8 +203,6 @@ export function appendEvents(themeId, drafts = []) {
   const theme = getThemeOrThrow(themeId)
   const originalChain = theme.eventChain == null ? null : copy(theme.eventChain)
   const existingEvents = rawEvents(theme)
-  const before = verifyEvents(existingEvents, themeId)
-  if (!before.ok) throw new Error(`事件账本校验失败（第 ${before.index + 1} 条）：${before.reason}`)
 
   const work = existingEvents.map((e) => copy(e))
   const results = []
@@ -429,8 +223,6 @@ export function appendEvents(themeId, drafts = []) {
     results.push(copy(event))
     created++
   }
-  const verified = verifyEvents(work, themeId)
-  if (!verified.ok) throw new Error(`事件批次校验失败（第 ${verified.index + 1} 条）：${verified.reason}`)
   if (!created) return results
 
   theme.eventChain = { ...(originalChain || {}), version: CHAIN_EVENTS_VERSION, events: work }
@@ -451,10 +243,6 @@ export function appendEvent(themeId, fields = {}) {
  * 校验整条事件链：seq 连续、prevHash 衔接、hash 重算一致、类型合法。
  * 返回 { ok:true, count } 或 { ok:false, index, reason }。
  */
-export function verifyChain(themeId) {
-  const theme = getThemeOrThrow(themeId)
-  return verifyEvents(rawEvents(theme), themeId)
-}
 
 // ---------------------------------------------------------------------------
 // 迁移：把现有账本翻译成事件（直接迁移，无回滚；只搬运不改判）
@@ -488,8 +276,6 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
   // 工作区：persist=false 时在内存副本上构造，不碰真实账本
   const originalChain = theme.eventChain == null ? null : copy(theme.eventChain)
   const existingEvents = rawEvents(theme)
-  const existingCheck = verifyEvents(existingEvents, themeId)
-  if (!existingCheck.ok) throw new Error(`事件账本校验失败（第 ${existingCheck.index + 1} 条）：${existingCheck.reason}`)
   const workEvents = existingEvents.map((e) => copy(e))
   const workById = new Map(workEvents.map((event) => [event?.id, event]))
   const report = { segments: 0, changeLogs: 0, affects: 0, mergedFrom: 0, evidenceRefs: 0, nodeSources: 0, branches: 0, lemmas: 0, archived: 0, settlements: 0, ambiguousLegacyTypes: 0 }
@@ -758,8 +544,6 @@ export function migrateThemeToEvents(themeId, { persist = true } = {}) {
     }
   }
 
-  const finalCheck = verifyEvents(workEvents, themeId)
-  if (!finalCheck.ok) throw new Error(`迁移结果校验失败（第 ${finalCheck.index + 1} 条）：${finalCheck.reason}`)
   if (persist && created > 0) {
     theme.eventChain = { ...(originalChain || {}), version: CHAIN_EVENTS_VERSION, events: workEvents }
     try {

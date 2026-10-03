@@ -13,7 +13,7 @@
  * 端点解析：{eventId} → 对应节点；{ref} → 已有节点或外部证据节点；
  * {name} → 按标题找主张节点，找不到则为外部节点。
  */
-import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, verifyChain, NODE_TYPES, REL_TYPES } from './chain-events.js'
+import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, NODE_TYPES, REL_TYPES } from './chain-events.js'
 import { updateConfidence, estimateStrength } from './engine-confidence.js'
 import { digest } from './reading-store.js'
 import { randomUUID } from 'node:crypto'
@@ -463,12 +463,10 @@ export function chainScope(projection) {
 export function getChainProjection(themeId, options = {}) {
   const migrateLegacy = options.migrateLegacy ?? options.migrateIfEmpty ?? true
   let events = getEvents(themeId)
-  let integrity = verifyChain(themeId)
-  if (migrateLegacy && integrity.ok && (events.length === 0 || hasUnmigratedNodeSources(themeId))) {
+  if (migrateLegacy && (events.length === 0 || hasUnmigratedNodeSources(themeId))) {
     const { created } = migrateThemeToEvents(themeId)
     if (created > 0) {
       events = getEvents(themeId)
-      integrity = verifyChain(themeId)
     }
   }
   return projectionResult(themeId, events, integrity)
@@ -499,9 +497,7 @@ function projectionResult(themeId, events, integrity, history = null) {
 export function getChainProjectionAt(themeId, sequence) {
   if (!Number.isSafeInteger(sequence)) throw new Error('回放序号必须是安全整数')
   const events = getEvents(themeId)
-  const integrity = verifyChain(themeId)
-  const validPrefixSeq = integrity.ok ? events.length : (integrity.lastValidSeq || 0)
-  const selectedSeq = Math.max(0, Math.min(validPrefixSeq, sequence))
+  const selectedSeq = Math.max(0, Math.min(events.length, sequence))
   const replayEvents = events.slice(0, selectedSeq)
   const replayIntegrity = { ...integrity, replayed: true, selectedSeq, validPrefixSeq }
   return projectionResult(themeId, replayEvents, replayIntegrity, {
@@ -516,9 +512,7 @@ export function getChainProjectionAt(themeId, sequence) {
 /** Archive browsing is deliberately read-only and does not trigger legacy migration. */
 export function getArchivedProjectionNodes(themeId) {
   const events = getEvents(themeId)
-  const integrity = verifyChain(themeId)
-  const safeEvents = integrity.ok ? events : events.slice(0, integrity.lastValidSeq || 0)
-  const projection = projectEvents(safeEvents)
+  const projection = projectEvents(events)
   return {
     themeId,
     integrity,
@@ -540,8 +534,6 @@ export function createProjectedNode(themeId, input = {}) {
   if (!NODE_TYPES.includes(nodeType)) throw new Error('请选择概念、对象、事件、观点或证据类型')
   if (!title || title.length > 180) throw new Error('标题必须为 1–180 个字符')
   if (detail.length > 10000) throw new Error('说明不能超过 10000 个字符')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const id = `evt:node:${randomUUID()}`
   return appendEvent(themeId, {
     id,
@@ -564,8 +556,6 @@ export function createProjectedNode(themeId, input = {}) {
 export function setProjectedConfidence(themeId, nodeId, value, reason = '') {
   const next = Math.round(Number(value))
   if (!Number.isFinite(next) || next < 0 || next > 100) throw new Error('强度必须是 0–100 的整数')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
   if (!node) throw new Error('节点不存在')
   if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能设定强度')
@@ -592,8 +582,6 @@ export function setProjectedConfidence(themeId, nodeId, value, reason = '') {
 /** Categorize a live node by appending its new category (append-only; history kept). */
 export function categorizeProjectedNode(themeId, nodeId, category) {
   const value = String(category || '').trim().slice(0, 24)
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
   if (!node) throw new Error('节点不存在')
   if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能改分类')
@@ -609,8 +597,6 @@ export function categorizeProjectedNode(themeId, nodeId, category) {
 export function renameProjectedNode(themeId, nodeId, newTitle, reason = '') {
   const title = String(newTitle || '').trim()
   if (!title || title.length > 180) throw new Error('新名称必须为 1–180 个字符')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
   if (!node) throw new Error('节点不存在')
   if (node.archived || node.invalidated) throw new Error('已失效或归档节点不能改名')
@@ -636,8 +622,6 @@ export function correctProjectedNode(themeId, nodeId, input = {}) {
   const requestId = String(input.requestId || '').trim().slice(0, 200)
   if (!newValue || newValue.length > 10000) throw new Error('修订后的观点说明必须为 1–10000 个字符')
   if (!reason || reason.length > 1000) throw new Error('请填写不超过 1000 个字符的修订原因')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const events = getEvents(themeId)
   const eventId = requestId
     ? `evt:manual-correction:${digest({ themeId, nodeId, requestId }).slice(0, 24)}`
@@ -668,8 +652,6 @@ export function correctProjectedNode(themeId, nodeId, input = {}) {
 export function invalidateProjectedNode(themeId, nodeId, reason = '') {
   const invalidationReason = String(reason || '').trim()
   if (!invalidationReason) throw new Error('请填写失效原因')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const node = projectEvents(getEvents(themeId)).nodes.find((candidate) => candidate.id === nodeId && !candidate.external)
   if (!node) throw new Error('节点不存在')
   if (node.archived || node.invalidated) throw new Error('该节点已失效或归档')
@@ -692,8 +674,6 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
   if (!text) throw new Error('请填写证据摘要或原文摘录')
   /* 佐证与反驳是同一种动作的两种方向：用户显式选择，AI 只建议不决定。 */
   const rel = input.rel === 'contradicts' ? 'contradicts' : 'supports'
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const target = projectEvents(getEvents(themeId)).nodes.find((node) => node.id === targetNodeId
     && !node.external && !node.archived && !node.invalidated && node.nodeType !== 'evidence')
   if (!target) throw new Error('请选择一个未归档、未失效的非证据节点')
@@ -756,8 +736,6 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
 /** Persist one engine recommendation decision and its consequences as one append-only batch. */
 export function reviewEngineRecommendation(themeId, recommendationEventId, decision, input = {}) {
   if (!['accepted', 'corrected', 'rejected'].includes(decision)) throw new Error('请选择接受、修正或驳回')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const events = getEvents(themeId)
   const proposal = events.find((event) => event.id === recommendationEventId && event.type === 'engine.recommendation.proposed')
   if (!proposal) throw new Error('找不到待审核的引擎建议')
@@ -920,8 +898,6 @@ export function declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) {
   if (!REL_TYPES.includes(rel)) throw new Error('请选择有效的关系类型')
   if (rel === 'supersedes') throw new Error('版本修订关系必须与观点更正事件一并追加')
   if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) throw new Error('请选择两个不同的节点')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const nodes = projectEvents(getEvents(themeId)).nodes
   const from = nodes.find((node) => node.id === fromNodeId && !node.external && !node.archived && !node.invalidated)
   const to = nodes.find((node) => node.id === toNodeId && !node.external && !node.archived && !node.invalidated)
@@ -950,8 +926,6 @@ export function reviewProjectedRelation(themeId, relationEventId, decision, reas
   if (!['confirmed', 'rejected'].includes(decision)) throw new Error('请选择确认或驳回')
   const decisionReason = String(reason || '').trim()
   if (!decisionReason) throw new Error('请填写复核理由')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const events = getEvents(themeId)
   const original = events.find((event) => event.id === relationEventId
     && event.type === 'relation.declared' && !event.payload?.reviewOf
@@ -981,8 +955,6 @@ export function reviewProjectedRelation(themeId, relationEventId, decision, reas
 export function restoreProjectedNodes(themeId, sourceRefs = [], reason = '') {
   const requested = [...new Set((sourceRefs || []).filter((ref) => typeof ref === 'string' && ref))]
   if (!requested.length) throw new Error('sourceRef 无效')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const nodes = projectEvents(getEvents(themeId)).nodes
   const targets = requested.map((sourceRef) => nodes.find((n) => !n.external && n.sourceRef === sourceRef && n.archived)).filter(Boolean)
   if (!targets.length || !targets.some((n) => n.sourceRef === requested[0])) throw new Error('该节点当前未归档')
@@ -1001,8 +973,6 @@ export function restoreProjectedNodes(themeId, sourceRefs = [], reason = '') {
 /** Archive changes only the current projection; no source claim or confidence is rewritten. */
 export function archiveProjectedNode(themeId, sourceRef, reason = '') {
   if (!sourceRef || typeof sourceRef !== 'string') throw new Error('sourceRef 无效')
-  const integrity = verifyChain(themeId)
-  if (!integrity.ok) throw new Error(`事件账本校验失败：${integrity.reason}`)
   const node = projectEvents(getEvents(themeId)).nodes.find((n) => !n.external && n.sourceRef === sourceRef)
   if (!node) throw new Error('节点不存在')
   if (node.archived) throw new Error('该节点已归档')

@@ -41,7 +41,7 @@ import {
   archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
   createProjectedNode, renameProjectedNode, categorizeProjectedNode, setProjectedConfidence, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
 } from './chain-projector.js'
-import { getEvents as getChainEvents, verifyChain as verifyThemeChain, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
+import { getEvents as getChainEvents, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
 import { createHash } from 'node:crypto'
 import { emitPlatformEvent } from './runtime-services.js'
