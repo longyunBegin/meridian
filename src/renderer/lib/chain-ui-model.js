@@ -113,7 +113,7 @@ const EVENT_KIND_SUMMARY = {
   'settlement.recorded': '结算',
   'topic.linked': '主题关联',
 }
-const RELATION_LABEL = {
+export const RELATION_LABEL = {
   supports: '支持', contradicts: '挑战', derives: '推导', supersedes: '修订', related: '相关',
   influences: '影响', depends_on: '依赖', part_of: '归属', precedes: '时间先于',
 }

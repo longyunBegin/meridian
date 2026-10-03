@@ -18,7 +18,7 @@ import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/bui
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
 import { DIRECTION_META, NATURE_META } from '../lib/reader-model.js'
-import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, requestBuilderNodeFocus, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
+import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, requestBuilderNodeFocus, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, RELATION_LABEL, searchGraphNodes } from '../lib/chain-ui-model.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType,
@@ -1294,6 +1294,7 @@ const firstAffectedNode = affectedNodeIdForEvent
 /* ------------------------------------------------------------------ */
 
 const EVENT_KIND_LABEL = {
+  'engine.recommendation.proposed': '模型建议',
   'evidence.appended': '新增证据',
   'claim.created': '新增原子',
   'inference.created': '新增推断',
@@ -1315,6 +1316,11 @@ const fmtAt = (at) => {
 function eventSummary(e, titleOf) {
   const p = e.payload || {}
   switch (e.type) {
+    case 'engine.recommendation.proposed': {
+      const rec = p.recommendation || {}
+      const rel = rec.rel ? `${RELATION_LABEL[rec.rel] || rec.rel} · ` : ''
+      return `${rel}${String(rec.change?.note || rec.reason || rec.title || '').trim() || '模型提出了一条建议，等你确认'}`
+    }
     case 'correction.appended': {
       const t = titleOf?.(p.claimEventId || p.targetEventId || e.supersedes) || ''
       return `更正${t ? `「${t}」` : ''}：${p.oldValue || '—'} → ${p.newValue || '—'}${p.reason ? `（${p.reason}）` : ''}`
@@ -1354,6 +1360,11 @@ function integrityText(integrity) {
 
 function eventObjectLabel(e, events, byId) {
   const p = e.payload || {}
+  /* 模型建议还没落到具体节点时，至少说清它在建议什么，别丢一句"未命名对象"。 */
+  if (e.type === 'engine.recommendation.proposed') {
+    const rec = p.recommendation || {}
+    return String(rec.propositionTitle || rec.title || p.statement?.subject || '').trim() || '这条建议还没落到具体对象'
+  }
   const titleOf = (id) => {
     const target = byId.get(id)
     const tp = target?.payload || {}
@@ -1495,7 +1506,8 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   const prev = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => setPage(page - 1) }, '更早')
   const next = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => setPage(page + 1) }, '较新')
   const pagination = h('div', { class: 'cog-pagination', 'aria-label': '账本分页' }, prev, pageLabel, next)
-  pane.append(
+  /* mount 会跳过 null/false：原生 append(null) 会追加字符串 "null"（用户截图里那行 null 就是这么来的）。 */
+  mount(pane,
     h('div', { class: 'cog-ledger-head' },
       h('span', { class: 'cog-ledger-num' }, '01'),
       h('span', { class: 'cog-ledger-title', id: handlers.titleId || '' }, '账本 · 谁在什么时候改了什么'),
