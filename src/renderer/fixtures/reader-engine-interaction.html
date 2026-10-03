@@ -105,6 +105,15 @@
         && builderHost.textContent.includes('时间未注明'))
       check('所有候选都明确要求用户确认且提供驳回', cards.every((card) => card.textContent.includes('确认并追加')
         && [...card.querySelectorAll('button')].some((button) => button.textContent.includes('驳回'))))
+      /* P0-5：变更预览旁的溯源条固定 5 格，缺项写「未记录」，有 URL 才给「查看来源」。 */
+      check('P0-5 变更预览旁有固定 5 格溯源条',
+        cards.every((card) => card.querySelectorAll('.review-trace-slot').length === 5))
+      check('P0-5 溯源条五格分别是来源名称/链接/发布时间/抓取摄入/适用时间',
+        [...cards[0].querySelectorAll('.review-trace-slot i')].map((el) => el.textContent.trim()).join(',')
+          === '来源名称,来源链接,来源发布时间,抓取 / 摄入,适用时间')
+      check('P0-5 有 URL 的条目给出「查看来源」，缺适用时间的条目如实写「未记录」',
+        builderHost.querySelectorAll('.review-trace-link').length === 3
+        && [...builderHost.querySelectorAll('.review-trace-slot b.is-missing')].some((el) => el.textContent.trim() === '未记录'))
 
       const byText = (root, text) => [...root.querySelectorAll('button')].find((button) => button.textContent.includes(text))
       byText(cards[0], '驳回').click()
@@ -148,7 +157,10 @@
       document.querySelector('#fixture-root').append(refreshed)
       await wait()
       check('重新挂载从追加 signal.reviewed 恢复接受/驳回状态且按钮禁用', [...refreshed.querySelectorAll('.review-card-v2')]
-        .every((card) => card.classList.contains('is-done') && [...card.querySelectorAll('button')].every((button) => button.disabled)))
+        .every((card) => card.classList.contains('is-done')
+          /* 只要求"审阅动作"按钮禁用；溯源条的「查看来源」是只读导航，已决策后仍应可点。 */
+          && [...card.querySelectorAll('.review-foot-actions button')].every((button) => button.disabled)
+          && ![...card.querySelectorAll('button')].some((button) => /确认并追加|驳回/.test(button.textContent) && !button.disabled)))
       check('重复点击的权限受到禁用态阻止，没有二次调用 bridge', bridgeCalls.length === 3)
 
       const generateHost = document.createElement('section')

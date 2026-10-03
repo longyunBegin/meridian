@@ -267,6 +267,27 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     })()
     const sourceDesc = String(item.text || '').replace(/\s+/g, ' ').slice(0, 120)
     const extractedQuote = statement.sourceText || ''
+    /* P0-5 溯源条固定 5 格：来源名称 · 来源链接 ↗ · 来源发布时间 · 抓取/摄入 · 适用时间。
+       缺项也留格子写「未记录」——读者不该把"没有记录"误读成"不适用"。 */
+    const sourceUrl = (() => {
+      const raw = String(item.provenance?.url || '').trim()
+      try { return /^https?:$/.test(new URL(raw).protocol) ? raw : '' } catch { return '' }
+    })()
+    const fetchedAt = item.provenance?.fetchedAt || null
+    const ingestedAt = item.createdAt || item.capturedAt || item.provenance?.capturedAt || null
+    const applicability = String(item.applicability || statement.timeWindow || '').trim()
+    const traceBar = h('div', { class: 'review-trace-bar', 'aria-label': '溯源' },
+      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源名称'), h('b', {}, sourceLabel)),
+      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源链接'),
+        sourceUrl
+          ? h('button', { type: 'button', class: 'review-trace-link', title: sourceUrl, onclick: () => m.openExternal?.(sourceUrl) }, '↗ 查看来源')
+          : h('b', { class: 'is-missing' }, '未记录')),
+      h('span', { class: 'review-trace-slot' }, h('i', {}, '来源发布时间'),
+        h('b', { class: publishTime === '未记录' ? 'is-missing' : '' }, publishTime)),
+      h('span', { class: 'review-trace-slot' }, h('i', {}, '抓取 / 摄入'),
+        h('b', {}, `${fetchedAt ? String(fetchedAt).slice(0, 10) : '未记录'} / ${ingestedAt ? String(ingestedAt).slice(0, 10) : '未记录'}`)),
+      h('span', { class: 'review-trace-slot' }, h('i', {}, '适用时间'),
+        h('b', { class: applicability ? '' : 'is-missing' }, applicability || '未记录')))
     const targetTitle = targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '未映射目标'
     const polarity = relation.value || suggestion.rel || 'related'
     const polarityLabel = { supports: '支持', contradicts: '反驳', derives: '推导', supersedes: '修订', related: '相关' }[polarity] || polarity
@@ -359,6 +380,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
         h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。'))
         : h('div', { class: 'review-change-summary' },
           h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
+      // P0-5 溯源条：紧邻变更预览，固定 5 格
+      traceBar,
       // 高级选项（折叠）：新原子标题按需挂载
       advancedOptions,
       // 底部操作
