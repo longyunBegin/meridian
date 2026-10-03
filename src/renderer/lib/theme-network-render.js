@@ -8,13 +8,13 @@ const ARGUMENT_TYPES = new Set(['supports', 'derives', 'contradicts'])
 const REVISION_TYPES = new Set(REVISION_RELATIONS)
 const MAX_VISIBLE_EDGES = 72
 
-function svgEl(name, attributes = {}) {
+export function svgEl(name, attributes = {}) {
   const element = document.createElementNS(SVG_NS, name)
   for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value))
   return element
 }
 
-function svgText(value, attributes = {}) {
+export function svgText(value, attributes = {}) {
   const element = svgEl('text', attributes)
   element.textContent = String(value ?? '')
   return element

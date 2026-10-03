@@ -1534,3 +1534,21 @@ body.tauri-macos{
 .rdr-conclusion-gaps li { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) 0; border-top: 1px solid var(--hairline-soft); }
 .rdr-conclusion-gap-title { flex: none; color: var(--text-1); font-size: var(--t-footnote); }
 .rdr-conclusion-gap-detail { color: var(--text-3); font-size: var(--t-caption); }
+
+/* 读者页第 ② 层：观点地图（大小=已表态来源条数，颜色=证据状况） */
+.rdr-map { margin: 0 0 var(--sp-5); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--hairline); border-radius: var(--r-lg); background: var(--surface); }
+.rdr-map-body { display: grid; gap: var(--sp-3); }
+.rdr-map-canvas { display: block; width: 100%; height: auto; }
+.rdr-map-link { stroke: var(--hairline); stroke-width: 1.5; }
+.rdr-map-circle { fill-opacity: .16; stroke-width: 2; }
+.rdr-map-bubble { cursor: pointer; }
+.rdr-map-bubble:focus-visible { outline: none; }
+.rdr-map-bubble:focus-visible .rdr-map-circle { stroke-width: 4; }
+.rdr-map-bubble.is-selected .rdr-map-circle { stroke-width: 4; }
+.rdr-map-label { fill: var(--text-1); font-size: var(--t-caption); }
+.rdr-map-caliber { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
+.rdr-map-legend { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin: 0; padding: 0; list-style: none; }
+.rdr-map-legend-item { display: flex; align-items: center; gap: 6px; font-size: var(--t-caption); color: var(--text-2); }
+.rdr-map-legend-dot { width: 12px; height: 12px; border: 2px solid var(--text-3); border-radius: var(--r-pill); }
+.rdr-map-legend-desc { color: var(--text-3); }
+.rdr-map-empty { color: var(--text-2); font-size: var(--t-footnote); }

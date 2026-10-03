@@ -43,12 +43,12 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
   if (!nodeCount) {
     verdict = '这个主题还没有可以被支持或反驳的观点——目前只有节点与来源。'
   } else {
-    /* 强度为 0 或没有强度记录时，不许叫"最站得住"——那只是"账本里还没有把它推起来的记录"。 */
+    /* 没有强度记录（null = 中性，不是 0）时，不许叫"最站得住"——那只是"账本里还没有这条记录"。 */
     const strengthReady = strongest && Number(strongest.strength) > 0
     const anyStrength = claims.some((node) => Number(node?.confidence ?? node?.strength ?? 0) > 0)
     const head = strengthReady
       ? `这个主题有 ${nodeCount} 条观点。目前最站得住的是「${strongest.title}」（强度 ${strongest.strength}%）`
-      : `这个主题有 ${nodeCount} 条观点。${anyStrength ? '还没有哪一条明显更站得住' : '账本里还没有任何观点的强度被推起来（都是 0）'}`
+      : `这个主题有 ${nodeCount} 条观点。${anyStrength ? '还没有哪一条明显更站得住' : '账本里还没有任何观点的强度记录（中性，不等于 0）'}`
     let tail = '；还没有观点同时收到支持与反对的证据'
     if (disputed && disputed.support > 0 && disputed.challenge > 0) {
       tail = Math.abs(disputed.support - disputed.challenge) <= 1
