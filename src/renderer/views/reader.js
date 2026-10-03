@@ -728,12 +728,10 @@ export function renderReaderView(theme, opts = {}) {
         h('div', {}, h('p', { class: 'rdr-kicker' }, '主题模型 · 读者视图'), h('h1', { class: 'rdr-title' }, theme?.name || '未命名主题')),
         h('span', { class: 'rdr-scope-badge' }, `${currentNodes.length} 个节点`),
         h('button', { type: 'button', class: 'btn btn-sm rdr-builder-link', onclick: () => opts.onOpenBuilder?.('network') }, '建设者视图')),
-      h('div', { class: 'rdr-synthesis' },
-        h('span', { class: 'rdr-synthesis-mark', 'aria-hidden': 'true' }, '◎'),
-        h('div', {}, h('strong', {}, '如何阅读这张图'),
-          h('p', {}, '主题只界定范围，不是中心节点。节点、论证关系与弱关联共同构成当前模型；支持关系数量不等于主题整体向好。选择节点，可回到证据、适用时间、来源摄入记录和未决项。')),
-        integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
-          : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `链完整 · ${verifiedEvents.length} 条记录`)))
+      /* 引导横幅已删除：页面本身要能直观看懂，不靠一段说明去解释它怎么读。
+         只保留链完整性徽标（这是事实状态，不是说教）；那句诚实提醒移进合成轴卡片。 */
+      integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
+        : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `链完整 · ${verifiedEvents.length} 条记录`))
 
     /* 全览：默认关（保持卡片原始可读尺寸），开了就把整张图缩进面板一屏——
        不需要滚动也能看全 21 个节点，代价是字变小。开关状态跟随这次挂载，不写任何数据。 */
@@ -812,30 +810,45 @@ export function renderReaderView(theme, opts = {}) {
     }
     /* 读者页是一屏到底的长文档：给一条吸顶的分段导航，既是全局感也是一跳直达。
        锚点用区块容器的 id；点击后高亮当前项（不整页重绘）。 */
-    const sectionNavHost = h('nav', { class: 'rdr-section-nav', 'aria-label': '读者页导航' })
+    /* 九个区块改成真正的 tab：点哪个只显示哪一块。
+       一屏堆九块信息，读者没有兴趣也没有耐心——按问题分开，想看什么点什么。 */
+    const sectionNavHost = h('nav', { class: 'rdr-section-nav', role: 'tablist', 'aria-label': '读者页分区' })
+    const tabDefs = [
+      ['reader-axis', '合成轴'],
+      ['reader-outline', '论证大纲'],
+      ['reader-debate', '双边清单'],
+      ['reader-multiples', '原子一览'],
+      ['reader-categories', '分类'],
+      ['reader-matrix', '矩阵'],
+      ['reader-chronicle', '编年史'],
+      ['reader-gaps', '缺口'],
+      ['reader-map', '图谱'],
+    ]
     const renderSectionNav = () => {
-      const items = [
-        ['reader-axis', '合成轴'],
-        ['reader-outline', '论证大纲'],
-        ['reader-debate', '双边清单'],
-        ['reader-multiples', '原子一览'],
-        ['reader-categories', '分类'],
-        ['reader-matrix', '矩阵'],
-        ['reader-chronicle', '编年史'],
-        ['reader-gaps', '缺口'],
-        ['reader-map', '图谱'],
-      ].filter(([id]) => document.getElementById(id) || hostsReady.has(id))
-      sectionNavHost.replaceChildren(...items.map(([id, label]) => h('button', {
-        type: 'button',
+      sectionNavHost.replaceChildren(...tabDefs.map(([id, label]) => h('button', {
+        type: 'button', role: 'tab', 'aria-selected': String(activeSection === id), 'aria-controls': id,
         class: `rdr-section-nav-item${activeSection === id ? ' is-active' : ''}`,
         onclick: () => {
+          if (activeSection === id) return
           activeSection = id
+          renderTabs()
           document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          renderSectionNav()
         },
       }, label)))
     }
-    const hostsReady = new Set(['reader-outline', 'reader-debate', 'reader-multiples', 'reader-categories', 'reader-matrix', 'reader-chronicle', 'reader-gaps'])
+    /* 只显示当前 tab 对应的那一块。注意 reader-map 的锚点在 workspace 内部的画布上，
+       所以"图谱 tab"要显示整个 workspace（画布 + 检视器），否则隐藏 workspace 会把画布压成 0 高。 */
+    /* 必须在调用时求值：workspace 在本函数之后才定义，提前求值会撞 TDZ。 */
+    const panelNodes = () => [axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace]
+    const panelFor = (id) => (id === 'reader-map' ? workspace : document.getElementById(id))
+    const renderTabs = () => {
+      for (const panel of panelNodes()) if (panel) panel.hidden = true
+      const active = panelFor(activeSection)
+      if (active) active.hidden = false
+      renderSectionNav()
+      /* 图谱被隐藏时尺寸为 0，切回来必须重画一次，否则是空画布。 */
+      if (activeSection === 'reader-map') renderGraph()
+    }
 
     const axisBox = h('section', { id: 'reader-axis', class: 'rdr-axis-card', 'aria-label': '合成轴：强度、时间与外部数据' },
       h('div', { class: 'rdr-axis-head' },
@@ -908,6 +921,12 @@ export function renderReaderView(theme, opts = {}) {
       }))
     }
     const focusAtom = (id) => {
+      /* 检视器在图谱 tab 里：在其它 tab 点原子时自动切过去，避免"点了没反应"。
+         首次渲染期间 renderTabs 可能还没求值（TDZ），这里兜住。 */
+      if (activeSection !== 'reader-map') {
+        activeSection = 'reader-map'
+        try { renderTabs() } catch { /* 首帧忽略 */ }
+      }
       const next = id && currentNodes.some((node) => node.id === id) ? id : null
       state.selectedNodeId = next
       if (next) outlineExpanded.add(next)
@@ -1023,47 +1042,14 @@ export function renderReaderView(theme, opts = {}) {
           '。点击空白处可清空选择，回到整张图谱。')),
       replayDetails)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
-    // 综合理解横幅：最强共识与最大分歧（对齐设计稿）
-    let synthesisBanner = null
-    try {
-      /* 必须传真实的证据口径：不传时 synthesisSummary 会退化成"把 evidenceCount 对半分"
-         的估算，于是横幅说"支持 2 · 挑战 2"，而图谱上同一个原子标的是"有证据·未表态"。 */
-      const summary = synthesisSummary(currentNodes, (_view, nodeId) => evidenceForNode(state, nodeId))
-      const hasStrength = currentNodes.some((node) => Number.isFinite(Number(node.confidence ?? node.strength)))
-      if (summary) {
-        const parts = []
-        if (hasStrength) {
-          parts.push(`当前 ${summary.nodeCount} 个原子节点中，`)
-          if (summary.strongest) {
-            parts.push(`最强共识是「${summary.strongest.title}」(强度 ${summary.strongest.strength}%)；`)
-          }
-          if (summary.mostDisputed) {
-            parts.push(`最大分歧是「${summary.mostDisputed.title}」(支持 ${summary.mostDisputed.support} · 挑战 ${summary.mostDisputed.challenge})。`)
-          }
-          parts.push('拖动底部时间条可以看强度如何随外部数据累积变化。')
-        } else {
-          /* 没有强度数据时不要硬报"最强共识 0%"：那只是把 Default 当结论。 */
-          parts.push(`当前 ${summary.nodeCount} 个原子节点都还没有强度：外部数据已经挂上来，但还没有一条被表态为支持或反驳。`)
-          parts.push('点开图上一个原子看它的来源，或到建设者视图确认归因——强度会在确认之后开始累积。')
-        }
-        synthesisBanner = h('div', { class: 'rdr-synthesis-banner', role: 'status' },
-          h('span', { class: 'rdr-synthesis-banner-mark', 'aria-hidden': 'true' }, '✳'),
-          h('div', {},
-            h('strong', {}, '当前综合理解 · 从原子节点自动投影'),
-            h('p', {}, parts.join('')),
-            h('div', { class: 'rdr-synthesis-pills' },
-              h('span', { class: 'rdr-pill' }, `时间窗口 ${new Date().getFullYear()}`),
-              h('span', { class: 'rdr-pill' }, `${summary.nodeCount} 原子节点`),
-              h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
-      }
-    } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
+    axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '支持关系数量不等于主题整体向好——数量只说明有多少条外部数据被挂上来。'))
+    article.replaceChildren(toolbar, sectionNavHost, axisBox, outlineHost, debateHost, multiplesHost, categoryHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()
     renderAxis()
     renderStructure()
-    renderSectionNav()
+    renderTabs()
     loadInboxItems().then(() => renderGaps())
     updateHistoryStatus()
   }

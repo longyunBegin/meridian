@@ -123,6 +123,8 @@
 }
 
 /* ---------- 全局基线 ---------- */
+/* 有些面板自带 display:flex，会把原生 [hidden] 的 display:none 覆盖掉——按 tab 显示/隐藏必须可靠 */
+[hidden] { display: none !important; }
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
