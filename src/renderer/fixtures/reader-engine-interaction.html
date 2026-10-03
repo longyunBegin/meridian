@@ -242,7 +242,8 @@
       await wait()
       check('读者视图以观点分簇缩略图为主结构，并明确拒绝由支持数推导整体走向',
         Boolean(currentRoot.querySelector('.rdr-cluster-canvas'))
-        && !currentRoot.querySelector('.rdr-overall-direction') && currentRoot.textContent.includes('来源多，不等于大家都认同'))
+        && !currentRoot.querySelector('.rdr-overall-direction')
+        && currentRoot.textContent.includes('颜色 = 证据状况'))
       /* 用户决定：读者页不要时间回放（播放 / 与当前对比 / 返回当前模型）。
          回放 UI 已从界面移除，这里改为断言"回放块不可见"；原来的 4 条行为断言
          （时间线对比 / 播放推进 / 暂停 / 返回当前状态）随功能一起下线——

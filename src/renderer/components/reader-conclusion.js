@@ -107,22 +107,8 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
   const topGaps = gaps.slice(0, 3)
 
   return h('div', { class: 'rdr-conclusion-body' },
-    h('p', { class: 'rdr-conclusion-verdict' }, verdict),
-    h('div', { class: 'rdr-conclusion-coverage' },
-      h('div', { class: 'rdr-conclusion-bar', role: 'img', 'aria-label': `观点覆盖率 ${coverage}%` },
-        h('span', { class: 'rdr-conclusion-bar-fill', style: `width:${coverage}%` })),
-      h('div', { class: 'rdr-conclusion-coverage-text' },
-        h('strong', {}, `观点覆盖率 ${withEvidence} / ${nodeCount}`),
-        h('span', {}, `（${coverage}%）至少有 1 条已表态来源的观点 ÷ 全部观点。它不是"结论为真的概率"。`))),
-    picks.length ? h('div', { class: 'rdr-conclusion-block' },
-      h('h3', { class: 'rdr-conclusion-head' }, '最值得先看的 5 条'),
-      h('p', { class: 'rdr-conclusion-caliber' }, '排序口径：先看两边都有证据的和一个来源都没有的，再看只有单一来源的，最后看来源最扎实的。'),
-      h('ul', { class: 'rdr-conclusion-picks' }, ...picks.map(pickRow))) : null,
     h('div', { class: 'rdr-conclusion-block' },
-      h('h3', { class: 'rdr-conclusion-head' }, '现在最缺的'),
-      topGaps.length
-        ? h('ul', { class: 'rdr-conclusion-gaps' }, ...topGaps.map((gap) => h('li', {},
-          h('span', { class: 'rdr-conclusion-gap-title' }, gap.title || '（未命名）'),
-          h('span', { class: 'rdr-conclusion-gap-detail' }, gap.detail || ''))))
-        : h('p', { class: 'rdr-conclusion-gap-detail' }, '按当前口径没有发现缺口——不等于已经足够，只说明"已记录的证据都挂到了某条观点上"。')))
+      h('h2', { class: 'rdr-conclusion-head' }, '当前最该看的 5 个'),
+      h('p', { class: 'rdr-conclusion-caliber' }, '先看两边都有证据的和一个来源都没有的，再看只有单一来源的。'),
+      h('ul', { class: 'rdr-conclusion-picks' }, ...picks.map(pickRow))))
 }

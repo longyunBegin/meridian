@@ -100,8 +100,6 @@ export function renderReaderClusterMap({ claims = [], evidenceForNode, onOpenCla
 
   return h('div', { class: 'rdr-cluster-body' },
     svg,
-    h('p', { class: 'rdr-cluster-caliber' },
-      '分簇依据：按证据状况分组（有争议 / 没有来源 / 单一来源 / 多来源一致），不是业务分类；'
-      + '气泡大小 = 该组观点数量，位置固定（不用力导向，同样的数据每次画在同一处）。'),
+    h('p', { class: 'rdr-cluster-caliber' }, '气泡大小 = 该组观点数量 · 颜色 = 证据状况 · 点气泡跳到该组清单'),
     listHost)
 }

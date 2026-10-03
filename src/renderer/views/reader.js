@@ -456,29 +456,6 @@ export function renderReaderView(theme, opts = {}) {
     /* 检视器保留：它是理由清单/正反两方/时间线/矩阵等下钻的详情面板（原本挂在关系图面板里）。 */
     const workspace = h('div', { class: 'rdr-workspace' }, inspector)
     axisBox.append(h('p', { class: 'rdr-axis-caveat' }, '来源多，不等于大家都认同——它只说明有多少条被挂上来。'))
-    /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
-       内容全部由真实数据推导：synthesisSummary 给"最强/最分歧"，gaps 给缺口，证据条数与
-       独立来源家数来自 evidenceForNode；口径直接写在页面上。 */
-    const conclusionBox = h('section', { class: 'rdr-conclusion', 'aria-label': '结论' },
-      renderReaderConclusion({
-        summary: synthesisSummary(currentNodes, (id) => evidenceForNode(state, id)),
-        claims: currentNodes.filter((node) => node && !node.archived
-          && (node.nodeType === 'viewpoint' || node.kind === 'claim')),
-        /* 注意：renderGaps 里那份 gaps 是函数内部变量，作用域到不了这里——
-           这里按同样入参现算一次（buildGapList 是纯函数，不写数据）。 */
-        gaps: buildGapList({
-          nodes: currentNodes,
-          edges: allEdgesOf(currentProjection),
-          inboxItems: inboxCache || [],
-        }),
-        evidenceForNode: (id) => evidenceForNode(state, id),
-        onOpenClaim: focusAtom,
-      }))
-    const claimNodes = currentNodes.filter((node) => node && !node.archived
-      && (node.nodeType === 'viewpoint' || node.kind === 'claim'))
-    const mapGaps = buildGapList({ nodes: currentNodes, edges: currentEdges, inboxItems: inboxCache || [] })
-    const rowsOfClaim = (id) => { try { return evidenceForNode(state, id) || {} } catch { return {} } }
-
     /* 第 ①③ 层「单条下钻」：就地展开在地图下方（读者不丢上下文）。
        口径与地图共用 claimEvidenceStats（不另写一份，避免两处说法分叉）。 */
     let detailClaimId = null
@@ -501,6 +478,29 @@ export function renderReaderView(theme, opts = {}) {
       detailHost.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
 
+    /* 第 ④ 层「结论页」：读者第一屏，常显（不属于九个 tab，切换 tab 不会把它藏掉）。
+       内容全部由真实数据推导：synthesisSummary 给"最强/最分歧"，gaps 给缺口，证据条数与
+       独立来源家数来自 evidenceForNode；口径直接写在页面上。 */
+    const conclusionBox = h('section', { class: 'rdr-conclusion', 'aria-label': '结论' },
+      renderReaderConclusion({
+        summary: synthesisSummary(currentNodes, (id) => evidenceForNode(state, id)),
+        claims: currentNodes.filter((node) => node && !node.archived
+          && (node.nodeType === 'viewpoint' || node.kind === 'claim')),
+        /* 注意：renderGaps 里那份 gaps 是函数内部变量，作用域到不了这里——
+           这里按同样入参现算一次（buildGapList 是纯函数，不写数据）。 */
+        gaps: buildGapList({
+          nodes: currentNodes,
+          edges: allEdgesOf(currentProjection),
+          inboxItems: inboxCache || [],
+        }),
+        evidenceForNode: (id) => evidenceForNode(state, id),
+        onOpenClaim: openClaimDetail,
+      }))
+    const claimNodes = currentNodes.filter((node) => node && !node.archived
+      && (node.nodeType === 'viewpoint' || node.kind === 'claim'))
+    const mapGaps = buildGapList({ nodes: currentNodes, edges: currentEdges, inboxItems: inboxCache || [] })
+    const rowsOfClaim = (id) => { try { return evidenceForNode(state, id) || {} } catch { return {} } }
+
     /* 第 ② 层「观点地图」：常显，紧跟结论页（三层下钻的第二层）。
        位置固定（按组数分区）、不用力导向；大小/颜色口径写在组件里。 */
     /* 图谱缩略图（分簇版，借鉴用户给的 demo）：固定分区、不用力导向。
@@ -520,16 +520,42 @@ export function renderReaderView(theme, opts = {}) {
     const block = (title, host) => h('section', { class: 'rdr-block' },
       h('h2', { class: 'rdr-block-head' }, title), host)
 
+    /* 读者页结构对齐用户给的 demo：
+       头部（主题名 + 四个统计数）→ 图谱缩略图（气泡=簇，含分簇清单）→ 当前最该看的 5 个 → 单条下钻（抽屉位）。
+       原先的"还缺什么 / 详情 / 四个折叠区"与结论页的长段落一并去掉——demo 里没有这些。
+       注意：这里曾误写成 `toolbar`（reader 的头部变量已删），于是取到 window.toolbar（BarProp），
+       页面上渲染出 [object BarProp] —— 已修。 */
+    const readerStats = (() => {
+      const states = claimNodes.map((node) => claimEvidenceStats(node, rowsOfClaim).state)
+      return {
+        claims: claimNodes.length,
+        clusters: new Set(states).size,
+        evidence: currentNodes.filter((node) => networkNodeType(node) === 'evidence').length,
+        contested: states.filter((state) => state === 'contested').length,
+      }
+    })()
+    const statBox = (num, label) => h('div', { class: 'rdr-stat' },
+      h('div', { class: 'rdr-stat-num' }, String(num)),
+      h('div', { class: 'rdr-stat-label' }, label))
+    const headBox = h('header', { class: 'rdr-head' },
+      h('p', { class: 'rdr-head-kicker' }, '主题 · 观点图谱'),
+      h('h1', { class: 'rdr-head-title' }, theme?.name || '未命名主题'),
+      h('div', { class: 'rdr-stats' },
+        statBox(readerStats.claims, '观点'),
+        statBox(readerStats.clusters, '分簇'),
+        statBox(readerStats.evidence, '证据'),
+        statBox(readerStats.contested, '受关注')))
+    /* demo 的顺序：气泡图 → 「当前最该看的 5 个」→ 分簇清单。
+       清单由缩略图组件一并产出，这里把那个节点搬到 Top 5 之后（同一个节点搬家，不重建）。 */
+    const clusterList = mapBox.querySelector('.rdr-cluster-list')
     article.replaceChildren(
-      toolbar, conclusionBox, mapBox, detailHost,
-      block('还缺什么', gapsHost),
-      /* 检视器常显：它是理由清单 / 正反两方 / 时间线 / 对照表 / 分簇清单点选后的详情面板
-         （原本挂在关系图面板里，图移除后单独挂出来）。 */
-      block('详情', workspace),
-      moreView('时间线', chronicleHost),
-      moreView('全部理由与逐条观点', outlineHost, debateHost, multiplesHost),
-      moreView('对照表与分类', matrixHost, categoryHost),
-      moreView('整体情况（强度随时间）', axisBox))
+      ...[headBox, mapBox, conclusionBox, clusterList, detailHost].filter(Boolean),
+      /* 其余面板（合成轴 / 理由清单 / 小倍数 / 正反两方 / 时间线 / 对照表 / 分类 / 缺口 / 检视器）
+         保留能力，但收进**一行折叠**——可见区域保持 demo 式的精简，页面不再被它们占满。 */
+      moreView('更多视图',
+        axisBox, outlineHost, debateHost, multiplesHost,
+        chronicleHost, matrixHost, categoryHost, gapsHost, workspace))
+    /* 面板在折叠区里也必须先渲染（fixture 与无障碍都按 DOM 断言/读取）。 */
     renderInspector()
     renderAxis()
     renderStructure()
