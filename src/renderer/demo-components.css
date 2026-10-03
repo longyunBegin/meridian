@@ -1058,3 +1058,27 @@
 .meridian-theme .builder-queue-item-desc { margin:0 0 8px; font-size:12px; color:var(--text-2); line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .meridian-theme .builder-queue-status-v2 { font-size:12px; color:#d97706; }
 .meridian-theme .builder-queue-status-v2.is-done { color:#16a34a; }
+
+/* 新增原子对话框（对齐设计稿） */
+.meridian-theme .atom-dialog { max-width:720px; width:calc(100vw - 48px); padding:24px; }
+.meridian-theme .atom-dialog-head { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+.meridian-theme .atom-badge { display:inline-block; padding:3px 10px; font-size:12px; font-weight:600; color:#2563eb; background:#dbeafe; border-radius:999px; }
+.meridian-theme .atom-dialog-head h3 { margin:0; font-size:18px; font-weight:700; flex:1; }
+.meridian-theme .atom-close { margin-left:auto; }
+.meridian-theme .atom-field { margin-bottom:18px; }
+.meridian-theme .atom-field-row { display:flex; gap:24px; margin-bottom:18px; }
+.meridian-theme .atom-field-row .atom-field { flex:1; margin-bottom:0; }
+.meridian-theme .atom-label-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; font-size:13px; font-weight:600; }
+.meridian-theme .atom-label { display:block; margin-bottom:8px; font-size:13px; font-weight:600; }
+.meridian-theme .atom-hint { font-size:12px; color:var(--text-2); font-weight:400; }
+.meridian-theme .atom-input, .meridian-theme .atom-textarea { width:100%; padding:12px 14px; font-size:14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
+.meridian-theme .atom-textarea { resize:vertical; min-height:100px; }
+.meridian-theme .atom-type-pills { display:flex; flex-wrap:wrap; gap:8px; }
+.meridian-theme .atom-type-pill { padding:8px 16px; font-size:13px; border:1px solid var(--line); border-radius:999px; background:var(--surface); cursor:pointer; }
+.meridian-theme .atom-type-pill.is-selected { border-color:#2563eb; color:#2563eb; background:#eff6ff; font-weight:600; }
+.meridian-theme .atom-color-picker { display:flex; gap:12px; }
+.meridian-theme .atom-color-dot { width:32px; height:32px; border-radius:50%; border:2px solid transparent; cursor:pointer; padding:0; }
+.meridian-theme .atom-color-dot.is-selected { border-color:#000; box-shadow:0 0 0 2px #fff, 0 0 0 4px #000; }
+.meridian-theme .atom-dialog-foot { display:flex; justify-content:space-between; align-items:center; margin-top:24px; padding-top:16px; border-top:1px solid var(--line); }
+.meridian-theme .atom-foot-note { font-size:12px; color:var(--text-2); }
+.meridian-theme .atom-foot-actions { display:flex; gap:10px; }
