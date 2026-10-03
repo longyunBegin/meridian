@@ -1,0 +1,176 @@
+/*
+ * Meridian 设计系统（令牌 + 全局基线）
+ *
+ * 目的：把散落在各处的"随手写死的值"收敛成一套可推理的令牌，并按苹果的设计语言
+ * 把默认观感统一起来。第一性原理：界面要先能被读懂，再谈好看——
+ *   1) 层级靠字阶与留白，不靠加粗和边框；
+ *   2) 颜色只用于语义（状态/强调），不做装饰；
+ *   3) 材质（半透明 + 模糊 + 发丝线）表达层次，而不是给每个东西套一个盒子；
+ *   4) 动效有目的、短、可关闭（prefers-reduced-motion）。
+ *
+ * 这个文件只放"令牌 + 全局基线"，具体组件样式仍在 styles.css / demo-components.css，
+ * 但一律引用这里的变量。
+ */
+
+:root {
+  /* 字阶：对齐 macOS 常用档位（11 / 12 / 13 / 15 / 17 / 20 / 24 / 28） */
+  --t-caption: 11px;
+  --t-footnote: 12px;
+  --t-body: 13px;
+  --t-callout: 13px;
+  --t-title: 15px;
+  --t-subhead: 17px;
+  --t-head: 20px;
+  --t-title1: 24px;
+  --t-largeTitle: 28px;
+  --t-hero: 28px;
+  /* 字重只用三档：正文 400、强调 500、标题 600（不再出现 700/800 的堆叠） */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --lh-tight: 1.25;
+  --lh-body: 1.5;
+  --lh-caption: 1.35;
+  /* 字距：大字号收紧、小字号放开一点，读起来才"苹果" */
+  --ls-title: -0.01em;
+  --ls-body: 0;
+  --ls-caption: 0.01em;
+
+  /* 间距阶：4 的倍数 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* 圆角：控件 6、卡片 10、面板 14、大容器 18 */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-pill: 999px;
+
+  /* 层次：一级发丝线、二级轻浮起、三级浮层 */
+  --hairline: rgba(0, 0, 0, 0.09);
+  --hairline-strong: rgba(0, 0, 0, 0.14);
+  --e-1: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.03);
+  --e-2: 0 4px 14px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05);
+  --e-3: 0 16px 40px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
+
+  /* 材质：侧栏/工具栏用薄材质，浮层用厚材质 */
+  --material-thin: saturate(180%) blur(20px);
+  --material-thick: saturate(180%) blur(30px);
+
+  /* 动效：短、可预期；缓动统一 ease-out，回弹只给"新增/出现" */
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 260ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.44, 1);
+
+  /* 焦点环：键盘可见，鼠标不打扰 */
+  --focus-ring: 0 0 0 3px rgba(0, 113, 227, 0.32);
+  --focus-ring-inset: inset 0 0 0 2px rgba(0, 113, 227, 0.55);
+
+  /* 语义色（保持既有名称，避免大面积改名） */
+  --accent-strong: #0066cc;
+  --accent-soft: rgba(0, 113, 227, 0.1);
+  --green-soft: rgba(52, 199, 89, 0.14);
+  --red-soft: rgba(255, 59, 48, 0.12);
+  --orange-soft: rgba(255, 149, 0, 0.14);
+  --purple-soft: rgba(175, 82, 222, 0.14);
+  --teal-soft: rgba(0, 184, 184, 0.14);
+}
+
+/* 暗色：同一套语义，只换材质与中性阶 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hairline: rgba(255, 255, 255, 0.1);
+    --hairline-strong: rgba(255, 255, 255, 0.16);
+    --e-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --e-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+    --e-3: 0 18px 44px rgba(0, 0, 0, 0.55);
+    --accent: #0a84ff;
+    --accent-strong: #409cff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+  }
+}
+
+/* ---------- 全局基线 ---------- */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--t-body);
+  line-height: var(--lh-body);
+  letter-spacing: var(--ls-body);
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: var(--ls-title);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-semibold);
+}
+
+/* 数字对齐：账本/统计/强度这类数值列对齐后，观感立刻"工程化"变"产品化" */
+.tnum, [data-numeric],
+.rdr-node-count, .rdr-multiple-value, .rdr-chronicle-date, .rdr-chronicle-delta,
+.rdr-gap-kind, .rdr-axis-tick, .rdr-axis-date, .stat, .stats {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection { background: var(--accent-soft); }
+
+/* 键盘焦点统一：鼠标点击不留描边，Tab 走查一定看得见 */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+button:focus-visible, a:focus-visible, [role="button"]:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 交互默认：所有可点元素共享同一套过渡与按压反馈 */
+button, a, [role="button"], summary, .btn, select, input[type="range"] {
+  transition: background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+button:active, [role="button"]:active, .btn:active { transform: scale(0.985); }
+button:disabled, .btn:disabled, [aria-disabled="true"] { opacity: 0.42; cursor: default; transform: none; }
+
+/* 滚动条：覆盖式、细、悬停才明显（苹果的滚动条不会喧宾夺主） */
+* { scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.3); }
+
+/* 动效可关闭：系统开了"减少动态效果"就全部退化为瞬时 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

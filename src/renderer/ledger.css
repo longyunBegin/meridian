@@ -8,7 +8,7 @@
   --ease:cubic-bezier(.4,0,.2,1);
   background:var(--surface);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
-  font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";
+  font-size: var(--t-body);line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";
   display:flex;flex-direction:column;overflow:hidden;
   min-height:0;flex:1 1 auto;
 }
@@ -20,29 +20,29 @@
   gap:12px;
 }
 .meridian-ledger .title-num {
-  width:26px;height:26px;border-radius:8px;
+  width:26px;height:26px;border-radius: var(--r);
   background:var(--surface-3);color:var(--text-2);
   display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:600;
+  font-size: var(--t-footnote);font-weight:600;
   font-variant-numeric:tabular-nums;
   flex:0 0 auto;
 }
 .meridian-ledger .title-text {
-  font-size:15px;font-weight:600;
+  font-size: var(--t-title);font-weight:600;
   letter-spacing:-.015em;color:var(--text);
   flex:1;min-width:0;
   display:flex;align-items:center;gap:10px;
 }
 .meridian-ledger .title-badge {
-  font-size:10.5px;font-weight:600;
+  font-size: var(--t-caption);font-weight:600;
   letter-spacing:.4px;
-  padding:2px 8px;border-radius:5px;
+  padding:2px 8px;border-radius: var(--r-xs);
   background:rgba(0,113,227,.1);color:var(--accent);
 }
 .meridian-ledger .title-actions {display:flex;gap:6px;flex:0 0 auto;}
 .meridian-ledger .title-btn {
-  padding:5px 12px;border-radius:7px;
-  font-size:12px;font-family:inherit;
+  padding:5px 12px;border-radius: var(--r-sm);
+  font-size: var(--t-footnote);font-family:inherit;
   font-weight:500;letter-spacing:-.003em;
   cursor:pointer;border:none;
   background:transparent;color:var(--text-2);
@@ -55,7 +55,7 @@
   padding:10px 22px;
   border-bottom:1px solid var(--line);
   gap:14px;
-  font-size:12px;
+  font-size: var(--t-footnote);
 }
 .meridian-ledger .status-check {
   display:flex;align-items:center;gap:6px;
@@ -67,19 +67,19 @@
   width:14px;height:14px;border-radius:50%;
   background:rgba(48,209,88,.14);color:var(--green);
   display:flex;align-items:center;justify-content:center;
-  font-size:9px;font-weight:700;
+  font-size: var(--t-caption);font-weight: var(--fw-semibold);
 }
 .meridian-ledger .status-check b {color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;}
 .meridian-ledger .status-check .lbl {color:var(--text-2);}
 .meridian-ledger .status-sep {color:var(--text-3);opacity:.5;}
 .meridian-ledger .status-meta {
-  font-size:11.5px;color:var(--text-3);
+  font-size: var(--t-caption);color:var(--text-3);
   letter-spacing:.01em;
   font-variant-numeric:tabular-nums;
 }
 .meridian-ledger .status-spacer {flex:1;}
 .meridian-ledger .status-action {
-  font-size:11.5px;color:var(--accent);
+  font-size: var(--t-caption);color:var(--accent);
   cursor:pointer;letter-spacing:-.003em;
   transition:opacity .16s var(--ease);
 }
@@ -99,10 +99,10 @@
 .meridian-ledger .search input {
   width:100%;
   padding:6px 10px 6px 30px;
-  border-radius:7px;
+  border-radius: var(--r-sm);
   border:1px solid var(--line-2);
   background:var(--surface);
-  font-family:inherit;font-size:12px;
+  font-family:inherit;font-size: var(--t-footnote);
   color:var(--text);
   outline:none;
   letter-spacing:-.003em;
@@ -112,15 +112,15 @@
 .meridian-ledger .search input::placeholder {color:var(--text-3);}
 .meridian-ledger .search .icon {
   position:absolute;left:9px;top:50%;transform:translateY(-50%);
-  color:var(--text-3);font-size:12px;pointer-events:none;
+  color:var(--text-3);font-size: var(--t-footnote);pointer-events:none;
 }
 .meridian-ledger .filters {
   display:flex;gap:4px;flex-wrap:wrap;
   flex:1;
 }
 .meridian-ledger .filter {
-  padding:4px 10px;border-radius:6px;
-  font-size:11.5px;font-family:inherit;
+  padding:4px 10px;border-radius: var(--r-sm);
+  font-size: var(--t-caption);font-family:inherit;
   cursor:pointer;border:none;
   background:transparent;color:var(--text-2);
   letter-spacing:-.003em;
@@ -144,7 +144,7 @@
   padding:8px 22px;
   border-bottom:1px solid var(--line);
   gap:12px;
-  font-size:11.5px;
+  font-size: var(--t-caption);
   color:var(--text-3);
   letter-spacing:.01em;
   font-variant-numeric:tabular-nums;
@@ -153,8 +153,8 @@
 .meridian-ledger .pager-info b {color:var(--text-2);font-weight:500;}
 .meridian-ledger .pager-nav {display:flex;gap:4px;}
 .meridian-ledger .pager-btn {
-  padding:4px 10px;border-radius:6px;
-  font-size:11.5px;font-family:inherit;
+  padding:4px 10px;border-radius: var(--r-sm);
+  font-size: var(--t-caption);font-family:inherit;
   cursor:pointer;border:none;
   background:transparent;color:var(--text-2);
   letter-spacing:-.003em;
@@ -174,7 +174,7 @@
   align-items:center;
   padding:7px 22px;
   border-bottom:1px solid var(--line);
-  font-size:12.5px;
+  font-size: var(--t-footnote);
   cursor:pointer;
   transition:background .12s var(--ease);
   position:relative;
@@ -182,7 +182,7 @@
 .meridian-ledger .row:hover {background:var(--surface-2);}
 .meridian-ledger .row:hover .row-action {opacity:1;}
 .meridian-ledger .seq {
-  font-size:11px;
+  font-size: var(--t-caption);
   color:var(--text-3);
   font-variant-numeric:tabular-nums;
   letter-spacing:.02em;
@@ -190,14 +190,14 @@
   font-family:ui-monospace,SFMono-Regular,monospace;
 }
 .meridian-ledger .time {
-  font-size:11.5px;
+  font-size: var(--t-caption);
   color:var(--text-2);
   font-variant-numeric:tabular-nums;
   letter-spacing:.02em;
   font-family:ui-monospace,SFMono-Regular,monospace;
 }
 .meridian-ledger .kind {
-  font-size:11.5px;
+  font-size: var(--t-caption);
   font-weight:600;
   letter-spacing:-.003em;
   display:flex;align-items:center;gap:6px;
@@ -235,10 +235,10 @@
 }
 .meridian-ledger .row-action button {
   width:24px;height:24px;
-  border-radius:6px;
+  border-radius: var(--r-sm);
   border:none;background:transparent;
   color:var(--text-3);cursor:pointer;
-  font-size:13px;line-height:1;
+  font-size: var(--t-body);line-height:1;
   display:flex;align-items:center;justify-content:center;
   transition:all .16s var(--ease);
   font-family:inherit;
@@ -254,10 +254,10 @@
   color:var(--text-3);
 }
 .meridian-ledger .empty-icon {
-  font-size:28px;opacity:.35;margin-bottom:14px;
+  font-size: var(--t-largeTitle);opacity:.35;margin-bottom:14px;
 }
 .meridian-ledger .empty-text {
-  font-size:13px;line-height:1.6;letter-spacing:-.003em;
+  font-size: var(--t-body);line-height:1.6;letter-spacing:-.003em;
 }
 .meridian-ledger .foot {
   flex:0 0 auto;
@@ -265,7 +265,7 @@
   border-top:1px solid var(--line);
   background:var(--surface-2);
   display:flex;align-items:center;gap:12px;
-  font-size:11px;color:var(--text-3);
+  font-size: var(--t-caption);color:var(--text-3);
   letter-spacing:.01em;
   font-variant-numeric:tabular-nums;
 }
@@ -278,9 +278,9 @@
 .meridian-ledger .toast {
   position:fixed;bottom:32px;left:50%;
   transform:translateX(-50%) translateY(80px);
-  padding:10px 20px;border-radius:11px;
+  padding:10px 20px;border-radius: var(--r);
   background:rgba(29,29,31,.92);
-  color:#fff;font-size:12.5px;letter-spacing:-.003em;
+  color:#fff;font-size: var(--t-footnote);letter-spacing:-.003em;
   box-shadow:0 8px 24px -8px rgba(0,0,0,.3);
   opacity:0;pointer-events:none;
   transition:all .3s var(--ease);
@@ -295,8 +295,8 @@
     gap:4px;
     padding:10px 16px;
   }
-.meridian-ledger .seq, .meridian-ledger .time {display:inline;font-size:10.5px;text-align:left;}
-.meridian-ledger .kind {font-size:11px;}
-.meridian-ledger .text {white-space:normal;font-size:12px;}
+.meridian-ledger .seq, .meridian-ledger .time {display:inline;font-size: var(--t-caption);text-align:left;}
+.meridian-ledger .kind {font-size: var(--t-caption);}
+.meridian-ledger .text {white-space:normal;font-size: var(--t-footnote);}
 .meridian-ledger .titlebar, .meridian-ledger .status-bar, .meridian-ledger .toolbar, .meridian-ledger .pager {padding-left:16px;padding-right:16px;}
 }
