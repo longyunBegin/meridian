@@ -18,7 +18,7 @@ import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/bui
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
 import { DIRECTION_META, NATURE_META } from '../lib/reader-model.js'
-import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
+import { LEDGER_PAGE_SIZE, GRAPH_FRAME_NODE_LIMIT, GRAPH_FRAME_EDGE_LIMIT, paginate, selectGraphWindow, consumeChainEventJump, consumeBuilderJump, requestBuilderNodeFocus, affectedNodeIdForEvent, verifiedLedgerPrefix, eventsThroughSequence, compactEventSummary, searchGraphNodes } from '../lib/chain-ui-model.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, RELATION_META, NODE_STATUS_LABEL, networkNodeType,
@@ -2826,7 +2826,26 @@ function renderQuickAttribute(item, { themeId, loadExisting, onDone } = {}) {
       if (res?.ok === false) throw new Error(res.error || '写入失败')
       /* 标记条目已归因 */
       await m.inboxResolve?.(item.id, 'accept').catch(() => null)
-      toast(stance === 'supports' ? '已连接到原子（支持）' : '已连接到原子（反驳）')
+      // 跨视图分工：收件箱=粗筛层（归位入口），建设者=精修层（证据查看）
+      // 归位后给出明确反馈 + 跳转入口，这是两个视图之间唯一的连接点
+      const atomName = propSelect.options[propSelect.selectedIndex]?.text || '原子'
+      const themeName = state.themes.find((t) => t.id === themeId)?.name || '主题'
+      const stanceLabel = stance === 'supports' ? '佐证' : '反驳'
+      // 在按钮旁显示归位反馈 + 去建设者查看入口
+      const feedback = h('div', { class: 'quick-attr-feedback' },
+        h('span', { class: 'quick-attr-done' }, `已归位 → ${themeName} · ${atomName} · ${stanceLabel}`),
+        h('button', {
+          type: 'button', class: 'quick-attr-goto',
+          onclick: () => {
+            // 跳转到建设者并选中对应原子（跨视图的唯一连接点）
+            requestBuilderNodeFocus(themeId, propId)
+            state.themeId = themeId
+            setView('theme')
+          },
+        }, '去建设者查看 →'),
+      )
+      confirmBtn.replaceWith(feedback)
+      toast(`已归位 → ${themeName} · ${atomName} · ${stanceLabel}`)
       onDone?.(res)
     } catch (e) {
       error.hidden = false

@@ -1298,6 +1298,18 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { items: pending.slice(offset, offset + limit), total: pending.length }
   })
   commands.register('inbox:ignored', () => ignoredInbox())
+  // 收件箱统计：待处理 / 已抽取要点 / 已归位（跨视图分工：收件箱=粗筛层）
+  commands.register('inbox:stats', () => {
+    const pending = allInbox()
+    const extractedCount = pending.filter((i) => i.extracted !== false).length
+    const lemmaCount = pending
+      .filter((i) => i.extracted !== false)
+      .reduce((sum, i) => sum + (Array.isArray(i.lemmas) ? i.lemmas.length : 0), 0)
+    // 已归位 = intakeEvents 中 resolved=true 的条目数
+    const db = load()
+    const resolvedCount = (db.intakeEvents || []).filter((e) => e.resolved === true && !e.undone).length
+    return { pending: pending.length, extracted: extractedCount, lemmas: lemmaCount, resolved: resolvedCount }
+  })
 
   commands.register('inbox:resolve', (id, action) => {
     // 分类和幂等性由 store 中的原记录决定，不信任客户端的建议元数据。
