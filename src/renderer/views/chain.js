@@ -740,18 +740,22 @@ async function loadConcept(theme, ledgerPane, opts) {
     const flow = h('div', { class: 'builder-flow-steps', 'aria-label': '建设者处理阶段' },
       ...['① 来源已摄入', '② 抽取原子陈述', '③ 映射到主题', '④ 变更前后预览', '⑤ 确认或驳回', '⑥ 事件追加与投影更新']
         .map((step, index) => h('span', { class: `builder-flow-step${index === 0 ? ' is-ready' : ''}` }, step)))
-    const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待处理')
+    const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待审')
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
-    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手工观点')
+    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
     const addManualOpinion = () => {
       if (opts.addNodeBtn?.disabled) { toast('当前账本暂不可追加节点', 'var(--text-2)'); return }
       opts.addNodeBtn?.click()
     }
     addNode.addEventListener('click', addManualOpinion)
+    const queueCount = h('span', { class: 'builder-queue-count' }, '0')
     const queueList = h('div', { class: 'builder-queue-list', role: 'listbox', 'aria-label': '待处理来源、建议与旧账本信号', tabindex: '0' },
       h('p', { class: 'chain-note' }, '正在加载…'))
     const queue = h('aside', { class: 'builder-intake-queue', 'aria-label': '来源与建议队列' },
-      h('div', { class: 'builder-queue-head' },
+      h('div', { class: 'builder-queue-head-v2' },
+        h('div', { class: 'builder-queue-title-row' },
+          h('h3', {}, '待处理'), queueCount),
+        h('p', { class: 'builder-queue-desc' }, '外部数据归因、AI 建议的新增/修改原子，都进入这里等待人工确认。'),
         h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab),
         addNode),
       queueList)
@@ -788,12 +792,15 @@ async function loadConcept(theme, ledgerPane, opts) {
     const renderQueue = () => {
       const entries = buildEntries(currentItems)
       const visible = filterWorkbenchEntries(entries, queueMode)
+      const pendingCount = entries.filter((entry) => !entry.decision).length
+      const processedCount = entries.filter((entry) => Boolean(entry.decision)).length
       pendingTab.setAttribute('aria-pressed', String(queueMode === 'pending'))
       processedTab.setAttribute('aria-pressed', String(queueMode === 'processed'))
       pendingTab.classList.toggle('is-active', queueMode === 'pending')
       processedTab.classList.toggle('is-active', queueMode === 'processed')
-      pendingTab.textContent = `待处理 · ${entries.filter((entry) => !entry.decision).length}`
-      processedTab.textContent = `已处理 · ${entries.filter((entry) => Boolean(entry.decision)).length}`
+      pendingTab.textContent = `待审 · ${pendingCount}`
+      processedTab.textContent = `已处理 · ${processedCount}`
+      queueCount.textContent = String(queueMode === 'pending' ? pendingCount : processedCount)
       clear(queueList)
       if (!visible.length) {
         queueList.append(h('p', { class: 'builder-queue-empty' }, queueMode === 'processed'
@@ -810,23 +817,44 @@ async function loadConcept(theme, ledgerPane, opts) {
       persistQueueState()
       for (const entry of visible) {
         const item = entry.item || {}
-        const label = entry.kind === 'legacy-signal' ? '历史事件 · 待复核'
-          : entry.kind === 'proposal'
-          ? entry.result.recommendation?.rel === 'supersedes' ? '修订建议'
-            : entry.result.kind === 'new-proposition' ? '新节点' : '论证建议'
-          : item.enginePipeline?.status === 'done' ? '模型建议' : '外部来源'
-        const status = entry.decision === 'rejected' ? '已驳回' : entry.decision ? '已确认' : '待审核'
+        // 类型徽标：数据 / 修原子 / 新原子（对齐设计稿）
+        let typeBadge, typeClass
+        if (entry.kind === 'proposal') {
+          const isNew = entry.result.kind === 'new-proposition' || entry.result.recommendation?.kind === 'new-proposition'
+          const isModify = entry.result.recommendation?.rel === 'supersedes'
+          if (isNew) { typeBadge = '新原子'; typeClass = 'is-new' }
+          else if (isModify) { typeBadge = '修原子'; typeClass = 'is-modify' }
+          else { typeBadge = 'AI 建议'; typeClass = 'is-suggest' }
+        } else {
+          typeBadge = '数据'; typeClass = 'is-data'
+        }
+        const status = entry.decision === 'rejected' ? '已驳回' : entry.decision ? '已确认' : '待审'
         const source = entry.kind === 'legacy-signal' ? entry.signal.source || '主题事件账本'
+          : entry.kind === 'proposal' ? 'AI 建议'
           : item.provenance?.sourceLabel || item.provenance?.platform || item.source || '来源未标注'
+        // 日期
+        const dateStr = (() => {
+          const d = item.createdAt || item.at || entry.signal?.at
+          if (!d) return ''
+          try { return new Date(d).toISOString().slice(0, 10) } catch { return '' }
+        })()
+        // 描述：取正文前两行
+        const desc = (() => {
+          const t = item.text || entry.signal?.text || ''
+          return t.replace(/\s+/g, ' ').slice(0, 80)
+        })()
         const button = h('button', {
-          type: 'button', class: `builder-queue-item${entry.id === selected.id ? ' is-selected' : ''}`,
+          type: 'button', class: `builder-queue-item-v2${entry.id === selected.id ? ' is-selected' : ''}`,
           role: 'option', 'aria-selected': String(entry.id === selected.id), 'data-entry-id': entry.id,
           onclick: () => { selectedEntryId = entry.id; persistQueueState(); renderQueue() },
         },
-        h('span', { class: 'builder-queue-item-top' }, h('span', { class: 'builder-queue-kind' }, label),
-          h('span', { class: `builder-queue-status${entry.decision ? ' is-done' : ''}` }, status)),
-        h('strong', { class: 'builder-queue-item-title' }, entryTitle(entry)),
-        h('span', { class: 'builder-queue-item-source' }, source))
+        h('div', { class: 'builder-queue-item-top' },
+          h('span', { class: `builder-queue-badge ${typeClass}` }, typeBadge),
+          h('span', { class: 'builder-queue-item-source-v2' }, source),
+          dateStr ? h('span', { class: 'builder-queue-item-date' }, dateStr) : null),
+        h('strong', { class: 'builder-queue-item-title-v2' }, entryTitle(entry)),
+        desc ? h('p', { class: 'builder-queue-item-desc' }, desc) : null,
+        h('span', { class: `builder-queue-status-v2${entry.decision ? ' is-done' : ''}` }, `● ${status}`))
         queueList.append(button)
       }
       renderSelected(selected)
