@@ -351,9 +351,12 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   for (const node of rows) {
     if (!seen.has(node.id)) { seen.add(node.id); dfsOrder.push(node.id) }
   }
-  const marginX = 112
-  const gapX = 188
-  const gapY = 116
+  /* 边距与间距跟着画布宽度走：面板窄（读者视图常只有 ~500px）时若还用 112px 边距 + 188px 列距，
+     只能塞下两列、整张图被拉成一长条；自适应后能塞三列，卡片也保持原始可读尺寸。
+     宽度 ≥1120 时这些值等于原来的常量，宽画布行为不变。 */
+  const marginX = Math.round(Math.min(112, Math.max(56, width * 0.1)))
+  const gapY = Math.round(Math.min(116, Math.max(104, width * 0.104)))
+  const gapX = Math.round(Math.min(188, Math.max(148, (width - marginX * 2) / 3.6)))
   const columns = Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
   const rowCount = Math.ceil(count / columns)
   const height = Math.max(420, 96 + rowCount * gapY)

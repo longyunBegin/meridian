@@ -164,10 +164,18 @@ export function renderReaderView(theme, opts = {}) {
     }
 
     const timeline = buildEventTimeline(verifiedEvents)
-    /* 归位/入库只写 evidence.appended + targetNodeIds（未声明立场），投影里没有对应的边。
-       布局必须把这类"证据挂载"也算进去，否则证据节点会散落在画布各处、和自己的观点离得很远。 */
-    const attachmentEdges = evidenceAttachmentEdges(currentNodes, currentEdges)
-    const layout = layoutThemeNetwork(currentNodes, [...currentEdges, ...attachmentEdges], 1120)
+    /* 布局按容器实测宽度算：写死 1120 会在这块 ~500px 的面板里被 CSS 缩到 0.64 倍
+       （卡片标题实际只有 8px），还得横向滚动。归位/入库只写 evidence.appended +
+       targetNodeIds（未声明立场），布局必须把证据挂载也算进去，否则证据会散落在画布各处。 */
+    let layout = null
+    const ensureLayout = () => {
+      const measured = Math.round(graphCanvas?.clientWidth || 0)
+      const width = Math.max(480, Math.min(1680, measured > 40 ? measured - 8 : 1120))
+      if (layout && layout.width === width) return layout
+      const attachmentEdges = evidenceAttachmentEdges(currentNodes, currentEdges)
+      layout = layoutThemeNetwork(currentNodes, [...currentEdges, ...attachmentEdges], width)
+      return layout
+    }
     const state = {
       projection: selectedSeq == null ? currentProjection : (replayProjection || currentProjection),
       events: selectedSeq == null ? verifiedEvents : verifiedEvents.filter((event) => event.seq <= selectedSeq),
@@ -430,7 +438,7 @@ export function renderReaderView(theme, opts = {}) {
       const currentFrameIds = new Set(currentFrameNodes.map((node) => node.id))
       const currentFrameEdges = currentEdges.filter((edge) => currentFrameIds.has(edge.from) && currentFrameIds.has(edge.to))
       if (frame.nodes.length) drawThemeNetwork(drawProjection, {
-        networkLayout: layout,
+        networkLayout: ensureLayout(),
         focusNodeId: state.selectedNodeId,
         readerStates,
         searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
@@ -447,12 +455,13 @@ export function renderReaderView(theme, opts = {}) {
         },
       }, graphCanvas)
       if (state.searchLocatedNodeId && nodeSearch.value.trim()) {
-        const point = layout.pos.get(state.searchLocatedNodeId)
+        const currentLayout = ensureLayout()
+        const point = currentLayout.pos.get(state.searchLocatedNodeId)
         const shownIndex = frame.nodes.findIndex((node) => node.id === state.searchLocatedNodeId)
         const located = currentNodes.find((node) => node.id === state.searchLocatedNodeId)
         if (point && shownIndex >= 0 && located) {
-          const horizontal = point.x < layout.width / 3 ? '左侧' : point.x > layout.width * 2 / 3 ? '右侧' : '中部'
-          const vertical = point.y < layout.height / 3 ? '上方' : point.y > layout.height * 2 / 3 ? '下方' : '中部'
+          const horizontal = point.x < currentLayout.width / 3 ? '左侧' : point.x > currentLayout.width * 2 / 3 ? '右侧' : '中部'
+          const vertical = point.y < currentLayout.height / 3 ? '上方' : point.y > currentLayout.height * 2 / 3 ? '下方' : '中部'
           searchStatus.textContent = `已定位并高亮「${titleOf(located)}」：画布${vertical}${horizontal} · 当前窗口 ${shownIndex + 1}/${frame.nodes.length}。`
         }
       }
