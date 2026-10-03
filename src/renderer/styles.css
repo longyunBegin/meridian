@@ -1600,3 +1600,23 @@ body.tauri-macos{
 .rdr-conclusion-reason { flex: 1 1 100%; color: var(--text-2); font-size: var(--t-caption); }
 .rdr-conclusion-reason::before { content: "▸"; color: var(--accent); margin-right: 6px; }
 .rdr-conclusion-caliber { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
+
+/* 读者页：观点分簇缩略图（固定分区，非力导向） */
+.rdr-cluster-body { display: grid; gap: var(--sp-3); }
+.rdr-cluster-canvas { display: block; width: 100%; height: auto; }
+.rdr-cluster-circle { fill-opacity: .16; stroke-width: 2; }
+.rdr-cluster-bubble { cursor: pointer; }
+.rdr-cluster-bubble:focus-visible .rdr-cluster-circle { stroke-width: 4; }
+.rdr-cluster-count { fill: var(--text-1); font-size: var(--t-title); font-weight: var(--fw-semibold); }
+.rdr-cluster-name { fill: var(--text-2); font-size: var(--t-caption); }
+.rdr-cluster-caliber, .rdr-cluster-empty { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
+.rdr-cluster-list { display: grid; gap: var(--sp-3); }
+.rdr-cluster-group-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-1); font-size: var(--t-footnote); }
+.rdr-cluster-dot { width: 10px; height: 10px; border-radius: var(--r-pill); }
+.rdr-cluster-group-name { color: var(--text-1); font-weight: var(--fw-semibold); }
+.rdr-cluster-group-count { color: var(--text-2); }
+.rdr-cluster-group-hint { color: var(--text-3); font-size: var(--t-caption); }
+.rdr-cluster-claims { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.rdr-cluster-claim { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); width: 100%; padding: 7px 10px; border: 1px solid var(--hairline-soft); border-radius: var(--r-sm); background: var(--surface-solid); color: var(--text-1); font-size: var(--t-caption); text-align: left; cursor: pointer; }
+.rdr-cluster-claim:hover { border-color: var(--line-2); }
+.rdr-cluster-claim-meta { color: var(--text-3); }

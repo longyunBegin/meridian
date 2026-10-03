@@ -13,7 +13,8 @@ import {
   graphNeighborhood, shortestNodePath, buildCategoryAggregation,
   synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
-import { renderReaderClaimMap, claimEvidenceStats } from '../components/reader-claim-map.js'
+import { claimEvidenceStats } from '../components/reader-claim-map.js'
+import { renderReaderClusterMap } from '../components/reader-cluster-map.js'
 import { renderReaderClaimDetail } from '../components/reader-claim-detail.js'
 import { renderReaderConclusion } from '../components/reader-conclusion.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
@@ -1055,13 +1056,12 @@ export function renderReaderView(theme, opts = {}) {
 
     /* 第 ② 层「观点地图」：常显，紧跟结论页（三层下钻的第二层）。
        位置复用 layoutThemeNetwork；大小/颜色口径写在组件图例上。 */
-    const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点地图' },
-      renderReaderClaimMap({
+    /* 图谱缩略图（分簇版，借鉴用户给的 demo）：固定分区、不用力导向。
+       分簇依据 = 按证据状况（用户已确认），口径写在组件里。 */
+    const mapBox = h('section', { class: 'rdr-map', 'aria-label': '观点分簇缩略图' },
+      renderReaderClusterMap({
         claims: claimNodes,
-        edges: currentEdges,
-        gaps: mapGaps,
         evidenceForNode: rowsOfClaim,
-        selectedId: state.selectedNodeId,
         onOpenClaim: openClaimDetail,
       }))
     /* 九个 tab 换成"三层常显 + 次级视图折叠"：
