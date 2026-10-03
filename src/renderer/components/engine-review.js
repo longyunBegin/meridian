@@ -134,10 +134,23 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     const attribution = result.attribution || {}
     const statement = result.statement || {}
     const isNew = result.kind === 'new-proposition' || suggestion.kind === 'new-proposition'
-    const targetNode = (projection?.allNodes || projection?.nodes || []).find((node) =>
+    const allAtoms = (projection?.allNodes || projection?.nodes || []).filter((n) => !n.archived && !n.invalidated && !n.external)
+    const targetNode = allAtoms.find((node) =>
       node.id === (suggestion.propositionId || result.proposition?.id))
+    // 目标原子选择器：用户可覆盖 AI 的结构决策（换挂载目标 / 改为新建）
+    const targetSelect = h('select', { class: 'engine-review-target', 'aria-label': '目标原子' },
+      h('option', { value: '__new__' }, '＋ 新建原子'),
+      ...allAtoms.map((n) => h('option', { value: n.id }, n.title || '未命名原子')))
+    // 默认选中 AI 建议
+    targetSelect.value = isNew ? '__new__' : (targetNode?.id || '__new__')
     const relation = changeOptions(['supports', 'contradicts', 'derives', 'supersedes', 'related'], suggestion.rel || attribution.rel,
       relLabel)
+    // 目标切换时，显示/隐藏新原子标题输入
+    targetSelect.addEventListener('change', () => {
+      const isNewTarget = targetSelect.value === '__new__'
+      const titleLabel = targetSelect.closest('.review-advanced')?.querySelectorAll('.engine-review-field')[1]
+      if (titleLabel) titleLabel.hidden = !isNewTarget
+    })
     const direction = changeOptions(['improving', 'declining', 'stable'], suggestion.change?.direction || attribution.change?.direction,
       { improving: '好转', declining: '承压', stable: '稳定' })
     const nature = changeOptions(['quantitative', 'pivot', 'epistemic', 'structural'], suggestion.change?.nature || attribution.change?.nature,
@@ -181,8 +194,16 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       confirm.disabled = true; reject.disabled = true
       try {
         const input = { change: { direction: direction.value, nature: nature.value, themeTag: themeTag.value.trim() } }
-        if (isNew) input.title = titleInput.value.trim()
-        else input.rel = relation.value
+        const userTarget = targetSelect.value
+        const userWantsNew = userTarget === '__new__'
+        if (userWantsNew) {
+          input.title = titleInput.value.trim()
+          // 明确告诉后端这是新建（覆盖 AI 的挂载建议）
+          input.targetNodeId = null
+        } else {
+          input.targetNodeId = userTarget
+          input.rel = relation.value
+        }
         const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'accepted', input)
         if (response?.ok === false) throw new Error(response.error || '写入失败')
         result.reviewDecision = 'accepted'
@@ -287,7 +308,9 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       // 高级选项（折叠）
       h('details', { class: 'review-advanced' },
         h('summary', {}, '高级选项'),
-        isNew ? h('label', { class: 'engine-review-field' }, '建议新观点', titleInput) : h('label', { class: 'engine-review-field' }, '关系类型', relation),
+        h('label', { class: 'engine-review-field' }, '目标原子', targetSelect),
+        h('label', { class: 'engine-review-field', hidden: targetSelect.value !== '__new__' }, '新原子标题', titleInput),
+        h('label', { class: 'engine-review-field' }, '关系类型', relation),
         h('div', { class: 'engine-review-controls' },
           h('label', { class: 'engine-review-field' }, '方向', direction),
           h('label', { class: 'engine-review-field' }, '性质', nature),
