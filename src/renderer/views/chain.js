@@ -2105,46 +2105,59 @@ function openAddAtomDialog(theme, proj, opts) {
   const relSelect = h('select', { class: 'txt atom-rel-select', 'aria-label': '关系类型' },
     ...relOptions.map((o) => h('option', { value: o.value, selected: o.value === selectedRel }, o.label)))
   relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
-  const nodeCheckboxes = h('div', { class: 'atom-connect-list' })
+  const nodeCheckboxes = h('div', { class: 'atom-node-list' })
   const selectedNodeIds = new Set()
   if (connectableNodes.length) {
     for (const node of connectableNodes.slice(0, 20)) { // 最多显示20个
-      const cb = h('input', { type: 'checkbox', id: `atom-connect-${node.id}`, value: node.id })
+      const cb = h('input', { type: 'checkbox', id: `atom-connect-${node.id}`, value: node.id, class: 'atom-node-check' })
       cb.addEventListener('change', () => {
         if (cb.checked) selectedNodeIds.add(node.id)
         else selectedNodeIds.delete(node.id)
+        // 更新选中态样式
+        label.classList.toggle('is-checked', cb.checked)
       })
-      nodeCheckboxes.append(
-        h('label', { class: 'atom-connect-item' }, cb,
-          h('span', {}, node.title || node.id)))
+      const label = h('label', { class: 'atom-node-item', for: `atom-connect-${node.id}` }, cb,
+        h('span', { class: 'atom-node-title' }, node.title || node.id))
+      nodeCheckboxes.append(label)
     }
   } else {
-    nodeCheckboxes.append(h('p', { class: 'atom-hint' }, '当前主题暂无可连接的节点，新原子将为孤立节点。'))
+    nodeCheckboxes.append(h('p', { class: 'atom-empty-note' }, '当前主题暂无可连接的节点，新原子将为孤立节点。'))
   }
-  const connectSection = h('div', { class: 'atom-field' },
-    h('div', { class: 'atom-label-row' }, h('span', {}, '连接到现有节点'), h('span', { class: 'atom-hint' }, '可选；不选则为孤立节点')),
-    h('div', { class: 'atom-connect-row' },
-      h('span', { class: 'atom-label-inline' }, '关系'), relSelect),
-    nodeCheckboxes)
 
   dialog.append(
-    h('header', { class: 'atom-dialog-head' },
-      h('span', { class: 'atom-badge' }, '新建'),
-      h('h3', { id: 'atom-dialog-title' }, '新增原子节点'),
-      h('button', { type: 'button', class: 'btn btn-icon atom-close', 'aria-label': '关闭', onclick: close }, '×')),
-    h('div', { class: 'atom-field' },
-      h('div', { class: 'atom-label-row' }, h('span', {}, '原子名称'), h('span', { class: 'atom-hint' }, '一句话 · 不可再分')),
-      titleInput),
-    h('div', { class: 'atom-field' },
-      h('div', { class: 'atom-label-row' }, h('span', {}, '当前理解'), h('span', { class: 'atom-hint' }, '用一两句话说明这个原子现在指什么')),
-      descInput),
-    h('div', { class: 'atom-field-row' },
-      h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '类型'), typePills),
-      h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '时间起点'), timeInput)),
-    h('div', { class: 'atom-field' }, h('span', { class: 'atom-label' }, '颜色'), colorPicker),
-    connectSection,
-    error,
-    h('div', { class: 'atom-dialog-foot' },
+    h('header', { class: 'atom-dialog-head-v2' },
+      h('div', { class: 'atom-head-left' },
+        h('span', { class: 'atom-badge' }, '新建'),
+        h('h3', { id: 'atom-dialog-title' }, '新增原子节点')),
+      h('button', { type: 'button', class: 'atom-close-btn', 'aria-label': '关闭', onclick: close }, '×')),
+    h('div', { class: 'atom-body' },
+      h('div', { class: 'atom-field-v2' },
+        h('label', { class: 'atom-label-v2' }, '原子名称',
+          h('span', { class: 'atom-hint-v2' }, '一句话 · 不可再分')),
+        titleInput),
+      h('div', { class: 'atom-field-v2' },
+        h('label', { class: 'atom-label-v2' }, '当前理解',
+          h('span', { class: 'atom-hint-v2' }, '用一两句话说明这个原子现在指什么')),
+        descInput),
+      h('div', { class: 'atom-field-v2' },
+        h('span', { class: 'atom-label-v2' }, '类型'),
+        typePills),
+      h('div', { class: 'atom-row-2col' },
+        h('div', { class: 'atom-field-v2' },
+          h('label', { class: 'atom-label-v2' }, '时间起点'),
+          timeInput),
+        h('div', { class: 'atom-field-v2' },
+          h('span', { class: 'atom-label-v2' }, '颜色'),
+          colorPicker)),
+      h('div', { class: 'atom-field-v2' },
+        h('span', { class: 'atom-label-v2' }, '连接到现有节点',
+          h('span', { class: 'atom-hint-v2' }, '可选；不选则为孤立节点')),
+        h('div', { class: 'atom-rel-row' },
+          h('span', { class: 'atom-rel-label' }, '关系'),
+          relSelect),
+        nodeCheckboxes),
+      error),
+    h('footer', { class: 'atom-foot-v2' },
       h('span', { class: 'atom-foot-note' }, '新增原子会改变图谱结构。'),
       h('div', { class: 'atom-foot-actions' },
         h('button', { type: 'button', class: 'btn', onclick: close }, '取消'),
