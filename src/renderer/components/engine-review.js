@@ -28,7 +28,7 @@ function shortSourceId(item) {
   return `IN-${String(Math.abs(hash) % 900 + 100)}`
 }
 
-export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
+export function renderEnginePipeline(item, { themeId, onDone, projection = {}, onConfirm: confirmOverride, onReject: rejectOverride } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe-v2' })
   const pipeline = item.enginePipeline
@@ -240,8 +240,12 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
           input.targetNodeId = userTarget
           input.rel = relation.value
         }
-        const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'accepted', input)
-        if (response?.ok === false) throw new Error(response.error || '写入失败')
+        if (typeof confirmOverride === 'function') {
+          await confirmOverride(input)
+        } else {
+          const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'accepted', input)
+          if (response?.ok === false) throw new Error(response.error || '写入失败')
+        }
         result.reviewDecision = 'accepted'
         status.textContent = '已确认 · 事件已追加'
         card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'accepted' })
@@ -251,8 +255,12 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     reject.addEventListener('click', async () => {
       confirm.disabled = true; reject.disabled = true
       try {
-        const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'rejected', {})
-        if (response?.ok === false) throw new Error(response.error || '驳回失败')
+        if (typeof rejectOverride === 'function') {
+          await rejectOverride()
+        } else {
+          const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'rejected', {})
+          if (response?.ok === false) throw new Error(response.error || '驳回失败')
+        }
         result.reviewDecision = 'rejected'; status.textContent = '已驳回'; card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'rejected' })
       } catch (cause) { toast(`未能驳回：${cause?.message || cause}`, 'var(--red)'); confirm.disabled = false; reject.disabled = false }
     })

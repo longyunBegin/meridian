@@ -369,15 +369,11 @@ async function loadConcept(theme, ledgerPane, opts) {
   /* 判决状态：signalId -> 'accepted' | 'rejected' | 'edited' */
   const verdictState = new Map()
   /* 编辑器草稿：signalId -> { nodeId, direction, nature, themeTag } */
-  const editorDraft = new Map()
 
   const dirColor = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).color
   const dirIcon = (d) => (DIRECTION_META[d] || DIRECTION_META.stable).icon
   const natIcon = (n) => (NATURE_META[n] || NATURE_META.quantitative).icon
   /* 三层 → demo data-type（决定圆点颜色）：improving=confirm(绿), declining=contradict(红), stable=new(蓝) */
-  const sigDataType = (direction) => direction === 'improving' ? 'confirm'
-    : direction === 'declining' ? 'contradict' : 'new'
-
   const renderSidebar = () => {
     clear(opts.sidebar)
     /* Count pending source intake and actionable legacy ledger signals together. */
@@ -448,28 +444,6 @@ async function loadConcept(theme, ledgerPane, opts) {
     if (typeof opts.onChanged === 'function') opts.onChanged()
     else { renderMain(); renderSidebar() }
   }
-  const acceptSignal = (sig) => doVerdict(sig, 'accepted', {
-    direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
-  })
-  const rejectSignal = (sig) => doVerdict(sig, 'rejected', null)
-  const confirmEdit = (sig) => {
-    const draft = editorDraft.get(sig.id) || {
-      direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
-    }
-    if (!['improving', 'declining', 'stable'].includes(draft.direction)) {
-      toast('请选择方向', 'var(--red)'); return
-    }
-    if (!['quantitative', 'pivot', 'epistemic', 'structural'].includes(draft.nature)) {
-      toast('请选择变化性质', 'var(--red)'); return
-    }
-    if (!String(draft.themeTag || '').trim()) {
-      toast('请填写主题标签', 'var(--red)'); return
-    }
-    doVerdict(sig, 'corrected', {
-      direction: draft.direction, nature: draft.nature, themeTag: String(draft.themeTag).trim(),
-    })
-  }
-
   /* 信号类型标签：对齐 demo TYPE_LABEL */
   const signalTypeLabel = (sig) => {
     const t = sig.type || sig.payload?.type || 'new'
@@ -480,152 +454,6 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     const map = { new: '新增', confirm: '证实', contradict: '证伪', duplicate: '重复', update: '更新' }
     return map[t] || '新增'
-  }
-
-  /* 信号卡片：1:1 对齐 demo renderSignal */
-  const renderSignal = (sig, i, savedDecision = null) => {
-    const statusMap = { pending: '等你确认', accepted: '已确认', rejected: '已驳回', edited: '已修改' }
-    const decision = verdictState.get(sig.id) || savedDecision || null
-    const status = decision === 'rejected' ? 'rejected'
-      : decision === 'corrected' || decision === 'edited' ? 'edited'
-        : decision ? 'accepted' : 'pending'
-    const isResolved = Boolean(decision)
-    const draft = editorDraft.get(sig.id) || {
-      direction: sig.direction, nature: sig.nature, themeTag: sig.themeTag,
-    }
-    /* 影响 pill：节点名 + themeTag（direction 颜色）+ nature 图标 */
-    const impactPill = h('button', {
-      type: 'button', class: 'impact-pill', 'data-node': sig.nodeId || '',
-      onclick: (e) => {
-        e.stopPropagation()
-        if (sig.nodeId) { selectedNodeId = sig.nodeId; builderMode = 'node'; renderMain(); renderSidebar(); }
-      },
-    },
-      h('span', { class: 'nd', style: `background:${dirColor(sig.direction)}` }),
-      sig.suggestedNode || '未归属',
-      h('span', { class: 'ef', style: `color:${dirColor(sig.direction)}` },
-        `${natIcon(sig.nature)} ${sig.themeTag || ''}`))
-
-    /* Only the three fields persisted by the append-only review event are editable here. */
-    const editor = h('div', { class: 'verdict-editor', 'data-editor': sig.id },
-      h('p', { class: 'legacy-signal-edit-note' }, '只修订方向、性质与标签；目标节点沿用原事件关系。所有决定均以追加事件记录。'),
-      h('div', { class: 'editor-row' },
-        h('span', { class: 'label' }, '方向'),
-        h('div', { class: 'dir-toggle' },
-          ...['improving', 'declining', 'stable'].map((d) =>
-            h('button', {
-              type: 'button', disabled: isResolved,
-              class: draft.direction === d ? 'active' : '',
-              'data-dir': sig.id, 'data-dir-val': d,
-              onclick: (e) => {
-                e.stopPropagation()
-                const dd = editorDraft.get(sig.id) || { ...draft }
-                dd.direction = d
-                editorDraft.set(sig.id, dd)
-                renderMain()
-                const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
-                if (ed) ed.classList.add('open')
-              },
-            }, `${dirIcon(d)} ${DIRECTION_META[d].label}`)))),
-      h('div', { class: 'editor-row' },
-        h('span', { class: 'label' }, '性质'),
-        h('div', { class: 'dir-toggle' },
-          ...['quantitative', 'pivot', 'epistemic', 'structural'].map((n) =>
-            h('button', {
-              type: 'button', disabled: isResolved,
-              class: draft.nature === n ? 'active' : '',
-              'data-nature': sig.id, 'data-nature-val': n,
-              onclick: (e) => {
-                e.stopPropagation()
-                const dd = editorDraft.get(sig.id) || { ...draft }
-                dd.nature = n
-                editorDraft.set(sig.id, dd)
-                renderMain()
-                const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
-                if (ed) ed.classList.add('open')
-              },
-            }, `${natIcon(n)} ${NATURE_META[n].label}`)))),
-      h('div', { class: 'editor-row' },
-        h('span', { class: 'label' }, '标签'),
-        h('input', {
-          type: 'text', disabled: isResolved,
-          value: draft.themeTag || '',
-          placeholder: '主题标签，如：产能瓶颈',
-          style: 'flex:1;font:inherit;padding:4px 8px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);color:var(--text)',
-          oninput: (e) => {
-            const dd = editorDraft.get(sig.id) || { ...draft }
-            dd.themeTag = e.target.value
-            editorDraft.set(sig.id, dd)
-          },
-        })),
-      h('div', { class: 'editor-row' },
-        h('span', { class: 'label' }, ''),
-        h('button', {
-          type: 'button', class: 'verdict-btn accept', disabled: isResolved,
-          onclick: () => confirmEdit(sig),
-        }, '✓ 确认修正')))
-
-    const card = h('div', {
-      class: 'signal',
-      'data-type': sigDataType(sig.direction),
-      'data-signal': sig.id,
-      style: `animation-delay:${Math.min(i * 0.04, 0.4)}s`,
-    },
-      h('span', { class: 'signal-dot' }),
-      h('div', { class: 'signal-card' },
-        h('div', { class: 'signal-top' },
-          /* 类型标签：显示 themeTag（三层） */
-          h('span', { class: 'signal-type' }, sig.themeTag || '数据更新'),
-          sig.source ? h('span', { class: 'signal-source' }, sig.source) : null,
-          h('span', { class: 'spacer' }),
-          h('span', { class: 'signal-time' }, fmtDate(sig.at))),
-        h('div', { class: 'signal-title' }, sig.text),
-        sig.payload?.text && sig.payload.text !== sig.text
-          ? h('div', { class: 'signal-excerpt' }, String(sig.payload.text).slice(0, 200))
-          : null,
-        h('div', { class: 'signal-extract' },
-          h('div', { class: 'label' }, '系统提取'),
-          h('div', { class: 'text' },
-            `${dirIcon(sig.direction)}${DIRECTION_META[sig.direction]?.label || ''} · ${natIcon(sig.nature)}${NATURE_META[sig.nature]?.label || ''} · ${sig.themeTag || ''}`,
-            sig.confidence != null ? ` · 置信度 ${Math.round(sig.confidence * 100)}%` : '')),
-        h('div', { class: 'signal-impacts' },
-          h('span', { class: 'lead' }, '影响'),
-          impactPill),
-        /* 与新卡共用同一套动作行结构（.review-card-foot / .review-foot-label / .review-foot-actions） */
-        h('div', { class: 'review-card-foot review-card-foot-legacy' },
-          h('span', { class: 'review-foot-label' }, '你的处理'),
-          h('span', { class: `verdict-status ${status}` },
-            h('span', { class: 'dot' }),
-            statusMap[status]),
-          h('div', { class: 'review-foot-actions' },
-          h('button', {
-            type: 'button', disabled: isResolved,
-            class: `verdict-btn accept${status === 'accepted' ? ' active' : ''}`,
-            'data-v': sig.id, 'data-act': 'accept',
-            onclick: (e) => { e.stopPropagation(); acceptSignal(sig) },
-          }, '✓ 确认'),
-          h('button', {
-            type: 'button', disabled: isResolved,
-            class: `${status === 'edited' ? 'active' : ''}`,
-            'data-v': sig.id, 'data-act': 'edit',
-            onclick: (e) => {
-              e.stopPropagation()
-              verdictState.set(sig.id, verdictState.get(sig.id) || 'pending')
-              renderMain()
-              const ed = opts.mainStage.querySelector(`[data-editor="${sig.id}"]`)
-              if (ed) ed.classList.add('open')
-              toast('展开修正选项')
-            },
-          }, '✎ 修正'),
-          h('button', {
-            type: 'button', disabled: isResolved,
-            class: `verdict-btn reject${status === 'rejected' ? ' active' : ''}`,
-            'data-v': sig.id, 'data-act': 'reject',
-            onclick: (e) => { e.stopPropagation(); rejectSignal(sig) },
-          }, '✕ 驳回'))),
-        editor)
-    )
-    return card
   }
 
   /* 节点视图：1:1 对齐 demo renderNodeView */
@@ -1155,39 +983,39 @@ async function loadConcept(theme, ledgerPane, opts) {
         return
       }
       if (entry.kind === 'legacy-signal') {
-        const signalIndex = buildSignals().findIndex((signal) => signal.id === entry.signal.id)
         const signal = entry.signal
-        const resolved = Boolean(entry.decision)
-        const decisionLabel = entry.decision === 'rejected' ? '已驳回'
-          : entry.decision === 'corrected' ? '已修订' : entry.decision ? '已确认' : '等你确认'
-        const suggested = signal.suggestedNode || '未归属'
-        /* 与"外部数据归因 / AI 建议"共用同一套卡片结构：
-           同一件事不该有两套 UI（用户反馈："建设者工作台为什么会有不一样的"）。 */
-        detail.append(h('article', { class: 'builder-intake-card builder-legacy-signal', 'data-entry-kind': 'legacy-signal' },
-          h('header', { class: 'builder-intake-card-head' },
-            h('div', {}, h('p', { class: 'builder-intake-kicker' }, `账本里的旧信号 · ${resolved ? '已处理' : '等你确认'}`),
-              h('h2', {}, signal.text || `待复核事件 ${signal.id}`)),
-            h('span', { class: `builder-intake-state${resolved ? ' is-ready' : ''}` }, decisionLabel)),
-          h('div', { class: 'review-change-summary' },
-            h('strong', {}, '将产生的变化：'),
-            resolved
-              ? '原始事件保持不变；下面是当时追加的审核决定。'
-              : `确认后：这条信号作为「${signal.suggestedDir || '支持'}」记到「${suggested}」上，并追加一条确认记录；驳回则保持未表态。原始事件不会改动。`),
-          renderReviewTraceBar([
-            { label: '建议归属', value: suggested, missing: !signal.suggestedNode },
-            { label: '方向', value: signal.suggestedDir || '支持' },
-            { label: '来源', value: signal.source, missing: !signal.source },
-            { label: '事件时间', value: signal.at ? String(signal.at).slice(0, 10) : '', missing: !signal.at },
-            { label: '事件 ID', value: signal.id },
-          ]),
-          renderSignal(signal, signalIndex, entry.decision),
-          h('details', { class: 'builder-source-body' },
-            h('summary', {}, '技术细节与审计入口'),
-            h('p', {}, '原事件保持不变；确认、修订或驳回都会追加一条 signal.reviewed 决定事件，可回放、可追溯。'),
-            h('button', { type: 'button', class: 'btn btn-sm builder-legacy-audit', onclick: () => {
-              opts.openLedger?.()
-              ledgerController?.showEvent(signal.id)
-            } }, '在审计账本查看原始事件'))))
+        /* 适配层：把账本里的历史信号合成成"一条待复核项"，交给**同一张**复核卡渲染。
+           确认/驳回的行为在这里注入——它走 chain:confirmSignal，而不是引擎建议那条命令。
+           这类信号是人写进账本的、没有模型引文需要核验，所以 sourceQuoteVerified 置真：
+           那道门控是为了拦住模型编造的引文，不适用于这里。 */
+        const synthetic = {
+          id: `signal:${signal.id}`,
+          title: signal.text || `待复核事件 ${signal.id}`,
+          text: signal.text || '',
+          createdAt: signal.at || null,
+          applicability: '',
+          provenance: { sourceLabel: signal.source || '', platform: '', url: '' },
+          enginePipeline: {
+            status: 'done',
+            results: [{
+              proposalEventId: signal.id,
+              propositionTitle: signal.suggestedNode || '',
+              rel: signal.dirKey || 'supports',
+              effectiveStrength: Number.isFinite(Number(signal.confidence)) ? Number(signal.confidence) : null,
+              statement: { sourceQuoteVerified: true },
+              suggestion: {},
+              attribution: {},
+              reviewDecision: entry.decision === 'rejected' ? 'rejected' : entry.decision ? 'accepted' : null,
+            }],
+          },
+        }
+        detail.append(renderEnginePipeline(synthetic, {
+          themeId: theme.id,
+          projection: proj,
+          onDone: () => { if (typeof opts.onChanged === 'function') opts.onChanged(); else { renderMain(); renderSidebar() } },
+          onConfirm: async () => { await doVerdict(signal, 'accepted', null) },
+          onReject: async () => { await doVerdict(signal, 'rejected') },
+        }))
         return
       }
       detail.append(renderIntakeItem(entry.item, entry))
