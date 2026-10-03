@@ -168,9 +168,9 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
     /* 备注取代了写死的方向/性质/标签：模型至多建议一句自由文本，用户可改可删，后端不做枚举校验。
        旧账本里已写入的 change.themeTag 仅作为备注初值回填，不再作为类型字段。 */
     /* 权重（=这条证据的强度，0–1）：用户可覆盖引擎给的值。留空=用引擎的。 */
-    const suggestedWeight = Number.isFinite(Number(recommendation?.effectiveStrength))
-      ? Number(recommendation.effectiveStrength)
-      : (Number.isFinite(Number(recommendation?.strength)) ? Number(recommendation.strength) : null)
+    const suggestedWeight = Number.isFinite(Number(suggestion.effectiveStrength))
+      ? Number(suggestion.effectiveStrength)
+      : (Number.isFinite(Number(suggestion.strength)) ? Number(suggestion.strength) : null)
     const weightInput = h('input', {
       class: 'txt', type: 'number', min: '0', max: '1', step: '0.05',
       placeholder: suggestedWeight == null ? '0–1' : `默认 ${suggestedWeight.toFixed(2)}`,
