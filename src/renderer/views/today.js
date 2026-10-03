@@ -741,17 +741,74 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         h('p', { class: 'inbox-detail-note' }, '原文已留在本地。勾选后点「抽取所选」，或直接点分组旁的「抽取这 N 条」。'),
       ) : h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, `提取的要点 · ${lemmas.length}`),
-        lemmas.length ? h('ol', { class: 'inbox-proposals' },
-          ...lemmas.map((lemma) => h('li', {},
-            h('span', {}, lemma.title),
-            h('div', { class: 'inbox-proposal-meta' },
-              h('span', {}, lemma.action === 'merge'
-                ? `合并到「${allNodes.find((node) => node.id === lemma.mergeInto)?.title || '已有要点'}」`
-                : '新增要点'),
-              h('span', {}, lemma.action === 'merge' ? '保留原置信度与挂点' : `建议置信度 ${Math.round(lemma.confidence ?? 50)}`),
-              lemma.conflicts?.length ? h('span', { class: 'cf' }, `${lemma.conflicts.length} 项冲突`) : null,
-            ),
-          )),
+        lemmas.length ? h('div', { class: 'inbox-statements' },
+          ...lemmas.map((lemma, idx) => {
+            const mapped = lemma.mappedTopic && lemma.mappedAtom
+            const card = h('div', { class: `inbox-statement-card${mapped ? ' is-mapped' : ''}` },
+              h('p', { class: 'inbox-statement-text' }, lemma.title))
+            if (mapped) {
+              // 已归位：显示反馈 + 去建设者查看
+              const themeName = state.themes.find((t) => t.id === lemma.mappedTopic)?.name || '未知主题'
+              const atomName = (cachedAllNodes || []).find((n) => n.id === lemma.mappedAtom)?.title || '未知原子'
+              const stanceLabel = lemma.stance === 'challenge' ? '反驳' : '佐证'
+              card.append(
+                h('p', { class: 'inbox-mapped-feedback' }, `已归位 → ${themeName} · ${atomName} · ${stanceLabel}`),
+                h('button', { type: 'button', class: 'inbox-goto-builder',
+                  onclick: () => {
+                    // 跳转到建设者并选中对应原子（跨视图唯一的连接点）
+                    sessionStorage.setItem('meridian:builderJump', JSON.stringify({ themeId: lemma.mappedTopic, atomId: lemma.mappedAtom }))
+                    location.hash = `#/theme/${lemma.mappedTopic}/builder`
+                  } }, '去建设者查看 →'))
+            } else {
+              // 未归位：主题 → 原子级联 + 立场
+              const themeSel = h('select', { class: 'inbox-stmt-theme', 'aria-label': '选择主题' },
+                h('option', { value: '' }, '选主题…'),
+                ...liveThemes.map((t) => h('option', { value: t.id }, t.name)))
+              const atomSel = h('select', { class: 'inbox-stmt-atom', disabled: true, 'aria-label': '选择原子' },
+                h('option', { value: '' }, '先选主题'))
+              const stanceBtns = h('div', { class: 'inbox-stance-toggle' },
+                h('button', { type: 'button', class: 'is-active', dataset: { stance: 'support' } }, '佐证'),
+                h('button', { type: 'button', dataset: { stance: 'challenge' } }, '反驳'))
+              let stance = 'support'
+              stanceBtns.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+                stanceBtns.querySelectorAll('button').forEach((x) => x.classList.remove('is-active'))
+                b.classList.add('is-active'); stance = b.dataset.stance
+              }))
+              themeSel.addEventListener('change', () => {
+                const tid = themeSel.value
+                const atoms = (cachedAllNodes || []).filter((n) => n.themeId === tid && !n.archived && !n.invalidated)
+                atomSel.innerHTML = ''
+                atomSel.append(h('option', { value: '' }, atoms.length ? '选原子…' : '该主题暂无原子'))
+                atoms.forEach((a) => atomSel.append(h('option', { value: a.id }, a.title || '未命名原子')))
+                atomSel.disabled = !atoms.length
+              })
+              const confirmBtn = h('button', { type: 'button', class: 'btn btn-primary btn-sm',
+                onclick: async () => {
+                  const tid = themeSel.value, aid = atomSel.value
+                  if (!tid || !aid) { toast('请先选择主题和原子', 'var(--red)'); return }
+                  confirmBtn.disabled = true
+                  try {
+                    // 归位：更新 lemma 的映射字段（跨视图连接点）
+                    lemma.mappedTopic = tid; lemma.mappedAtom = aid; lemma.stance = stance
+                    lemma.mappedAt = new Date().toISOString()
+                    const res = await m.inboxSetTheme(item.id, tid)
+                    if (!res?.ok) throw new Error(res?.error || '归位失败')
+                    // 追加 evidence 到原子（经建设者事件）
+                    await m.chainAddEvidence(tid, aid, {
+                      statement: lemma.title, stance, weight: 0.7,
+                      sourceItemId: item.id, sourceItemTitle: item.title,
+                      sourceOrigin: item.provenance?.sourceLabel || item.provenance?.platform || '',
+                    })
+                    toast(`已归位 → ${state.themes.find((t) => t.id === tid)?.name}`)
+                    rerender ? rerender() : onRouteChange()
+                  } catch (e) { toast(e.message || '归位失败', 'var(--red)'); confirmBtn.disabled = false }
+                } }, '确认归位')
+              card.append(
+                h('div', { class: 'inbox-stmt-controls' }, themeSel, atomSel),
+                h('div', { class: 'inbox-stmt-row' }, stanceBtns, confirmBtn))
+            }
+            return card
+          }),
         ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的要点。你可以忽略，或补充原文后重新捕获。'),
       ),
       // 确认归位：图已删，归位 = 挂到认知链。提案草稿搬进这里，一处确认。

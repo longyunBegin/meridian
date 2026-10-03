@@ -1244,3 +1244,19 @@
 .meridian-theme .evidence-date { color:var(--text-3); margin-left:auto; }
 .meridian-theme .evidence-statement { font-size:13px; line-height:1.5; margin-bottom:4px; }
 .meridian-theme .evidence-source { font-size:12px; color:var(--text-3); }
+
+/* 收件箱逐条要点归位卡片（参考设计稿） */
+.meridian-theme .inbox-statements { display:flex; flex-direction:column; gap:12px; }
+.meridian-theme .inbox-statement-card { border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:var(--bg); }
+.meridian-theme .inbox-statement-card.is-mapped { border-color:var(--green); background:color-mix(in srgb, var(--green) 4%, var(--bg)); }
+.meridian-theme .inbox-statement-text { font-size:14px; font-weight:600; margin:0 0 12px; line-height:1.5; }
+.meridian-theme .inbox-stmt-controls { display:flex; gap:8px; margin-bottom:10px; }
+.meridian-theme .inbox-stmt-controls select { flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+.meridian-theme .inbox-stmt-row { display:flex; justify-content:space-between; align-items:center; }
+.meridian-theme .inbox-stance-toggle { display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.meridian-theme .inbox-stance-toggle button { padding:7px 18px; border:none; background:transparent; font-size:13px; cursor:pointer; color:var(--text-2); }
+.meridian-theme .inbox-stance-toggle button.is-active { background:var(--green); color:#fff; font-weight:600; }
+.meridian-theme .inbox-stance-toggle button[data-stance="challenge"].is-active { background:var(--red); }
+.meridian-theme .inbox-mapped-feedback { font-size:13px; color:var(--green); font-weight:600; margin:0 0 8px; }
+.meridian-theme .inbox-goto-builder { font-size:12px; color:var(--accent); background:none; border:none; cursor:pointer; padding:0; }
+.meridian-theme .inbox-goto-builder:hover { text-decoration:underline; }
