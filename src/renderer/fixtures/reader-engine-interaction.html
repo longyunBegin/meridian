@@ -252,73 +252,8 @@
       check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
         !currentRoot.querySelector('.rdr-replay-details'))
 
-      /* R1 理由清单 + R2 小倍数网格（§10.2 第 2/3 屏）：有序主结构 */
-      const structureEvidence = (id, title, extra = {}) => ({
-        id, nodeType: 'evidence', kind: 'evidence', title, currentText: title, status: 'pending', archived: false, external: false,
-        createdSeq: 1, eventIds: [], provenanceEventIds: [], targetNodeIds: ['sx-v1'], evidenceCount: 0,
-        evidenceRefs: [{ type: 'url', id: 'https://example.test/r1-source', title: '示例来源' }],
-        sourceLabel: '示例来源', sourcePublishedAt: '2026-09-20', applicability: '2026Q3', ...extra,
-      })
-      const structureNodes = [
-        {
-          id: 'sx-v1', nodeType: 'viewpoint', kind: 'claim', title: 'R1 结论原子', currentText: 'R1 结论原子',
-          confidence: 71, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [],
-          evidenceNodeIds: ['sx-e1', 'sx-e2', 'sx-e3'], evidenceCount: 3, atomCategory: '技术路线',
-          confidenceHistory: [
-            { at: '2026-09-23T00:00:00.000Z', oldConfidence: 62, newConfidence: 67 },
-            { at: '2026-09-24T00:00:00.000Z', oldConfidence: 67, newConfidence: 71 },
-          ],
-        },
-        { id: 'sx-v2', nodeType: 'viewpoint', kind: 'claim', title: 'R1 无证据原子', currentText: 'R1 无证据原子', confidence: null, status: 'pending', archived: false, external: false, createdSeq: 2, eventIds: [], provenanceEventIds: [], evidenceCount: 0, atomCategory: '商业模式' },
-        structureEvidence('sx-e1', '支持用的来源', { applicability: '2020Q1' }),
-        structureEvidence('sx-e2', '挑战用的来源', { applicability: '2099' }),
-        structureEvidence('sx-e3', '未表态的来源', { evidenceRefs: [], sourceLabel: null, sourceUrl: null, sourcePublishedAt: null, applicability: null }),
-      ]
-      const structureEdges = [
-        { id: 'sx-r1', from: 'sx-e1', to: 'sx-v1', rel: 'supports', reviewDecision: null, pendingReview: false },
-        { id: 'sx-r2', from: 'sx-e2', to: 'sx-v1', rel: 'contradicts', reviewDecision: null, pendingReview: false },
-        { id: 'sx-r3', from: 'sx-v1', to: 'sx-v2', rel: 'related', reviewDecision: null, pendingReview: false },
-      ]
-      const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
-      /* 时间线要按事件流读：这里让事件 id 与投影证据节点 id 对齐（真实数据就是同一批 id）。 */
-      const structureEvents = [
-        { id: 'sx-e1', seq: 1, at: '2026-09-20T00:00:00.000Z', type: 'evidence.appended', payload: { text: '支持用的来源' } },
-        { id: 'sx-rel1', seq: 2, at: '2026-09-20T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'supports', from: { eventId: 'sx-e1' }, to: { eventId: 'sx-v1' } } },
-        { id: 'sx-c1', seq: 3, at: '2026-09-20T01:00:01.000Z', type: 'confidence.updated', payload: { nodeId: 'sx-v1', evidenceEventId: 'sx-e1', oldConfidence: 62, newConfidence: 67 } },
-        { id: 'sx-e2', seq: 4, at: '2026-09-25T00:00:00.000Z', type: 'evidence.appended', payload: { text: '挑战用的来源' } },
-        { id: 'sx-rel2', seq: 5, at: '2026-09-25T01:00:00.000Z', type: 'relation.declared', payload: { rel: 'contradicts', from: { eventId: 'sx-e2' }, to: { eventId: 'sx-v1' } } },
-        { id: 'sx-e3', seq: 6, at: '2026-09-26T00:00:00.000Z', type: 'evidence.appended', payload: { text: '未表态的来源' } },
-      ]
-      const structureRoot = renderReaderView({ name: '大纲合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
-        loadProjection: async () => structureProjection, loadEvents: async () => structureEvents, onOpenBuilder: () => {},
-        loadInbox: async () => ([{ id: 'inbox-unassigned', status: 'pending', title: '未归位条目', text: '还没归主题' }]),
-      })
-      document.querySelector('#fixture-root').append(structureRoot)
-      await wait()
-      check('R1 理由清单：每个原子一行结论，支持/挑战/未表态三组都在',
-        structureRoot.querySelectorAll('.rdr-outline-atom').length === 2
-        && structureRoot.querySelectorAll('.rdr-outline-group.is-supports').length === 2
-        && structureRoot.querySelectorAll('.rdr-outline-group.is-against').length === 2
-        && structureRoot.querySelectorAll('.rdr-outline-group.is-unclassified').length === 2)
-      check('R1 大纲按立场分组来源，带来源名、时间与「查看来源」',
-        structureRoot.querySelectorAll('.rdr-outline-group.is-supports .rdr-outline-item').length === 1
-        && structureRoot.querySelectorAll('.rdr-outline-group.is-against .rdr-outline-item').length === 1
-        && (structureRoot.querySelector('.rdr-outline-item-meta')?.textContent || '').includes('示例来源')
-        && structureRoot.querySelectorAll('.rdr-outline-link').length === 2)
-      check('R1 大纲文案里不出现账本术语（事件 / seq / 哈希）',
-        !/事件|seq|哈希/.test(structureRoot.querySelector('.rdr-outline')?.textContent || ''),
-        structureRoot.querySelector('.rdr-outline')?.textContent?.slice(0, 60) || '')
-      /* R3 正反两方 / R4 时间线 */
-      const chronicleItems = [...structureRoot.querySelectorAll('.rdr-chronicle-item')]
-      check('R4 时间线一行一条来源，带日期/来源/归入原子/立场/强度变化',
-        chronicleItems.length === 3
-        && chronicleItems[0].querySelector('.rdr-chronicle-date')?.textContent === '2026-09-26'
-        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-delta')?.textContent || '').includes('62% → 67%')
-        && (structureRoot.querySelector('.rdr-chronicle-item.is-contradicts .rdr-chronicle-stance')?.textContent || '') === '挑战'
-        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('归入 R1 结论原子')
-        && (structureRoot.querySelector('.rdr-chronicle-item.is-supports .rdr-chronicle-meta')?.textContent || '').includes('示例来源'))
-      check('R4 时间线不出现账本术语（事件序号 / 哈希）',
-        !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
+      /* 用户决定：理由清单与时间线都删除——它们与「按分类的观点清单 + 点开信息卡」功能重叠
+         （信息卡已含 支持/反对/未表态 + 强度 + 相关原子 + 完整证据流），对应的 R1/R4 断言随之下线。 */
 
       /* 用户决定：读者页不再展示「还缺什么」面板（要求精简），对应的 R5 / P1-5 断言随之下线。
          缺口能力本身仍在（buildGapList 与收件箱待办通道未动），只是不再占读者页版面。 */

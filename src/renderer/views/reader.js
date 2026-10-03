@@ -533,11 +533,6 @@ export function renderReaderView(theme, opts = {}) {
        常显 = 结论页(④) → 观点地图(②) → 单条下钻(①③) → 还缺什么；
        其余（关系全貌 / 时间线 / 全部理由 / 对照与分类 / 整体情况）收进折叠区——
        能力一个不丢，但读者不再需要先选一种"格式"才能开始看。 */
-    const moreView = (title, ...nodes) => h('details', { class: 'rdr-more' },
-      h('summary', { class: 'rdr-more-summary' }, title), ...nodes)
-    const block = (title, host) => h('section', { class: 'rdr-block' },
-      h('h2', { class: 'rdr-block-head' }, title), host)
-
     /* 读者页结构对齐用户给的 demo：
        头部（主题名 + 四个统计数）→ 图谱缩略图（气泡=簇，含分簇清单）→ 当前最该看的 5 个 → 单条下钻（抽屉位）。
        原先的"还缺什么 / 详情 / 四个折叠区"与结论页的长段落一并去掉——demo 里没有这些。
@@ -572,17 +567,8 @@ export function renderReaderView(theme, opts = {}) {
       /* 其余面板（合成轴 / 理由清单 / 小倍数 / 正反两方 / 时间线 / 对照表 / 分类 / 缺口 / 检视器）
          保留能力，但收进**一行折叠**——可见区域保持 demo 式的精简，页面不再被它们占满。 */
       /* 还缺什么：三个构造器里数据最实的一个（11 条、三类），也最回答"哪里不确定"——提到可见区。 */
-      /* 「更多视图」只留两个看得懂的：
-         · 时间线：这主题是怎么长出来的（事件时间戳齐全）
-         · 理由清单：每个观点凭什么（来源按立场分组）
-         移除：整体情况（强度历史为空，画出来是空图）、分类聚合（主题没配分类，只有"未分类"一行）、
-         正反两方（与理由清单同源同轴）、小倍数（每卡都显示"还没有强度"、分类色点也没数据）、
-         对照表（用户反馈"完全看不懂"，且与理由清单同一份数据）。 */
-      moreView('更多视图', outlineHost, chronicleHost))
-    /* 面板在折叠区里也必须先渲染（fixture 与无障碍都按 DOM 断言/读取）。 */
-    renderInspector()
-    renderStructure()
-    loadInboxItems().then(() => renderGaps())
+      /* 用户决定：理由清单与时间线都删除（与「按分类的观点清单 + 点开信息卡」功能重叠）。 */
+      )
   }
 
   const loadProjection = typeof opts.loadProjection === 'function' ? opts.loadProjection() : Promise.resolve({})
