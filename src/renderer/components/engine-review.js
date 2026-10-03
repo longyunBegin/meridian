@@ -29,9 +29,7 @@ function shortSourceId(item) {
 
 export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
   const m = globalThis.window?.meridian || {}
-  const wrap = h('div', { class: 'engine-pipe' },
-    h('div', { class: 'draft-head' }, h('span', { class: 'draft-title' }, '外部数据 → 抽取 → 归因/建议 → 人工确认'),
-      h('span', { class: 'draft-sub' }, '建议只读预览；确认或驳回后才追加决定事件')))
+  const wrap = h('div', { class: 'engine-pipe-v2' })
   const pipeline = item.enginePipeline
   const runButton = (label, callback) => {
     const button = h('button', { type: 'button', class: 'btn btn-primary btn-sm' }, label)
@@ -40,11 +38,17 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
   }
   if (!pipeline || pipeline.status !== 'done') {
     const sourceText = String(item.text || '').trim()
-    const hint = h('p', { class: 'chain-note' }, sourceText
-      ? '运行已配置的模型来抽取原子陈述、映射候选关系并生成变更前后预览。模型只提出建议；确认或驳回前不会修改主题投影。未配置模型或运行失败时会显示实际错误。'
-      : '此来源没有保存可供分析的正文。请重新接入原文或摘录；仅凭标题或 URL 不会伪造抽取结果。')
+    const shortId = shortSourceId(item)
+    const sourceTitle = item.title || '未命名来源'
+    const sourceLabel = item.provenance?.sourceLabel || item.provenance?.platform || '未标注来源'
+    const publishTime = (() => {
+      const d = item.provenance?.publishedAt || item.createdAt
+      if (!d) return '未记录'
+      try { return new Date(d).toISOString().slice(0, 10) } catch { return '未记录' }
+    })()
+    const sourceDesc = sourceText.replace(/\s+/g, ' ').slice(0, 150)
     const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
-    const button = runButton('运行模型抽取与映射', async () => {
+    const button = h('button', { type: 'button', class: 'btn btn-primary', onclick: async () => {
       button.disabled = true
       error.hidden = true
       try {
@@ -56,9 +60,29 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       } catch (cause) {
         error.hidden = false; error.textContent = cause?.message || String(cause); button.disabled = false
       }
-    })
+    } }, '运行模型抽取与映射')
     button.disabled = !sourceText
-    wrap.append(hint, h('div', { class: 'draft-actions' }, button), error)
+    // 新卡片风格（与待审卡片设计语言一致）
+    wrap.append(
+      h('div', { class: 'review-card-v2' },
+        h('div', { class: 'review-card-head' },
+          h('span', { class: 'review-card-kicker' }, `外部数据待处理 · ${shortId}`),
+          h('span', { class: 'review-badge-pending' }, '待运行模型')),
+        h('div', { class: 'review-source-card' },
+          h('div', { class: 'review-source-title-row' },
+            h('strong', {}, sourceTitle),
+            h('span', { class: 'review-source-id' }, shortId)),
+          h('div', { class: 'review-source-meta' },
+            h('span', {}, '来源 '), h('b', {}, sourceLabel),
+            h('span', { class: 'review-meta-sep' }, '发布时间 '), h('b', {}, publishTime)),
+          sourceDesc ? h('p', { class: 'review-source-desc' }, sourceDesc) : null),
+        h('div', { class: 'review-runmodel-box' },
+          h('div', { class: 'review-runmodel-title' }, '外部数据 → 抽取 → 归因/建议 → 人工确认'),
+          h('p', { class: 'review-runmodel-desc' }, sourceText
+            ? '运行已配置的模型来抽取原子陈述、映射候选关系并生成变更前后预览。模型只提出建议；确认或驳回前不会修改主题投影。'
+            : '此来源没有保存可供分析的正文。请重新接入原文或摘录；仅凭标题或 URL 不会伪造抽取结果。'),
+          h('div', { class: 'review-runmodel-actions' }, button)),
+        error))
     return wrap
   }
 

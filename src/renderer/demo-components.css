@@ -1200,3 +1200,11 @@
 .meridian-theme .review-foot-hint { font-size:12px; color:var(--text-3); }
 .meridian-theme .review-foot-actions { display:flex; gap:10px; }
 .meridian-theme .review-foot-actions .btn { padding:10px 22px; }
+
+/* 待运行模型卡片（新设计语言） */
+.meridian-theme .engine-pipe-v2 { padding:4px; }
+.meridian-theme .review-runmodel-box { border:1px solid var(--line); border-radius:12px; padding:20px 22px; background:var(--bg); }
+.meridian-theme .review-runmodel-title { font-size:14px; font-weight:700; margin-bottom:10px; }
+.meridian-theme .review-runmodel-desc { font-size:13px; color:var(--text-2); line-height:1.6; margin:0 0 16px; }
+.meridian-theme .review-runmodel-actions { display:flex; justify-content:flex-end; }
+.meridian-theme .review-runmodel-actions .btn-primary { padding:10px 24px; }
