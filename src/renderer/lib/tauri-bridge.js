@@ -98,6 +98,7 @@ export function createMeridianBridge() {
     inboxCapture: (text, channelMeta, themeId) => call('inbox:capture', text, channelMeta, themeId),
     inboxUpsertItem: (item) => call('inbox:upsertItem', item),
     inboxList: (opts) => call('inbox:list', opts), inboxIgnored: () => call('inbox:ignored'),
+    inboxStats: () => call('inbox:stats'),
     inboxResolve: (id, action) => call('inbox:resolve', id, action), inboxResolveMany: (ids, action) => call('inbox:resolveMany', ids, action),
     inboxImport: (themeId, items, overrides) => call('inbox:import', themeId, items, overrides), inboxClear: () => call('inbox:clear'),
     inboxUndoAutoImport: (id) => call('inbox:undoAutoImport', id), inboxLastAutoImport: () => call('inbox:lastAutoImport'),
