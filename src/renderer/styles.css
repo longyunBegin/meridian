@@ -1960,6 +1960,8 @@ body.tauri-macos .app {
 .cog-node:focus-visible { outline: none; }
 .cog-node:focus-visible rect { stroke: #0a84ff; stroke-width: 3; }
 .cog-node-title { font-size: var(--t-body); fill: var(--text-1); font-weight: 600; }
+/* 读者画布上的证据"数据点"：单行小字，不跟观点原子抢视觉重量 */
+.cog-node-title.is-compact { font-size: 10.5px; font-weight: 500; fill: var(--text-2); }
 .cog-node-sub { font-size: var(--t-caption); fill: var(--text-3); }
 .cog-edge { fill: none; stroke-width: 1.6; }
 .cog-edge.is-review { stroke-dasharray: 5 4; }

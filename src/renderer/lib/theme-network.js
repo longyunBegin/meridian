@@ -287,7 +287,8 @@ function hashId(value) {
 /** 尺寸即强度：confidence 0-100 映射到 0.84–1.16 的缩放；布局间距与碰撞检测同步跟随。 */
 function nodeDimensions(node) {
   const type = networkNodeType(node)
-  const base = type === 'evidence' ? { w: 144, h: 72 } : { w: 156, h: 72 }
+  /* 证据是"数据点"：卡片明显小于观点原子，一眼就能看出谁是论点、谁是数据。 */
+  const base = type === 'evidence' ? { w: 128, h: 38 } : { w: 156, h: 72 }
   const raw = Number(node?.confidence ?? node?.strength)
   const strength = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 50
   const scale = 0.84 + (strength / 100) * 0.32
@@ -359,7 +360,19 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
   const gapX = Math.round(Math.min(188, Math.max(148, (width - marginX * 2) / 3.6)))
   const columns = Math.max(1, Math.floor((width - marginX * 2) / gapX) + 1)
   const rowCount = Math.ceil(count / columns)
-  const height = Math.max(420, 96 + rowCount * gapY)
+  /* 行高按该行最高卡片取步进：证据数据点只有 38px 高，若还按统一的 104px 走，
+     纯证据行会白留一大截高度（21 节点时能差出 ~140px 的空白）。 */
+  const rowTop = [62]
+  for (let row = 0; row < rowCount; row++) {
+    let tallest = 0
+    for (let col = 0; col < columns; col++) {
+      const node = dfsOrder[row * columns + col]
+      if (!node) continue
+      tallest = Math.max(tallest, size.get(node)?.h || 0)
+    }
+    rowTop[row + 1] = rowTop[row] + Math.max(64, Math.round(tallest + 32), Math.round(gapY * 0.6))
+  }
+  const height = Math.max(420, Math.round(rowTop[rowCount] + 40))
   /* 蛇形填网格：偶数行左→右、奇数行右→左，DFS 相邻节点永不跨行跳变。 */
   dfsOrder.forEach((id, i) => {
     const row = Math.floor(i / columns)
@@ -367,7 +380,7 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
     const col = row % 2 === 0 ? colInRow : columns - 1 - colInRow
     pos.set(id, {
       x: Math.max(84, Math.min(width - 84, marginX + col * gapX)),
-      y: Math.max(56, Math.min(height - 48, 62 + row * gapY)),
+      y: Math.max(56, Math.min(height - 48, rowTop[row])),
     })
   })
   const iterations = Math.max(24, Math.min(80, Math.round(5200 / Math.max(1, Math.sqrt(count)))))
@@ -408,14 +421,13 @@ export function layoutThemeNetwork(nodes = [], edges = [], width = 1120) {
       let dx = b.x - a.x
       let dy = b.y - a.y
       const distance = Math.hypot(dx, dy) || 1
-      /* 证据挂载和弱关联一样松散：让证据与它的观点之间留出看得见的距离，
-         否则两张 144px 宽的卡片会把中间的连线整个盖住。 */
-      const isAssociation = edge.relationGroup === 'association' || edge.relationGroup === 'evidence'
-        || ASSOCIATION_RELATIONS.includes(edge.rel)
+      /* 论证边与修订链是阅读主干；弱主题关联保持疏松；证据挂载用中等距离
+         （数据点卡片比观点卡小得多，不需要拉那么远，图也能矮一截）。 */
+      const isAttachment = edge.relationGroup === 'evidence'
+      const isAssociation = edge.relationGroup === 'association' || ASSOCIATION_RELATIONS.includes(edge.rel)
       const isRevision = edge.relationGroup === 'revision' || REVISION_RELATIONS.includes(edge.rel)
-      /* 论证边和修订链是阅读主干；弱主题关联保持疏松。 */
-      const target = isAssociation ? 235 : isRevision ? 190 : 168
-      const strength = edge.pendingReview ? 0.2 : isAssociation ? 0.3 : isRevision ? 0.48 : 0.7
+      const target = isAttachment ? 150 : isAssociation ? 235 : isRevision ? 190 : 168
+      const strength = edge.pendingReview ? 0.2 : isAttachment ? 0.45 : isAssociation ? 0.3 : isRevision ? 0.48 : 0.7
       const magnitude = Math.max(-28, Math.min(28, (distance - target) * 0.004 * strength)) * cooling
       dx = dx / distance * magnitude; dy = dy / distance * magnitude
       fx.set(edge.from, fx.get(edge.from) + dx); fy.set(edge.from, fy.get(edge.from) + dy)

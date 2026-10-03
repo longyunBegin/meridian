@@ -132,7 +132,6 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
     'data-edge-count': edges.length,
     'data-comparison-ghosts': notYetAdded,
   })
-  svg.style.opacity = '0'
   const defs = svgEl('defs')
   for (const rel of ['supports', 'derives', 'contradicts', 'supersedes']) {
     const meta = RELATION_META[rel]
@@ -292,13 +291,17 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       'stroke-dasharray': unavailable ? '5 4' : 'none',
       class: 'cog-node-card',
     }))
-    const glyphX = -dimensions.w / 2 + 15
-    const glyphY = -dimensions.h / 2 + 16
+    /* 证据在读者画布上压成紧凑"数据点"：单行短标签、不挂状态徽标（14 张全标"未评估"
+       只是噪声），身份由外形和它与观点的连线表达。只用 opts.compactEvidence 开启，
+       建设者画布保持原样。 */
+    const compact = Boolean(opts.compactEvidence) && type === 'evidence'
+    const glyphX = compact ? -dimensions.w / 2 + 12 : -dimensions.w / 2 + 15
+    const glyphY = compact ? 0 : -dimensions.h / 2 + 16
     // 视觉编码：glyph 尺寸表示节点强度（confidence 0-100 → 0.7-1.3）
     const strengthScale = 0.7 + (Math.max(0, Math.min(100, Number(node.confidence ?? node.strength ?? 50))) / 100) * 0.6
-    appendTypeGlyph(group, type, glyphX, glyphY, strengthScale)
+    appendTypeGlyph(group, type, glyphX, glyphY, compact ? 0.55 : strengthScale)
     /* 类型文字标签已移除：形状 + 颜色已足够区分，label 只保留在无障碍文本与图例中。 */
-    const showPill = node._notYetCreated || Boolean(readerMeta) || status !== 'pending'
+    const showPill = node._notYetCreated || (!compact && Boolean(readerMeta)) || status !== 'pending'
     if (showPill) {
       const pillWidth = Math.max(44, Math.min(68, pillLabel.length * 10 + 13))
       const pillX = dimensions.w / 2 - pillWidth - 7
@@ -306,11 +309,13 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
       group.append(svgEl('rect', { x: pillX, y: pillY, width: pillWidth, height: 18, rx: 9, fill: readerMeta ? readerMeta.color : nodeStatusColor(status), class: 'cog-node-status-bg' }))
       group.append(svgText(pillLabel, { x: pillX + pillWidth / 2, y: pillY + 9.5, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'cog-node-status-pill', fill: readerMeta ? readerMeta.text : nodeStatusTextColor(status) }))
     }
-    const titleLines = splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w, 11, 28), 2)
+    const titleLines = compact
+      ? splitNetworkTitle(node.title || '数据', nodeTitleCharsPerLine(dimensions.w - 26, 10.5, 20), 1)
+      : splitNetworkTitle(node.title || '未命名节点', nodeTitleCharsPerLine(dimensions.w, 11, 28), 2)
     titleLines.forEach((line, index) => group.append(svgText(line, {
-      x: -dimensions.w / 2 + 12,
-      y: titleLines.length === 1 ? 5 : -1 + index * 15,
-      class: 'cog-node-title',
+      x: -dimensions.w / 2 + (compact ? 21 : 12),
+      y: compact ? 4 : titleLines.length === 1 ? 5 : -1 + index * 15,
+      class: `cog-node-title${compact ? ' is-compact' : ''}`,
     })))
     if (node._comparison?.currentTitle) {
       const comparisonText = `当前：${node._comparison.currentTitle}`
@@ -339,7 +344,9 @@ export function drawThemeNetwork(projection, opts = {}, canvas) {
   }
 
   canvas.append(svg)
-  requestAnimationFrame(() => { if (svg.isConnected) svg.style.opacity = '1' })
+  /* 不再用"先 opacity:0、等 requestAnimationFrame 再显示"的淡入：窗口被遮挡或
+     在后台时 rAF 不推进，图会一直停在不可见状态（实测 opacity 卡在 0）。
+     可见性不押在动画帧上。 */
   svg.addEventListener('cog-clear-focus', () => setFocus(null))
   /* 点空白处＝清空聚焦：所有节点与连线回到完全可见，右侧检视器也退回"未选中"。
      之前点空白没有任何反应，读者被"锁"在某次选择里出不来。 */

@@ -441,6 +441,8 @@ export function renderReaderView(theme, opts = {}) {
         networkLayout: ensureLayout(),
         focusNodeId: state.selectedNodeId,
         readerStates,
+        /* 证据压成紧凑数据点，让观点原子成为视觉主体（建设者画布不受影响）。 */
+        compactEvidence: true,
         searchMatchIds: nodeSearch.value.trim() ? state.searchMatches.map((node) => node.id) : [],
         historyContext: { events: state.events, projection: state.projection, selectedSeq: state.selectedSeq },
         compareCurrent: Boolean(state.compareCurrent && state.replaying),
