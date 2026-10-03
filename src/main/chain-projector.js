@@ -469,17 +469,15 @@ export function getChainProjection(themeId, options = {}) {
       events = getEvents(themeId)
     }
   }
-  return projectionResult(themeId, events, integrity)
+  return projectionResult(themeId, events)
 }
 
-function projectionResult(themeId, events, integrity, history = null) {
-  const safeEvents = integrity.ok ? events : events.slice(0, integrity.lastValidSeq || 0)
-  const projection = projectEvents(safeEvents)
+function projectionResult(themeId, events, history = null) {
+  const projection = projectEvents(events)
   const scope = chainScope(projection)
   return {
     themeId,
     eventCount: events.length,
-    integrity,
     nodes: scope.nodes,
     edges: scope.edges,
     allNodes: projection.nodes,
@@ -499,12 +497,10 @@ export function getChainProjectionAt(themeId, sequence) {
   const events = getEvents(themeId)
   const selectedSeq = Math.max(0, Math.min(events.length, sequence))
   const replayEvents = events.slice(0, selectedSeq)
-  const replayIntegrity = { ...integrity, replayed: true, selectedSeq, validPrefixSeq }
-  return projectionResult(themeId, replayEvents, replayIntegrity, {
+  return projectionResult(themeId, replayEvents, {
     replayed: true,
     selectedSeq,
     requestedSeq: sequence,
-    validPrefixSeq,
     selectedAt: selectedSeq ? replayEvents.at(-1)?.at || null : null,
   })
 }
@@ -515,7 +511,6 @@ export function getArchivedProjectionNodes(themeId) {
   const projection = projectEvents(events)
   return {
     themeId,
-    integrity,
     nodes: projection.nodes.filter((n) => n.archived),
     edges: projection.edges,
   }

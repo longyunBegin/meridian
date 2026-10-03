@@ -93,7 +93,7 @@ ok('无目标证据不因事件总数或标题而猜挂', evidenceProjection.all
 const evidencePrefix = pj.getChainProjectionAt(evidenceTheme.id, 9)
 const prefixA = evidencePrefix.allNodes.find((node) => node.id === 'target-a')
 const prefixB = evidencePrefix.allNodes.find((node) => node.id === 'target-b')
-ok('有效前缀历史证据数随时间截断且目标保持一致', evidencePrefix.integrity.replayed === true
+ok('有效前缀历史证据数随时间截断且目标保持一致', evidencePrefix.replayed === true
   && prefixA.evidenceCount === 4 && prefixB.evidenceCount === 3
   && prefixA.evidenceEventIds.every((id) => expectedEvidenceA.includes(id))
   && prefixB.evidenceEventIds.every((id) => expectedEvidenceB.includes(id)))
@@ -159,7 +159,7 @@ const mNode = mProj.nodes.find((n) => n.title === '新主张')
 ok('挂载后主张在投影中', !!mNode)
 ok('挂载证据通过 supports 连入', mProj.edges.some((e) => e.rel === 'supports' && e.to === mNode.id))
 ok('newValue 追为更正事件', mNode.superseded && mNode.currentText === '新版判断')
-ok('更正链可校验', ev.verifyChain(theme3.id).ok)
+ok('更正链事件已追加', ev.getEvents(theme3.id).length > 0)
 // 再次挂载同名 → 命中已有主张，不建新主张
 const mountRes2 = pj.mountDraftToEvents(theme3.id, {
   inboxId: 'inbox-10', segmentNames: ['新主张'], newSegmentName: '',
@@ -251,7 +251,7 @@ ok('复核后投影保留决定者、时间、理由并只解除待复核状态'
   && afterDecisionEdge?.reviewedBy === 'user' && !!afterDecisionEdge?.reviewedAt)
 let repeatedReviewRejected = false
 try { pj.reviewProjectedRelation(reviewTheme.id, derivedEdge.id, 'rejected', '改主意') } catch { repeatedReviewRejected = true }
-ok('已决定的关系不可原地反转或重复复核', repeatedReviewRejected && ev.verifyChain(reviewTheme.id).ok)
+ok('已决定的关系不可原地反转或重复复核', repeatedReviewRejected)
 
 const replayTheme = store.addTheme('历史只读回放测试')
 ev.appendEvent(replayTheme.id, { id: 'replay-a', type: 'claim.created', payload: { title: '版本 A', sourceRef: 'fixture:a' } })
@@ -261,7 +261,7 @@ const replayAtOne = pj.getChainProjectionAt(replayTheme.id, 1)
 ok('v1 回放仅含 v1 节点且标记只读序号', replayAtOne.selectedSeq === 1
   && replayAtOne.allNodes.some((node) => node.id === 'replay-a')
   && !replayAtOne.allNodes.some((node) => node.id === 'replay-b')
-  && replayAtOne.integrity.replayed === true)
+  && replayAtOne.replayed === true)
 pj.getChainProjectionAt(replayTheme.id, 99)
 ok('只读历史回放不写入或修改生产 ledger', JSON.stringify(ev.getEvents(replayTheme.id)) === eventsBeforeReplay)
 const damagedReplayTheme = store.addTheme('损坏前缀回放测试')
@@ -271,10 +271,10 @@ const damagedRow = store.load().themes.find((item) => item.id === damagedReplayT
 damagedRow.eventChain.events[1].payload.title = '被篡改的未来状态'
 store.persistLedger()
 const damagedReplay = pj.getChainProjectionAt(damagedReplayTheme.id, 999)
-ok('账本损坏时回放自动截断到最后校验有效前缀', damagedReplay.selectedSeq === 1
-  && damagedReplay.validPrefixSeq === 1
+/* 账本校验已删除（决定1=A）：损坏不再截断，回放返回全部事件 */
+ok('账本损坏时回放不再截断，返回全部事件', damagedReplay.selectedSeq === 2
   && damagedReplay.allNodes.some((node) => node.id === 'safe-prefix')
-  && !damagedReplay.allNodes.some((node) => node.id === 'bad-future'))
+  && damagedReplay.allNodes.some((node) => node.id === 'bad-future'))
 
 console.log('\n— 明确添加证据与语义关系 —')
 const manualTheme = store.addTheme('手动建模主题')
@@ -296,7 +296,7 @@ ok('手动证据保留来源 URL 并明确连到目标观点', addedEvidence[0].
   && addedEvidence[1].payload.to.eventId === manualClaimEvent.id)
 const contradiction = pj.declareProjectedRelation(manualTheme.id, addedEvidence[0].id, manualClaimEvent.id, 'contradicts')
 ok('反驳关系显式追加且完整性继续通过', contradiction.type === 'relation.declared'
-  && contradiction.payload.rel === 'contradicts' && ev.verifyChain(manualTheme.id).ok)
+  && contradiction.payload.rel === 'contradicts')
 /* 佐证 / 反驳：同一入口，两种方向 */
 const confBefore = pj.getChainProjection(manualTheme.id).nodes.find((n) => n.id === manualClaimEvent.id)?.confidence
 const refutingEvidence = pj.appendEvidenceToProjectedNode(manualTheme.id, manualClaimEvent.id, {
@@ -432,7 +432,7 @@ ok('relational 流程由用户确认后追加观点、可核验来源和支持�
   && ev.getEvents(engineTheme.id).length > beforeRelationalAccept
   && afterRelationalProjection.nodes.some((node) => node.title === '用户确认的合成关系命题')
   && afterRelationalProjection.allEdges.some((edge) => edge.rel === 'supports' && edge.to === relationalReview.events?.[0]?.id))
-ok('引擎建议闭环完成后全事件链可验证', ev.verifyChain(engineTheme.id).ok)
+ok('引擎建议闭环完成后事件已追加', ev.getEvents(engineTheme.id).length > 0)
 
 console.log('\n— 去领域化：审阅 change 收敛为自由备注 —')
 const noteProposal = makeEngineProposal('note-only', engineTarget.id, 'supports')
@@ -446,7 +446,7 @@ const noteConfidence = noteEvents.find((event) => event.type === 'confidence.upd
 ok('确认建议后账本事件的 change 只有 note 字段', noteReview.ok
   && JSON.stringify(noteEvidence?.payload.change) === JSON.stringify({ note: '这句是自由备注，不是枚举。' })
   && JSON.stringify(noteDecision?.payload.change) === JSON.stringify({ note: '这句是自由备注，不是枚举。' })
-  && ev.verifyChain(engineTheme.id).ok)
+ )
 ok('强度只由 strength 决定，不读 change 标签', noteConfidence?.payload.strength === expectedStrength)
 
 const emptyNoteProposal = makeEngineProposal('empty-note', engineTarget.id, 'supports')
@@ -465,7 +465,7 @@ ok('归档查询返回详情和日期', archivedRead.nodes.some((n) => n.sourceR
 const restoreEvent = pj.restoreProjectedNode(theme3.id, eventNode.sourceRef, '重新核验后恢复')
 const restoredNode = pj.projectEvents(ev.getEvents(theme3.id)).nodes.find((n) => n.sourceRef === eventNode.sourceRef)
 ok('恢复只追加 node.restored 且保留归档史', restoreEvent.type === 'node.restored' && ev.getEvents(theme3.id).some((e) => e.id === archiveEvent.id))
-ok('重放恢复后节点重新进入当前图', !restoredNode.archived && restoredNode.restoredAt && ev.verifyChain(theme3.id).ok)
+ok('重放恢复后节点重新进入当前图', !restoredNode.archived && restoredNode.restoredAt)
 let restoreTwiceRejected = false
 try { pj.restoreProjectedNode(theme3.id, eventNode.sourceRef, '重复恢复') } catch { restoreTwiceRejected = true }
 ok('重复恢复拒绝', restoreTwiceRejected)
@@ -473,8 +473,7 @@ ok('重复恢复拒绝', restoreTwiceRejected)
 console.log('\n— 五类主题网络与完整节点生命周期 —')
 const networkTheme = store.addTheme('合成网络全流程')
 const emptyNetwork = pj.getChainProjection(networkTheme.id)
-ok('新主题起始投影真实为空且不自动生成主题根或观点', emptyNetwork.integrity.ok
-  && emptyNetwork.nodes.length === 0 && emptyNetwork.eventCount === 0)
+ok('新主题起始投影真实为空且不自动生成主题根或观点', emptyNetwork.nodes.length === 0 && emptyNetwork.eventCount === 0)
 let invalidNodeTypeRejected = false
 try { pj.createProjectedNode(networkTheme.id, { nodeType: 'topic', title: '不得作为图节点的主题' }) } catch { invalidNodeTypeRejected = true }
 ok('节点类型严格限制为五类，不接纳主题 root', invalidNodeTypeRejected && ev.getEvents(networkTheme.id).length === 0)
@@ -539,7 +538,7 @@ ok('观点修订只追加 correction 事件，保留旧文本并更新适用时�
   && priorViewpoint.applicability === '2026Q1')
 ok('相同 requestId 重试返回原更正事件且不追加重复记录', repeatedManualCorrection.replayed === true
   && ev.getEvents(networkTheme.id).length === afterCorrectionCount
-  && ev.verifyChain(networkTheme.id).ok)
+ )
 const beforeRenameSeq = ev.getEvents(networkTheme.id).length
 const renamed = pj.renameProjectedNode(networkTheme.id, concept.id, '合成概念新名', '测试追加式改名')
 const beforeInvalidateSeq = ev.getEvents(networkTheme.id).length
@@ -563,8 +562,8 @@ pj.getChainProjectionAt(networkTheme.id, 2)
 ok('滑动历史只读回放不会写入或修改事件链', JSON.stringify(ev.getEvents(networkTheme.id)) === beforeReadOnlyReplay)
 let invalidationWithoutReasonRejected = false
 try { pj.invalidateProjectedNode(networkTheme.id, objectNode.id, '   ') } catch { invalidationWithoutReasonRejected = true }
-ok('失效标记要求明确原因', invalidationWithoutReasonRejected && ev.verifyChain(networkTheme.id).ok)
-ok('生命周期结束后全账本哈希链仍有效且原声明/决定都保留', ev.verifyChain(networkTheme.id).ok
+ok('失效标记要求明确原因', invalidationWithoutReasonRejected)
+ok('生命周期结束后原声明/决定都保留', ev.getEvents(networkTheme.id).length > 0
   && ev.getEvents(networkTheme.id).some((event) => event.id === relationEvents[7].id)
   && ev.getEvents(networkTheme.id).some((event) => event.id === rejected.id))
 
@@ -582,7 +581,7 @@ ok('共享 legacy sourceRef 下改名/失效仍只作用于 payload 指定的 no
   && !sharedRefNodes.find((node) => node.id === sharedRefFirst.id)?.invalidated
   && sharedRefNodes.find((node) => node.id === sharedRefSecond.id)?.title === '第二个旧节点新名'
   && sharedRefNodes.find((node) => node.id === sharedRefSecond.id)?.invalidated
-  && ev.verifyChain(sharedRefTheme.id).ok)
+ )
 
 console.log('\n— 旧 signal 决定投影与有效前缀 —')
 const signalTheme = store.addTheme('旧信号审核与回放')
@@ -627,7 +626,7 @@ ok('有效前缀回放可回到未判决旧信号，不提前泄露未来决定'
   && beforeSignalProjection.allNodes.find((node) => node.id === pendingEvidenceSignal.id)?.pendingReview
   && !beforeSignalProjection.allEdges.find((edge) => edge.eventId === pendingRelationSignal.id)?.reviewDecision
   && !beforeSignalReviewAgain.allNodes.find((node) => node.id === pendingEvidenceSignal.id)?.reviewEventId)
-ok('旧信号复核后哈希链完整', ev.verifyChain(signalTheme.id).ok)
+ok('旧信号复核后事件已追加', ev.getEvents(signalTheme.id).length > 0)
 
 /* —— P0-1 / P0-2 / P0-3：出处随事件走、脏 ref 不进门、投影带 refs —— */
 const provenanceTheme = store.addTheme('出处保真测试')
@@ -655,7 +654,7 @@ ok('P0-1 挂载事件自带 URL 与来源元数据（不依赖收件箱条目存
   && mountedEvidence.payload.evidenceRefs.some((ref) => ref.type === 'url' && ref.id === 'https://example.com/report?a=1'))
 ok('P0-2 脏协议 ref 写不进账本（javascript: 被挡在写入侧）',
   !JSON.stringify(provenanceEvents).includes('javascript:')
-  && ev.verifyChain(provenanceTheme.id).ok)
+ )
 const provenanceProjection = pj.getChainProjection(provenanceTheme.id)
 const projectionEvidence = provenanceProjection.allNodes.find((node) => node.nodeType === 'evidence')
 ok('P0-3 投影证据节点带 evidenceRefs 与来源（快照/回放不丢出处）',
@@ -677,7 +676,7 @@ ok('P0-2 手工补证同样过 http(s) 判定：脏的不产生 url ref，合法
   && dirtyEvents.length === 1 && dirtyEvents[0].payload.evidenceRefs.length === 0
   && cleanEvents.length === 2
   && cleanEvents[1].payload.evidenceRefs.some((ref) => ref.id === 'https://example.org/paper')
-  && ev.verifyChain(protocolTheme.id).ok)
+ )
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

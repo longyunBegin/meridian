@@ -75,10 +75,11 @@ const damagedLedgerFixture = [
   { id: 'relation-valid', seq: 1, type: 'relation.declared', payload: { rel: 'derives' } },
   { id: 'future-invalid-review', seq: 2, type: 'relation.declared', payload: { reviewOf: 'relation-valid', reviewDecision: 'confirmed' } },
 ]
+/* 账本校验已删除（决定1=A）：verifiedLedgerPrefix 不再按校验结果截断，一律返回全部事件。 */
 const verifiedPrefix = verifiedLedgerPrefix(damagedLedgerFixture, { ok: false, lastValidSeq: 1 })
-ok('损坏尾部的关系复核决定不进入当前状态或历史节点时间线', verifiedPrefix.length === 1
+ok('删除校验后不再截断事件，一律返回全部', verifiedPrefix.length === 2
   && verifiedPrefix[0].id === 'relation-valid')
-ok('没有完整性结果时不把原始事件当成已校验前缀', verifiedLedgerPrefix(damagedLedgerFixture, null).length === 0)
+ok('没有完整性结果时同样返回全部事件', verifiedLedgerPrefix(damagedLedgerFixture, null).length === 2)
 const futureLookupFixture = [
   { id: 'v1', seq: 1, type: 'claim.created', payload: { title: '历史观点' } },
   { id: 'v2', seq: 2, type: 'claim.created', payload: { title: '未来观点' } },

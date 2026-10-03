@@ -41,7 +41,6 @@ const vocabTheme = makeTheme('synthetic-vocab-theme', '隔离词表主题', {
 const plainTheme = makeTheme('synthetic-plain-theme', '隔离空词表主题', { atomCategories: [], relationLabels: [] })
 const emptyProjection = {
   nodes: [], allNodes: [], edges: [], allEdges: [], eventCount: 0,
-  integrity: { ok: true, count: 0, lastValidSeq: 0, verified: true },
 }
 
 const stub = {
@@ -53,7 +52,6 @@ const stub = {
   async chainEvents() { return { events: [] } },
   async inboxList() { return [] },
   async settings() { return {} },
-  async chainVerify() { return { ok: true, lastValidSeq: 0, count: 0 } },
   /* 词表保存：把 patch 落到主题对象上，模拟真实后端持久化，
      这样"保存 → 重新渲染 → 再删"的往返才测得到（否则删的是渲染时那份旧词表）。 */
   async themeUpdate(id, patch) {

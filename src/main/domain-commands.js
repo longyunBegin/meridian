@@ -625,7 +625,6 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:getProjectionAt', (themeId, sequence) => getChainProjectionAt(themeId, sequence))
   commands.register('chain:getArchive', (themeId) => getArchivedProjectionNodes(themeId))
   commands.register('chain:getEvents', (themeId) => ({ ok: true, events: getChainEvents(themeId) }))
-  commands.register('chain:verify', (themeId) => ({ ok: true, integrity: verifyThemeChain(themeId) }))
   commands.register('chain:createNode', (themeId, payload) => ({ ok: true, event: createProjectedNode(themeId, payload) }))
   commands.register('chain:renameNode', (themeId, nodeId, title, reason) => ({ ok: true, event: renameProjectedNode(themeId, nodeId, title, reason) }))
   commands.register('chain:categorizeNode', (themeId, nodeId, category) => ({ ok: true, event: categorizeProjectedNode(themeId, nodeId, category) }))

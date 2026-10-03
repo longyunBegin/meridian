@@ -108,7 +108,6 @@ function projectedNodes(projection) {
 export function renderChainSection(theme, opts = {}) {
   const drawerId = `cog-ledger-drawer-${++chainSectionCounter}`
   const drawerTitleId = `${drawerId}-title`
-  const integrityBadge = h('span', { class: 'cog-integrity-badge is-pending', role: 'status', 'aria-live': 'polite', 'data-ledger-status': '' }, '账本校验中…')
   const concept = h('div', { class: 'cog-concept cog-reading-layout' })
   const ledgerBackdrop = h('div', { class: 'cog-ledger-backdrop', hidden: true, 'aria-hidden': 'true' })
   const ledgerPane = h('aside', {
@@ -169,7 +168,6 @@ export function renderChainSection(theme, opts = {}) {
     mainStage,
     onViewAtSequence: opts.onViewAtSequence,
     onReturnLive: opts.onReturnLive,
-    integrityBadge,
     ledgerButton,
     onChanged: () => {
       clear(ledgerPane)
@@ -193,14 +191,11 @@ function updateThemeStats(stats, projection, events) {
   const points = nodes.filter((node) => !node.external && networkNodeType(node) !== 'evidence').length
   const evidence = nodes.filter((node) => !node.external && networkNodeType(node) === 'evidence').length
   const eventCount = Number.isSafeInteger(projection?.eventCount) ? projection.eventCount : events.length
-  const integrity = projection?.integrity?.ok === true ? '链完整'
-    : projection?.integrity?.ok === false ? '校验异常' : '待校验'
-  const values = { points, evidence, events: eventCount, integrity }
+  const values = { points, evidence, events: eventCount }
   for (const [key, value] of Object.entries(values)) {
     const card = stats.querySelector(`[data-theme-stat="${key}"]`)
     const output = card?.querySelector(`[data-theme-stat-value="${key}"]`)
     if (output) output.textContent = String(value)
-    if (card && key === 'integrity') card.dataset.state = projection?.integrity?.ok === false ? 'error' : projection?.integrity?.ok === true ? 'ok' : 'pending'
   }
 }
 
@@ -233,30 +228,14 @@ async function loadConcept(theme, ledgerPane, opts) {
       m.chainEvents(theme.id).catch(() => null),
     ])
   const events = evRes?.events || []
-  const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
+  const verifiedEvents = verifiedLedgerPrefix(events)
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
-  const writeBlocked = proj.integrity?.ok === false
   updateThemeStats(opts.themeStats, proj, events)
   let ledgerController = null
   const sectionEl = ledgerPane.closest('.chain-section')
   const scopedNodes = Array.isArray(proj.nodes) ? proj.nodes : projectedNodes(proj)
-  const integrityBadge = sectionEl?.querySelector('[data-ledger-status]')
-  const updateIntegrityBadge = (current = proj.integrity, validCount = validPrefixSeq, rawCount = events.length) => {
-    if (!integrityBadge) return
-    const valid = current?.ok === true
-    integrityBadge.classList.toggle('is-ok', valid)
-    integrityBadge.classList.toggle('is-error', !valid)
-    integrityBadge.setAttribute('role', valid ? 'status' : 'alert')
-    integrityBadge.textContent = valid
-      /* P0-4：哈希链只能证明"没被改动过"，不能证明内容为真——措辞必须与代码注释的立场一致。 */
-      ? `✓ ${validCount} 条事件 · 链完整（内容真伪由你判断）`
-      : `⚠ ${validCount} / ${rawCount} 条事件 · 校验异常`
-    integrityBadge.title = valid ? '追加式账本：哈希链完整，内容真伪由你判断' : integrityText(current || { ok: false })
-  }
-  updateIntegrityBadge()
-  ledgerController = renderLedgerPanel(ledgerPane, theme, events, proj.integrity, {
-    onIntegrityChange: updateIntegrityBadge,
+  ledgerController = renderLedgerPanel(ledgerPane, theme, events, {
     onClose: opts.closeLedger,
     titleId: opts.ledgerTitleId,
     onChanged: opts.onChanged,
@@ -582,7 +561,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     let selectedEntryId = savedQueue.entryId || null
     const wrap = h('div', { class: 'builder-intake' })
     const auditControls = h('div', { class: 'builder-audit-actions' },
-      ...[opts.integrityBadge, opts.ledgerButton].filter(Boolean))
+      ...[opts.ledgerButton].filter(Boolean))
     /* 顶部压成一行：标题 + 阶段说明 + 校验/账本控件同一行。
        原来标题、说明、控件各占一行，头部 145px，工作台被推到 358px 以下。 */
     const head = h('div', { class: 'inbox-head builder-head-row' },
@@ -1135,12 +1114,6 @@ function eventSummary(e, titleOf) {
 }
 
 /** 追加式完整性账本面板：事件序列只增不改，更正追加新事件。 */
-function integrityText(integrity) {
-  if (integrity?.ok) return `链完整 · ${integrity.count} 条事件`
-  const seq = Number.isInteger(integrity?.index) ? `第 ${integrity.index + 1} 条` : '账本'
-  return `校验失败 · ${seq} · ${integrity?.reason || '格式不可读'} · 仅投影已验证前缀 ${integrity?.lastValidSeq || 0} 条`
-}
-
 function eventObjectLabel(e, events, byId) {
   const p = e.payload || {}
   /* 模型建议还没落到具体节点时，至少说清它在建议什么，别丢一句"未命名对象"。 */
@@ -1218,38 +1191,8 @@ function ledgerText(value, fallback = '—') {
   return text
 }
 
-function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
+function renderLedgerPanel(pane, theme, events, handlers = {}) {
   clear(pane)
-  /* 完整性本来就在每次投影时自动校验（projectionResult 里跑 verifyEvents），
-     所以不需要一个并排的大按钮。把动作收进徽标本身：点一下重新校验，能力保留、噪声去掉。 */
-  const integrityLabel = h('span', { class: 'cog-integrity-text', role: integrity?.ok ? 'status' : 'alert', 'aria-live': 'polite' }, integrityText(integrity))
-  const integrityHint = h('span', { class: 'cog-integrity-hint' }, '点一下重新校验')
-  const integrityBox = h('button', {
-    type: 'button', class: `cog-integrity is-action ${integrity?.ok ? 'is-ok' : 'is-error'}`,
-    title: '点一下重新校验哈希链：它只证明记录没被改动过，不证明内容为真',
-    onclick: async () => {
-      integrityBox.disabled = true
-      integrityLabel.textContent = '正在重新校验…'
-      try {
-        const result = await m.chainVerify(theme.id)
-        const checked = result?.integrity
-        integrityBox.setAttribute('class', `cog-integrity is-action ${checked?.ok ? 'is-ok' : 'is-error'}`)
-        integrityLabel.setAttribute('role', checked?.ok ? 'status' : 'alert')
-        integrityLabel.textContent = integrityText(checked)
-        integrityHint.textContent = '刚刚校验过'
-        handlers.onIntegrityChange?.(checked,
-          Number.isSafeInteger(checked?.lastValidSeq) ? checked.lastValidSeq
-            : Number.isSafeInteger(checked?.count) ? checked.count : events.length,
-          events.length)
-      } catch (error) {
-        integrityBox.setAttribute('class', 'cog-integrity is-action is-error')
-        integrityLabel.setAttribute('role', 'alert')
-        integrityLabel.textContent = `校验失败 · ${error?.message || error}`
-        integrityHint.textContent = '点一下重试'
-        handlers.onIntegrityChange?.({ ok: false, reason: error?.message || String(error) }, 0, events.length)
-      } finally { integrityBox.disabled = false }
-    },
-  }, integrityLabel, integrityHint)
   /* 搜索用；分堆已去掉，只保留关键字过滤 */
   let query = ''
   const search = h('input', {
@@ -1283,7 +1226,6 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       h('span', { class: 'cog-ledger-badge' }, '只追加'),
       h('button', { type: 'button', class: 'btn cog-ledger-close', 'aria-label': '关闭账本抽屉', onclick: handlers.onClose }, '关闭')),
     h('p', { class: 'cog-ledger-sub' }, '只追加，不覆盖：更正、归档、恢复与复核都会留下新记录。'),
-    h('div', { class: 'cog-integrity-row' }, integrityBox),
     handlers.replayControls || null,
     search,
     h('p', { class: 'cog-ledger-colhead' }, '从早到晚 · 每页 40 条'),
@@ -1293,7 +1235,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
     return { syncReplay: () => {}, showEvent: () => {} }
   }
 
-  const verifiedEvents = handlers.verifiedEvents || verifiedLedgerPrefix(events, integrity)
+  const verifiedEvents = handlers.verifiedEvents || verifiedLedgerPrefix(events)
   const reviewedBy = new Map(verifiedEvents.filter((event) => event?.payload?.reviewOf)
     .map((event) => [event.payload.reviewOf, event]))
 
@@ -1306,7 +1248,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
 
   function renderPage(viewState = currentViewState) {
     currentViewState = viewState
-    const visibleEvents = eventsThroughSequence(events, integrity, viewState?.selectedSeq)
+    const visibleEvents = eventsThroughSequence(events, null, viewState?.selectedSeq)
     const byId = new Map(visibleEvents.filter((x) => x && typeof x === 'object').map((x) => [x.id, x]))
     const titleOf = (eventId) => {
       const e = byId.get(eventId)
@@ -1344,10 +1286,6 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       const kindLabel = isInvalid ? '无法解析的事件记录' : isReviewEvent ? '关系复核决定'
         : (isFirst ? '初始记录' : (EVENT_KIND_LABEL[e.type] || '未识别事件'))
       const superseded = isCorrection && e.supersedes ? byId.get(e.supersedes) : null
-      const verification = integrity?.ok ? '已校验'
-        : Number.isInteger(integrity?.index) && item.index < integrity.index ? '前缀已校验'
-          : Number.isInteger(integrity?.index) && item.index === integrity.index ? '校验失败' : '未校验'
-      const verificationClass = verification === '校验失败' ? 'is-error' : verification === '未校验' ? 'is-pending' : 'is-ok'
       const actor = ACTOR_LABEL[e.actor] || e.actor || '未记录'
       const sourceLabel = eventSourceLabel(e, visibleEvents)
       const objectLabel = eventObjectLabel(e, visibleEvents, byId)
@@ -1394,7 +1332,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
           h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '操作者'), h('span', { class: 'cog-ev-readable-value' }, ledgerText(actor, '未记录'))),
           h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '来源'), h('span', { class: `cog-ev-readable-value${sourceLabel === '来源未解析' ? ' is-unresolved' : ''}` }, ledgerText(sourceLabel, '来源未解析'))),
           reviewText ? h('div', { class: 'cog-review-status', role: 'status' }, reviewText) : null),
-          isPendingReview && !reviewDecision && viewState?.selectedSeq == null && integrity?.ok
+          isPendingReview && !reviewDecision && viewState?.selectedSeq == null
             ? renderReviewControls(theme, e, handlers.onChanged) : null,
           h('details', { class: 'cog-ev-technical' },
           h('summary', {}, '技术详情 · 原始 ID、引用与哈希'),
@@ -1423,7 +1361,6 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       },
         h('div', { class: 'cog-ev-row' },
           disclosure,
-          h('span', { class: `cog-ev-validation ${verificationClass}`, role: verification === '校验失败' ? 'alert' : 'status' }, verification),
           openButton))
       list.append(card)
     }
@@ -1780,7 +1717,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     referencesDisclosure.hidden = !node
     if (!node) {
       const hasLocalNodes = allNodes.some((candidate) => !candidate.external)
-      const trulyEmpty = !allNodes.length && !(currentView.events || []).length && projection.integrity?.ok === true
+      const trulyEmpty = !allNodes.length && !(currentView.events || []).length
       pointSummary.append(
         h('div', { class: 'cog-point-inspector-head' },
           h('div', {}, h('span', { class: 'cog-point-inspector-kicker' }, '节点检视'),
@@ -1789,7 +1726,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
           h('p', {}, hasLocalNodes ? '选择图中的节点，查看类型、状态、来源、关系与事件历史。'
             : trulyEmpty ? '这是一个真实空主题。主题仅限定网络范围；不会自动生成观点、证据或事实。'
               : '当前有效前缀中没有本地节点；可先检查账本与外部引用记录。'),
-          trulyEmpty ? h('button', { type: 'button', class: 'btn btn-primary', disabled: projection.integrity?.ok !== true,
+          trulyEmpty ? h('button', { type: 'button', class: 'btn btn-primary', disabled: false,
             onclick: () => openEntryDialog(theme, projection, 'node', opts, 'viewpoint') }, '添加第一条观察/观点') : null))
       return
     }
@@ -1833,7 +1770,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       h('p', { class: 'cog-point-inspector-note' }, '状态与来源按已有记录展示；账本完整性只说明事件链一致，不代表内容或来源已经证实。'),
       h('div', { class: 'cog-point-inspector-actions' },
         h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpen?.(node, detailOptions) }, '完整详情与操作')),
-      !node.archived && !node.invalidated && !node.external && currentView.selectedSeq == null && projection.integrity?.ok
+      !node.archived && !node.invalidated && !node.external && currentView.selectedSeq == null
         ? renderNodeLifecycleControls(theme, node, opts) : null,
       firstEvent && typeof opts.onJumpToEvent === 'function'
         ? h('button', { type: 'button', class: 'btn cog-focus-event', onclick: () => opts.onJumpToEvent(firstEvent) }, `跳回来源事件 · 第 ${firstEvent.seq} 条`)
@@ -1883,12 +1820,8 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     if (!filteredNodes.length && allNodes.length) graphCanvas.append(h('p', { class: 'cog-frame-note', role: 'status' },
       '没有节点符合当前筛选。可调整类型/状态，或清除筛选。'))
     if (!allNodes.length) {
-      const trulyEmpty = verifiedTimelineEvents.length === 0 && projection.integrity?.ok === true
-      graphCanvas.append(projection.integrity?.ok === false
-        ? h('section', { class: 'cog-network-empty is-integrity-error', role: 'alert' },
-          h('h3', {}, '当前有效记录为空，账本校验异常'),
-          h('p', {}, '历史回放与写入仅依据校验有效前缀；请先查看账本异常详情。这里不会将损坏尾部当作事实。'))
-        : trulyEmpty ? h('section', { class: 'cog-network-empty', 'aria-label': '空主题引导' },
+      const trulyEmpty = verifiedTimelineEvents.length === 0
+      graphCanvas.append(trulyEmpty ? h('section', { class: 'cog-network-empty', 'aria-label': '空主题引导' },
           h('span', { class: 'cog-network-empty-kicker' }, '真实空主题'),
           h('h3', {}, '从一条观察或观点开始'),
           h('p', {}, '主题只限定这张网络的范围，不是中心节点。不会自动生成观点、证据或事实。'),
@@ -1954,12 +1887,11 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       const point = timelinePoints.find((item) => item.seq === Number(tick.getAttribute('data-seq')))
       if (point) tick.setAttribute('aria-current', String(point.seq === currentPoint?.seq && replaying))
     }
-    addNode.disabled = replaying || projection.integrity?.ok === false
-    addNode.title = replaying ? '历史回放只读；返回当前状态后才能添加节点'
-      : projection.integrity?.ok === false ? '事件账本校验异常，不能追加记录' : ''
+    addNode.disabled = replaying
+    addNode.title = replaying ? '历史回放只读；返回当前状态后才能添加节点' : ''
     const choices = projectedNodes(projection).filter((node) => !node.archived && !node.invalidated
       && !node.external && networkNodeType(node) !== 'evidence')
-    evidenceGuidance.textContent = replaying || projection.integrity?.ok === false ? '历史回放或账本校验异常时，写入和复核已禁用。'
+    evidenceGuidance.textContent = replaying ? '历史回放时写入和复核已禁用。'
       : choices.length ? '' : '当前没有可关联的原子节点。'
   }
 
@@ -2169,7 +2101,7 @@ export async function openNodeDetail(theme, node, opts = {}) {
       proj = { ...snapshot, nodes: snapshot.allNodes || snapshot.nodes || [] }
     } else {
       const [evRes, p] = await Promise.all([m.chainEvents(theme.id), m.chainProjection(theme.id)])
-      events = verifiedLedgerPrefix(evRes?.events || [], p.integrity)
+      events = verifiedLedgerPrefix(evRes?.events || [])
       proj = { ...p, nodes: p.allNodes || p.nodes || [] }
     }
   } catch (e) {
@@ -2220,7 +2152,6 @@ export async function openNodeDetail(theme, node, opts = {}) {
     node.currentText && node.currentText !== node.title ? h('p', { class: 'chain-dcore' }, node.currentText) : null,
     node.confidence != null ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
     node.external ? h('p', { class: 'chain-note' }, '外部引用节点：关系端点指向账本外的对象。') : null,
-    proj?.integrity?.ok === false ? h('p', { class: 'cog-integrity is-error', role: 'alert' }, `事件账本校验失败：${proj.integrity.reason}。当前仅显示已验证前缀。`) : null,
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '来源'),
       h('p', { class: `chain-note${readableSource.status === 'unresolved' ? ' is-unresolved' : ''}` },
@@ -2238,7 +2169,7 @@ export async function openNodeDetail(theme, node, opts = {}) {
     !historical && !node.external && !node.archived && !node.invalidated && type !== 'evidence'
       ? renderEvidenceComposer(theme, node, opts) : null,
     !historical && !node.external && !node.archived && !node.invalidated ? renderRelationComposer(proj, node, theme, opts) : null,
-    !historical && !node.external && !node.archived && !node.invalidated && proj?.integrity?.ok
+    !historical && !node.external && !node.archived && !node.invalidated
       ? renderNodeLifecycleControls(theme, node, opts) : null,
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, `历史版本（${versionEvents.length}）`),

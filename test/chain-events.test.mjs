@@ -85,8 +85,8 @@ ok('事件总数 15', events.length === 15, `实际 ${events.length}`)
 ok('seq 连续 1..15', events.every((e, i) => e.seq === i + 1))
 ok('首事件 prevHash 为 GENESIS', events[0].prevHash === 'GENESIS')
 ok('prevHash 衔接', events.every((e, i) => i === 0 || e.prevHash === events[i - 1].hash))
-const v1 = ev.verifyChain(theme.id)
-ok('verifyChain 通过', v1.ok && v1.count === 15)
+/* 账本校验已删除（决定1=A）：不再有 verifyChain，事件只追加 */
+ok('事件数 15 条', events.length === 15)
 
 console.log('\n— 语义正确性 —')
 const corrections = events.filter((e) => e.type === 'correction.appended')
@@ -120,19 +120,18 @@ console.log('\n— 幂等 —')
 const r2 = ev.migrateThemeToEvents(theme.id)
 ok('重跑零新建', r2.created === 0, `新建 ${r2.created}`)
 ok('重跑全部跳过', r2.skipped === 15, `跳过 ${r2.skipped}`)
-ok('重跑后链仍有效', ev.verifyChain(theme.id).ok)
+ok('重跑后事件仍在', ev.getEvents(theme.id).length > 0)
 
 console.log('\n— 篡改检测 —')
 {
   const t = store.load().themes.find((x) => x.id === theme.id)
   t.eventChain.events[5].payload.reason = '被篡改'
   store.persistLedger()
-  const v = ev.verifyChain(theme.id)
-  ok('篡改被检出', !v.ok && v.index === 5, v.reason || '')
-  ok('损坏记录仍可读用于恢复', ev.getEvents(theme.id)[5].payload.reason === '被篡改')
-  let appendBlocked = false
-  try { ev.appendEvent(theme.id, { type: 'evidence.appended', payload: { text: '不得接在损坏后缀上' } }) } catch { appendBlocked = true }
-  ok('损坏账本拒绝继续追加', appendBlocked)
+  /* 账本校验已删除（决定1=A）：篡改不再被检出，追加不再被拦截，静默继续 */
+  ok('损坏记录仍可读', ev.getEvents(theme.id)[5].payload.reason === '被篡改')
+  let appendOk = false
+  try { ev.appendEvent(theme.id, { type: 'evidence.appended', payload: { text: '损坏后仍可追加' } }); appendOk = true } catch { appendOk = false }
+  ok('损坏账本静默继续追加（不再拦截）', appendOk)
 }
 
 console.log('\n— 非法记录恢复边界 —')
@@ -143,12 +142,11 @@ console.log('\n— 非法记录恢复边界 —')
   row.eventChain.events.push(null)
   store.persistLedgerNow()
   const readBack = ev.getEvents(damagedTheme.id)
-  const integrity = ev.verifyChain(damagedTheme.id)
+  /* 账本校验已删除：非法尾行不被过滤，追加不再被拦截 */
   ok('非法尾行不被静默过滤', readBack.length === 2 && readBack[1] === null)
-  ok('校验报告给出最后有效前缀', !integrity.ok && integrity.index === 1 && integrity.lastValidSeq === 1)
-  let blocked = false
-  try { ev.appendEvent(damagedTheme.id, { type: 'evidence.appended', payload: { text: 'blocked' } }) } catch { blocked = true }
-  ok('非法尾行存在时拒绝追加', blocked)
+  let appended = false
+  try { ev.appendEvent(damagedTheme.id, { type: 'evidence.appended', payload: { text: '仍可追加' } }); appended = true } catch { appended = false }
+  ok('非法尾行存在时仍可追加（不再拦截）', appended)
 }
 
 console.log('\n— 追加校验 —')
@@ -171,7 +169,7 @@ try {
   } })
 } catch { orphanRevisionRejected = true }
 ok('版本修订关系必须与同一证据/目标谱系的更正事件配对', orphanRevisionRejected
-  && ev.verifyChain(revisionTheme.id).ok && ev.getEvents(revisionTheme.id).length === 2)
+  && ev.getEvents(revisionTheme.id).length === 2)
 const e1 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 const e2 = ev.appendEvent(theme2.id, { id: 'evt:fixed', type: 'evidence.appended', payload: { text: 't' } })
 ok('显式 id 幂等', e2.replayed === true && ev.getEvents(theme2.id).length === 1 && e1.hash === e2.hash)
@@ -202,7 +200,7 @@ try {
   } })
 } catch { badInvalidationRejected = true }
 ok('改名必须绑定到 sourceRef 所指的节点 ID', badRenameRejected && ev.getEvents(schemaTheme.id).length === 1)
-ok('失效必须携带非空原因且失败不会污染有效前缀', badInvalidationRejected && ev.verifyChain(schemaTheme.id).ok
+ok('失效必须携带非空原因', badInvalidationRejected
   && ev.getEvents(schemaTheme.id).length === 1)
 
 console.log('\n— dry-run 不写账本 —')
@@ -251,7 +249,7 @@ ok('五种已有标准节点类型在迁移中逐一保留且不压成观点', c
 ok('标准类型旧节点记录仍保留在原数据存储中', canonicalLegacyNodes.every((node) => store.load().nodes.some((saved) => saved.id === node.id)))
 const canonicalRerun = ev.migrateThemeToEvents(canonicalLegacyTheme.id)
 ok('标准节点迁移可重复执行且无重复追加', canonicalRerun.created === 0
-  && canonicalRerun.skipped === 5 && ev.verifyChain(canonicalLegacyTheme.id).ok)
+  && canonicalRerun.skipped === 5)
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

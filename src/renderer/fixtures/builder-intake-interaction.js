@@ -25,7 +25,6 @@ import '../styles.css'
     const emptyEvents = []
     let emptyProjection = {
       nodes: [], allNodes: [], edges: [], allEdges: [], eventCount: 0,
-      integrity: { ok: true, count: 0, lastValidSeq: 0, verified: true },
     }
     const events = [{
       id: 'synthetic-seed', seq: 1, at: '2026-09-20T10:00:00.000Z', actor: 'user', type: 'claim.created',
@@ -39,7 +38,6 @@ import '../styles.css'
     }
     let projection = {
       nodes: [target], allNodes: [target], edges: [], allEdges: [], eventCount: 1,
-      integrity: { ok: true, count: 1, lastValidSeq: 1, verified: true },
     }
     const inboxItem = {
       id: 'synthetic-inbox-item', title: '隔离合成来源条目', text: '合成摘录：本条仅用于验证摄入、抽取与复核交互，不代表真实来源。',
@@ -114,7 +112,7 @@ import '../styles.css'
       events.push(...appended)
       reviewEvents.push(...appended)
       decisions.set(eventId, decision)
-      projection = { ...projection, eventCount: events.length, integrity: { ok: true, count: events.length, lastValidSeq: events.length, verified: true } }
+      projection = { ...projection, eventCount: events.length }
       return { ok: true, events: appended }
     }
 
@@ -126,8 +124,7 @@ import '../styles.css'
       async chainEvents(themeId) {
         commandCalls.push(['chainEvents', themeId])
         const rows = themeId === emptyTheme.id ? emptyEvents : events
-        const integrity = themeId === emptyTheme.id ? emptyProjection.integrity : projection.integrity
-        return { ok: true, events: [...rows], integrity }
+        return { ok: true, events: [...rows] }
       },
       async chainProjectionAt(themeId, sequence) {
         commandCalls.push(['chainProjectionAt', themeId, sequence])
@@ -183,14 +180,13 @@ import '../styles.css'
           id: result.proposalEventId, seq: events.at(-1).seq + 1, at: generatedPipeline.ranAt,
           type: 'engine.recommendation.proposed', payload: { pendingReview: true, recommendationId: result.proposalEventId, inboxId: id },
         })
-        projection = { ...projection, eventCount: events.length, integrity: { ok: true, count: events.length, lastValidSeq: events.length, verified: true } }
+        projection = { ...projection, eventCount: events.length }
         return { ok: true, pipeline: generatedPipeline }
       },
       async chainReviewEngineRecommendation(themeId, eventId, decision, input) {
         commandCalls.push(['chainReviewEngineRecommendation', themeId, eventId, decision, input])
         return appendReview(eventId, decision, input)
       },
-      async chainVerify() { return { ok: true, lastValidSeq: events.length, count: events.length } },
       async chainCreateNode(themeId, input) {
         commandCalls.push(['chainCreateNode', themeId, input])
         if (themeId === emptyTheme.id) {
@@ -207,8 +203,7 @@ import '../styles.css'
             eventIds: [event.id], provenanceEventIds: [event.id], evidenceCount: 0,
           }
           emptyProjection = {
-            ...emptyProjection, nodes: [created], allNodes: [created], eventCount: emptyEvents.length,
-            integrity: { ok: true, count: emptyEvents.length, lastValidSeq: emptyEvents.length, verified: true },
+            ...emptyProjection, nodes: [created], allNodes: [created], eventCount: emptyEvents.length
           }
           return { ok: true, event }
         }
@@ -226,7 +221,7 @@ import '../styles.css'
         }
         projection = {
           ...projection, nodes: [...projection.nodes, created], allNodes: [...projection.allNodes, created],
-          eventCount: events.length, integrity: { ok: true, count: events.length, lastValidSeq: events.length, verified: true },
+          eventCount: events.length,
         }
         return { ok: true, event }
       },
@@ -252,7 +247,7 @@ import '../styles.css'
         projection = {
           ...projection, nodes: [...projection.nodes, evidenceNode], allNodes: [...projection.allNodes, evidenceNode],
           edges: [...projection.edges, edge], allEdges: [...projection.allEdges, edge],
-          eventCount: events.length, integrity: { ok: true, count: events.length, lastValidSeq: events.length, verified: true },
+          eventCount: events.length,
         }
         return { ok: true, events: [evidenceEvent, relationEvent] }
       },
@@ -298,10 +293,9 @@ import '../styles.css'
         return pane && !pane.hidden && pane.querySelector('.cog-ledger-head')
       }, '事件账本抽屉可打开')
       const ledgerPane = host.querySelector('.theme-view-host .cog-ledger-pane')
-      check('历史导航移除后，追加式账本、完整性状态与关闭控件仍可用',
+      check('历史导航移除后，追加式账本与关闭控件仍可用',
         ledgerPane.getAttribute('role') === 'dialog'
         && ledgerPane.querySelector('.cog-ledger-title')?.textContent.includes('谁在什么时候改了什么')
-        && !!ledgerPane.querySelector('.cog-integrity')
         && !!ledgerPane.querySelector('.cog-ledger-close'))
       ledgerPane.querySelector('.cog-ledger-close').click()
       await waitFor(() => ledgerPane.hidden, '关闭账本抽屉')

@@ -167,7 +167,8 @@ function buildNextEvent(events, themeId, { id = null, at = null, actor = 'user',
     throw new Error(`supersedes 指向不存在的事件：${supersedes}`)
   }
   const seq = events.length + 1
-  const prevHash = events.length ? events[events.length - 1].hash : 'GENESIS'
+  const lastValid = [...events].reverse().find((e) => e && typeof e.hash === 'string')
+  const prevHash = lastValid ? lastValid.hash : 'GENESIS'
   const body = eventBody({
     id: eventId, themeId, seq,
     at: at || new Date().toISOString(),
