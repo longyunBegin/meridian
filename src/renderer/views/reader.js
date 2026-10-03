@@ -620,7 +620,8 @@ export function renderReaderView(theme, opts = {}) {
       graphCanvas,
       h('details', { class: 'rdr-legend' }, h('summary', {}, '关系与节点图例'),
         h('p', {}, '实线箭头：支持、推导、反驳；虚线箭头：版本修订；点线：归属、影响、依赖、时间关联、相关。待复核与驳回关系会保留其决定状态。'),
-        h('p', {}, '节点按概念、对象、事件、观点、证据区分。网络位置为稳定布局，不代表重要度或因果强度。')),
+        h('p', {}, '节点按概念、对象、事件、观点、证据区分。网络位置为稳定布局，不代表重要度或因果强度。'),
+        h('p', {}, h('strong', {}, '视觉编码：'), '节点图标大小表示强度（越大越强）；状态徽标颜色表示已佐证（绿）/受挑战（红）/待复核（灰）。')),
       replayBox)
     const workspace = h('div', { class: 'rdr-workspace' }, controls, inspector)
     // 综合理解横幅：最强共识与最大分歧（对齐设计稿）
