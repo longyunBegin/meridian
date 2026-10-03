@@ -28,7 +28,7 @@ function shortSourceId(item) {
   return `IN-${String(Math.abs(hash) % 900 + 100)}`
 }
 
-export function renderEnginePipeline(item, { themeId, onDone, projection = {}, onConfirm: confirmOverride, onReject: rejectOverride } = {}) {
+export function renderEnginePipeline(item, { themeId, onDone, projection = {}, onConfirm: confirmOverride, onReject: rejectOverride, entryDecision = null } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe-v2' })
   const pipeline = item.enginePipeline
@@ -329,6 +329,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
           ? `为「${targetTitle}」追加一条支持信号；来源 ${shortId}。`
           : `为「${targetTitle}」追加一条「${polarityLabel}」关系；来源 ${shortId}。`
 
+    const aiNote = h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。')
+    const footHint = h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。')
     const card = h('li', { class: 'review-card-v2' },
       // 头部
       h('div', { class: 'review-card-head' },
@@ -380,7 +382,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
               : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）${afterCountsText}`))),
         h('div', { class: 'review-change-summary' },
           h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
-        h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。'))
+        aiNote)
         : h('div', { class: 'review-change-summary' },
           h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
       // P0-5 溯源条：紧邻变更预览，固定 5 格
@@ -391,15 +393,31 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
       h('div', { class: 'review-card-foot' },
         h('span', { class: 'review-foot-label' }, '你的处理'),
         status,
-        h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),
+        footHint,
         h('div', { class: 'review-foot-actions' }, reject, confirm)))
     // 更新按钮文本
     confirm.textContent = '确认并追加'
     reject.textContent = '驳回'
     confirm.disabled = !result.proposalEventId || !quoteVerified
     reject.disabled = !result.proposalEventId
-    if (result.reviewDecision === 'rejected') { status.textContent = '已驳回'; confirm.disabled = true; reject.disabled = true; card.classList.add('is-done') }
-    else if (result.reviewDecision === 'accepted' || result.reviewDecision === 'corrected') { status.textContent = '已确认 · 事件已追加'; confirm.disabled = true; reject.disabled = true; card.classList.add('is-done') }
+    /* 已处理的数据是**只读**的：不再显示"确认/驳回"这类操作按钮，也不再有"选一下试试"的引导——
+       已决策就只展示当时的决定与它会产生的变化（用户："已处理的数据应该是读的状态"）。 */
+    const makeReadOnly = (decisionText) => {
+      status.textContent = '已处理 · 只读'
+      footHint.textContent = decisionText
+      confirm.hidden = true
+      reject.hidden = true
+      targetSelect.disabled = true
+      relation.disabled = true
+      changeNote.disabled = true
+      const titleInput = advancedOptions.querySelector('input')
+      if (titleInput) titleInput.disabled = true
+      aiNote.textContent = '这条建议当时已经处理过；下面是那时的决定，以及它对模型会产生的影响。'
+      card.classList.add('is-done', 'is-readonly')
+    }
+    if (result.reviewDecision === 'rejected') makeReadOnly('决定：已驳回 · 原事件保留，另追加了一条决定事件')
+    else if (result.reviewDecision === 'accepted' || result.reviewDecision === 'corrected') makeReadOnly('决定：已确认 · 事件已追加')
+    else if (entryDecision) makeReadOnly(entryDecision === 'rejected' ? '决定：已驳回 · 原事件保留，另追加了一条决定事件' : '决定：已确认 · 事件已追加')
     list.append(card)
     reviewStatuses.push({ result, status, card, confirm, reject })
   }

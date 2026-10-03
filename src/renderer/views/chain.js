@@ -974,6 +974,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         detail.append(renderEnginePipeline(synthetic, {
           themeId: theme.id,
           projection: proj,
+          entryDecision: entry.decision || null,
           onDone: () => { if (typeof opts.onChanged === 'function') opts.onChanged(); else { renderMain(); renderSidebar() } },
           onConfirm: async () => { await doVerdict(signal, 'accepted', null) },
           onReject: async () => { await doVerdict(signal, 'rejected') },
@@ -1033,6 +1034,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         engineHost.append(renderEnginePipeline(reviewItem, {
           themeId: theme.id,
           projection: viewState.projection,
+          entryDecision: entry?.decision || null,
           onDone: (change) => {
             if (change?.kind === 'decision') {
               queueMode = 'processed'
