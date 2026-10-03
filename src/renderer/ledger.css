@@ -1,11 +1,12 @@
 /* 1:1 迁移自 deepseek_html_20261002_2a745f.html —— 账本视图样式
    作用域限定在 .meridian-ledger 下，避免与主样式冲突 */
 .meridian-ledger{
-  --bg:#ececed;--surface:#fff;--surface-2:rgba(29,29,31,.03);--surface-3:rgba(29,29,31,.05);
-  --text:#1d1d1f;--text-2:rgba(29,29,31,.56);--text-3:rgba(29,29,31,.34);
-  --line:rgba(29,29,31,.07);--line-2:rgba(29,29,31,.12);
-  --accent:#0071e3;--red:#ff3b30;--green:#30d158;--orange:#ff9f0a;--purple:#bf5af2;--cyan:#39c5cf;
-  --ease:cubic-bezier(.4,0,.2,1);
+  /* 令牌只有一处真相：这里只把账本视图的历史变量名映射到设计系统，不再自带一套色板。 */
+  --surface:var(--surface-solid);--surface-2:var(--hover);--surface-3:var(--active);
+  --text:var(--text-1);
+  --line:var(--hairline);--line-2:var(--hairline-strong);
+  --cyan:var(--teal);
+  --ease:var(--ease-out);
   background:var(--surface);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
   font-size: var(--t-body);line-height:1.5;-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";

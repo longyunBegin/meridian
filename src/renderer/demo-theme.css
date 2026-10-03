@@ -4,7 +4,7 @@
   --bg:#ececed;--surface:#fff;--surface-2:rgba(29,29,31,.03);--surface-3:rgba(29,29,31,.05);
   --text:#1d1d1f;--text-2:rgba(29,29,31,.56);--text-3:rgba(29,29,31,.34);
   --line:rgba(29,29,31,.08);--line-2:rgba(29,29,31,.14);
-  --accent:#0071e3;--red:#ff3b30;--green:#30d158;--orange:#ff9f0a;--purple:#bf5af2;--cyan:#39c5cf;--brown:#a2845e;
+  --cyan:#39c5cf;--brown:#a2845e;
   --ease:cubic-bezier(.4,0,.2,1);
 }
 *{box-sizing:border-box;}
@@ -359,7 +359,7 @@ body{
   transition:background .16s var(--ease);min-height:2px;
 }
 .density-day.has-signal{background:rgba(0,113,227,.32);}
-.density-day.has-key{background:linear-gradient(180deg,#0071e3,#4aa6f0);}
+.density-day.has-key{background:linear-gradient(180deg,var(--accent),#4aa6f0);}
 
 .stream-head{
   flex:0 0 auto;padding:20px 36px 12px;
@@ -758,7 +758,7 @@ body{
   cursor:pointer;border:none;transition:all .16s var(--ease);
 }
 .attr-btn.confirm{background:var(--accent);color:#fff;}
-.attr-btn.confirm:hover{background:#0066cc;}
+.attr-btn.confirm:hover{background:var(--accent-strong);}
 .attr-btn.reject{background:rgba(29,29,31,.06);color:var(--text-2);}
 .attr-btn.reject:hover{background:rgba(29,29,31,.1);color:var(--text);}
 

@@ -76,8 +76,16 @@
   --focus-ring: 0 0 0 3px rgba(0, 113, 227, 0.32);
   --focus-ring-inset: inset 0 0 0 2px rgba(0, 113, 227, 0.55);
 
-  /* 语义色（保持既有名称，避免大面积改名） */
+  /* 语义色：唯一真相在这里（历史名称保留，避免大面积改名）。
+     注意：自定义属性不能自引用（--x: var(--x) 会让它失效），所以真值必须写在这一处。 */
+  --accent: #0071e3;
   --accent-strong: #0066cc;
+  --red: #ff3b30;
+  --orange: #ff9500;
+  --green: #34c759;
+  --purple: #af52de;
+  --teal: #00b8b8;
+  --brown: #a2845e;
   --accent-soft: rgba(0, 113, 227, 0.1);
   --green-soft: rgba(52, 199, 89, 0.14);
   --red-soft: rgba(255, 59, 48, 0.12);
