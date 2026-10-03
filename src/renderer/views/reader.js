@@ -267,11 +267,30 @@ export function renderReaderView(theme, opts = {}) {
       ]
       const event = sourceEventFor(node, eventById, state.events)
       const detail = node.currentText || node.detail || node.coreInfo || ''
+      const strength = Math.round(Number(node.confidence ?? node.strength ?? 0))
+      const supportCount = evidenceSummary.supports.length + evidenceSummary.both.length
+      const challengeCount = evidenceSummary.against.length + evidenceSummary.both.length
+      // 外部数据按时间倒序
+      const sortedEvidence = [...evidenceNodes].sort((a, b) => {
+        const ta = sourceEventFor(a, eventById, state.events)?.at || a.at || 0
+        const tb = sourceEventFor(b, eventById, state.events)?.at || b.at || 0
+        return new Date(tb) - new Date(ta)
+      })
       inspector.append(
         h('div', { class: 'rdr-inspector-head' },
           h('p', { class: 'rdr-inspector-kicker' }, `${TYPE_LABEL[type] || '节点'} · ${NODE_STATUS_LABEL[status] || status}`),
           h('h2', { class: 'rdr-inspector-title' }, titleOf(node)),
-          detail ? h('p', { class: 'rdr-inspector-summary' }, cleanText(detail)) : h('p', { class: 'rdr-inspector-summary is-empty' }, '没有记录节点说明。')),
+          detail ? h('p', { class: 'rdr-inspector-summary' }, cleanText(detail)) : h('p', { class: 'rdr-inspector-summary is-empty' }, '没有记录节点说明。'),
+          // 当前强度条（对齐设计稿）
+          h('div', { class: 'rdr-strength-block' },
+            h('div', { class: 'rdr-strength-label-row' },
+              h('span', {}, '当前强度'),
+              h('strong', {}, `${strength}%`)),
+            h('div', { class: 'rdr-strength-bar', role: 'progressbar', 'aria-valuenow': strength, 'aria-valuemin': 0, 'aria-valuemax': 100 },
+              h('div', { class: 'rdr-strength-fill', style: `width:${strength}%` })),
+            h('div', { class: 'rdr-strength-counts' },
+              h('span', { class: 'rdr-count-pill is-support' }, `支持 ${supportCount}`),
+              h('span', { class: 'rdr-count-pill is-challenge' }, `挑战 ${challengeCount}`)))),
         h('div', { class: 'rdr-inspector-scroll' },
           h('section', { class: 'rdr-inspector-section rdr-reader-questions' },
             h('h3', {}, '读者三问 · 仅呈现账本中明确记录的关系'),
@@ -295,18 +314,21 @@ export function renderReaderView(theme, opts = {}) {
             ...pending.map((edge) => h('p', { class: 'rdr-open-item' }, `关系「${edge.rel || '未知'}」仍待人工复核。`)),
             !pending.length && status !== 'disputed' ? h('p', { class: 'rdr-muted' }, '当前没有显式记录的未决项；这不表示所有问题都已解决。') : null),
           h('section', { class: 'rdr-inspector-section' },
-            h('h3', {}, `证据与来源 · ${evidenceSummary.total} 条可导航证据`),
-            h('p', { class: 'rdr-evidence-count-note' }, '按唯一证据节点计数，不按关系边计数；方向未标注时不会推定为支持或反驳。'),
-            evidenceNodes.length ? h('div', { class: 'rdr-evidence-groups' }, ...evidenceBuckets.filter((bucket) => bucket.nodes.length).map((bucket) =>
-              h('div', { class: `rdr-evidence-group is-${bucket.key}` },
-                h('strong', {}, `${bucket.label} · ${bucket.nodes.length}`),
-                h('div', { class: 'rdr-evidence-list' }, ...bucket.nodes.map((evidence) => {
-                  const sourceEvent = sourceEventFor(evidence, eventById, state.events)
-                  return renderSourceRecord(evidence, sourceEvent, {
-                    stanceLabel: bucket.label,
-                    onLocateEvent: (source) => opts.onOpenBuilder?.('network', evidence.id, source.id),
-                  })
-                }))))) : h('p', { class: 'rdr-muted' }, '没有找到直接关联的证据节点。观点说明本身不是证据。')),
+            h('h3', {}, `外部数据 · ${evidenceSummary.total} 条（按时间倒序）`),
+            h('p', { class: 'rdr-evidence-count-note' }, '按唯一证据节点计数；佐证/反驳徽标表示该证据与当前节点的关系方向。'),
+            sortedEvidence.length ? h('div', { class: 'rdr-evidence-list-flat' }, ...sortedEvidence.map((evidence) => {
+              const sourceEvent = sourceEventFor(evidence, eventById, state.events)
+              // 判断徽标
+              const isSupport = evidenceSummary.supports.some((r) => r.source.id === evidence.id) || evidenceSummary.both.some((r) => r.source.id === evidence.id)
+              const isChallenge = evidenceSummary.against.some((r) => r.source.id === evidence.id) || evidenceSummary.both.some((r) => r.source.id === evidence.id)
+              const badge = isSupport && isChallenge ? h('span', { class: 'rdr-evidence-badge is-both' }, '佐证/反驳')
+                : isSupport ? h('span', { class: 'rdr-evidence-badge is-support' }, '佐证')
+                : isChallenge ? h('span', { class: 'rdr-evidence-badge is-challenge' }, '反驳')
+                : h('span', { class: 'rdr-evidence-badge is-neutral' }, '已关联')
+              return h('div', { class: 'rdr-evidence-item' }, badge, renderSourceRecord(evidence, sourceEvent, {
+                onLocateEvent: (source) => opts.onOpenBuilder?.('network', evidence.id, source.id),
+              }))
+            })) : h('p', { class: 'rdr-muted' }, '没有找到直接关联的证据节点。观点说明本身不是证据。')),
           event ? h('section', { class: 'rdr-inspector-section' },
             h('h3', {}, '节点自身的来源记录'),
             renderSourceRecord(node, event, { onLocateEvent: (source) => opts.onOpenBuilder?.('network', node.id, source.id) })) : null,
