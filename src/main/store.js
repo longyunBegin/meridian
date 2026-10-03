@@ -749,17 +749,32 @@ export function bestThemeContext() {
   return best
 }
 export function addTheme(name) {
-  const theme = { id: uid(), name: String(name || '').trim(), tags: [], createdAt: today() }
+  const theme = { id: uid(), name: String(name || '').trim(), tags: [], config: emptyThemeConfig(), createdAt: today() }
   db.themes.push(theme)
   persist()
   return theme
 }
-/** 更新主题字段（支持 name / tags） */
+/** L2 主题自定义层：只有分类与关系词表由用户定义，L1 通用字段永不进这里。 */
+export function emptyThemeConfig() {
+  return { atomCategories: [], relationLabels: [] }
+}
+/** 词表统一清洗：去空白、去重、限长限量；空数组表示"未定义"，调用方回落到"未分类"。 */
+export function normalizeThemeConfig(patch = {}) {
+  const list = (value, limit) => [...new Set((Array.isArray(value) ? value : [])
+    .map((item) => String(item ?? '').trim().slice(0, 40))
+    .filter(Boolean))].slice(0, limit)
+  return {
+    atomCategories: list(patch?.atomCategories, 24),
+    relationLabels: list(patch?.relationLabels, 9),
+  }
+}
+/** 更新主题字段（支持 name / tags / config） */
 export function updateTheme(id, patch) {
   const theme = db.themes.find((t) => t.id === id)
   if (!theme) return null
   if (patch.name !== undefined) theme.name = String(patch.name).trim()
   if (patch.tags !== undefined) theme.tags = [...new Set((Array.isArray(patch.tags) ? patch.tags : []).filter((t) => typeof t === 'string'))]
+  if (patch.config !== undefined) theme.config = normalizeThemeConfig(patch.config)
   persist()
   return theme
 }

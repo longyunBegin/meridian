@@ -434,6 +434,28 @@ ok('relational 流程由用户确认后追加观点、可核验来源和支持�
   && afterRelationalProjection.allEdges.some((edge) => edge.rel === 'supports' && edge.to === relationalReview.events?.[0]?.id))
 ok('引擎建议闭环完成后全事件链可验证', ev.verifyChain(engineTheme.id).ok)
 
+console.log('\n— 去领域化：审阅 change 收敛为自由备注 —')
+const noteProposal = makeEngineProposal('note-only', engineTarget.id, 'supports')
+const noteReview = pj.reviewEngineRecommendation(engineTheme.id, noteProposal.id, 'accepted', {
+  change: { note: '这句是自由备注，不是枚举。' },
+})
+const noteEvents = ev.getEvents(engineTheme.id)
+const noteEvidence = noteEvents.find((event) => event.type === 'evidence.appended' && event.payload.recommendationId === 'synthetic:note-only')
+const noteDecision = noteEvents.filter((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === noteProposal.id).at(-1)
+const noteConfidence = noteEvents.find((event) => event.type === 'confidence.updated' && event.payload.evidenceEventId === noteEvidence?.id)
+ok('确认建议后账本事件的 change 只有 note 字段', noteReview.ok
+  && JSON.stringify(noteEvidence?.payload.change) === JSON.stringify({ note: '这句是自由备注，不是枚举。' })
+  && JSON.stringify(noteDecision?.payload.change) === JSON.stringify({ note: '这句是自由备注，不是枚举。' })
+  && ev.verifyChain(engineTheme.id).ok)
+ok('强度只由 strength 决定，不读 change 标签', noteConfidence?.payload.strength === expectedStrength)
+
+const emptyNoteProposal = makeEngineProposal('empty-note', engineTarget.id, 'supports')
+let emptyNoteAccepted = false
+try { emptyNoteAccepted = pj.reviewEngineRecommendation(engineTheme.id, emptyNoteProposal.id, 'accepted', {})?.ok === true } catch { emptyNoteAccepted = false }
+const emptyNoteEvidence = ev.getEvents(engineTheme.id).find((event) => event.type === 'evidence.appended' && event.payload.recommendationId === 'synthetic:empty-note')
+ok('input.change 已是可选：不再要求 direction/nature/themeTag', emptyNoteAccepted
+  && Boolean(emptyNoteEvidence) && Object.keys(emptyNoteEvidence.payload.change || {}).every((key) => key === 'note'))
+
 console.log('\n— 投影归档 / 恢复 —')
 const eventNode = pj.getChainProjection(theme3.id).nodes.find((n) => n.title === '新主张')
 const archiveEvent = pj.archiveProjectedNode(theme3.id, eventNode.sourceRef, '证据已过时')

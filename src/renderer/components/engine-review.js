@@ -27,7 +27,7 @@ function shortSourceId(item) {
   return `IN-${String(Math.abs(hash) % 900 + 100)}`
 }
 
-export function renderEnginePipeline(item, { themeId, onDone, projection = {} } = {}) {
+export function renderEnginePipeline(item, { themeId, onDone, projection = {}, relationLabels = [] } = {}) {
   const m = globalThis.window?.meridian || {}
   const wrap = h('div', { class: 'engine-pipe-v2' })
   const pipeline = item.enginePipeline
@@ -143,20 +143,30 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       ...allAtoms.map((n) => h('option', { value: n.id }, n.title || '未命名原子')))
     // 默认选中 AI 建议
     targetSelect.value = isNew ? '__new__' : (targetNode?.id || '__new__')
-    const relation = changeOptions(['supports', 'contradicts', 'derives', 'supersedes', 'related'], suggestion.rel || attribution.rel,
-      relLabel)
+    /* 关系词表（L2）只改下拉里的措辞；写进事件的 rel 仍是 L1 固定枚举。 */
+    const relChoices = ['supports', 'contradicts', 'derives', 'supersedes', 'related']
+    const relationLabelsFor = { ...relLabel }
+    for (const [index, rel] of relChoices.entries()) {
+      const custom = String(relationLabels?.[index] ?? '').trim()
+      if (custom) relationLabelsFor[rel] = custom
+    }
+    const relation = changeOptions(relChoices, suggestion.rel || attribution.rel, relationLabelsFor)
+    const titleInput = isNew ? h('input', { class: 'engine-review-title', type: 'text', maxlength: '180', value: suggestion.title || result.suggestedTitle || '', 'aria-label': '新观点标题' }) : null
+    const titleField = titleInput
+      ? h('label', { class: 'engine-review-field', hidden: targetSelect.value !== '__new__' }, '新原子标题', titleInput)
+      : null
     // 目标切换时，显示/隐藏新原子标题输入
     targetSelect.addEventListener('change', () => {
-      const isNewTarget = targetSelect.value === '__new__'
-      const titleLabel = targetSelect.closest('.review-advanced')?.querySelectorAll('.engine-review-field')[1]
-      if (titleLabel) titleLabel.hidden = !isNewTarget
+      if (titleField) titleField.hidden = targetSelect.value !== '__new__'
     })
-    const direction = changeOptions(['improving', 'declining', 'stable'], suggestion.change?.direction || attribution.change?.direction,
-      { improving: '好转', declining: '承压', stable: '稳定' })
-    const nature = changeOptions(['quantitative', 'pivot', 'epistemic', 'structural'], suggestion.change?.nature || attribution.change?.nature,
-      { quantitative: '量变', pivot: '质变', epistemic: '认识变化', structural: '结构变化' })
-    const themeTag = h('input', { class: 'engine-review-tag', type: 'text', maxlength: '20', value: suggestion.change?.themeTag || attribution.change?.themeTag || statement.attribute || '待复核', 'aria-label': '变化标签' })
-    const titleInput = isNew ? h('input', { class: 'engine-review-title', type: 'text', maxlength: '180', value: suggestion.title || result.suggestedTitle || '', 'aria-label': '新观点标题' }) : null
+    /* 备注取代了写死的方向/性质/标签：模型至多建议一句自由文本，用户可改可删，后端不做枚举校验。
+       旧账本里已写入的 change.themeTag 仅作为备注初值回填，不再作为类型字段。 */
+    const suggestedNote = suggestion.change?.note || attribution.change?.note
+      || suggestion.change?.themeTag || attribution.change?.themeTag || ''
+    const changeNote = h('input', {
+      class: 'engine-review-note', type: 'text', maxlength: '200', value: suggestedNote,
+      placeholder: '可留空；例如：这条证据改写了哪一点', 'aria-label': '备注（可选）',
+    })
     const quoteVerified = statement.sourceQuoteVerified === true
     const warning = !quoteVerified
       ? h('p', { class: 'engine-review-warning', role: 'alert' }, '来源摘录未能与原文核验；为避免把模型编造内容写入账本，本条不能直接确认。')
@@ -193,7 +203,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
     const confirm = runButton('确认并追加', async () => {
       confirm.disabled = true; reject.disabled = true
       try {
-        const input = { change: { direction: direction.value, nature: nature.value, themeTag: themeTag.value.trim() } }
+        const input = { change: { note: changeNote.value.trim() } }
         const userTarget = targetSelect.value
         const userWantsNew = userTarget === '__new__'
         if (userWantsNew) {
@@ -309,12 +319,9 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       h('details', { class: 'review-advanced' },
         h('summary', {}, '高级选项'),
         h('label', { class: 'engine-review-field' }, '目标原子', targetSelect),
-        h('label', { class: 'engine-review-field', hidden: targetSelect.value !== '__new__' }, '新原子标题', titleInput),
+        titleField,
         h('label', { class: 'engine-review-field' }, '关系类型', relation),
-        h('div', { class: 'engine-review-controls' },
-          h('label', { class: 'engine-review-field' }, '方向', direction),
-          h('label', { class: 'engine-review-field' }, '性质', nature),
-          h('label', { class: 'engine-review-field' }, '标签', themeTag))),
+        h('label', { class: 'engine-review-field' }, '备注', changeNote)),
       // 底部操作
       h('div', { class: 'review-card-foot' },
         h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),

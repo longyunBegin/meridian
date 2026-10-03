@@ -132,6 +132,8 @@ export function projectEvents(events) {
       createdSeq: e.seq,
       currentText: p.detail ?? p.coreInfo ?? p.title ?? '',
       detail: p.detail ?? p.coreInfo ?? '',
+      /* L2：原子分类来自主题自定义词表；没有分类时保持 null，不在事件里编造领域类型。 */
+      atomCategory: String(p.atomCategory || '').trim() || null,
       applicability: String(p.applicability || '').trim() || null,
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || `event:${e.id}`,
@@ -517,6 +519,7 @@ export function createProjectedNode(themeId, input = {}) {
       status: ['pending', 'verified', 'disputed'].includes(input.status) ? input.status : 'pending',
       sourceKind: 'user-authored',
       sourceRef: `theme-node:${id}`,
+      ...(String(input.atomCategory || '').trim() ? { atomCategory: String(input.atomCategory).trim().slice(0, 40) } : {}),
       ...(String(input.applicability || '').trim() ? { applicability: String(input.applicability).trim().slice(0, 160) } : {}),
     },
   })
@@ -679,14 +682,22 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   if (!proposal) throw new Error('找不到待审核的引擎建议')
   const priorReview = events.find((event) => event.type === 'signal.reviewed' && event.payload?.signalEventId === proposal.id)
   const recommendation = proposal.payload.recommendation
-  const change = decision === 'rejected' ? null : (input.change || recommendation.change)
+  /* change 从"写死的方向/性质/标签"收敛为一句自由备注：可选、不做枚举校验、不参与强度计算。
+     旧账本里的 {direction,nature,themeTag} 归一成 {note} 后仍能比对重放意图。 */
+  const normalizeChange = (value) => {
+    if (!value || typeof value !== 'object') return null
+    const note = typeof value.note === 'string' ? value.note
+      : (typeof value.themeTag === 'string' ? value.themeTag : '')
+    return { note: note.trim().slice(0, 200) }
+  }
+  const change = decision === 'rejected' ? null : normalizeChange(input.change || recommendation.change)
   const targetNodeId = input.targetNodeId || recommendation.propositionId || null
   const relation = input.rel || recommendation.rel
   const reviewIntent = { decision, change, targetNodeId, rel: relation, title: String(input.title || '').trim() }
   if (priorReview) {
     const priorIntent = {
       decision: priorReview.payload.decision,
-      change: priorReview.payload.change || null,
+      change: normalizeChange(priorReview.payload.change),
       targetNodeId: priorReview.payload.targetNodeId || null,
       rel: priorReview.payload.rel || null,
       title: priorReview.payload.title || '',
@@ -703,9 +714,6 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   const drafts = []
 
   if (decision !== 'rejected') {
-    if (!change || !['improving', 'declining', 'stable'].includes(change.direction)
-      || !['quantitative', 'pivot', 'epistemic', 'structural'].includes(change.nature)
-      || !String(change.themeTag || '').trim()) throw new Error('请审核方向、性质和标签')
     if (!sourceQuote || !sourceQuoteVerified) throw new Error('原文摘录无法与来源核验，不能将它作为证据追加')
     const sourceUrl = String(proposal.payload.sourceUrl || '').trim()
     const validUrl = (() => { try { return /^https?:$/.test(new URL(sourceUrl).protocol) } catch { return false } })()
@@ -717,7 +725,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       text: sourceQuote, sourceLabel, sourceKind: 'engine-reviewed', sourceRef,
       ...(evidenceTargetNodeId ? { targetNodeId: evidenceTargetNodeId } : {}),
       evidenceRefs: validUrl ? [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] : [],
-      change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) },
+      ...(change ? { change } : {}),
       recommendationId,
       ...(proposal.payload.sourcePublishedAt ? { sourcePublishedAt: proposal.payload.sourcePublishedAt } : {}),
       ...(proposal.payload.sourceFetchedAt ? { sourceFetchedAt: proposal.payload.sourceFetchedAt } : {}),
@@ -796,7 +804,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
 
   const reviewPayload = {
     signalEventId: proposal.id, decision,
-    ...(change ? { change: { direction: change.direction, nature: change.nature, themeTag: String(change.themeTag).trim().slice(0, 20) } } : {}),
+    ...(change ? { change } : {}),
     ...(targetNodeId ? { targetNodeId } : {}),
     ...(relation ? { rel: relation } : {}),
     ...(String(input.title || '').trim() ? { title: String(input.title).trim() } : {}),

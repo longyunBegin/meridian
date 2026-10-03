@@ -3,11 +3,9 @@ import { createStatement } from './engine-statements.js'
 const EXTRACT_SYSTEM = `抽取新闻中可核验的原子陈述。保留原文数字和单位；不得推断或补充。每条包含 subject、attribute、value、time_window、quote；没有明确时间时 time_window 必须为空字符串。quote 不超过40字。只输出 JSON：{"statements":[{"subject":"...","attribute":"...","value":"...","time_window":"...","quote":"..."}]}`
 const CLASSIFY_SYSTEM = `将每条陈述分类为 hard、soft、relational 或 meta。hard=可直接核验事实；soft=观点/估计；relational=关系陈述，建议新命题；meta=关于信息本身的提示。不能确定时用 soft。只输出 JSON：{"types":[{"index":0,"type":"hard"}]}`
 const MATCH_SYSTEM = `判断陈述与命题的语义、主体、时间是否匹配，字段必须为严格布尔值。如果陈述没有时间窗口，temporal=false 表示无法核实；不要因此丢弃语义及主体匹配的候选，而应标为需人工复核。如果时间明确且不匹配，则不返回该候选。score 必须为 0 到 1 的数字。只输出 JSON：{"matches":[{"proposition_index":0,"semantic":true,"subject":true,"temporal":true,"score":0.85,"reason":"..."}]}`
-const ATTRIBUTE_SYSTEM = `判断陈述与命题的关系：supports、contradicts、derives、supersedes、related。返回 0 到 1 的 strength、reason，以及建议 change：direction=improving/declining/stable，nature=quantitative/pivot/epistemic/structural，themeTag=简洁标签。输出仅为待用户审阅的建议；任何分数都不能自动接受或追加事件。只输出 JSON：{"rel":"supports","strength":0.62,"reason":"...","change":{"direction":"improving","nature":"quantitative","themeTag":"营收增长"}}`
+const ATTRIBUTE_SYSTEM = `判断陈述与命题的关系：supports、contradicts、derives、supersedes、related。返回 0 到 1 的 strength、reason，以及可选的 note：不超过 40 字的一句话备注，说明这条证据改变了哪一点；说不出就留空字符串。不要输出方向、性质、标签等分类字段——领域分类由用户和主题配置决定，不由模型规定。输出仅为待用户审阅的建议；任何分数都不能自动接受或追加事件。只输出 JSON：{"rel":"supports","strength":0.62,"reason":"...","note":"营收增长"}`
 const TYPES = new Set(['hard', 'soft', 'relational', 'meta'])
 const RELS = new Set(['supports', 'contradicts', 'derives', 'supersedes', 'related'])
-const DIRECTIONS = new Set(['improving', 'declining', 'stable'])
-const NATURES = new Set(['quantitative', 'pivot', 'epistemic', 'structural'])
 
 async function callLLM(llmCall, system, user) {
   if (typeof llmCall !== 'function') throw new Error('缺少 LLM 调用函数')
@@ -73,12 +71,9 @@ export async function attributeRelation(llmCall, statement, proposition) {
   const result = await callLLM(llmCall, ATTRIBUTE_SYSTEM, user)
   if (!RELS.has(result.rel)) throw new Error(`LLM 返回了非法关系类型：${result.rel}`)
   if (!Number.isFinite(result.strength) || result.strength < 0 || result.strength > 1) throw new Error('LLM 返回的 strength 必须是 0 到 1 的数字')
-  const change = result.change || {}
-  const direction = DIRECTIONS.has(change.direction) ? change.direction : result.rel === 'supports' ? 'improving' : result.rel === 'contradicts' ? 'declining' : 'stable'
-  const nature = NATURES.has(change.nature) ? change.nature : 'quantitative'
-  const themeTag = String(change.themeTag || statement.attribute || '').trim().slice(0, 20)
-  return { rel: result.rel, strength: result.strength, reason: String(result.reason || '').trim(),
-    change: { direction, nature, themeTag } }
+  /* 备注是唯一保留的自由文本；旧响应的 change.themeTag 仅作为兼容回填。 */
+  const note = String(result.note ?? result.change?.note ?? result.change?.themeTag ?? '').trim().slice(0, 200)
+  return { rel: result.rel, strength: result.strength, reason: String(result.reason || '').trim(), change: { note } }
 }
 
 export function statementTitle(statement) {
@@ -107,7 +102,7 @@ export async function runEnginePipeline(llmCall, { themeName, title, text, sourc
       results.push({ kind: 'new-proposition', statement, match: null, proposition: null,
         suggestedTitle: statementTitle(statement), attribution: { rel: 'related', strength: 1,
           reason: '关系陈述仅用于提出新命题，不自动建立既成关系。',
-          change: { direction: 'stable', nature: 'structural', themeTag: statement.attribute.slice(0, 20) } },
+          change: { note: String(statement.attribute || '').trim().slice(0, 200) } },
         metaCount, metaMultiplier, requiresTemporalReview: !statement.timeWindow })
       continue
     }

@@ -752,7 +752,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
           rel: 'supports',
           strength: 0.7,
           reason: 'Mock：该信号支持目标原子的当前理解',
-          change: { direction: 'improving', nature: 'quantitative', themeTag: '营收结构' },
+          change: { note: 'Mock：营收结构变化（支持）' },
         },
         proposition: targetAtom,
         metaCount: 0,
@@ -769,7 +769,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
           rel: 'contradicts',
           strength: 0.6,
           reason: 'Mock：该信号与目标原子的当前理解存在分歧',
-          change: { direction: 'declining', nature: 'quantitative', themeTag: '产能瓶颈' },
+          change: { note: 'Mock：产能瓶颈压力（反驳）' },
         },
         proposition: secondAtom,
         metaCount: 0,
@@ -787,7 +787,7 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         rel: 'related',
         strength: 1,
         reason: 'Mock：未找到匹配的原子，建议新建原子节点',
-        change: { direction: 'stable', nature: 'structural', themeTag: mockStatement2.attribute.slice(0, 20) },
+        change: { note: mockStatement2.attribute.slice(0, 200) },
       },
       metaCount: 0,
       metaMultiplier: 1,
@@ -875,11 +875,9 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         type: ['hard', 'soft', 'relational'].includes(statement.type) ? statement.type : 'soft', sourceText: quote,
         sourceQuoteVerified: statement.sourceQuoteVerified === true || Boolean(quote && sourceText.includes(normalize(quote))),
       }
+      /* 备注是自由文本：模型至多给一句建议，没有枚举可校验，也不参与强度计算。 */
       const change = {
-        direction: ['improving', 'declining', 'stable'].includes(attribution.change?.direction) ? attribution.change.direction
-          : rel === 'supports' ? 'improving' : rel === 'contradicts' ? 'declining' : 'stable',
-        nature: ['quantitative', 'pivot', 'epistemic', 'structural'].includes(attribution.change?.nature) ? attribution.change.nature : 'quantitative',
-        themeTag: String(attribution.change?.themeTag || normalizedStatement.attribute || '待复核').trim().slice(0, 20),
+        note: String(attribution.change?.note || attribution.change?.themeTag || normalizedStatement.attribute || '').trim().slice(0, 200),
       }
       const strength = Number.isFinite(attribution.strength) ? Math.max(0, Math.min(1, attribution.strength)) : 0
       const metaMultiplier = Number.isFinite(result.metaMultiplier) ? Math.max(0, Math.min(1, result.metaMultiplier)) : 1

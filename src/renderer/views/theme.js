@@ -7,6 +7,91 @@ import { requestBuilderPane, requestBuilderNodeFocus, requestChainEventJump } fr
 const m = window.meridian
 const themeViewKey = (themeId) => `meridian:theme-view:${themeId}`
 
+/**
+ * L2 词表编辑器：一行一项，可改可删，底部可加。保存后整表覆写 theme.config，
+ * 所以删掉一项就等于从词表里抹掉；没有词表时新建原子回落成"未分类"。
+ */
+function vocabularyEditor({ label, hint, values, placeholder, onSave }) {
+  const rows = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', margin: '4px 0 6px' } })
+  if (!values.length) {
+    rows.append(h('p', { style: { margin: '0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, '暂无'))
+  }
+  values.forEach((value, index) => {
+    const input = h('input', {
+      class: 'txt', value, maxlength: '40', style: { flex: '1', minWidth: '80px' },
+      'aria-label': `${label}第 ${index + 1} 项`,
+    })
+    input.addEventListener('change', () => {
+      const text = input.value.trim()
+      if (!text) { input.value = value; return }
+      if (text === value) return
+      const next = values.slice()
+      next[index] = text
+      onSave(next)
+    })
+    rows.append(h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } },
+      input,
+      h('button', {
+        type: 'button', class: 'btn btn-icon', 'aria-label': `删除 ${value}`, title: '删除',
+        style: { color: 'var(--red)' },
+        onclick: () => onSave(values.filter((_, i) => i !== index)),
+      }, '×')))
+  })
+  const addInput = h('input', { class: 'txt', placeholder, maxlength: '40', style: { flex: '1', minWidth: '80px' }, 'aria-label': `添加${label}` })
+  const add = () => {
+    const text = addInput.value.trim()
+    if (!text) return
+    addInput.value = ''
+    onSave([...values, text])
+  }
+  addInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    add()
+  })
+  return h('div', { style: { marginTop: '10px' } },
+    h('div', { style: { display: 'flex', alignItems: 'baseline', gap: '6px' } },
+      h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)' } }, label),
+      h('span', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)' } }, hint)),
+    rows,
+    h('div', { style: { display: 'flex', gap: '4px' } },
+      addInput,
+      h('button', { type: 'button', class: 'btn', style: { padding: '2px 8px', fontSize: 'var(--t-caption)' }, onclick: add }, '添加')))
+}
+
+/** 分类管理：原子分类与关系词表是主题自定义层，只影响这个主题的界面措辞。 */
+function renderThemeVocabulary(theme) {
+  const config = theme.config || {}
+  const save = async (patch) => {
+    try {
+      await m.themeUpdate(theme.id, {
+        config: {
+          atomCategories: patch.atomCategories ?? (Array.isArray(config.atomCategories) ? config.atomCategories : []),
+          relationLabels: patch.relationLabels ?? (Array.isArray(config.relationLabels) ? config.relationLabels : []),
+        },
+      })
+      await refresh()
+      toast('已保存主题分类', 'var(--text-2)')
+    } catch (error) {
+      toast(`保存分类失败：${error?.message || error}`, 'var(--red)')
+    }
+  }
+  return h('div', { style: { marginTop: '12px', borderTop: '1px solid var(--line)', paddingTop: '10px' } },
+    h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)', fontWeight: '600' } }, '分类管理'),
+    h('p', { style: { margin: '2px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
+      '分类只属于这个主题：新建原子时的「类型」从这里读，没有词表就只显示「未分类」。'),
+    vocabularyEditor({
+      label: '原子分类', hint: '如 技术路线 / 关键问题',
+      values: Array.isArray(config.atomCategories) ? config.atomCategories : [],
+      placeholder: '添加一个分类', onSave: (atomCategories) => save({ atomCategories }),
+    }),
+    vocabularyEditor({
+      label: '关系词表', hint: '按顺序对应 支持 / 反驳 / 推导 / 修订 / 相关，留空用默认措辞',
+      values: Array.isArray(config.relationLabels) ? config.relationLabels : [],
+      placeholder: '添加一个关系标签', onSave: (relationLabels) => save({ relationLabels }),
+    }))
+}
+
 /** 主题操作区：主题名 / 主题标签 / 删除主题（原嵌在标签库段内，标签库删除后独立成段）。 */
 function renderThemeOpsSection(theme) {
   if (!theme) return null
@@ -48,6 +133,7 @@ function renderThemeOpsSection(theme) {
       await refresh()
       toast(`已删除主题「${theme.name}」`, 'var(--text-2)')
     } }, '删除主题…'),
+    renderThemeVocabulary(theme),
   ))
   return h('div', { class: 'sect theme-ops' }, toggle, body)
 }

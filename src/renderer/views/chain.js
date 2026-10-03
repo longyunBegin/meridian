@@ -982,17 +982,14 @@ async function loadConcept(theme, ledgerPane, opts) {
     const renderAddAtomForm = () => {
       clear(detail)
       updateFlowSteps(null)
-      const typeOptions = [
-        { label: '技术路线', nodeType: 'concept' },
-        { label: '关键问题', nodeType: 'viewpoint' },
-        { label: '制造条件', nodeType: 'object' },
-        { label: '外部条件', nodeType: 'object' },
-        { label: '产业事件', nodeType: 'event' },
-        { label: '观点', nodeType: 'viewpoint' },
-        { label: '争议观点', nodeType: 'viewpoint', status: 'disputed' },
-        { label: '证据', nodeType: 'evidence' },
-        { label: '待验证工艺', nodeType: 'object' },
-      ]
+      /* L2：分类来自当前主题的自定义词表，L1 不写死任何领域类型。
+         词表为空时只给"未分类"，并指向主题设置里的分类管理。 */
+      const themeConfig = theme.config || {}
+      const atomCategories = (Array.isArray(themeConfig.atomCategories) ? themeConfig.atomCategories : [])
+        .filter((label) => typeof label === 'string' && label.trim())
+      const typeOptions = atomCategories.length
+        ? atomCategories.map((label) => ({ label, nodeType: 'viewpoint', atomCategory: label }))
+        : [{ label: '未分类', nodeType: 'viewpoint', atomCategory: '' }]
       const colorOptions = [
         { name: '紫', value: '#a855f7' }, { name: '青', value: '#14b8a6' },
         { name: '绿', value: '#22c55e' }, { name: '橙', value: '#f59e0b' },
@@ -1036,10 +1033,14 @@ async function loadConcept(theme, ledgerPane, opts) {
 
       // 连接现有节点（可选）
       const connectableNodes = projectedNodes(viewState.projection).filter((n) => !n.archived && !n.invalidated)
+      /* 关系词表（L2）只改显示的措辞，事件里的 rel 值仍是 L1 的固定枚举。 */
+      const relLabels = Array.isArray(themeConfig.relationLabels) ? themeConfig.relationLabels : []
+      const relChoices = ['supports', 'contradicts', 'derives', 'related']
       const relSelect = h('select', { class: 'txt atom-form-rel', 'aria-label': '关系类型' },
-        ...['supports', 'contradicts', 'derives', 'related'].map((v) =>
+        ...relChoices.map((v, index) =>
           h('option', { value: v, selected: v === selectedRel },
-            { supports: '支持', contradicts: '反驳', derives: '推导', related: '相关' }[v])))
+            String(relLabels[index] || '').trim()
+              || { supports: '支持', contradicts: '反驳', derives: '推导', related: '相关' }[v])))
       relSelect.addEventListener('change', () => { selectedRel = relSelect.value })
       const nodeList = h('div', { class: 'atom-form-nodelist' })
       if (connectableNodes.length) {
@@ -1067,7 +1068,7 @@ async function loadConcept(theme, ledgerPane, opts) {
           const result = await m.chainCreateNode(theme.id, {
             nodeType: selectedType.nodeType, title, detail: descInput.value.trim(),
             status: selectedType.status || 'pending', applicability: timeInput.value.trim(),
-            color: selectedColor.value, atomLabel: selectedType.label,
+            atomCategory: selectedType.atomCategory, color: selectedColor.value,
           })
           if (result?.ok === false) throw new Error(result.error || '保存未完成')
           const newNodeId = result.node?.id || result.id
@@ -1114,7 +1115,10 @@ async function loadConcept(theme, ledgerPane, opts) {
             descInput),
           h('div', { class: 'atom-form-2col' },
             h('div', { class: 'atom-form-field' },
-              h('span', { class: 'atom-form-label' }, '类型'), typePills),
+              h('div', { class: 'atom-form-labelrow' },
+                h('span', { class: 'atom-form-label' }, '类型'),
+                atomCategories.length ? null : h('span', { class: 'atom-form-hint' }, '可在主题设置中添加分类')),
+              typePills),
             h('div', { class: 'atom-form-field' },
               h('span', { class: 'atom-form-label' }, '时间起点'), timeInput)),
           h('div', { class: 'atom-form-field' },
@@ -1220,6 +1224,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         engineHost.append(renderEnginePipeline(reviewItem, {
           themeId: theme.id,
           projection: viewState.projection,
+          relationLabels: theme.config?.relationLabels || [],
           onDone: (change) => {
             if (change?.kind === 'decision') {
               queueMode = 'processed'

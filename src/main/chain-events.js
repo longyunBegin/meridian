@@ -53,6 +53,18 @@ function legacyNodeType(node) {
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
 const copy = (v) => JSON.parse(JSON.stringify(v ?? null))
 const textId = (v) => typeof v === 'string' && v.length > 0
+/**
+ * 审阅 change 的合法形状：新的自由备注 {note}，或去领域化之前写入账本的
+ * {direction,nature,themeTag} 三元组。旧账本要继续校验通过，新事件也不再被
+ * 要求编造领域分类——所以这里两种都收，但都不再是必填。
+ */
+const validReviewChange = (change) => {
+  if (!isObj(change)) return false
+  if (typeof change.note === 'string') return true
+  return ['improving', 'declining', 'stable'].includes(change.direction)
+    && ['quantitative', 'pivot', 'epistemic', 'structural'].includes(change.nature)
+    && textId(change.themeTag)
+}
 const displayTitle = (value, limit = 28) => {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
   const parts = typeof Intl?.Segmenter === 'function'
@@ -295,18 +307,9 @@ function verifyEvents(events, themeId) {
       if (!targetPayload.pendingReview && !target.pendingReview && !relationPending) {
         return { ok: false, index: i, lastValidSeq: i, reason: '目标不是待审阅信号' }
       }
-      /* accepted/corrected 需要三层 change */
-      if (p.decision !== 'rejected') {
-        const ch = p.change || {}
-        if (!['improving', 'declining', 'stable'].includes(ch.direction)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少有效 direction' }
-        }
-        if (!['quantitative', 'pivot', 'epistemic', 'structural'].includes(ch.nature)) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少有效 nature' }
-        }
-        if (typeof ch.themeTag !== 'string' || !ch.themeTag.trim()) {
-          return { ok: false, index: i, lastValidSeq: i, reason: '判决缺少 themeTag' }
-        }
+      /* accepted/corrected 的 change 是可选的自由备注；不填也可以判决。 */
+      if (p.decision !== 'rejected' && p.change !== undefined && !validReviewChange(p.change)) {
+        return { ok: false, index: i, lastValidSeq: i, reason: '判决 change 字段非法' }
       }
       /* 防止重复判决同一信号 */
       for (const [id, evt] of ids) {
@@ -327,9 +330,7 @@ function verifyEvents(events, themeId) {
         || !['evidence', 'new-proposition'].includes(recommendation.kind)
         || !textId(recommendation.title) || !['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(recommendation.rel)
         || !Number.isFinite(recommendation.strength) || recommendation.strength < 0 || recommendation.strength > 1
-        || !['improving', 'declining', 'stable'].includes(change.direction)
-        || !['quantitative', 'pivot', 'epistemic', 'structural'].includes(change.nature)
-        || !textId(change.themeTag)) {
+        || !validReviewChange(change)) {
         return { ok: false, index: i, lastValidSeq: i, reason: '引擎建议事件字段非法' }
       }
       if (recommendation.kind === 'evidence' && !textId(recommendation.propositionId)) {
