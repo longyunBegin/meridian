@@ -20,10 +20,15 @@
     ]
     const decisions = []
     const bridgeCalls = []
+    const todoCalls = []
+    const inboxResolved = []
     let generatedPipeline = null
     let pipelineCalls = 0
     window.meridian = {
       chainEvents: async () => ({ ok: true, events: [...proposals, ...decisions] }),
+      /* P1-5 读者回流：待办走 inbox:upsertItem（不触发自动抽取），撤销走 inbox:resolve。 */
+      inboxUpsertItem: async (item) => { todoCalls.push(item); return { ok: true, added: true, id: item.id } },
+      inboxResolve: async (id, action) => { inboxResolved.push({ id, action }); return { ok: true } },
       engineRunPipeline: async (inboxId) => {
         pipelineCalls++
         return generatedPipeline ? { ok: true, inboxId, pipeline: generatedPipeline } : { ok: false, error: 'fixture pipeline missing' }
@@ -424,8 +429,8 @@
           ],
         },
         { id: 'sx-v2', nodeType: 'viewpoint', kind: 'claim', title: 'R1 无证据原子', currentText: 'R1 无证据原子', confidence: null, status: 'pending', archived: false, external: false, createdSeq: 2, eventIds: [], provenanceEventIds: [], evidenceCount: 0, atomCategory: '商业模式' },
-        structureEvidence('sx-e1', '支持用的外部数据'),
-        structureEvidence('sx-e2', '挑战用的外部数据'),
+        structureEvidence('sx-e1', '支持用的外部数据', { applicability: '2020Q1' }),
+        structureEvidence('sx-e2', '挑战用的外部数据', { applicability: '2099' }),
         structureEvidence('sx-e3', '未表态的外部数据', { evidenceRefs: [], sourceLabel: null, sourceUrl: null, sourcePublishedAt: null, applicability: null }),
       ]
       const structureEdges = [
@@ -435,6 +440,7 @@
       const structureProjection = { nodes: structureNodes, allNodes: structureNodes, edges: structureEdges, allEdges: structureEdges, integrity: { ok: true }, eventCount: 2 }
       const structureRoot = renderReaderView({ name: '大纲合成主题', config: { atomCategories: ['技术路线', '商业模式'], relationLabels: [] } }, {
         loadProjection: async () => structureProjection, loadEvents: async () => [], onOpenBuilder: () => {},
+        loadInbox: async () => ([{ id: 'inbox-unassigned', status: 'pending', title: '未归位条目', text: '还没归主题' }]),
       })
       document.querySelector('#fixture-root').append(structureRoot)
       await wait()
@@ -463,6 +469,37 @@
       await wait()
       check('R2 点卡片聚焦该原子并联动检视器', structureRoot.querySelector('.rdr-inspector-title')?.textContent === 'R1 结论原子'
         && Boolean(structureRoot.querySelector('.rdr-multiple-card.is-selected')))
+
+      /* R5 缺口清单 + P1-5 回流 */
+      const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
+      check('R5 缺口清单覆盖缺外部数据 / 已过期 / 未归位三类',
+        gapItems.length === 3
+        && gapItems.some((el) => el.textContent.includes('缺外部数据'))
+        && gapItems.some((el) => el.textContent.includes('已过期'))
+        && gapItems.some((el) => el.textContent.includes('未归位')),
+        gapItems.map((el) => el.querySelector('.rdr-gap-kind')?.textContent.trim()).join('/'))
+      check('R5 缺口清单不把没过的证据算成过期',
+        !gapItems.some((el) => el.textContent.includes('挑战用的外部数据')))
+      const todoButton = gapItems[0].querySelector('.rdr-gap-todo')
+      todoButton.click()
+      await wait()
+      check('P1-5 加入待办写进收件箱且是 todo 类型（不触发自动抽取）',
+        todoCalls.length === 1 && todoCalls[0].kind === 'todo' && todoCalls[0].extracted === false
+        && todoCalls[0].text.includes('补一条外部数据') && todoCalls[0].provenance?.platform === 'reader-gap',
+        JSON.stringify(todoCalls[0] || null))
+      check('P1-5 已加入待办的缺口标成"已在收件箱"', Boolean(structureRoot.querySelector('.rdr-gap-done')))
+      const toastButton = [...document.querySelectorAll('.toast-btn')].pop()
+      check('P1-5 回流提示带撤销按钮', toastButton?.textContent === '撤销')
+      toastButton?.click()
+      await wait()
+      check('P1-5 撤销把刚建的待办移出收件箱',
+        inboxResolved.length === 1 && inboxResolved[0].id === todoCalls[0].id && inboxResolved[0].action === 'reject'
+        && !structureRoot.querySelector('.rdr-gap-done'))
+      structureRoot.querySelector('.rdr-gap-mark').click()
+      await wait()
+      check('P1-5「标记缺口」对选中原子记一条待办',
+        todoCalls.length === 2 && todoCalls[1].text.includes('R1 结论原子'),
+        JSON.stringify(todoCalls[1] || null))
 
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'

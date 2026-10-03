@@ -1,4 +1,4 @@
-import { h } from '../lib/dom.js'
+import { h, toast } from '../lib/dom.js'
 import {
   NETWORK_NODE_TYPES, NODE_TYPE_META, NODE_STATUS_LABEL, REVISION_RELATIONS, READER_STATE_META, readerStateKey,
   graphLodLevel, GRAPH_LOD_LABEL, evidenceAttachmentEdges, categoryColor,
@@ -7,10 +7,14 @@ import {
 } from '../lib/theme-network.js'
 import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
-import { filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline, synthesisSummary, UNCATEGORIZED_LABEL } from '../lib/reader-model.js'
+import {
+  filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline,
+  buildGapList, synthesisSummary, UNCATEGORIZED_LABEL,
+} from '../lib/reader-model.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import { renderArgumentOutline } from '../components/reader-argument-outline.js'
 import { renderSmallMultiples } from '../components/reader-small-multiples.js'
+import { renderGapList } from '../components/reader-gaps.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -765,6 +769,56 @@ export function renderReaderView(theme, opts = {}) {
        图没有唯一阅读顺序、也比不了量；要"读完 / 比较"就用有序结构，图退到点开某个原子之后。 */
     const outlineHost = h('div', { class: 'rdr-outline-host' })
     const multiplesHost = h('div', { class: 'rdr-multiples-host' })
+    /* R5 缺口清单 + P1-5 回流：待办只写收件箱，不动账本；撤销＝把刚建的待办移出收件箱。 */
+    const gapsHost = h('div', { class: 'rdr-gaps-host' })
+    const todoKeys = new Set()
+    let inboxCache = null
+    const loadInboxItems = async () => {
+      if (inboxCache) return inboxCache
+      try { inboxCache = (await opts.loadInbox?.()) || [] } catch { inboxCache = [] }
+      return inboxCache
+    }
+    const createTodo = async (text, key, color) => {
+      const mm = globalThis.window?.meridian || {}
+      const id = `gap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+      if (typeof mm.inboxUpsertItem !== 'function') { toast('当前环境不支持写入收件箱', 'var(--red)'); return }
+      const res = await mm.inboxUpsertItem({
+        id, text, title: text.slice(0, 40), kind: 'todo', extracted: false,
+        provenance: { platform: 'reader-gap', sourceLabel: '读者标记的缺口' },
+        createdAt: new Date().toISOString(),
+      })
+      if (res?.ok === false) { toast(`加入收件箱失败：${res.error || '未知错误'}`, 'var(--red)'); return }
+      if (key) todoKeys.add(key)
+      inboxCache = null
+      renderStructure()
+      toast(`已加入今日收件箱 · 待办：${text}`, color || 'var(--text-2)', {
+        label: '撤销',
+        onClick: async () => {
+          try { await mm.inboxResolve?.(id, 'reject') } catch { /* 撤销失败不阻塞阅读 */ }
+          if (key) todoKeys.delete(key)
+          inboxCache = null
+          renderStructure()
+        },
+      })
+    }
+    const renderGaps = () => {
+      const gaps = buildGapList({
+        nodes: currentNodes,
+        edges: allEdgesOf(currentProjection),
+        inboxItems: inboxCache || [],
+      })
+      gapsHost.replaceChildren(renderGapList(gaps, {
+        todoKeys,
+        selectedId: state.selectedNodeId,
+        onCreateTodo: (gap) => createTodo(gap.todo, gap.key),
+        onFocusAtom: focusAtom,
+        onOpenBuilder: (gap) => opts.onOpenBuilder?.(gap.nodeId ? 'network' : 'network', gap.nodeId || undefined),
+        onMarkGap: (selectedAtomId) => {
+          const node = selectedAtomId ? currentNodes.find((item) => item.id === selectedAtomId) : null
+          createTodo(node ? `为「${titleOf(node)}」补一条外部数据` : '复核这个主题里说不通的关系', null)
+        },
+      }))
+    }
     const focusAtom = (id) => {
       const next = id && currentNodes.some((node) => node.id === id) ? id : null
       state.selectedNodeId = next
@@ -785,6 +839,7 @@ export function renderReaderView(theme, opts = {}) {
         onToggle: (id, open) => { open ? outlineExpanded.add(id) : outlineExpanded.delete(id) },
         onFocusAtom: focusAtom,
       }))
+      renderGaps()
       multiplesHost.replaceChildren(renderSmallMultiples(rows, {
         selectedId: state.selectedNodeId,
         colorFor: (category) => categoryColor(themeCategories, category),
@@ -853,12 +908,13 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, multiplesHost, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, multiplesHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()
     renderAxis()
     renderStructure()
+    loadInboxItems().then(() => renderGaps())
     updateHistoryStatus()
   }
 

@@ -149,6 +149,80 @@ export function buildArgumentOutline(nodes = [], evidenceForNodeFn = null) {
 }
 
 /**
+ * R5 缺口清单：模型的一半价值在"知道哪里还不知道"。
+ * 四类缺口全部来自投影/收件箱的既有事实，不猜测：
+ * ① 无任何证据的原子 ② 待复核的归因 ③ 适用时间已过的证据 ④ 跨主题未归位的收件箱条目
+ */
+export function parseApplicabilityEnd(value) {
+  const text = String(value || '').trim()
+  if (!text) return null
+  let match = /^(\d{4})\s*[Qq]([1-4])$/.exec(text)
+  if (match) return Date.UTC(Number(match[1]), Number(match[2]) * 3, 0, 23, 59, 59)
+  match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text)
+  if (match) return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59)
+  match = /^(\d{4})-(\d{1,2})$/.exec(text)
+  if (match) return Date.UTC(Number(match[1]), Number(match[2]), 0, 23, 59, 59)
+  match = /^(\d{4})$/.exec(text)
+  if (match) return Date.UTC(Number(match[1]), 11, 31, 23, 59, 59)
+  return null
+}
+
+export function buildGapList({ nodes = [], edges = [], inboxItems = [], now = Date.now() } = {}) {
+  const rows = asArray(nodes).filter((node) => node && !node.archived)
+  const evidenceRows = rows.filter((node) => networkNodeType(node) === 'evidence')
+  const gaps = []
+  for (const node of rows) {
+    if (networkNodeType(node) === 'evidence') continue
+    const linked = new Set(asArray(node.evidenceNodeIds))
+    for (const evidence of evidenceRows) if (asArray(evidence.targetNodeIds).includes(node.id)) linked.add(evidence.id)
+    if (!linked.size && !(Number(node.evidenceCount) > 0)) {
+      gaps.push({
+        key: `no-evidence:${node.id}`, kind: 'no-evidence', nodeId: node.id,
+        title: titleOf(node), detail: '这个原子还没有任何外部数据',
+        todo: `为「${titleOf(node)}」补一条外部数据`,
+      })
+    }
+  }
+  for (const evidence of evidenceRows) {
+    if (evidence.pendingReview !== true || evidence.reviewDecision) continue
+    gaps.push({
+      key: `pending-review:${evidence.id}`, kind: 'pending-review', nodeId: evidence.id,
+      title: titleOf(evidence), detail: '这条外部数据的归因还没人工复核',
+      todo: `复核「${titleOf(evidence)}」的归因`,
+    })
+  }
+  for (const evidence of evidenceRows) {
+    const end = parseApplicabilityEnd(evidence.applicability)
+    if (end == null || end >= now) continue
+    gaps.push({
+      key: `expired-evidence:${evidence.id}`, kind: 'expired-evidence', nodeId: evidence.id,
+      title: titleOf(evidence), detail: `适用时间（${evidence.applicability}）已经过去`,
+      todo: `更新「${titleOf(evidence)}」的适用时间或补一条新数据`,
+    })
+  }
+  for (const item of asArray(inboxItems)) {
+    if (!item || item.status !== 'pending' || item.kind === 'todo' || item.extractedThemeId) continue
+    gaps.push({
+      key: `unassigned-inbox:${item.id}`, kind: 'unassigned-inbox', nodeId: null,
+      title: String(item.title || item.text || '未归位条目').slice(0, 40),
+      detail: '收件箱里这条还没有归到任何主题',
+      todo: `把「${String(item.title || item.text || '').slice(0, 24)}」归到主题`,
+    })
+  }
+  /* 关系层面的待复核：投影里带 pendingReview 且还没有决定的边。 */
+  for (const edge of asArray(edges)) {
+    if (!edge || edge.reviewDecision || edge.pendingReview !== true) continue
+    gaps.push({
+      key: `pending-review-edge:${edge.id}`, kind: 'pending-review', nodeId: edge.to || null,
+      title: `${edge.from || '?'} → ${edge.to || '?'}`, detail: '这条关系还没人工复核',
+      todo: '复核一条待确认的关系',
+    })
+  }
+  const order = { 'no-evidence': 0, 'pending-review': 1, 'expired-evidence': 2, 'unassigned-inbox': 3 }
+  return gaps.sort((a, b) => (order[a.kind] - order[b.kind]) || String(a.title).localeCompare(String(b.title)))
+}
+
+/**
  * R2 小倍数网格的 sparkline：由 confidence 历史算出折线点。
  * 少于两个点就不画线（enough=false）——一个点连不成趋势，别硬画成"平稳"。
  */

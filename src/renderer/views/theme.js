@@ -253,6 +253,8 @@ export function renderTheme(mid) {
         autoPlay: preloaded?.autoPlay,
         loadEvents: async () => preloaded?.events
           || (await m.chainEvents(theme.id).catch(() => null))?.events || [],
+        /* R5 缺口清单要看"未归位条目"：只读拉一次收件箱，失败就当空。 */
+        loadInbox: async () => (await m.inboxList({ limit: 200 }).catch(() => null))?.items || [],
         onOpenBuilder: (kind, nodeId, eventId) => {
           if (kind && kind !== 'network') requestBuilderPane(theme.id, kind)
           if (nodeId) requestBuilderNodeFocus(theme.id, nodeId)

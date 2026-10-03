@@ -1,4 +1,7 @@
-import { deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline, strengthSparkline, UNCATEGORIZED_LABEL } from '../src/renderer/lib/reader-model.js'
+import {
+  deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline,
+  strengthSparkline, buildGapList, parseApplicabilityEnd, UNCATEGORIZED_LABEL,
+} from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
 let failed = 0
@@ -143,6 +146,39 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
     && buildArgumentOutline([{ id: 'v2', nodeType: 'viewpoint', title: '无强度原子', confidence: null }], () => null)[0].strength === null
     && buildArgumentOutline([{ id: 'v3', nodeType: 'viewpoint', title: '归档原子', archived: true }], () => null).length === 0)
   const spark = strengthSparkline({ confidenceHistory: [{ newConfidence: 62 }, { newConfidence: 71 }] })
+  /* R5 缺口清单：四类缺口都来自既有事实，且过期判定只认能解析的适用时间。 */
+  check('R5 适用时间只认可解析的写法（季度/月/日/年）',
+    parseApplicabilityEnd('2026Q3') === Date.UTC(2026, 9, 0, 23, 59, 59)
+    && parseApplicabilityEnd('2026-08') === Date.UTC(2026, 8, 0, 23, 59, 59)
+    && parseApplicabilityEnd('2026-08-15') === Date.UTC(2026, 7, 15, 23, 59, 59)
+    && parseApplicabilityEnd('2026') === Date.UTC(2026, 11, 31, 23, 59, 59)
+    && parseApplicabilityEnd('随便写的') === null && parseApplicabilityEnd('') === null)
+  const gapNodes = [
+    { id: 'v1', nodeType: 'viewpoint', title: '有证据原子', evidenceNodeIds: ['e1'], evidenceCount: 1 },
+    { id: 'v2', nodeType: 'viewpoint', title: '无证据原子', evidenceCount: 0 },
+    { id: 'e1', nodeType: 'evidence', title: '过期数据', applicability: '2020Q1', targetNodeIds: ['v1'], pendingReview: false },
+    { id: 'e2', nodeType: 'evidence', title: '待复核数据', applicability: '2099', targetNodeIds: ['v1'], pendingReview: true },
+  ]
+  const gaps = buildGapList({
+    nodes: gapNodes,
+    inboxItems: [
+      { id: 'i1', status: 'pending', title: '未归位条目' },
+      { id: 'i2', status: 'pending', title: '已归位条目', extractedThemeId: 't1' },
+      { id: 'i3', status: 'pending', title: '读者自己记的待办', kind: 'todo' },
+      { id: 'i4', status: 'rejected', title: '已裁决条目' },
+    ],
+    now: Date.parse('2026-10-03T00:00:00.000Z'),
+  })
+  check('R5 缺口清单覆盖缺外部数据 / 待复核 / 已过期 / 未归位，且不误报',
+    gaps.filter((gap) => gap.kind === 'no-evidence').length === 1
+    && gaps.filter((gap) => gap.kind === 'pending-review').length === 1
+    && gaps.filter((gap) => gap.kind === 'expired-evidence').map((gap) => gap.title).join() === '过期数据'
+    && gaps.filter((gap) => gap.kind === 'unassigned-inbox').length === 1
+    && gaps.every((gap) => gap.todo && gap.detail))
+  check('R5 每条缺口都给出可执行的待办文案',
+    gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条外部数据'
+    && gaps.find((gap) => gap.kind === 'expired-evidence').todo.includes('更新'))
+
   check('R2 sparkline 由 confidence 历史算折线点，单点或空历史不画线',
     spark.enough && spark.min === 62 && spark.max === 71 && spark.points.split(' ').length === 2
     && strengthSparkline({ confidenceHistory: [{ newConfidence: 62 }] }).enough === false
