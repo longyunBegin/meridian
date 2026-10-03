@@ -1091,3 +1091,7 @@
 .meridian-theme .atom-connect-item { display:flex; align-items:center; gap:8px; padding:6px 8px; font-size:13px; cursor:pointer; border-radius:6px; }
 .meridian-theme .atom-connect-item:hover { background:var(--hover); }
 .meridian-theme .atom-connect-item input[type="checkbox"] { width:16px; height:16px; }
+
+/* 建设者6步指示器：按真实状态驱动 */
+.builder-flow-step.is-done { border-color:#16a34a; background:#dcfce7; color:#166534; }
+.builder-flow-step.is-current { border-color:#2563eb; background:#dbeafe; color:#1d4ed8; font-weight:600; }
