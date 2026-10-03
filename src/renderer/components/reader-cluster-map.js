@@ -87,7 +87,12 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
       place.set(row.node.id, {
         x: cx + Math.cos(angle) * spread,
         y: cy + Math.sin(angle) * spread * 0.85,
-        r: 6 + Math.sqrt(Math.max(0, row.stated)) * 3,
+        /* 气泡半径 = **该原子的强度**（用户指定）：强度是它关联证据逐条累加的结果
+           （updateConfidence），所以"证据越硬、原子越大"这件事是自洽的。
+           没有强度记录时给最小半径（提示里写明未记录），不假造。 */
+        r: row.strength == null
+          ? 7
+          : 7 + (Math.max(0, Math.min(100, row.strength)) / 100) * 15,
         row,
         group,
       })
@@ -96,7 +101,7 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
 
   const svg = svgEl('svg', {
     class: 'rdr-cluster-canvas', viewBox: `0 0 ${width} ${height}`,
-    role: 'group', 'aria-label': '观点图谱：大圆是证据状况分组，圆内每个气泡是一条观点，气泡大小表示已表态来源数',
+    role: 'group', 'aria-label': '观点图谱：大圆是主题分类，圆内每个气泡是一条观点，气泡大小表示该观点的强度',
   })
 
   /* 簇间连线：用真实的观点之间关系（跨簇才画）。 */
@@ -179,7 +184,7 @@ export function renderReaderClusterMap({ claims = [], edges = [], themeCategorie
     svg,
     h('p', { class: 'rdr-cluster-caliber' },
       '大圆 = 主题分类（在「主题设置 → 分类管理」里定义；没分类的观点归入「未分类」）· '
-      + '圆内每个气泡 = 一条观点（大小 = 已表态来源数）· 气泡颜色 = 证据状况 · '
-      + '悬浮或选中才显示标题 · 连线 = 观点之间的真实关系'),
+      + '圆内每个气泡 = 一条观点（**大小 = 该观点的强度**）· 气泡颜色 = 证据状况 · '
+      + '悬浮或选中才显示标题与强度 · 连线 = 观点之间的真实关系'),
     list)
 }
