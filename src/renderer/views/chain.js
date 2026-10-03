@@ -1416,6 +1416,14 @@ function copyLedgerReference(value, label) {
     .catch(() => toast('复制失败，请检查系统剪贴板权限', 'var(--red)'))
 }
 
+/* 账本显示层兜底：字段缺失时给一个人话占位，绝不把 null/undefined/NaN 漏到界面上。
+   （用户反馈"账本还有个 null"，我用全视图扫描没能复现；这里把显示层做成结构上不可能出现。） */
+function ledgerText(value, fallback = '—') {
+  const text = value == null ? '' : String(value).trim()
+  if (!text || text === 'null' || text === 'undefined' || text === 'NaN') return fallback
+  return text
+}
+
 function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   clear(pane)
   const integrityBox = h('div', {
@@ -1583,27 +1591,22 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
           onclick: () => handlers.onOpenAffected(affectedId, e),
         }, '看这条改变了什么')
         : null
-      const focusButton = h('button', {
-        type: 'button', class: 'btn cog-event-focus',
-        disabled: isInvalid || verification === '校验失败' || verification === '未校验',
-        'aria-label': `在图里看第 ${Number.isSafeInteger(e.seq) ? e.seq : item.index + 1} 条事件`,
-        onclick: () => handlers.onFocusEvent?.(e),
-      }, h('span', { 'aria-hidden': 'true' }, '⌖'), h('span', {}, '在图里看'))
       const disclosure = h('details', { class: 'cog-ev-disclosure' },
         h('summary', { class: 'cog-ev-summary', title: compactEventSummary(e) },
           h('span', { class: `cog-ev-dot${isCorrection || isReviewEvent ? ' orange' : ''}`, 'aria-hidden': 'true' }),
           h('span', { class: 'cog-ev-summary-text' }, isInvalid
-            ? `记录 ${item.index + 1} · 无法解析的事件记录` : compactEventSummary(e))),
+            ? `记录 ${item.index + 1} · 无法解析的事件记录`
+            : ledgerText(compactEventSummary(e), '（这条记录无法解读）'))),
         h('div', { class: 'cog-ev-expanded' },
           h('div', { class: 'cog-ev-meta' },
             h('span', { class: 'cog-ev-at' }, fmtAt(e.at) || '时间未记录'),
             h('span', { class: 'cog-ev-kind' }, isFirst ? '初始记录' : kindLabel),
             afterReplay ? h('span', { class: 'cog-ev-future-tag' }, '未纳入当前回放') : null),
           h('div', { class: 'cog-ev-readable' },
-          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '对象'), h('span', { class: 'cog-ev-readable-value' }, objectLabel)),
-          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '变化'), h('span', { class: 'cog-ev-readable-value' }, eventSummary(e, titleOf) || '未记录摘要')),
-          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '操作者'), h('span', { class: 'cog-ev-readable-value' }, actor)),
-          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '来源'), h('span', { class: `cog-ev-readable-value${sourceLabel === '来源未解析' ? ' is-unresolved' : ''}` }, sourceLabel)),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '对象'), h('span', { class: 'cog-ev-readable-value' }, ledgerText(objectLabel, '对象未解析'))),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '变化'), h('span', { class: 'cog-ev-readable-value' }, ledgerText(eventSummary(e, titleOf), '未记录摘要'))),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '操作者'), h('span', { class: 'cog-ev-readable-value' }, ledgerText(actor, '未记录'))),
+          h('div', { class: 'cog-ev-readable-row' }, h('span', { class: 'cog-ev-readable-label' }, '来源'), h('span', { class: `cog-ev-readable-value${sourceLabel === '来源未解析' ? ' is-unresolved' : ''}` }, ledgerText(sourceLabel, '来源未解析'))),
           reviewText ? h('div', { class: 'cog-review-status', role: 'status' }, reviewText) : null),
           isPendingReview && !reviewDecision && viewState?.selectedSeq == null && integrity?.ok
             ? renderReviewControls(theme, e, handlers.onChanged) : null,
@@ -1635,8 +1638,7 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
         h('div', { class: 'cog-ev-row' },
           disclosure,
           h('span', { class: `cog-ev-validation ${verificationClass}`, role: verification === '校验失败' ? 'alert' : 'status' }, verification),
-          openButton,
-          focusButton))
+          openButton))
       list.append(card)
     }
   }
@@ -1741,8 +1743,8 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       type: 'button', class: `cog-time-tick density-${point.density}`,
       style: { left: `${point.position}%` },
       'data-seq': String(point.seq),
-      title: `${point.date} · ${point.count} 条已校验事件`,
-      'aria-label': `${point.date}，${point.count} 条已校验事件，回放到第 ${point.seq} 条`,
+      title: `${point.date || '时间未记录'} · ${point.count} 条已校验事件`,
+      'aria-label': `${point.date || '时间未记录'}，${point.count} 条已校验事件，回放到第 ${point.seq ?? '?'} 条`,
       onclick: () => handlers.onReplay?.(point.seq),
     })
     tickRail.append(tick)
@@ -1763,7 +1765,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
   const replayFromSlider = (commit = false) => {
     const point = pointAtPosition(Number(timeSlider.value))
     if (!point) return
-    timePreview.textContent = `${point.date} · ${point.count} 条事件 · v${point.seq}`
+    timePreview.textContent = `${point.date || '时间未记录'} · ${point.count} 条事件 · v${point.seq ?? '?'}`
     clearTimeout(replayTimer)
     if (commit) handlers.onReplay?.(point.seq)
     else replayTimer = setTimeout(() => handlers.onReplay?.(point.seq), 90)
