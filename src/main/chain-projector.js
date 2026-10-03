@@ -763,6 +763,14 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   if (!proposal) throw new Error('找不到待审核的引擎建议')
   const priorReview = events.find((event) => event.type === 'signal.reviewed' && event.payload?.signalEventId === proposal.id)
   const recommendation = proposal.payload.recommendation
+  /* 用户可以在确认时**自己给这条证据的权重**（=证据强度，0–1）：给了就用它，没给才用引擎算的。
+     不新增事件类型——权重本来就在证据/置信度事件的载荷里，这里只是允许人工覆盖，
+     并在载荷里标 strengthSource 便于区分"模型算的"与"人定的"。 */
+  const manualWeight = (() => {
+    if (input?.weight == null || input.weight === '') return null
+    const value = Number(input.weight)
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null
+  })()
   /* change 从"写死的方向/性质/标签"收敛为一句自由备注：可选、不做枚举校验、不参与强度计算。
      旧账本里的 {direction,nature,themeTag} 归一成 {note} 后仍能比对重放意图。 */
   const normalizeChange = (value) => {
@@ -815,7 +823,8 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       scores: {
         ...(Number.isFinite(recommendation.matchScore) ? { matchScore: recommendation.matchScore } : {}),
         ...(Number.isFinite(recommendation.strength) ? { attributionStrength: recommendation.strength } : {}),
-        ...(Number.isFinite(recommendation.effectiveStrength) ? { effectiveStrength: recommendation.effectiveStrength } : {}),
+        ...(manualWeight != null ? { effectiveStrength: manualWeight, strengthSource: 'manual' }
+          : (Number.isFinite(recommendation.effectiveStrength) ? { effectiveStrength: recommendation.effectiveStrength } : {})),
         ...(Number.isFinite(proposal.payload.metaMultiplier) ? { metaMultiplier: proposal.payload.metaMultiplier } : {}),
       },
     }
@@ -829,7 +838,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
          观点永远停在"没有强度记录"——读者页的强度与强度曲线也就永远画不出来。
          只认 effectiveStrength：老事件里没有这个字段就保持 null，不拿 strength 冒充。 */
       /* 注意 Number(null) === 0：必须先判 null/undefined，否则"没有强度"会被写成"强度 0"。 */
-      const rawEffective = recommendation.effectiveStrength
+      const rawEffective = manualWeight != null ? manualWeight : recommendation.effectiveStrength
       const initialConfidence = rawEffective == null || !Number.isFinite(Number(rawEffective))
         ? null
         : Math.round(Math.max(0, Math.min(1, Number(rawEffective))) * 100)
@@ -877,7 +886,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       }
       if ((relation === 'supports' || relation === 'contradicts') && target.confidence != null && Number.isFinite(Number(target.confidence))) {
         const oldPercent = Number(target.confidence)
-        const effectiveStrength = estimateStrength({
+        const effectiveStrength = manualWeight != null ? manualWeight : estimateStrength({
           isHardFact: statement.type === 'hard', hasUrl: validUrl,
           attributionStrength: Number(recommendation.strength), metaMultiplier: Number(proposal.payload.metaMultiplier ?? 1),
         })
@@ -886,6 +895,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
         if (newPercent !== oldPercent) drafts.push({ id: stableId('confidence'), actor: 'user', type: 'confidence.updated', payload: {
           nodeId: target.id, oldConfidence: oldPercent, newConfidence: newPercent,
           strength: effectiveStrength, attributionStrength: recommendation.strength,
+          strengthSource: manualWeight != null ? 'manual' : 'engine',
           reason: `${relation === 'supports' ? '支持' : '反驳'}证据：${sourceQuote.slice(0, 50)}`,
           evidenceEventId: evidenceId,
         } })
