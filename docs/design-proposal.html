@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Meridian · 设计提案（合成轴 / 图谱 LOD / 语义色）</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Segoe UI","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --bg:#f5f5f7; --window:#ececed; --surface:#fff; --surface-2:rgba(29,29,31,.035); --surface-3:rgba(29,29,31,.06);
+  --text:#1d1d1f; --text-2:rgba(29,29,31,.62); --text-3:rgba(29,29,31,.38);
+  --line:rgba(0,0,0,.09); --line-2:rgba(0,0,0,.14);
+  --accent:#0071e3; --accent-soft:rgba(0,113,227,.1);
+  --green:#34c759; --green-soft:rgba(52,199,89,.13);
+  --red:#ff3b30;   --red-soft:rgba(255,59,48,.11);
+  --orange:#ff9500;--orange-soft:rgba(255,149,0,.13);
+  --purple:#af52de;--purple-soft:rgba(175,82,222,.12);
+  --teal:#00b8b8;
+  --r-lg:14px; --r:11px; --r-sm:8px;
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 10px 30px -14px rgba(0,0,0,.14);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05);
+  --ease:cubic-bezier(.4,0,.2,1);
+  --grid:rgba(0,0,0,.07);
+}
+html[data-theme="dark"]{
+  --bg:#1c1c1e; --window:#161618; --surface:#242426; --surface-2:rgba(255,255,255,.045); --surface-3:rgba(255,255,255,.075);
+  --text:#f5f5f7; --text-2:rgba(245,245,247,.66); --text-3:rgba(245,245,247,.4);
+  --line:rgba(255,255,255,.11); --line-2:rgba(255,255,255,.17);
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.16);
+  --green:#30d158; --red:#ff453a; --orange:#ff9f0a; --purple:#bf5af2;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 40px -18px rgba(0,0,0,.6);
+  --grid:rgba(255,255,255,.07);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:13px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+h1,h2,h3,p,ul,dl,dd,dt{margin:0}
+ul{padding:0;list-style:none}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+/* ---------- 顶栏 ---------- */
+.topbar{height:52px;display:flex;align-items:center;gap:14px;padding:0 18px;background:var(--window);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;backdrop-filter:saturate(160%) blur(18px)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600}
+.brand-mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,var(--accent),var(--purple));
+  color:#fff;font-size:13px;font-weight:700;display:grid;place-items:center}
+.brand-sub{color:var(--text-3);font-weight:400;font-size:12px}
+.seg{display:inline-flex;background:var(--surface-2);border-radius:9px;padding:2px;gap:2px}
+.seg button{padding:5px 12px;border-radius:7px;color:var(--text-2);font-size:12.5px;transition:background .18s var(--ease),color .18s var(--ease)}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--text);font-weight:600;box-shadow:var(--shadow-sm)}
+.grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;
+  background:var(--surface);font-size:12px;color:var(--text-2)}
+.chip b{color:var(--text);font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.select{padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:12.5px;color:var(--text)}
+
+/* ---------- 布局 ---------- */
+.wrap{max-width:1400px;margin:0 auto;padding:22px 22px 90px}
+.view{display:none}
+.view.is-on{display:block}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.hair{border-top:1px solid var(--line)}
+.cap{font-size:11.5px;color:var(--text-3)}
+.grid-2{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+@media (max-width:1080px){.grid-2{grid-template-columns:minmax(0,1fr)}}
+
+/* ---------- 读者 hero ---------- */
+.hero{padding:26px 26px 20px}
+.kicker{font-size:12px;color:var(--text-3);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.hero h1{font-size:27px;line-height:1.24;letter-spacing:-.02em;font-weight:650;max-width:30ch}
+.hero-sub{margin-top:9px;color:var(--text-2);font-size:13.5px;max-width:62ch;line-height:1.6}
+.metrics{display:flex;gap:34px;margin-top:20px;align-items:flex-end;flex-wrap:wrap}
+.metric .k{font-size:11.5px;color:var(--text-3);margin-bottom:3px}
+.metric .v{font-size:31px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.metric .v small{font-size:14px;font-weight:600;color:var(--text-2);margin-left:2px}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:7px;font-size:11.5px;font-weight:550}
+.pill.ok{background:var(--green-soft);color:var(--green)}
+.pill.warn{background:var(--orange-soft);color:var(--orange)}
+.pill.bad{background:var(--red-soft);color:var(--red)}
+.pill.info{background:var(--accent-soft);color:var(--accent)}
+.pill.rev{background:var(--purple-soft);color:var(--purple)}
+.pill.ghost{background:var(--surface-2);color:var(--text-2)}
+
+/* ---------- 合成轴 ---------- */
+.axis-card{padding:20px 22px 12px;margin-top:18px}
+.axis-head{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.axis-head h2{font-size:15px;font-weight:650}
+.axis-head .cap{margin-left:auto}
+.axis-legend{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 2px}
+.axis-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
+.axis-legend i{width:14px;height:2px;border-radius:2px;display:inline-block}
+.axis-svg{width:100%;height:232px;display:block;overflow:visible}
+.axis-tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .12s var(--ease);background:var(--surface);
+  border:1px solid var(--line-2);border-radius:9px;box-shadow:var(--shadow);padding:8px 10px;font-size:11.5px;max-width:250px;z-index:5}
+.axis-tip b{display:block;font-size:12.5px;margin-bottom:2px}
+.axis-tip .m{color:var(--text-3);font-family:var(--mono);font-size:11px}
+
+/* ---------- 图谱 ---------- */
+.graph-card{padding:16px 18px;margin-top:18px;position:relative}
+.graph-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.graph-head h2{font-size:15px;font-weight:650}
+.stats{margin-left:auto;display:flex;gap:12px;font-family:var(--mono);font-size:11px;color:var(--text-3)}
+.canvas-wrap{position:relative;margin-top:12px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  background:
+    radial-gradient(circle at 1px 1px,var(--grid) 1px,transparent 0) 0 0/22px 22px,
+    linear-gradient(var(--surface),var(--surface))}
+#graph{display:block;width:100%;height:470px;touch-action:none}
+.graph-foot{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.slider{-webkit-appearance:none;appearance:none;height:4px;border-radius:3px;background:var(--surface-3);flex:1;min-width:140px}
+.slider::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--surface);
+  border:1px solid var(--line-2);box-shadow:var(--shadow-sm);cursor:pointer}
+.badge{font-size:10.5px;padding:2px 7px;border-radius:6px;background:var(--surface-2);color:var(--text-2);font-family:var(--mono)}
+
+/* ---------- 检视器 ---------- */
+.inspector{padding:18px}
+.inspector h3{font-size:16px;font-weight:650;line-height:1.35}
+.inspector .body{margin-top:8px;color:var(--text-2);font-size:12.5px;line-height:1.62}
+.sect{margin-top:16px}
+.sect-h{font-size:11.5px;color:var(--text-3);letter-spacing:.02em;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.bar{height:7px;border-radius:4px;background:var(--surface-3);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 55%,var(--purple)));
+  transition:width .35s var(--ease)}
+.ev{display:flex;gap:9px;padding:8px 0;border-top:1px solid var(--line);align-items:flex-start}
+.ev:first-of-type{border-top:0}
+.ev .t{font-size:11px;color:var(--text-3);font-family:var(--mono);white-space:nowrap;padding-top:1px}
+.ev .x{font-size:12.5px;line-height:1.5}
+.ev .x b{font-weight:600}
+.rel{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px}
+.rel:first-of-type{border-top:0}
+.rel .arrow{color:var(--text-3);font-family:var(--mono)}
+
+/* ---------- 建设者 ---------- */
+.queue{display:grid;grid-template-columns:320px minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:1000px){.queue{grid-template-columns:minmax(0,1fr)}}
+.qitem{display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;padding:11px 13px;border-radius:10px;border:1px solid transparent}
+.qitem:hover{background:var(--surface-2)}
+.qitem[aria-selected="true"]{background:var(--surface);border-color:var(--line-2);box-shadow:var(--shadow-sm)}
+.qitem .top{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-3)}
+.qitem strong{font-size:13px;font-weight:600;line-height:1.4}
+.qitem .desc{font-size:11.5px;color:var(--text-3);line-height:1.45}
+.review{padding:20px}
+.review h3{font-size:17px;font-weight:650;line-height:1.35}
+.trace{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-top:14px;padding:12px;border:1px solid var(--line);
+  border-radius:var(--r);background:var(--surface-2)}
+.trace div{display:flex;flex-direction:column;gap:2px}
+.trace dt{font-size:10.5px;color:var(--text-3)}
+.trace dd{font-size:12px;font-family:var(--mono)}
+.compare{display:grid;grid-template-columns:1fr 22px 1fr;gap:10px;align-items:center;margin-top:16px}
+.cmp{border:1px solid var(--line);border-radius:var(--r);padding:12px;background:var(--surface-2)}
+.cmp.after{border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:var(--accent-soft)}
+.cmp .lbl{font-size:10.5px;color:var(--text-3);margin-bottom:5px}
+.cmp .txt{font-size:12.5px;line-height:1.5}
+.delta{margin-top:14px;border-top:1px dashed var(--line-2);padding-top:12px;font-size:12.5px;line-height:1.7}
+.delta b{font-weight:600}
+.fields{display:grid;gap:12px;margin-top:16px}
+.field{display:grid;gap:6px}
+.field .l{font-size:11.5px;color:var(--text-3)}
+.field input,.field select,.field textarea{padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);
+  color:var(--text);font:inherit;font-size:12.5px}
+.actions{display:flex;align-items:center;gap:10px;margin-top:18px}
+.btn{padding:8px 15px;border:1px solid var(--line);border-radius:9px;background:var(--surface);font-size:12.5px;transition:transform .12s var(--ease)}
+.btn:active{transform:scale(.985)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.ghost{background:transparent}
+
+/* ---------- 收件箱 ---------- */
+.stats-row{display:flex;gap:36px;padding:6px 2px 16px}
+.stat .n{font-size:29px;font-weight:700;line-height:1.1;letter-spacing:-.02em}
+.stat .n.orange{color:var(--orange)} .stat .n.green{color:var(--green)}
+.stat .k{font-size:12px;color:var(--text-3);margin-top:2px}
+.filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.tabs{display:inline-flex;background:var(--surface-2);border-radius:10px;padding:3px;gap:2px;margin-bottom:14px}
+.tabs button{padding:6px 15px;border-radius:8px;font-size:12.5px;color:var(--text-2)}
+.tabs button[aria-selected="true"]{background:var(--surface);color:var(--text);font-weight:600;box-shadow:var(--shadow-sm)}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:0;border:1px solid var(--line);border-radius:var(--r-lg);
+  overflow:hidden;background:var(--surface);box-shadow:var(--shadow)}
+@media (max-width:1000px){.split{grid-template-columns:minmax(0,1fr)}}
+.list{padding:10px;display:grid;gap:6px;align-content:start;max-height:480px;overflow:auto}
+.item{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;padding:12px;border:1px solid transparent;border-radius:11px;text-align:left}
+.item:hover{background:var(--surface-2)}
+.item[aria-selected="true"]{background:var(--surface);border-color:var(--line-2);box-shadow:var(--shadow-sm)}
+.item .t{font-size:13.5px;font-weight:600;line-height:1.4}
+.item .m{display:flex;gap:8px;font-size:11px;color:var(--text-3);margin-top:3px}
+.check{width:15px;height:15px;border:1px solid var(--line-2);border-radius:5px;margin-top:2px;display:grid;place-items:center;font-size:10px;color:transparent}
+.item[aria-selected="true"] .check{background:var(--accent);border-color:var(--accent);color:#fff}
+.detail{padding:20px;border-left:1px solid var(--line)}
+@media (max-width:1000px){.detail{border-left:0;border-top:1px solid var(--line)}}
+.prop{border:1px solid var(--line);border-radius:11px;padding:12px;margin-top:10px}
+.prop.mapped{border-color:color-mix(in srgb,var(--green) 40%,var(--line));background:var(--green-soft)}
+.prop .txt{font-size:13px;line-height:1.55}
+.prop .row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.prop select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:12px;color:var(--text)}
+
+/* ---------- 缺口回流 ---------- */
+.reflow{margin-top:18px;padding:14px 16px;border:1px dashed var(--line-2);border-radius:var(--r);display:flex;gap:12px;align-items:center;background:var(--surface-2)}
+.reflow .mic{width:28px;height:28px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;flex:none;font-size:14px}
+.toast{margin-top:10px;display:none;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;background:var(--accent-soft);
+  color:var(--text);font-size:12.5px}
+.toast.on{display:flex;animation:pop .22s var(--ease)}
+@keyframes pop{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.toast a{color:var(--accent);font-weight:600}
+
+/* ---------- 色板 / 说明 ---------- */
+.palette{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-top:18px}
+.pal{padding:14px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.pal h4{margin:0 0 8px;font-size:12px;font-weight:600}
+.swatches{display:flex;gap:6px;flex-wrap:wrap}
+.sw{width:100%;height:26px;border-radius:7px;border:1px solid var(--line);display:grid;place-items:center;font-size:10px;color:var(--text-2)}
+.notes{margin-top:18px;display:grid;gap:8px}
+.notes li{display:flex;gap:9px;font-size:12.5px;color:var(--text-2);line-height:1.6}
+.notes li b{color:var(--text);font-weight:600}
+.notes .n{font-family:var(--mono);color:var(--text-3);flex:none}
+#debug{position:fixed;left:12px;bottom:12px;max-width:60ch;font-family:var(--mono);font-size:11px;color:var(--red);
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;display:none;z-index:40;white-space:pre-wrap}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">M</span><span>Meridian</span><span class="brand-sub">设计提案 · 交互原型</span></div>
+  <div class="seg" id="view-seg" role="tablist" aria-label="视图">
+    <button role="tab" data-view="reader" aria-selected="true">读者</button>
+    <button role="tab" data-view="builder" aria-selected="false">建设者</button>
+    <button role="tab" data-view="inbox" aria-selected="false">今日收件箱</button>
+  </div>
+  <div class="seg" id="scale-seg" role="group" aria-label="规模">
+    <button data-scale="60" aria-selected="true">60 节点</button>
+    <button data-scale="300" aria-selected="false">300</button>
+    <button data-scale="1000" aria-selected="false">1000</button>
+  </div>
+  <div class="grow"></div>
+  <label class="chip"><span class="dot" id="theme-dot" style="background:var(--accent)"></span>
+    <select class="select" id="theme-pick" aria-label="主题"></select></label>
+  <button class="chip" id="mode-toggle">◐ 明暗</button>
+</header>
+
+<div class="wrap">
+
+  <!-- ============ 读者 ============ -->
+  <section class="view is-on" id="view-reader">
+    <div class="card hero">
+      <div class="kicker"><span class="pill info">读者视图</span><span id="hero-updated">账本 128 条事件 · 校验通过</span></div>
+      <h1 id="hero-title"></h1>
+      <p class="hero-sub" id="hero-sub"></p>
+      <div class="metrics">
+        <div class="metric"><div class="k">当前强度</div><div class="v num" id="m-strength">—</div></div>
+        <div class="metric"><div class="k">支持 / 挑战</div><div class="v num" id="m-stance">—</div></div>
+        <div class="metric"><div class="k">外部数据</div><div class="v num" id="m-evidence">—</div></div>
+        <div class="metric"><div class="k">跨时</div><div class="v num" id="m-span">—</div></div>
+        <div class="metric" style="margin-left:auto">
+          <div class="k">关键转折</div>
+          <div id="m-turns" style="display:flex;gap:6px;margin-top:4px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card axis-card">
+      <div class="axis-head">
+        <h2>强度 · 时间 · 外部数据（合成轴）</h2>
+        <span class="cap" id="axis-cap"></span>
+      </div>
+      <div class="axis-legend">
+        <span><i style="background:var(--accent)"></i>强度</span>
+        <span><i style="background:var(--green)"></i>支持证据</span>
+        <span><i style="background:var(--red)"></i>挑战证据</span>
+        <span><i style="background:var(--purple)"></i>修订</span>
+        <span><i style="background:var(--line-2)"></i>悬停读刻度</span>
+      </div>
+      <div style="position:relative">
+        <svg class="axis-svg" id="axis" role="img" aria-label="强度随时间与外部数据的变化"></svg>
+        <div class="axis-tip" id="axis-tip"></div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:18px">
+      <div class="card graph-card">
+        <div class="graph-head">
+          <h2>主题认知网络</h2>
+          <span class="badge" id="lod-badge">LOD 自动</span>
+          <div class="stats" id="graph-stats"></div>
+        </div>
+        <div class="canvas-wrap"><canvas id="graph"></canvas></div>
+        <div class="graph-foot">
+          <span class="cap">缩放</span>
+          <input class="slider" id="zoom" type="range" min="0.45" max="1.9" step="0.01" value="1">
+          <span class="badge" id="zoom-badge">1.00×</span>
+          <button class="btn ghost" id="focus-clear">显示全图</button>
+          <span class="cap" id="graph-hint">点节点＝只看它的一跳邻域</span>
+        </div>
+      </div>
+      <aside class="card inspector" id="inspector"></aside>
+    </div>
+
+    <div class="reflow">
+      <span class="mic">⌁</span>
+      <div>
+        <div style="font-weight:600">读者发现缺口 → 回流</div>
+        <div class="cap" style="margin-top:2px">读者能标记「这里缺一条外部数据 / 这个关系说不通」，它直接变成今日收件箱的一条待办。</div>
+      </div>
+      <div class="grow"></div>
+      <button class="btn primary" id="gap-btn">标记缺口</button>
+    </div>
+    <div class="toast" id="gap-toast"><b>已加入今日收件箱</b><span class="cap">· 待办：为「光子互连的产业取舍」补一条 2026Q4 的外部数据</span><a href="#" id="gap-undo">撤销</a></div>
+  </section>
+
+  <!-- ============ 建设者 ============ -->
+  <section class="view" id="view-builder">
+    <div class="queue">
+      <div class="card" style="padding:10px">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 8px 10px">
+          <strong style="font-size:14px">待归因</strong><span class="badge">8</span>
+          <div class="grow"></div><span class="cap">全部是原子级建议</span>
+        </div>
+        <ul id="queue-list"></ul>
+        <div style="padding:10px 6px 4px"><button class="btn" style="width:100%">＋ 手动新增一个原子</button></div>
+      </div>
+
+      <div class="card review">
+        <div class="kicker"><span class="pill warn">待人工确认</span><span class="cap">外部数据归因 · IN-014</span></div>
+        <h3>Yole：硅光在数据中心光模块的渗透率已达 35%</h3>
+        <p class="cap" style="margin-top:6px">来源 Yole Group · 发布于 2026-09-28 · 系统摄入 2026-10-03</p>
+
+        <blockquote style="margin:14px 0 0;padding:12px 14px;border-left:3px solid var(--accent);background:var(--surface-2);border-radius:0 10px 10px 0;font-size:12.5px;line-height:1.6">
+          “硅光技术在数据中心光模块中的渗透率已达到 35%，预计 2027 年将超过 50%。”
+          <div class="cap" style="margin-top:6px">✓ 摘录已与原文核验</div>
+        </blockquote>
+
+        <div class="trace">
+          <div><dt>来源</dt><dd>Yole Group</dd></div>
+          <div><dt>来源时间</dt><dd>2026-09-28</dd></div>
+          <div><dt>抓取 / 摄入</dt><dd>10-01 / 10-03</dd></div>
+          <div><dt>适用时间</dt><dd>2026Q3</dd></div>
+          <div><dt>模型把握</dt><dd>0.62 × 0.85</dd></div>
+        </div>
+
+        <div class="compare">
+          <div class="cmp"><div class="lbl">确认前 · 当前模型</div><div class="txt" id="cmp-before">—</div></div>
+          <div style="text-align:center;color:var(--text-3);font-family:var(--mono)">→</div>
+          <div class="cmp after"><div class="lbl">确认后 · 建议投影</div><div class="txt" id="cmp-after">—</div></div>
+        </div>
+
+        <div class="delta">
+          <div><b>将产生的变化：</b></div>
+          <ul style="margin-top:6px;display:grid;gap:4px">
+            <li>① 强度 <b class="num">62% → 67%</b>（只用 strength，不读标签）</li>
+            <li>② 外部数据 <b class="num">+1</b>，支持/挑战 <b class="num">12 / 5 → 13 / 5</b></li>
+            <li>③ 合成轴 <b>+1 个点</b>（2026-09-28），并在曲线上留下一次台阶</li>
+          </ul>
+        </div>
+
+        <div class="fields">
+          <label class="field"><span class="l">目标原子</span>
+            <select><option>光子互连的产业取舍</option><option>制造条件</option><option>＋ 新建原子</option></select></label>
+          <label class="field"><span class="l">关系类型</span>
+            <select><option>支持</option><option>反驳</option><option>推导</option><option>修订</option><option>相关</option></select></label>
+          <label class="field"><span class="l">备注（可留空 · AI 可建议 · 不做枚举校验）</span>
+            <input value="这条证据改写了渗透率的上界"></label>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary">确认并追加</button>
+          <button class="btn">驳回</button>
+          <div class="grow"></div>
+          <button class="btn ghost" id="to-reader">在读者里看效果 →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 收件箱 ============ -->
+  <section class="view" id="view-inbox">
+    <div class="card" style="padding:20px 22px 6px">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <h2 style="font-size:17px;font-weight:650">待确认</h2><div class="grow"></div><span class="cap">3 条待审阅</span>
+      </div>
+      <div class="stats-row">
+        <div class="stat"><div class="n num orange">3</div><div class="k">待处理</div></div>
+        <div class="stat"><div class="n num">5</div><div class="k">已抽取要点</div></div>
+        <div class="stat"><div class="n num green">0</div><div class="k">已归位</div></div>
+      </div>
+      <div class="filters">
+        <span class="cap">主题筛选</span>
+        <button class="chip" style="background:var(--text);color:var(--bg);border-color:var(--text)">全部主题</button>
+        <button class="chip"><span class="dot" style="background:var(--accent)"></span>光子互连</button>
+        <button class="chip"><span class="dot" style="background:var(--purple)"></span>北岸盐运</button>
+        <span class="pill ghost" style="margin-left:auto">外部数据 = 变量之一</span>
+      </div>
+      <div class="tabs">
+        <button aria-selected="true">全部 <span class="cap">3</span></button>
+        <button aria-selected="false">待处理 <span class="cap">0</span></button>
+        <button aria-selected="false">已处理 <span class="cap">3</span></button>
+      </div>
+    </div>
+    <div class="split" style="margin-top:14px">
+      <div class="list" id="inbox-list"></div>
+      <div class="detail" id="inbox-detail"></div>
+    </div>
+  </section>
+
+  <!-- ============ 色板与说明 ============ -->
+  <div class="palette">
+    <div class="pal">
+      <h4>① 材质层（做层次，不靠边框）</h4>
+      <div class="swatches">
+        <div class="sw" style="background:var(--bg)">bg</div>
+        <div class="sw" style="background:var(--window)">窗口</div>
+        <div class="sw" style="background:var(--surface)">卡片</div>
+        <div class="sw" style="background:var(--surface-3)">内嵌</div>
+      </div>
+    </div>
+    <div class="pal">
+      <h4>② 强调层（全局只有一个）</h4>
+      <div class="swatches">
+        <div class="sw" style="background:var(--accent);color:#fff">accent</div>
+        <div class="sw" style="background:var(--accent-soft)">soft</div>
+      </div>
+    </div>
+    <div class="pal">
+      <h4>③ 语义层（颜色绑语义，不绑领域类型）</h4>
+      <div class="swatches">
+        <div class="sw" style="background:var(--green-soft);color:var(--green)">支持</div>
+        <div class="sw" style="background:var(--red-soft);color:var(--red)">挑战</div>
+        <div class="sw" style="background:var(--orange-soft);color:var(--orange)">待复核</div>
+        <div class="sw" style="background:var(--purple-soft);color:var(--purple)">修订</div>
+      </div>
+    </div>
+    <div class="pal">
+      <h4>④ 分类（主题自定义，可带色）</h4>
+      <div class="swatches" id="cat-swatches"></div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><span class="n">01</span><span><b>合成轴</b>：强度（线）× 外部数据（点）× 确认/修订（台阶）画在同一条<b>日期轴</b>上——这就是"时间 & 外部数据"两个变量的可视化；序号回放降级为内部细节。</span></li>
+    <li><span class="n">02</span><span><b>图谱 LOD</b>：缩放 &lt;0.75 只画点（不画字）；0.75–1.15 画卡片不画字；&gt;1.15 才出标题。文字是 SVG/canvas 里最贵的东西。</span></li>
+    <li><span class="n">03</span><span><b>规模降级</b>：≥600 节点自动切网格布局（放弃力导向松弛），并在右上角如实标注"已降级"，而不是卡死或假装画完了。</span></li>
+    <li><span class="n">04</span><span><b>邻域聚焦</b>：点节点只点亮一跳邻域，其余降到 12% 透明度；空白处点击复原——比"画全图"更符合"认知一个陌生主题"。</span></li>
+    <li><span class="n">05</span><span><b>建设者只做三件事</b>：目标原子 / 关系 / 备注，加上"将产生的变化"三行与<b>溯源条</b>（来源·核验·抓取/摄入·适用时间·把握），并提供"在读者里看效果"。</span></li>
+    <li><span class="n">06</span><span><b>闭环回流</b>：读者标记缺口 → 变成收件箱待办。现在闭环只到"读者阅读"，最后一段是断的。</span></li>
+  </ul>
+</div>
+
+<div id="debug"></div>
+
+<script>
+/* ============================================================
+   数据（两个主题：一个产业、一个历史 —— 证明界面不依赖领域）
+   ============================================================ */
+const CAT_PALETTE = ['#0071e3','#af52de','#ff9500','#00b8b8','#34c759','#ff3b30'];
+const THEMES = [
+  {
+    id:'photon', name:'光子互连的产业取舍', dot:'#0071e3',
+    judgment:'光子互连的瓶颈在制造条件，不在技术路线本身。',
+    sub:'把 41 条外部数据归位后，强度从 2023 年的 41% 走到今天的 62%；两次下修都来自产能与良率的外部证据。',
+    strength:62, supports:12, challenges:5, evidence:41, span:'2022-04 → 2026-10',
+    categories:['技术路线','关键问题','制造条件','外部条件','待验证工艺'],
+    turns:['2024-11 产能质疑','2025-06 良率证据','2026-03 需求上修'],
+    nodes:['光子互连','硅光渗透率','良率窗口','产能瓶颈','数据中心需求','封装工艺','外部代工','设备交付','价格弹性','标准之争','材料约束','验证工艺'],
+  },
+  {
+    id:'salt', name:'北岸盐运与冬季封路', dot:'#af52de',
+    judgment:'决定盐价的是封路时长，不是盐场产量。',
+    sub:'用了 27 条外部数据（驿报、账册、天气记录）；每次封路超过 20 天，下游盐价在一个月内上抬。',
+    strength:71, supports:9, challenges:3, evidence:27, span:'1782 → 1795',
+    categories:['人物','事件','条件','代价'],
+    turns:['1788 大雪封路','1791 官运改道','1794 盐价回落'],
+    nodes:['北岸盐运','封路时长','盐价','官运改道','private 商队','驿报','存盐','船期','牲口损耗','盐场产量','冬季风向','税关'],
+  },
+];
+CAT_PALETTE.forEach(()=>{});
+function catColor(theme, cat){
+  const i = theme.categories.indexOf(cat);
+  return CAT_PALETTE[(i<0?0:i) % CAT_PALETTE.length];
+}
+
+/* 确定性伪随机，保证每次打开一致 */
+function rng(seed){ let s = seed>>>0 || 1; return () => (s = (s*1664525 + 1013904223)>>>0) / 4294967296 }
+
+function genGraph(theme, n){
+  const rand = rng(theme.id === 'photon' ? 20261003 : 17950000);
+  const nodes = [], edges = [];
+  for (let i=0;i<n;i++){
+    const cat = theme.categories[Math.floor(rand()*theme.categories.length)];
+    const base = theme.nodes[i % theme.nodes.length];
+    nodes.push({
+      id:'n'+i,
+      title: i < theme.nodes.length ? base : base + ' · ' + (1 + Math.floor(i/theme.nodes.length)),
+      cat,
+      /* 0 号是"主原子"：强度与 hero 一致，让检视器和首屏讲同一个故事 */
+      strength: i === 0 ? theme.strength : Math.round(30 + rand()*65),
+      status: i === 0 ? 'verified' : rand() < 0.18 ? 'pending' : rand() < 0.5 ? 'verified' : rand() < 0.75 ? 'disputed' : 'settled',
+      x:0, y:0,
+    });
+  }
+  const m = Math.round(n*1.35);
+  for (let i=0;i<m;i++){
+    const a = Math.floor(rand()*n), b = Math.floor(rand()*n);
+    if (a===b) continue;
+    const r = rand();
+    edges.push({ a:nodes[a].id, b:nodes[b].id,
+      rel: r<0.55?'supports': r<0.72?'contradicts': r<0.85?'derives': r<0.93?'supersedes':'related' });
+  }
+  return { nodes, edges };
+}
+
+/* ---------- 布局：网格按卡片实际尺寸算列数；小图再加松弛与干涉消除；大图纯网格（如实降级） ---------- */
+function layoutGraph(nodes, edges, w, h){
+  const t0 = performance.now();
+  const n = nodes.length;
+  const heavy = n > 600;                                  // 降级阈值
+  const cardW = (nd) => (heavy ? 0 : Math.min(104, 64 + nd.title.length*3.0));
+  const gapX = heavy ? 26 : 118, gapY = heavy ? 16 : 42;
+  const cols = Math.max(1, Math.min(n, Math.floor(w/gapX)));
+  const rows = Math.max(1, Math.ceil(n/cols));
+  const cw = w/cols, ch = h/rows;
+  const jit = (i, k) => (((Math.sin((i+1)*(k?78.233:12.9898))*43758.5453)%1)+1)%1 - 0.5;
+  nodes.forEach((nd,i)=>{
+    const r = Math.floor(i/cols), c = i%cols;
+    nd.x = cw*(c+0.5) + jit(i,false)*Math.min(16, cw*0.26);
+    nd.y = ch*(r+0.5) + jit(i,true)*Math.min(10, ch*0.26);
+  });
+  if (!heavy){
+    const byId = new Map(nodes.map(nd=>[nd.id,nd]));
+    const rounds = n > 300 ? 8 : 24;
+    for (let k=0;k<rounds;k++){
+      const cool = 1 - k/rounds;
+      for (const e of edges){
+        const a = byId.get(e.a), b = byId.get(e.b);
+        if (!a||!b) continue;
+        const dx = b.x-a.x, dy = b.y-a.y, d = Math.hypot(dx,dy) || 1;
+        const target = 138, f = (d-target)/d*0.04*cool;
+        a.x += dx*f; a.y += dy*f; b.x -= dx*f; b.y -= dy*f;
+      }
+    }
+    /* 干涉消除：卡片宽度不同，必须按实际宽度分开（这是"看起来像设计过"的关键） */
+    const passes = n > 300 ? 10 : 26;
+    for (let pass=0; pass<passes; pass++){
+      let moved = false;
+      for (let i=0;i<n;i++){
+        const a = nodes[i];
+        for (let j=i+1;j<n;j++){
+          const b = nodes[j];
+          const minX = (cardW(a)+cardW(b))/2 + 16, minY = 44;
+          const dx = b.x-a.x, dy = b.y-a.y;
+          const ox = minX-Math.abs(dx), oy = minY-Math.abs(dy);
+          if (ox<=0 || oy<=0) continue;
+          moved = true;
+          if (ox < oy){ const s = (dx>=0?1:-1)*(ox/2+1); a.x -= s; b.x += s }
+          else { const s = (dy>=0?1:-1)*(oy/2+1); a.y -= s; b.y += s }
+        }
+      }
+      if (!moved) break;
+      for (const nd of nodes){
+        nd.x = Math.max(cardW(nd)/2+8, Math.min(w-cardW(nd)/2-8, nd.x));
+        nd.y = Math.max(18, Math.min(h-18, nd.y));
+      }
+    }
+  }
+  return { ms: performance.now()-t0, heavy };
+}
+
+/* ---------- 图谱绘制（canvas + LOD + 邻域聚焦） ---------- */
+const REL_STYLE = {
+  supports:{ c:'#61a8ff', arrow:true, dash:null, label:'支持' },
+  contradicts:{ c:'#ff8d78', arrow:true, dash:null, label:'挑战' },
+  derives:{ c:'#c2a0ff', arrow:true, dash:null, label:'推导' },
+  supersedes:{ c:'#d89b49', arrow:true, dash:[6,4], label:'修订' },
+  related:{ c:'#8e8e93', arrow:false, dash:[3,5], label:'相关' },
+};
+/* 语义色：canvas 里不能用 CSS 变量字符串，必须给真值（明/暗两套） */
+const STATUS_STYLE = {
+  pending:{ c:'orange', label:'待复核' },
+  verified:{ c:'green', label:'已核验' },
+  disputed:{ c:'red', label:'有争议' },
+  settled:{ c:'accent', label:'已结算' },
+};
+function pal(){
+  return document.documentElement.dataset.theme === 'dark' ? {
+    surface:'#242426', text:'#f5f5f7', text2:'rgba(245,245,247,.66)', text3:'rgba(245,245,247,.4)',
+    line:'rgba(255,255,255,.11)', line2:'rgba(255,255,255,.17)',
+    accent:'#0a84ff', green:'#30d158', red:'#ff453a', orange:'#ff9f0a', purple:'#bf5af2',
+  } : {
+    surface:'#ffffff', text:'#1d1d1f', text2:'rgba(29,29,31,.62)', text3:'rgba(29,29,31,.38)',
+    line:'rgba(0,0,0,.09)', line2:'rgba(0,0,0,.14)',
+    accent:'#0071e3', green:'#34c759', red:'#ff3b30', orange:'#ff9500', purple:'#af52de',
+  };
+}
+const ms = (v) => (v < 0.05 ? '<0.1' : v < 10 ? v.toFixed(1) : v.toFixed(0));
+let graph = null, layout = null, zoom = 1, focusId = null, adj = new Map();
+let lastStats = { layout:0, draw:0, heavy:false, n:0 };
+
+function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim() }
+
+function buildAdj(edges){
+  adj = new Map();
+  for (const e of edges){
+    if (!adj.has(e.a)) adj.set(e.a, new Set());
+    if (!adj.has(e.b)) adj.set(e.b, new Set());
+    adj.get(e.a).add(e.b); adj.get(e.b).add(e.a);
+  }
+}
+
+function drawGraph(){
+  const canvas = document.getElementById('graph');
+  if (!canvas || !graph) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w*dpr || canvas.height !== h*dpr){ canvas.width = w*dpr; canvas.height = h*dpr }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const t0 = performance.now();
+  const P = pal();
+
+  const curTheme = THEMES[state.themeIndex];
+  const near = focusId ? new Set([focusId, ...(adj.get(focusId) || [])]) : null;
+  /* LOD：远景只画点；≥600 节点强制点阵（图元太多，卡片会糊成一片） */
+  const showLabels = zoom > 1.15 && !lastStats.heavy;
+  const showCards = zoom > 0.75 && !lastStats.heavy;
+
+  // 边
+  for (const e of graph.edges){
+    const a = graph.nodes.find(nd=>nd.id===e.a), b = graph.nodes.find(nd=>nd.id===e.b);
+    if (!a||!b) continue;
+    const st = REL_STYLE[e.rel] || REL_STYLE.related;
+    const dim = near && !(near.has(e.a) && near.has(e.b));
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.07 : (e.rel==='related'?0.34:0.62);
+    ctx.strokeStyle = st.c;
+    ctx.lineWidth = e.rel==='related' ? 1 : (e.rel==='contradicts'?1.7:1.35);
+    if (!showCards && e.rel==='related') ctx.lineWidth = .8;
+    ctx.setLineDash((st.dash||[]).map(v=>v*Math.max(.6,zoom)));
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 节点：LOD
+  for (const nd of graph.nodes){
+    const st = STATUS_STYLE[nd.status] || STATUS_STYLE.pending;
+    const dim = near && !near.has(nd.id);
+    const r = 4 + (zoom<0.75 ? 0 : 2) + (nd.strength/100)*7*Math.max(.5,Math.min(1.4,zoom));
+    ctx.save();
+    ctx.globalAlpha = dim ? 0.12 : 1;
+    const accent = P[st.c] || P.accent;
+    if (!showCards){
+      // 远景：只画点
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(nd.x, nd.y, Math.max(2.4, r*0.62), 0, Math.PI*2); ctx.fill();
+    } else {
+      /* 卡片尺寸要按画布容量收敛：60 张卡在 900×470 里必须留出碰撞间隙，否则一定糊成一片 */
+      const wide = Math.min(104, 64 + nd.title.length*3.0), tall = showLabels ? 34 : 26;
+      ctx.shadowColor = 'rgba(0,0,0,.10)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
+      ctx.fillStyle = P.surface;
+      roundRect(ctx, nd.x-wide/2, nd.y-tall/2, wide, tall, 9); ctx.fill();
+      ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = accent; ctx.globalAlpha = dim?0.12:0.5; ctx.lineWidth = 1.3;
+      roundRect(ctx, nd.x-wide/2, nd.y-tall/2, wide, tall, 9); ctx.stroke();
+      // 左侧分类色条（分类＝主题自定义，颜色只表达"属于哪一类"）
+      ctx.fillStyle = catColor(curTheme, nd.cat);
+      ctx.globalAlpha = dim?0.12:0.95;
+      roundRect(ctx, nd.x-wide/2+5, nd.y-(tall/2-5), 3, tall-10, 2); ctx.fill();
+      if (showLabels){
+        ctx.globalAlpha = dim?0.14:1; ctx.fillStyle = P.text;
+        ctx.font = '600 11.5px -apple-system,"PingFang SC",sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(clip(nd.title, 12), nd.x+4, nd.y);
+      }
+    }
+    ctx.restore();
+  }
+
+  // 聚焦描边
+  if (focusId){
+    const nd = graph.nodes.find(x=>x.id===focusId);
+    if (nd){
+      ctx.save(); ctx.strokeStyle = P.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(nd.x, nd.y, 5 + (nd.strength/100)*10, 0, Math.PI*2); ctx.stroke(); ctx.restore();
+    }
+  }
+
+  lastStats.draw = performance.now()-t0;
+  updateGraphStats();
+}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath() }
+function clip(s,n){ return s.length>n ? s.slice(0,n-1)+'…' : s }
+
+function updateGraphStats(){
+  const el = document.getElementById('graph-stats');
+  const lod = lastStats.heavy ? '点阵' : zoom<0.75 ? '点阵' : zoom<=1.15 ? '卡片' : '卡片+标题';
+  el.textContent = `${graph.nodes.length} 节点 · ${graph.edges.length} 边 · 布局 ${ms(lastStats.layout)}ms · 绘制 ${ms(lastStats.draw)}ms`;
+  const badge = document.getElementById('lod-badge');
+  badge.textContent = lastStats.heavy ? `LOD ${lod} · ≥600 已降级为网格布局` : `LOD ${lod}`;
+  badge.style.color = lastStats.heavy ? 'var(--orange)' : '';
+}
+
+/* ---------- 合成轴：叙事化的强度曲线（不是随机游走，才看得出"被外部数据推着走"） ---------- */
+function buildSeries(theme){
+  const P = theme.strength, N = 46, pts = [];
+  const anchors = [
+    { t:0.00, v:P-21 }, { t:0.28, v:P-15 }, { t:0.42, v:P-21 },
+    { t:0.58, v:P-13 }, { t:0.66, v:P-7 },  { t:0.84, v:P-3 }, { t:1.00, v:P },
+  ];
+  for (let i=0;i<N;i++){
+    const t = i/(N-1);
+    let a = anchors[0], b = anchors[anchors.length-1];
+    for (let k=0;k<anchors.length-1;k++) if (t>=anchors[k].t && t<=anchors[k+1].t){ a=anchors[k]; b=anchors[k+1]; break }
+    const w = (t-a.t)/((b.t-a.t)||1);
+    const v = a.v + (b.v-a.v)*w + Math.sin(i*2.1)*0.7;
+    pts.push({ i, t, v: Math.max(4, Math.min(97, v)), kind: i%3===2 ? 'contradicts' : 'supports' });
+  }
+  const steps = [
+    { at:0.42, label:theme.turns[0], down:true },
+    { at:0.66, label:theme.turns[1], down:false },
+    { at:0.84, label:theme.turns[2], down:false },
+  ];
+  return { pts, steps, start:theme.span.split('→')[0].trim(), end:theme.span.split('→')[1].trim() };
+}
+function drawAxis(){
+  const theme = THEMES[state.themeIndex];
+  const P = pal();
+  const svg = document.getElementById('axis');
+  const { pts, steps, start, end } = buildSeries(theme);
+  const W = svg.clientWidth || 900, H = 236, padL = 46, padR = 20, padT = 26, padB = 66;
+  /* y 轴按数据自适应：曲线才有起伏可读，而不是被 0–100 压平 */
+  const lo = Math.max(0, Math.floor((Math.min(...pts.map(p=>p.v))-6)/5)*5);
+  const hi = Math.min(100, Math.ceil((Math.max(...pts.map(p=>p.v))+6)/5)*5);
+  const x = t => padL + t*(W-padL-padR);
+  const y = v => padT + (1-(v-lo)/(hi-lo))*(H-padT-padB);
+  const parts = [];
+  parts.push(`<defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1">
+    <stop offset="0" stop-color="${P.accent}" stop-opacity=".20"/>
+    <stop offset="1" stop-color="${P.accent}" stop-opacity="0"/></linearGradient></defs>`);
+  const ticks = []; for (let v=lo; v<=hi+0.1; v+=(hi-lo)/4) ticks.push(Math.round(v));
+  for (const g of ticks){
+    parts.push(`<line x1="${padL}" x2="${W-padR}" y1="${y(g).toFixed(1)}" y2="${y(g).toFixed(1)}" stroke="${P.line}" stroke-width="1"/>`);
+    parts.push(`<text x="${padL-9}" y="${(y(g)+4).toFixed(1)}" text-anchor="end" font-size="10" fill="${P.text3}" font-family="ui-monospace,monospace">${g}%</text>`);
+  }
+  const line = pts.map((p,i)=>`${i?'L':'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  parts.push(`<path d="${line} L${x(1).toFixed(1)},${(H-padB).toFixed(1)} L${padL},${(H-padB).toFixed(1)} Z" fill="url(#fill)"/>`);
+  /* 外部数据轨道 + 到曲线的细引线：一眼看出"这条数据把强度推到哪" */
+  const railY = H - 30;
+  pts.forEach((p)=>{
+    const xx = x(p.t).toFixed(1);
+    const c = p.kind==='supports' ? P.green : P.red;
+    parts.push(`<line x1="${xx}" x2="${xx}" y1="${railY-5}" y2="${y(p.v).toFixed(1)}" stroke="${c}" stroke-width=".7" opacity=".14"/>`);
+    parts.push(`<circle cx="${xx}" cy="${railY}" r="2.7" fill="${c}" opacity=".92"/>`);
+  });
+  /* 转折台阶 */
+  for (const s of steps){
+    const xx = x(s.at).toFixed(1);
+    const c = s.down ? P.purple : P.green;
+    parts.push(`<line x1="${xx}" x2="${xx}" y1="${padT}" y2="${(H-padB).toFixed(1)}" stroke="${P.line2}" stroke-width="1" stroke-dasharray="3 3"/>`);
+    parts.push(`<rect x="${(+xx-4).toFixed(1)}" y="${padT-15}" width="8" height="8" rx="2" fill="${c}"/>`);
+    parts.push(`<text x="${xx}" y="${(H-padB+17).toFixed(1)}" text-anchor="middle" font-size="10.5" fill="${P.text2}">${s.label.split(' ')[0]}</text>`);
+  }
+  parts.push(`<text x="${padL}" y="${H-8}" font-size="10.5" fill="${P.text3}" font-family="ui-monospace,monospace">${start}</text>`);
+  parts.push(`<text x="${W-padR}" y="${H-8}" text-anchor="end" font-size="10.5" fill="${P.text3}" font-family="ui-monospace,monospace">${end}</text>`);
+  pts.forEach(p=>{ parts.push(`<rect class="hot" data-i="${p.i}" x="${(x(p.t)-5).toFixed(1)}" y="${padT}" width="10" height="${H-padT-padB}" fill="transparent"/>`) });
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = parts.join('');
+  document.getElementById('axis-cap').textContent = `${theme.evidence} 条外部数据 · 3 次转折 · 轴按数据自适应（${lo}–${hi}%）`;
+
+  svg.querySelectorAll('.hot').forEach(r=>{
+    r.addEventListener('mouseenter', (ev)=>{
+      const p = pts[Number(r.dataset.i)];
+      const tip = document.getElementById('axis-tip');
+      tip.innerHTML = `<b>强度 ${Math.round(p.v)}%</b><div class="m">第 ${p.i+1}/${pts.length} 条外部数据 · ${p.kind==='supports'?'支持':'挑战'}</div>`
+        + `<div class="m">相对刻度 ${(p.t*100).toFixed(0)}%（${start} → ${end}）</div>`;
+      const rect = svg.getBoundingClientRect();
+      tip.style.left = Math.min(rect.width-260, Math.max(4, ev.clientX-rect.left+12)) + 'px';
+      tip.style.top = Math.max(6, ev.clientY-rect.top-10) + 'px';
+      tip.style.opacity = '1';
+    });
+    r.addEventListener('mouseleave', ()=>{ document.getElementById('axis-tip').style.opacity='0' });
+  });
+}
+
+/* ---------- 检视器 ---------- */
+function renderInspector(){
+  const theme = THEMES[state.themeIndex];
+  const node = graph ? (graph.nodes.find(n=>n.id===focusId) || graph.nodes[0]) : null;
+  const host = document.getElementById('inspector');
+  if (!node){ host.innerHTML = '<p class="cap">选择一条数据查看详情</p>'; return }
+  const st = STATUS_STYLE[node.status];
+  const color = catColor(theme, node.cat);
+  const neighbors = [...(adj.get(node.id)||[])].slice(0,5).map(id=>graph.nodes.find(n=>n.id===id)).filter(Boolean);
+  host.innerHTML = `
+    <div class="kicker"><span class="pill" style="background:color-mix(in srgb, ${color} 14%, transparent);color:${color}">${node.cat}</span>
+      <span class="pill ${node.status==='verified'?'ok':node.status==='pending'?'warn':node.status==='disputed'?'bad':'info'}">${st.label}</span></div>
+    <h3>${node.title}</h3>
+    <p class="body">强度由外部数据逐条累积；颜色表示状态，尺寸表示强度，分类由主题自己定义——系统不预设领域类型。</p>
+    <div class="sect"><div class="sect-h">当前强度 <b class="num" style="color:var(--text);margin-left:auto">${node.strength}%</b></div>
+      <div class="bar"><i style="width:${node.strength}%"></i></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <span class="pill ok">支持 ${Math.round(node.strength/6)}</span>
+        <span class="pill bad">挑战 ${Math.round((100-node.strength)/12)}</span>
+        <span class="pill ghost">证据 ${Math.round(node.strength/4)}</span>
+      </div></div>
+    <div class="sect"><div class="sect-h">外部数据 · 按时间倒序</div>
+      ${['2026-09-28｜Yole：渗透率 35%','2026-03-11｜财报：产能利用率 92%','2025-06-02｜良率窗口验证']
+        .map(t=>`<div class="ev"><span class="t">${t.split('｜')[0]}</span><span class="x">${t.split('｜')[1]}</span></div>`).join('')}</div>
+    <div class="sect"><div class="sect-h">相邻原子 · 点一下跟着走</div>
+      ${neighbors.map(nb=>{
+        const e = graph.edges.find(x=>(x.a===node.id&&x.b===nb.id)||(x.b===node.id&&x.a===nb.id));
+        const rl = REL_STYLE[e?.rel] || REL_STYLE.related;
+        return `<div class="rel" data-goto="${nb.id}" style="cursor:pointer"><span class="arrow">→</span>
+          <span style="flex:1">${nb.title}</span><span class="pill ghost">${rl.label}</span></div>`;
+      }).join('') || '<div class="cap">暂无相邻节点</div>'}</div>`;
+  host.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click', ()=>{ focusId = el.dataset.goto; drawGraph(); renderInspector() }));
+}
+
+/* ---------- 收件箱（已实现形态的静态呈现） ---------- */
+const INBOX = [
+  { id:'i1', title:'Yole：硅光渗透率已达 35%', src:'Yole Group', time:'1 小时前', badge:['✓ 已抽取 2 条要点','ok'], themes:['光子互连'] },
+  { id:'i2', title:'财报：产能利用率接近瓶颈', src:'官网', time:'2 小时前', badge:['✓ 已抽取 1 条要点','ok'], themes:['光子互连'] },
+  { id:'i3', title:'驿报：北岸封路已 23 日', src:'清档·驿报', time:'3 小时前', badge:['✓ 已归位 1 条','done'], themes:['北岸盐运'] },
+];
+function renderInbox(){
+  const list = document.getElementById('inbox-list');
+  list.innerHTML = INBOX.map((it,i)=>`
+    <button class="item" data-i="${i}" aria-selected="${i===0}">
+      <span class="check">✓</span>
+      <span><span class="t">${it.title}</span>
+        <span class="m"><span>${it.src}</span><span>·</span><span>${it.time}</span></span>
+        <span class="m" style="margin-top:6px">
+          <span class="pill ${it.badge[1]==='ok'?'ok':'ghost'}">${it.badge[0]}</span>
+          ${it.themes.map(t=>`<span class="pill ghost">◆ ${t}</span>`).join('')}
+        </span></span>
+    </button>`).join('');
+  const detail = document.getElementById('inbox-detail');
+  detail.innerHTML = `
+    <div class="kicker"><span class="cap">${INBOX[0].src} · ${INBOX[0].time}</span></div>
+    <h3 style="font-size:19px;font-weight:650;line-height:1.35">${INBOX[0].title}</h3>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <span class="pill info">属于主题</span><span class="pill ghost">◆ 光子互连</span><span class="pill ghost">＋ 北岸盐运</span>
+    </div>
+    <div class="sect"><div class="sect-h">原文</div>
+      <p class="body">硅光技术在数据中心光模块中的渗透率已达到 35%，预计 2027 年将超过 50%。</p></div>
+    <div class="sect"><div class="sect-h">提取的要点 · 2</div>
+      <div class="prop"><div class="txt">硅光渗透率 35%（2026Q3）</div>
+        <div class="row"><select><option>目标原子：硅光渗透率</option></select><select><option>支持</option><option>挑战</option></select>
+        <button class="btn" style="padding:5px 10px">确认归位</button></div></div>
+      <div class="prop mapped"><div class="txt">产能利用率 92% → 已归位到「产能瓶颈」</div>
+        <div class="row"><span class="pill ok">已归位 · 支持</span><span class="cap">可撤销，账本保留原事件</span></div></div></div>`;
+  list.querySelectorAll('.item').forEach(el=>el.addEventListener('click', ()=>{
+    list.querySelectorAll('.item').forEach(x=>x.setAttribute('aria-selected','false'));
+    el.setAttribute('aria-selected','true');
+  }));
+}
+
+/* ---------- 建设者队列 ---------- */
+const QUEUE = [
+  { kind:'新原子', title:'Yole：硅光渗透率 35%', desc:'模型建议新建原子并追加一条支持证据', tone:'info' },
+  { kind:'归因', title:'财报：产能利用率 92%', desc:'建议归到「产能瓶颈」· 挑战', tone:'warn' },
+  { kind:'修订', title:'协会：良率窗口收窄', desc:'建议修订「良率窗口」的当前表述', tone:'rev' },
+  { kind:'新原子', title:'驿报：封路 23 日', desc:'历史主题的另一条外部数据', tone:'info' },
+];
+function renderQueue(){
+  document.getElementById('queue-list').innerHTML = QUEUE.map((q,i)=>`
+    <li><button class="qitem" aria-selected="${i===0}">
+      <span class="top"><span class="pill ${q.tone}">${q.kind}</span><span>2026-10-03</span></span>
+      <strong>${q.title}</strong><span class="desc">${q.desc}</span></button></li>`).join('');
+  document.querySelectorAll('#queue-list .qitem').forEach(el=>el.addEventListener('click', ()=>{
+    document.querySelectorAll('#queue-list .qitem').forEach(x=>x.setAttribute('aria-selected','false'));
+    el.setAttribute('aria-selected','true');
+  }));
+}
+
+/* ---------- 状态与事件 ---------- */
+const state = { view:'reader', themeIndex:0, scale:60 };
+function setTheme(i){
+  state.themeIndex = i;
+  const theme = THEMES[i];
+  document.getElementById('theme-dot').style.background = theme.dot;
+  document.getElementById('hero-title').textContent = theme.judgment;
+  document.getElementById('hero-sub').textContent = theme.sub;
+  document.getElementById('m-strength').innerHTML = `${theme.strength}<small>%</small>`;
+  document.getElementById('m-stance').innerHTML = `${theme.supports}<small> / ${theme.challenges}</small>`;
+  document.getElementById('m-evidence').textContent = theme.evidence;
+  document.getElementById('m-span').innerHTML = theme.span.includes('→') ? theme.span.replace(' → ','<small> → </small>') : theme.span;
+  document.getElementById('m-turns').innerHTML = theme.turns.map(t=>`<span class="pill ${t.includes('质疑')||t.includes('封路')?'warn':'ok'}">${t}</span>`).join('');
+  document.getElementById('cat-swatches').innerHTML = theme.categories
+    .map(c=>`<div class="sw" style="background:color-mix(in srgb, ${catColor(theme,c)} 16%, transparent);color:${catColor(theme,c)}">${c}</div>`).join('');
+  document.getElementById('cmp-before').textContent = `${theme.judgment}（强度 ${theme.strength}%）`;
+  document.getElementById('cmp-after').textContent = `强度将变为 ${Math.min(96, theme.strength+5)}%；外部数据 +1，合成轴 +1 个点`;
+  rebuildGraph();
+  drawAxis();
+}
+function rebuildGraph(){
+  const theme = THEMES[state.themeIndex];
+  const w = document.getElementById('graph').clientWidth || 900;
+  const h = 430;
+  graph = genGraph(theme, state.scale);
+  const res = layoutGraph(graph.nodes, graph.edges, w, h);
+  lastStats.layout = res.ms; lastStats.heavy = res.heavy; lastStats.n = state.scale;
+  buildAdj(graph.edges);
+  focusId = null;
+  drawGraph(); renderInspector();
+}
+function setView(v){
+  state.view = v;
+  document.querySelectorAll('#view-seg button').forEach(b=>b.setAttribute('aria-selected', String(b.dataset.view===v)));
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('is-on', s.id === 'view-'+v));
+  if (v==='reader'){ requestAnimationFrame(()=>{ drawAxis(); drawGraph() }) }
+}
+function setScale(n){
+  state.scale = Number(n);
+  document.querySelectorAll('#scale-seg button').forEach(b=>b.setAttribute('aria-selected', String(b.dataset.scale===String(n))));
+  const theme = THEMES[state.themeIndex];
+  document.getElementById('graph-stats').textContent = '布局中…';
+  requestAnimationFrame(()=>{ graph = genGraph(theme, state.scale); const r = layoutGraph(graph.nodes, graph.edges, document.getElementById('graph').clientWidth||900, 430);
+    lastStats.layout = r.ms; lastStats.heavy = r.heavy; buildAdj(graph.edges); focusId=null; drawGraph(); renderInspector() });
+}
+
+document.querySelectorAll('#view-seg button').forEach(b=>b.addEventListener('click', ()=>setView(b.dataset.view)));
+document.querySelectorAll('#scale-seg button').forEach(b=>b.addEventListener('click', ()=>setScale(b.dataset.scale)));
+document.getElementById('mode-toggle').addEventListener('click', ()=>{
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  requestAnimationFrame(()=>{ drawAxis(); drawGraph() });
+});
+document.getElementById('zoom').addEventListener('input', (e)=>{ zoom = Number(e.target.value); document.getElementById('zoom-badge').textContent = zoom.toFixed(2)+'×'; drawGraph() });
+document.getElementById('focus-clear').addEventListener('click', ()=>{ focusId=null; drawGraph(); renderInspector() });
+document.getElementById('gap-btn').addEventListener('click', ()=>{ document.getElementById('gap-toast').classList.add('on') });
+document.getElementById('gap-undo').addEventListener('click', (e)=>{ e.preventDefault(); document.getElementById('gap-toast').classList.remove('on') });
+document.getElementById('to-reader').addEventListener('click', ()=>setView('reader'));
+document.getElementById('graph').addEventListener('click', (ev)=>{
+  const canvas = ev.currentTarget, r = canvas.getBoundingClientRect();
+  const mx = ev.clientX-r.left, my = ev.clientY-r.top;
+  let best = null, bd = 26;
+  for (const nd of graph.nodes){ const d = Math.hypot(nd.x-mx, nd.y-my); if (d<bd){ bd=d; best=nd } }
+  focusId = best ? best.id : null;
+  drawGraph(); renderInspector();
+});
+window.addEventListener('resize', ()=>{ if (graph) { const r = layoutGraph(graph.nodes, graph.edges, document.getElementById('graph').clientWidth||900, 430); lastStats.layout=r.ms; drawGraph() } drawAxis() });
+window.addEventListener('error', (e)=>{ const d=document.getElementById('debug'); d.style.display='block'; d.textContent += (e.message||String(e.error)) + '\n' });
+
+/* ---------- 启动（支持 ?view=reader|builder|inbox&scale=60|300|1000&theme=0|1&mode=dark 便于逐状态评审） ---------- */
+(function boot(){
+  const pick = document.getElementById('theme-pick');
+  pick.innerHTML = THEMES.map((t,i)=>`<option value="${i}">${t.name}</option>`).join('');
+  pick.addEventListener('change', ()=>setTheme(Number(pick.value)));
+  renderInbox(); renderQueue();
+  const q = new URLSearchParams(location.search);
+  if (q.get('mode') === 'dark') document.documentElement.dataset.theme = 'dark';
+  const ti = Number(q.get('theme'));
+  pick.value = String(Number.isFinite(ti) && THEMES[ti] ? ti : 0);
+  setTheme(Number(pick.value));
+  /* 默认不聚焦：先把全貌给出来（检视器仍会展示主原子）；聚焦是"点一下"的动作 */
+  const sc = q.get('scale');
+  if (sc) setScale(sc);
+  drawGraph(); renderInspector();
+  const v = q.get('view');
+  setView(v === 'builder' || v === 'inbox' ? v : 'reader');
+  requestAnimationFrame(()=>{ drawAxis(); drawGraph(); renderInspector() });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Meridian · 闭环原型：收件箱 → 建设者 → 账本 → 读者</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --bg:#f5f5f7; --window:#ececed; --surface:#fff; --surface-2:rgba(29,29,31,.035); --surface-3:rgba(29,29,31,.06);
+  --text:#1d1d1f; --text-2:rgba(29,29,31,.68); --text-3:rgba(29,29,31,.55);
+  --line:rgba(0,0,0,.09); --line-2:rgba(0,0,0,.14);
+  --accent:#0071e3; --accent-soft:rgba(0,113,227,.1);
+  --green:#1f7a35; --green-dot:#34c759; --green-soft:rgba(52,199,89,.13);
+  --red:#b3261e;   --red-dot:#ff3b30;   --red-soft:rgba(255,59,48,.11);
+  --orange:#8a5200;--orange-dot:#ff9500;--orange-soft:rgba(255,149,0,.14);
+  --purple:#6b3fa0;--purple-dot:#af52de;--purple-soft:rgba(175,82,222,.12);
+  --r-lg:14px; --r:11px; --shadow:0 1px 2px rgba(0,0,0,.04),0 10px 30px -14px rgba(0,0,0,.14);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05); --ease:cubic-bezier(.4,0,.2,1);
+}
+html[data-theme="dark"]{
+  --bg:#1c1c1e; --window:#161618; --surface:#242426; --surface-2:rgba(255,255,255,.045); --surface-3:rgba(255,255,255,.075);
+  --text:#f5f5f7; --text-2:rgba(245,245,247,.7); --text-3:rgba(245,245,247,.55);
+  --line:rgba(255,255,255,.11); --line-2:rgba(255,255,255,.17);
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.16);
+  --green:#30d158; --green-dot:#30d158; --green-soft:rgba(48,209,88,.15);
+  --red:#ff6961;   --red-dot:#ff453a;   --red-soft:rgba(255,69,69,.15);
+  --orange:#ffb340;--orange-dot:#ff9f0a;--orange-soft:rgba(255,159,10,.15);
+  --purple:#d0a3ff;--purple-dot:#bf5af2;--purple-soft:rgba(191,90,242,.16);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 40px -18px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:13px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+h1,h2,h3,h4,p,ul,dl,dt,dd{margin:0}
+ul{padding:0;list-style:none}
+.num{font-variant-numeric:tabular-nums}
+.topbar{height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--window);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600}
+.brand-mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,var(--accent),var(--purple-dot));color:#fff;font-size:13px;font-weight:700;display:grid;place-items:center}
+.brand-sub{color:var(--text-3);font-weight:400;font-size:12px}
+.grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;color:var(--text-2)}
+.wrap{padding:16px 16px 90px;max-width:1800px;margin:0 auto}
+.cols{display:grid;grid-template-columns:minmax(300px,1fr) minmax(340px,1.05fr) minmax(420px,1.35fr);gap:14px;align-items:start}
+@media (max-width:1400px){.cols{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (max-width:980px){.cols{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.col-head{display:flex;align-items:baseline;gap:8px;padding:13px 14px 10px;border-bottom:1px solid var(--line);position:sticky;top:52px;background:var(--surface);border-radius:var(--r-lg) var(--r-lg) 0 0;z-index:5}
+.col-head h2{font-size:14px;font-weight:650}
+.col-head .cap{margin-left:auto}
+.cap{font-size:11.5px;color:var(--text-3);line-height:1.5}
+.body{padding:11px;display:grid;gap:9px;max-height:calc(100vh - 190px);overflow:auto}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:11.5px;font-weight:550}
+.pill.ok{background:var(--green-soft);color:var(--green)} .pill.bad{background:var(--red-soft);color:var(--red)}
+.pill.warn{background:var(--orange-soft);color:var(--orange)} .pill.rev{background:var(--purple-soft);color:var(--purple)}
+.pill.ghost{background:var(--surface-2);color:var(--text-2)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+.btn{padding:6px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:12px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row-acts{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px}
+
+/* 收件箱 */
+.item{padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.item.is-done{opacity:.55}
+.item .t{font-size:13.5px;font-weight:600;line-height:1.4}
+.item .m{display:flex;gap:7px;align-items:center;font-size:11px;color:var(--text-3);margin-top:5px;flex-wrap:wrap}
+.item .prov{font-family:var(--mono);font-size:10.5px;color:var(--text-3);word-break:break-all;margin-top:5px}
+.lemmas{margin-top:8px;display:grid;gap:5px}
+.lemma{display:flex;align-items:center;gap:7px;font-size:12px;padding:5px 8px;border-radius:7px;background:var(--surface-2)}
+.lemma .s{width:6px;height:6px;border-radius:50%;flex:none}
+.pick{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px;padding-top:9px;border-top:1px dashed var(--line-2)}
+select{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text)}
+
+/* 建设者 */
+.review{padding:13px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.review.is-queue{border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+.review h3{font-size:14.5px;font-weight:650;line-height:1.4}
+.trace{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin-top:10px;padding:9px;border-radius:9px;background:var(--surface-2)}
+.trace dt{font-size:10px;color:var(--text-3)} .trace dd{font-size:11.5px;font-family:var(--mono);word-break:break-all}
+.delta{margin-top:10px;font-size:12px;line-height:1.65}
+.delta b{font-weight:650}
+.fields{display:grid;gap:8px;margin-top:10px}
+.fields label{display:grid;gap:5px;font-size:11px;color:var(--text-3)}
+.fields input,.fields select,.fields textarea{font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text)}
+.empty{padding:14px;border:1px dashed var(--line-2);border-radius:var(--r);font-size:12px;color:var(--text-3);text-align:center}
+
+/* 读者 */
+.metrics{display:flex;gap:20px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.metric .k{font-size:10.5px;color:var(--text-3)} .metric .v{font-size:21px;font-weight:700;letter-spacing:-.02em}
+.metric .v small{font-size:11.5px;font-weight:600;color:var(--text-2)}
+.thumb-wrap{position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface)}
+#thumb{display:block;width:100%;height:150px}
+.thumb-tip{position:absolute;pointer-events:none;opacity:0;background:var(--surface);border:1px solid var(--line-2);border-radius:8px;box-shadow:var(--shadow);padding:6px 9px;font-size:11.5px;max-width:220px;z-index:6}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--text-2)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.atom{padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.atom .top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.atom h3{font-size:15px;font-weight:650;line-height:1.35;margin-top:8px}
+.evbar{display:flex;height:7px;border-radius:4px;overflow:hidden;margin-top:10px;background:var(--surface-3)}
+.evbar i{display:block;height:100%}
+.evbar .s{background:var(--green-dot)} .evbar .c{background:var(--red-dot)} .evbar .u{background:var(--line-2)}
+.quant{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11.5px;color:var(--text-2)}
+.quant b{color:var(--text)}
+.spark{width:66px;height:20px}
+.spark path{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linecap:round}
+.chain{margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--text-2);display:grid;gap:4px}
+.chain .ln{display:flex;gap:6px;align-items:flex-start}
+.chain .ln .arrow{color:var(--text-3);font-family:var(--mono);flex:none}
+.gap-item{display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:9px;font-size:12px;background:var(--surface)}
+.gap-item .spacer{flex:1}
+.gap-item .why{color:var(--text-3);font-size:11px}
+
+/* 账本 */
+.ledger{margin-top:14px}
+.ledger .body{max-height:220px}
+.ev{display:grid;grid-template-columns:56px 96px minmax(0,1fr);gap:9px;font-size:11.5px;padding:6px 0;border-top:1px solid var(--line)}
+.ev:first-of-type{border-top:0}
+.ev .seq{font-family:var(--mono);color:var(--text-3)}
+.ev .type{font-family:var(--mono);color:var(--accent);font-size:10.5px}
+.ev .say{color:var(--text)}
+.ev.is-new{background:var(--accent-soft)}
+.selfcheck{position:fixed;left:12px;bottom:12px;max-width:70ch;font-family:var(--mono);font-size:10.5px;color:var(--text-3);
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;white-space:pre-wrap;z-index:30;opacity:.85}
+#debug{position:fixed;right:12px;bottom:12px;max-width:60ch;font-family:var(--mono);font-size:11px;color:var(--red);
+  background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 9px;display:none;z-index:40;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">M</span><span>Meridian</span><span class="brand-sub">闭环原型 · 收件箱 → 建设者 → 账本 → 读者</span></div>
+  <div class="grow"></div>
+  <span class="chip" id="theme-chip">主题：光子互连的产业取舍</span>
+  <button class="chip" id="mode-toggle">◐ 明暗</button>
+  <button class="chip" id="reset">↺ 重置</button>
+</header>
+
+<div class="wrap">
+  <div class="cols">
+    <!-- ① 今日收件箱 -->
+    <section class="card">
+      <div class="col-head"><h2>① 今日收件箱</h2><span class="cap" id="inbox-cap"></span></div>
+      <div class="body" id="inbox"></div>
+    </section>
+
+    <!-- ② 建设者 -->
+    <section class="card">
+      <div class="col-head"><h2>② 建设者</h2><span class="cap" id="builder-cap"></span></div>
+      <div class="body" id="builder"></div>
+    </section>
+
+    <!-- ③ 读者 -->
+    <section class="card">
+      <div class="col-head"><h2>③ 读者（投影）</h2><span class="cap" id="reader-cap"></span></div>
+      <div class="body" id="reader"></div>
+    </section>
+  </div>
+
+  <!-- ④ 账本 -->
+  <section class="card ledger">
+    <div class="col-head"><h2>④ 事件账本（追加式 · 只增不改）</h2>
+      <span class="cap" id="ledger-cap"></span>
+      <button class="btn ghost" id="verify" style="margin-left:10px">校验链完整性</button></div>
+    <div class="body" id="ledger"></div>
+  </section>
+</div>
+
+<pre class="selfcheck" id="selfcheck">SELFCHECK PENDING</pre>
+<div id="debug"></div>
+
+<script>
+/* =========================================================================
+   模型：读者看到的一切 = 账本事件的投影。
+   事件只由两个地方产生：收件箱的「归位」、建设者的「确认」。
+   ========================================================================= */
+const THEME = { id:'t1', name:'光子互连的产业取舍', categories:['技术路线','关键问题','制造条件'] };
+const CAT_DOT = { '技术路线':'#0071e3', '关键问题':'#af52de', '制造条件':'#ff9500' };
+const errors = [];
+
+function seedInbox(){
+  return [
+    { id:'IN-011', status:'pending',
+      title:'Yole：硅光在数据中心光模块的渗透率已达 35%',
+      text:'硅光技术在数据中心光模块中的渗透率已达到 35%，预计 2027 年将超过 50%。',
+      provenance:{ url:'https://yole.example/reports/silicon-photonics-2026', sourceLabel:'Yole Group', publishedAt:'2026-09-28', fetchedAt:'2026-10-01' },
+      lemmas:[ { id:'L1', title:'硅光渗透率 35%', stance:'supports' }, { id:'L2', title:'2027 年将超 50%', stance:'supports' } ] },
+    { id:'IN-012', status:'pending',
+      title:'渠道调研：客户认证周期被拉长到 3 个季度',
+      text:'多家模块厂反馈，云厂商认证周期从 2 个季度拉长到 3 个季度，排产被迫后移。',
+      provenance:{ url:'https://channel.example/survey/2026-q3', sourceLabel:'渠道调研', publishedAt:'2026-09-30', fetchedAt:'2026-10-02' },
+      lemmas:[ { id:'L3', title:'认证周期 2 → 3 个季度', stance:'contradicts' } ] },
+    { id:'IN-013', status:'pending',
+      title:'财报：产能利用率 92%，接近瓶颈',
+      text:'本季产能利用率 92%，管理层称四季度没有新增产能投放计划。',
+      provenance:{ url:'https://ir.example/q3-2026', sourceLabel:'公司财报', publishedAt:'2026-10-01', fetchedAt:'2026-10-03' },
+      lemmas:[ { id:'L4', title:'产能利用率 92%', stance:'supports' } ] },
+    { id:'IN-014', status:'mounted', mountTarget:'a2',
+      title:'协会通报：良率窗口收窄约 15%',
+      text:'多家代工厂反馈良率窗口较上季度收窄约 15%，爬坡周期被拉长。',
+      provenance:{ url:'https://assoc.example/yield-window', sourceLabel:'行业协会通报', publishedAt:'2026-09-26', fetchedAt:'2026-09-30' },
+      lemmas:[ { id:'L5', title:'良率窗口收窄 15%', stance:'contradicts' } ] },
+  ];
+}
+/* 已有账本：主题本来就有 3 个观点 + 1 条证据（模拟"上一轮已经建好的模型"） */
+function seedLedger(){
+  const ev = [];
+  const push = (type, payload, say) => ev.push({ seq: ev.length+1, type, payload, say, at:'2026-09-20' });
+  push('node.created', { nodeId:'a1', title:'光子互连的产业取舍', atomCategory:'技术路线' }, '新增观点「光子互连的产业取舍」');
+  push('node.created', { nodeId:'a2', title:'良率窗口', atomCategory:'制造条件' }, '新增观点「良率窗口」');
+  push('node.created', { nodeId:'a3', title:'数据中心需求', atomCategory:'关键问题' }, '新增观点「数据中心需求」');
+  push('evidence.appended', { nodeId:'a2', sourceRef:'inbox:IN-004', sourceLabel:'SEMI 报告', sourceUrl:'https://semi.example/yield', publishedAt:'2026-08-15' }, '为「良率窗口」追加证据（SEMI 报告）');
+  push('relation.declared', { from:'ev1', to:'a2', rel:'supports' }, '声明「SEMI 报告」支持「良率窗口」');
+  push('confidence.updated', { nodeId:'a2', newConfidence:58, reason:'按证据强度累积' }, '「良率窗口」强度 0 → 58%');
+  /* 首屏就有一条"已归位、等建设者确认"的建议，让三栏都有内容 */
+  push('engine.recommendation.proposed', {
+    proposalId:'P-IN-014', kind:'evidence', inboxId:'IN-014', targetNodeId:'a2',
+    suggestedRel:'contradicts', note:'', sourceLabel:'行业协会通报', sourceUrl:'https://assoc.example/yield-window',
+    publishedAt:'2026-09-26', sourceRef:'inbox:IN-014',
+    text:'多家代工厂反馈良率窗口较上季度收窄约 15%，爬坡周期被拉长。',
+  }, '收件箱归位「IN-014」→ 生成一条建议（待建设者确认）');
+  return ev;
+}
+let ledger = [];
+let inbox = [];
+let nextSeq = 1;
+const state = { selectedAtom:null, lastNewSeqs:[] };
+
+/* ------------------------- 写事件（唯一入口） ------------------------- */
+function append(type, payload, say, at){
+  const ev = { seq: nextSeq++, type, payload, say, at: at || '2026-10-03' };
+  ledger.push(ev);
+  state.lastNewSeqs.push(ev.seq);
+  return ev;
+}
+
+/* ------------------------- 投影：读者看到的一切 ------------------------- */
+function project(){
+  const atoms = new Map();      // id → {id,title,category,evidence:[],relations:[],history:[],strength}
+  const evidence = new Map();   // evId → {id, nodeId, sourceLabel, sourceUrl, publishedAt, sourceRef, fromEvent}
+  const pendingProposals = [];
+  const reviewedProposalIds = new Set();
+  const evidenceBySource = new Map();
+
+  for (const ev of ledger){
+    const p = ev.payload || {};
+    if (ev.type === 'node.created'){
+      atoms.set(p.nodeId, { id:p.nodeId, title:p.title, category:p.atomCategory || '未分类', evidence:[], relations:[], history:[], strength:null });
+    } else if (ev.type === 'evidence.appended'){
+      evidence.set('ev'+ev.seq, { id:'ev'+ev.seq, nodeId:p.nodeId, sourceLabel:p.sourceLabel, sourceUrl:p.sourceUrl, publishedAt:p.publishedAt, sourceRef:p.sourceRef, seq:ev.seq });
+      const a = atoms.get(p.nodeId);
+      if (a) a.evidence.push('ev'+ev.seq);
+    } else if (ev.type === 'relation.declared'){
+      const a = atoms.get(p.to);
+      if (a) a.relations.push({ from:p.from, rel:p.rel, seq:ev.seq });
+    } else if (ev.type === 'confidence.updated'){
+      const a = atoms.get(p.nodeId);
+      if (a){ a.strength = p.newConfidence; a.history.push({ v:p.newConfidence, seq:ev.seq }); }
+    } else if (ev.type === 'engine.recommendation.proposed'){
+      pendingProposals.push({ id:p.proposalId, ...p, seq:ev.seq });
+    } else if (ev.type === 'signal.reviewed'){
+      reviewedProposalIds.add(p.proposalId);
+      if (p.decision === 'rejected'){ const a = atoms.get(p.targetNodeId); if (a) a.relations = a.relations.filter((r) => r.proposalId !== p.proposalId) }
+    }
+  }
+  const openProposals = pendingProposals.filter((p) => !reviewedProposalIds.has(p.id));
+  const list = [...atoms.values()].map((a) => {
+    const evs = a.evidence.map((id) => evidence.get(id)).filter(Boolean);
+    const sources = new Set(evs.map((e) => e.sourceLabel || e.sourceUrl || e.sourceRef));
+    const supports = a.relations.filter((r) => r.rel === 'supports').length;
+    const challenges = a.relations.filter((r) => r.rel === 'contradicts').length;
+    return { ...a, evidenceList:evs, sources:sources.size, supports, challenges,
+      bucket: evs.length === 0 ? 'none' : (supports > 0 && challenges > 0) ? 'contested' : sources.size === 1 ? 'single' : 'multi' };
+  });
+  return { atoms:list, evidence:[...evidence.values()], proposals:openProposals, allProposals:pendingProposals, reviewedProposalIds };
+}
+
+/* ------------------------- ① 收件箱动作 ------------------------- */
+function mountItem(itemId){
+  const item = inbox.find((i) => i.id === itemId);
+  if (!item || item.status !== 'pending') return;
+  const proj = project();
+  const target = item.mountTarget === '__new__' ? null : (item.mountTarget || (proj.atoms[0] && proj.atoms[0].id));
+  const proposalId = 'P-' + item.id;
+  append('engine.recommendation.proposed', {
+    proposalId,
+    kind: target ? 'evidence' : 'new-proposition',
+    inboxId: item.id,
+    targetNodeId: target,
+    suggestedTitle: target ? null : item.title.slice(0, 40),
+    suggestedAtomCategory: target ? null : (item.lemmas[0] && item.lemmas[0].stance === 'contradicts' ? '关键问题' : '技术路线'),
+    suggestedRel: (item.lemmas[0] && item.lemmas[0].stance) || 'supports',
+    note: '',
+    sourceLabel: item.provenance.sourceLabel,
+    sourceUrl: item.provenance.url,
+    publishedAt: item.provenance.publishedAt,
+    sourceRef: 'inbox:' + item.id,
+    text: item.text,
+  }, `收件箱归位「${item.id}」→ 生成一条建议（待建设者确认）`);
+  item.status = 'mounted';
+}
+
+/* ------------------------- ② 建设者动作 ------------------------- */
+function confirmProposal(proposalId, form){
+  const p = project().allProposals.find((x) => x.id === proposalId);
+  if (!p) return;
+  const targetId = form.targetNodeId || p.targetNodeId;
+  const isNew = !targetId || targetId === '__new__';
+  let nodeId = targetId;
+  if (isNew){
+    nodeId = 'a' + (Math.max(0, ...project().atoms.map((a) => Number(String(a.id).replace('a','')) || 0)) + 1);
+    append('node.created', { nodeId, title:form.title || p.suggestedTitle || '未命名观点', atomCategory:form.atomCategory || p.suggestedAtomCategory || '未分类' },
+      `新增观点「${form.title || p.suggestedTitle}」`);
+  }
+  const ev = append('evidence.appended', { nodeId, sourceRef:p.sourceRef, sourceLabel:p.sourceLabel, sourceUrl:p.sourceUrl, publishedAt:p.publishedAt, text:p.text, evidenceRefs:p.sourceUrl ? [{ type:'url', id:p.sourceUrl, title:p.sourceLabel }] : [] },
+    `为「${titleOfNode(nodeId)}」追加证据（${p.sourceLabel}）`);
+  append('relation.declared', { from:'ev'+ev.seq, to:nodeId, rel:form.rel || p.suggestedRel || 'supports', proposalId },
+    `声明「${p.sourceLabel}」${labelOfRel(form.rel || p.suggestedRel)}「${titleOfNode(nodeId)}」`);
+  const cur = project().atoms.find((a) => a.id === nodeId);
+  const delta = (form.rel || p.suggestedRel) === 'contradicts' ? -9 : 8;
+  const before = cur.strength == null ? null : cur.strength;
+  const after = Math.max(4, Math.min(96, (before == null ? 50 : before) + delta));
+  append('confidence.updated', { nodeId, oldConfidence:before, newConfidence:after, reason:'按证据强度累积' },
+    `「${titleOfNode(nodeId)}」强度 ${before == null ? '未记录' : before + '%'} → ${after}%`);
+  append('signal.reviewed', { proposalId, decision:'accepted', targetNodeId:nodeId, note:form.note || '', title:isNew ? (form.title || p.suggestedTitle) : null },
+    `建设者确认建议「${p.sourceLabel} → ${titleOfNode(nodeId)}」${form.note ? '（备注：' + form.note + '）' : ''}`);
+  const item = inbox.find((i) => i.id === p.inboxId);
+  if (item) item.status = 'done';
+}
+function rejectProposal(proposalId, note){
+  const p = project().allProposals.find((x) => x.id === proposalId);
+  if (!p) return;
+  append('signal.reviewed', { proposalId, decision:'rejected', targetNodeId:p.targetNodeId, note:note || '' },
+    `建设者驳回建议「${p.sourceLabel} → ${titleOfNode(p.targetNodeId)}」${note ? '（备注：' + note + '）' : ''}`);
+  const item = inbox.find((i) => i.id === p.inboxId);
+  if (item) item.status = 'rejected';
+}
+function titleOfNode(id){ const a = project().atoms.find((x) => x.id === id); return a ? a.title : id }
+function labelOfRel(rel){ return rel === 'contradicts' ? '挑战' : rel === 'derives' ? '推导' : '支持' }
+
+/* ------------------------- 渲染：收件箱 ------------------------- */
+function renderInbox(){
+  const proj = project();
+  const pending = inbox.filter((i) => i.status === 'pending').length;
+  const mounted = inbox.filter((i) => i.status === 'mounted').length;
+  document.getElementById('inbox-cap').textContent = `待归位 ${pending} · 已归位待确认 ${mounted} · 30 天后清理`;
+  const host = document.getElementById('inbox');
+  host.replaceChildren(...inbox.map((item) => {
+    const el = document.createElement('div');
+    el.className = 'item' + (item.status !== 'pending' ? ' is-done' : '');
+    const stanceOf = (s) => s === 'supports' ? { c:'var(--green-dot)', t:'支持' } : s === 'contradicts' ? { c:'var(--red-dot)', t:'挑战' } : { c:'var(--line-2)', t:'未表态' };
+    el.innerHTML = `
+      <div class="t">${item.title}</div>
+      <div class="m">
+        <span class="pill ${item.status === 'pending' ? 'warn' : item.status === 'mounted' ? 'acc' : 'ghost'}">
+          ${item.status === 'pending' ? '待处理' : item.status === 'mounted' ? '已归位 · 等建设者确认' : '已驳回'}</span>
+        <span>${item.provenance.sourceLabel}</span><span>·</span><span>发布 ${item.provenance.publishedAt}</span>
+        <span>·</span><span>抓取 ${item.provenance.fetchedAt}</span>
+      </div>
+      <div class="prov">${item.provenance.url}</div>
+      <div class="lemmas">${item.lemmas.map((l) => {
+        const s = stanceOf(l.stance);
+        return `<div class="lemma"><span class="s" style="background:${s.c}"></span><span>${l.title}</span>
+          <span class="pill ghost" style="margin-left:auto">${s.t}</span></div>`;
+      }).join('')}</div>
+      ${item.status === 'pending' ? `
+      <div class="pick">
+        <span class="cap">归位到</span>
+        <select data-target="${item.id}">
+          <option value="__new__">＋ 新建观点</option>
+          ${proj.atoms.map((a) => `<option value="${a.id}">${a.title}</option>`).join('')}
+        </select>
+        <button class="btn primary" data-mount="${item.id}">归位</button>
+        <button class="btn ghost" data-reject="${item.id}">忽略</button>
+      </div>` : ''}`;
+    return el;
+  }));
+  host.querySelectorAll('[data-mount]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.mount;
+    const sel = host.querySelector(`[data-target="${id}"]`);
+    const item = inbox.find((i) => i.id === id);
+    item.mountTarget = sel ? sel.value : '__new__';
+    mountItem(id); render();
+  }));
+  host.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => {
+    const item = inbox.find((i) => i.id === b.dataset.reject);
+    item.status = 'rejected'; render();
+  }));
+}
+
+/* ------------------------- 渲染：建设者 ------------------------- */
+function renderBuilder(){
+  const proj = project();
+  document.getElementById('builder-cap').textContent = `待确认建议 ${proj.proposals.length}（来源：收件箱归位）`;
+  const host = document.getElementById('builder');
+  if (!proj.proposals.length){
+    host.innerHTML = `<div class="empty">队列为空。去左边「归位」一条外部数据，建议会出现在这里。</div>`;
+    return;
+  }
+  host.replaceChildren(...proj.proposals.map((p) => {
+    const isNew = !p.targetNodeId;
+    const cur = isNew ? null : proj.atoms.find((a) => a.id === p.targetNodeId);
+    const rel = p.suggestedRel || 'supports';
+    const before = cur && cur.strength != null ? cur.strength : null;
+    const after = Math.max(4, Math.min(96, (before == null ? 50 : before) + (rel === 'contradicts' ? -9 : 8)));
+    const el = document.createElement('div');
+    el.className = 'review is-queue';
+    el.innerHTML = `
+      <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+        <span class="pill warn">待人工确认</span>
+        <span class="pill ghost">${isNew ? '新观点' : '追加证据'}</span>
+        <span class="cap" style="margin-left:auto">来自 ${p.inboxId}</span>
+      </div>
+      <h3 style="margin-top:8px">${p.sourceLabel}：${(p.text || '').slice(0, 34)}…</h3>
+      <div class="trace">
+        <div><dt>来源</dt><dd>${p.sourceLabel}</dd></div>
+        <div><dt>来源时间</dt><dd>${p.publishedAt}</dd></div>
+        <div><dt>收件箱条目</dt><dd>${p.inboxId}</dd></div>
+        <div><dt>链接</dt><dd><a href="#" onclick="return false" style="color:var(--accent)">打开 ↗</a></dd></div>
+      </div>
+      <div class="delta">
+        <div><b>确认后会产生：</b></div>
+        <div>① ${isNew ? '新建观点 + 1' : '证据 + 1（挂到「' + (cur ? cur.title : '?') + '」）'}</div>
+        <div>② 关系：${labelOfRel(rel)} · 独立来源 ${cur ? cur.sources : 0} → ${cur ? cur.sources + 1 : 1} 家</div>
+        <div>③ 强度 ${before == null ? '未记录' : before + '%'} → <b>${after}%</b>；读者页立刻变</div>
+      </div>
+      <div class="fields">
+        <label>目标观点
+          <select data-f-target="${p.id}">
+            <option value="__new__" ${isNew ? 'selected' : ''}>＋ 新建观点</option>
+            ${proj.atoms.map((a) => `<option value="${a.id}" ${a.id === p.targetNodeId ? 'selected' : ''}>${a.title}</option>`).join('')}
+          </select></label>
+        <label>新观点标题（新建时用）<input data-f-title="${p.id}" value="${p.suggestedTitle || ''}"></label>
+        <label>关系类型
+          <select data-f-rel="${p.id}">
+            <option value="supports" ${rel === 'supports' ? 'selected' : ''}>支持</option>
+            <option value="contradicts" ${rel === 'contradicts' ? 'selected' : ''}>挑战</option>
+            <option value="derives" ${rel === 'derives' ? 'selected' : ''}>推导</option>
+          </select></label>
+        <label>备注（可留空 · 只进 note，不做枚举校验）<input data-f-note="${p.id}" placeholder="例如：这条改写了渗透率的上界"></label>
+      </div>
+      <div class="row-acts">
+        <button class="btn primary" data-confirm="${p.id}">确认并追加事件</button>
+        <button class="btn" data-reject-p="${p.id}">驳回</button>
+      </div>`;
+    return el;
+  }));
+  host.querySelectorAll('[data-confirm]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.confirm;
+    confirmProposal(id, {
+      targetNodeId: host.querySelector(`[data-f-target="${id}"]`).value,
+      title: host.querySelector(`[data-f-title="${id}"]`).value.trim(),
+      rel: host.querySelector(`[data-f-rel="${id}"]`).value,
+      note: host.querySelector(`[data-f-note="${id}"]`).value.trim(),
+    });
+    render();
+  }));
+  host.querySelectorAll('[data-reject-p]').forEach((b) => b.addEventListener('click', () => {
+    rejectProposal(b.dataset.rejectP, ''); render();
+  }));
+}
+
+/* ------------------------- 渲染：读者（纯投影） ------------------------- */
+function drawThumb(proj){
+  const canvas = document.getElementById('thumb');
+  if (!canvas) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = canvas.clientWidth || 380, h = canvas.clientHeight || 150;
+  if (canvas.width !== w*dpr || canvas.height !== h*dpr){ canvas.width = w*dpr; canvas.height = h*dpr }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const cats = [...new Set(proj.atoms.map((a) => a.category))];
+  const pos = new Map();
+  const cx = w/2, cy = h/2, R = Math.min(w,h)*0.28;
+  cats.forEach((cat, ci) => {
+    const ang = (ci/Math.max(1,cats.length))*Math.PI*2 - Math.PI/2;
+    const cc = { x: cx + R*Math.cos(ang), y: cy + R*Math.sin(ang) };
+    ctx.save(); ctx.globalAlpha = .1;
+    const g = ctx.createRadialGradient(cc.x, cc.y, 2, cc.x, cc.y, 40);
+    g.addColorStop(0, CAT_DOT[cat] || '#8e8e93'); g.addColorStop(1, 'transparent');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cc.x, cc.y, 40, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    const list = proj.atoms.filter((a) => a.category === cat);
+    list.forEach((a, i) => {
+      const aa = i*2.399963, r = 16*Math.sqrt((i+1)/Math.max(1,list.length));
+      pos.set(a.id, { x: cc.x + r*Math.cos(aa), y: cc.y + r*Math.sin(aa) });
+    });
+  });
+  for (const a of proj.atoms){
+    const p = pos.get(a.id); if (!p) continue;
+    const r = 1.8 + Math.min(4, a.sources*1.1);
+    ctx.save(); ctx.globalAlpha = .92; ctx.fillStyle = CAT_DOT[a.category] || '#8e8e93';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+    if (a.evidenceList.length === 0){ ctx.globalAlpha = .8; ctx.strokeStyle = 'rgba(255,149,0,.95)'; ctx.lineWidth = 1.2;
+      ctx.setLineDash([2,2]); ctx.beginPath(); ctx.arc(p.x, p.y, r+3, 0, Math.PI*2); ctx.stroke(); ctx.setLineDash([]) }
+    if (state.selectedAtom === a.id){ ctx.globalAlpha = 1; ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0071e3';
+      ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r+5, 0, Math.PI*2); ctx.stroke() }
+    ctx.restore();
+  }
+  canvas.onmousemove = (ev) => {
+    const rr = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rr.left, my = ev.clientY - rr.top;
+    let best = null, bd = 10;
+    for (const [id,p] of pos){ const d = Math.hypot(p.x-mx, p.y-my); if (d < bd){ bd = d; best = id } }
+    const tip = document.getElementById('thumb-tip');
+    if (!best){ tip.style.opacity = 0; return }
+    const a = proj.atoms.find((x) => x.id === best);
+    tip.innerHTML = `<b>${a.title}</b><div class="cap">${a.category} · 独立来源 ${a.sources} · 支持 ${a.supports} / 挑战 ${a.challenges}</div>`;
+    tip.style.left = Math.min(rr.width-230, Math.max(4, mx+10)) + 'px';
+    tip.style.top = Math.max(4, my-6) + 'px';
+    tip.style.opacity = 1;
+  };
+  canvas.onclick = (ev) => {
+    const rr = canvas.getBoundingClientRect();
+    const mx = ev.clientX - rr.left, my = ev.clientY - rr.top;
+    let best = null, bd = 12;
+    for (const [id,p] of pos){ const d = Math.hypot(p.x-mx, p.y-my); if (d < bd){ bd = d; best = id } }
+    if (best){ state.selectedAtom = state.selectedAtom === best ? null : best; render() }
+  };
+  canvas.onmouseleave = () => { document.getElementById('thumb-tip').style.opacity = 0 };
+  return pos.size;
+}
+function sparkline(history){
+  if (!history || history.length < 2) return '<span class="cap">强度未记录</span>';
+  const w = 66, h = 20, vals = history.map((x) => x.v), min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const pts = vals.map((v,i) => `${(i/(vals.length-1)*w).toFixed(1)},${(h-(v-min)/span*h).toFixed(1)}`).join(' L');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-label="强度趋势"><path d="M${pts}"/></svg>`;
+}
+function renderReader(){
+  const proj = project();
+  const withSources = proj.atoms.filter((a) => a.evidenceList.length > 0).length;
+  const sources = new Set(proj.evidence.map((e) => e.sourceLabel)).size;
+  const gaps = proj.atoms.filter((a) => a.evidenceList.length === 0).length;
+  const contested = proj.atoms.filter((a) => a.bucket === 'contested').length;
+  const host = document.getElementById('reader');
+  const ranked = proj.atoms.slice().sort((a,b) => (b.sources - a.sources) || (b.evidenceList.length - a.evidenceList.length));
+  const top = state.selectedAtom ? ranked.filter((a) => a.id === state.selectedAtom) : ranked.slice(0,4);
+  document.getElementById('reader-cap').textContent = `全部数字来自账本投影 · 共 ${ledger.length} 条事件`;
+
+  const gapsHtml = [];
+  for (const a of proj.atoms.filter((x) => x.evidenceList.length === 0)){
+    gapsHtml.push(`<div class="gap-item"><span class="pill warn">没有来源</span><span>${a.title}</span>
+      <span class="spacer"></span><span class="why">缺口 = 事件缺失</span>
+      <button class="btn ghost" data-goto="inbox">去收件箱补</button></div>`);
+  }
+  for (const p of proj.proposals){
+    gapsHtml.push(`<div class="gap-item"><span class="pill acc">待确认</span><span>${p.sourceLabel} → ${p.targetNodeId ? titleOfNode(p.targetNodeId) : '新观点'}</span>
+      <span class="spacer"></span><span class="why">来自 ${p.inboxId}</span>
+      <button class="btn ghost" data-goto="builder">去建设者确认</button></div>`);
+  }
+
+  host.innerHTML = `
+    <div class="metrics">
+      <div class="metric"><div class="k">观点</div><div class="v num">${proj.atoms.length}</div></div>
+      <div class="metric"><div class="k">覆盖率（≥1 条已表态来源）</div><div class="v num">${withSources}<small> / ${proj.atoms.length}（${Math.round(withSources/Math.max(1,proj.atoms.length)*100)}%）</small></div></div>
+      <div class="metric"><div class="k">独立来源</div><div class="v num">${sources}</div></div>
+      <div class="metric"><div class="k">有争议</div><div class="v num">${contested}</div></div>
+      <div class="metric"><div class="k">缺口</div><div class="v num" style="color:var(--orange)">${gaps + proj.proposals.length}</div></div>
+    </div>
+    <div class="thumb-wrap"><canvas id="thumb"></canvas><div class="thumb-tip" id="thumb-tip"></div></div>
+    <div class="legend">
+      ${[...new Set(proj.atoms.map((a) => a.category))].map((c) => `<span><i style="background:${CAT_DOT[c] || '#8e8e93'}"></i>${c}</span>`).join('')}
+      <span><i style="background:transparent;border:1px dashed var(--orange-dot)"></i>没有来源</span>
+      <span class="cap">点大小 = 独立来源家数 · 点颜色 = 分类</span>
+    </div>
+    <div class="cap" style="margin-top:2px">最强/最有据的 ${top.length} 条观点（点缩略图可下钻）</div>
+    ${top.map((a) => {
+      const total = Math.max(1, a.supports + a.challenges + Math.max(0, a.evidenceList.length - a.supports - a.challenges));
+      const unstated = Math.max(0, a.evidenceList.length - a.supports - a.challenges);
+      return `<div class="atom">
+        <div class="top">
+          <span class="pill ghost" style="gap:6px"><i style="width:7px;height:7px;border-radius:50%;background:${CAT_DOT[a.category] || '#8e8e93'};display:inline-block"></i>${a.category}</span>
+          <span class="pill ghost">支持 ${a.supports} · 挑战 ${a.challenges} · 独立来源 ${a.sources}</span>
+          ${a.bucket === 'none' ? '<span class="pill warn">没有来源</span>' : a.bucket === 'contested' ? '<span class="pill bad">有争议</span>' : a.bucket === 'single' ? '<span class="pill warn">单一来源</span>' : '<span class="pill ok">多来源一致</span>'}
+        </div>
+        <h3>${a.title}</h3>
+        <div class="evbar" role="img" aria-label="支持 ${a.supports}、挑战 ${a.challenges}、未表态 ${unstated}">
+          <i class="s" style="width:${a.supports/total*100}%"></i><i class="c" style="width:${a.challenges/total*100}%"></i><i class="u" style="width:${unstated/total*100}%"></i></div>
+        <div class="quant">
+          <span>强度 <b>${a.strength == null ? '未记录' : a.strength + '%'}</b></span>
+          ${sparkline(a.history)}
+          <span>证据 <b>${a.evidenceList.length}</b></span>
+          <span>最近 <b>${a.evidenceList.length ? a.evidenceList[a.evidenceList.length-1].publishedAt : '—'}</b></span>
+        </div>
+        ${a.evidenceList.length ? `<div class="chain">
+          ${a.evidenceList.slice(-2).map((e) => `<div class="ln"><span class="arrow">←</span>
+            <span>证据 #${e.seq}：${e.sourceLabel} · ${e.publishedAt} · 来自 <b>${e.sourceRef}</b>
+            <a href="#" onclick="return false" style="color:var(--accent)">打开 ↗</a></span></div>`).join('')}
+          ${a.history.length ? `<div class="ln"><span class="arrow">↗</span><span>强度由事件 #${a.history[a.history.length-1].seq} 写入（confidence.updated）</span></div>` : ''}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
+    <div class="cap" style="margin-top:4px">缺口清单（每条都能回到产生它的那一栏）</div>
+    ${gapsHtml.join('') || '<div class="empty">没有缺口</div>'}`;
+
+  const drawn = drawThumb(proj);
+  host.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => {
+    const col = b.dataset.goto;
+    const idx = col === 'inbox' ? 0 : 1;
+    const target = document.querySelectorAll('.cols .card')[idx];
+    target?.scrollIntoView({ behavior:'smooth', block:'center' });
+    target?.animate([{ outline:'2px solid var(--accent)' }, { outline:'2px solid transparent' }], { duration:1200 });
+  }));
+  return { proj, drawn };
+}
+
+/* ------------------------- 渲染：账本 ------------------------- */
+function renderLedger(){
+  document.getElementById('ledger-cap').textContent = `共 ${ledger.length} 条事件 · 追加式`;
+  const host = document.getElementById('ledger');
+  host.replaceChildren(...ledger.slice().reverse().map((ev) => {
+    const el = document.createElement('div');
+    el.className = 'ev' + (state.lastNewSeqs.includes(ev.seq) ? ' is-new' : '');
+    el.innerHTML = `<span class="seq">#${ev.seq}</span><span class="type">${ev.type}</span><span class="say">${ev.say}</span>`;
+    return el;
+  }));
+}
+function verifyChain(){
+  const ok = ledger.every((ev, i) => ev.seq === i+1);
+  append('chain.verified', { ok, count:ledger.length }, `校验链完整性：${ok ? '通过' : '失败'}（${ledger.length} 条）`);
+  render();
+  return ok;
+}
+
+/* ------------------------- 总渲染 ------------------------- */
+function render(){
+  renderInbox(); renderBuilder(); const r = renderReader(); renderLedger();
+  selfCheck(r);
+}
+function snapshot(){
+  const p = project();
+  return { 事件: ledger.length, 观点: p.atoms.length, 证据: p.evidence.length,
+    独立来源: new Set(p.evidence.map((e) => e.sourceLabel)).size,
+    待确认建议: p.proposals.length,
+    缺口: p.atoms.filter((a) => a.evidenceList.length === 0).length + p.proposals.length,
+    强度已记录: p.atoms.filter((a) => a.strength != null).length };
+}
+function selfCheck(r){
+  const canvas = document.getElementById('thumb');
+  let ink = null;
+  try {
+    if (canvas && canvas.width){
+      const d = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+      let n = 0; for (let i=3;i<d.length;i+=4) if (d[i] > 0) n++;
+      ink = +(n/(d.length/4)*100).toFixed(1);
+    }
+  } catch (e) { errors.push('ink:' + e.message) }
+  const out = { 快照:snapshot(), 缩略图点:(r && r.drawn) || 0, 缩略图墨迹:ink,
+    读者卡片: document.querySelectorAll('#reader .atom').length, 缺口项: document.querySelectorAll('#reader .gap-item').length,
+    账本行: document.querySelectorAll('#ledger .ev').length, 错误: errors };
+  document.getElementById('selfcheck').textContent = 'SELFCHECK ' + JSON.stringify(out);
+  window.__SELFCHECK__ = out;
+}
+
+/* ------------------------- 闭环自动测试（可复核） ------------------------- */
+function loopTest(){
+  const before = snapshot();
+  const item = inbox.find((i) => i.status === 'pending');
+  if (!item) return { error:'没有待归位条目' };
+  const t1 = { 收件箱归位: item.id, 归位前: snapshot() };
+  item.mountTarget = '__new__';
+  mountItem(item.id);
+  t1.归位后 = snapshot();
+  const p = project().proposals[0];
+  confirmProposal(p.id, { targetNodeId:'__new__', title:'认证周期拉长（来自收件箱）', rel:'contradicts', note:'这条改写了排产假设' });
+  const t2 = { 建设者确认: p.id, 确认后: snapshot() };
+  return { 归位前: before, 归位后: t1.归位后, 确认后: t2.确认后, 事件增量: ledger.length - before.事件 };
+}
+
+/* ------------------------- 启动 ------------------------- */
+function resetAll(){
+  ledger = []; nextSeq = 1; state.lastNewSeqs = []; state.selectedAtom = null;
+  inbox = seedInbox();
+  for (const ev of seedLedger()) ledger.push({ ...ev, seq: nextSeq++ });
+  render();
+}
+document.getElementById('mode-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  render();
+});
+document.getElementById('reset').addEventListener('click', () => resetAll());
+document.getElementById('verify').addEventListener('click', () => verifyChain());
+window.addEventListener('error', (e) => {
+  errors.push(String(e.message || e.error));
+  const d = document.getElementById('debug'); d.style.display = 'block'; d.textContent += (e.message || String(e.error)) + '\n';
+});
+resetAll();
+/* 闭环自测：跑一遍「归位 → 确认」并记录数字变化，然后把状态还原——保证你打开时看到的是干净的初始态 */
+(function runLoopTest(){
+  const saved = JSON.stringify({ ledger, inbox, nextSeq });
+  window.__LOOPTEST__ = loopTest();
+  const restored = JSON.parse(saved);
+  ledger = restored.ledger; inbox = restored.inbox; nextSeq = restored.nextSeq;
+  state.lastNewSeqs = []; state.selectedAtom = null;
+  render();
+  document.getElementById('selfcheck').textContent += '\nLOOPTEST ' + JSON.stringify(window.__LOOPTEST__);
+})();
+</script>
+</body>
+</html>
