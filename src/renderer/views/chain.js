@@ -913,6 +913,7 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     const renderSelected = (entry) => {
       clear(detail)
+      updateFlowSteps(entry)
       if (!entry) {
         detail.append(h('div', { class: 'builder-review-empty' },
           h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),
