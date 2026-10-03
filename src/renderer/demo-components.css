@@ -1372,6 +1372,7 @@
 .meridian-theme .review-ai-note {font-size: var(--t-footnote); color:var(--text-3); margin:0; }
 .meridian-theme .review-advanced {margin-bottom:16px; }
 .meridian-theme .review-advanced summary {font-size: var(--t-body); color:var(--text-2); cursor:pointer; }
+.meridian-theme .review-foot-label { color:var(--text-2); font-size:var(--t-footnote); font-weight:var(--fw-medium); }
 .meridian-theme .review-card-foot {display:flex; justify-content:space-between; align-items:center; padding-top:18px; border-top:1px solid var(--line); }
 .meridian-theme .review-foot-hint {font-size: var(--t-footnote); color:var(--text-3); }
 .meridian-theme .review-foot-actions {display:flex; gap:10px; }

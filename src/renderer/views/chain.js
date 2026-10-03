@@ -438,7 +438,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       const response = await m.chainConfirmSignal(theme.id, sig.id, decision, change, '')
       if (response?.ok === false) throw new Error(response.error || '确认没能记录上')
       verdictState.set(sig.id, decision === 'accepted' ? 'accepted' : decision === 'rejected' ? 'rejected' : 'edited')
-      toast(decision === 'accepted' ? '已接受 · 决定事件已追加'
+      toast(decision === 'accepted' ? '已确认 · 决定事件已追加'
         : decision === 'rejected' ? '已驳回 · 原事件保留，决定事件已追加' : '建议已修订 · 决定事件已追加')
     } catch (e) {
       toast('处理失败：' + (e?.message || e), 'var(--red)')
@@ -591,14 +591,19 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('div', { class: 'signal-impacts' },
           h('span', { class: 'lead' }, '影响'),
           impactPill),
-        h('div', { class: 'verdict' },
-          h('span', { class: 'lead' }, '你的处理'),
+        /* 与新卡共用同一套动作行结构（.review-card-foot / .review-foot-label / .review-foot-actions） */
+        h('div', { class: 'review-card-foot review-card-foot-legacy' },
+          h('span', { class: 'review-foot-label' }, '你的处理'),
+          h('span', { class: `verdict-status ${status}` },
+            h('span', { class: 'dot' }),
+            statusMap[status]),
+          h('div', { class: 'review-foot-actions' },
           h('button', {
             type: 'button', disabled: isResolved,
             class: `verdict-btn accept${status === 'accepted' ? ' active' : ''}`,
             'data-v': sig.id, 'data-act': 'accept',
             onclick: (e) => { e.stopPropagation(); acceptSignal(sig) },
-          }, '✓ 接受'),
+          }, '✓ 确认'),
           h('button', {
             type: 'button', disabled: isResolved,
             class: `${status === 'edited' ? 'active' : ''}`,
@@ -617,10 +622,7 @@ async function loadConcept(theme, ledgerPane, opts) {
             class: `verdict-btn reject${status === 'rejected' ? ' active' : ''}`,
             'data-v': sig.id, 'data-act': 'reject',
             onclick: (e) => { e.stopPropagation(); rejectSignal(sig) },
-          }, '✕ 驳回'),
-          h('span', { class: `verdict-status ${status}` },
-            h('span', { class: 'dot' }),
-            statusMap[status])),
+          }, '✕ 驳回'))),
         editor)
     )
     return card

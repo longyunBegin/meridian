@@ -381,6 +381,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {} } 
       advancedOptions,
       // 底部操作
       h('div', { class: 'review-card-foot' },
+        h('span', { class: 'review-foot-label' }, '你的处理'),
         status,
         h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。'),
         h('div', { class: 'review-foot-actions' }, reject, confirm)))
