@@ -1,11 +1,17 @@
 import { h, toast, confirmToast } from '../lib/dom.js'
-import { state, refresh, setView } from '../app.js'
+import { state, refresh, setView, selectTheme } from '../app.js'
 import { renderChainSection, openNodeDetail, openEvidenceDetail } from './chain.js'
 import { renderReaderView } from './reader.js'
 import { requestBuilderPane, requestBuilderNodeFocus, requestChainEventJump } from '../lib/chain-ui-model.js'
 
 const m = window.meridian
 const themeViewKey = (themeId) => `meridian:theme-view:${themeId}`
+
+/** 从别的页面直接进某主题的建设者（今日的「去判」入口）：先记下视图选择再切主题，renderTheme 按它挂载。 */
+export function openThemeBuilder(themeId) {
+  try { localStorage.setItem(themeViewKey(themeId), 'builder') } catch { /* 存不下就按主题默认视图打开 */ }
+  selectTheme(themeId)
+}
 
 /**
  * L2 词表编辑器：一行一项，可改可删，底部可加。保存后整表覆写 theme.config，

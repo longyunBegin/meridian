@@ -42,7 +42,7 @@ import '../styles.css'
     const inboxItem = {
       id: 'synthetic-inbox-item', title: '隔离合成来源条目', text: '合成摘录：本条仅用于验证摄入、抽取与复核交互，不代表真实来源。',
       createdAt: '2026-09-21T10:00:00.000Z', extracted: false,
-      provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://example.test/synthetic-builder-source', publishedAt: '2026-09-18', fetchedAt: '2026-09-21T09:55:00.000Z' },
+      provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://www.reuters.com/fixture/synthetic-builder-source', publishedAt: '2026-09-18', fetchedAt: '2026-09-21T09:55:00.000Z' },
     }
     const commandCalls = []
     const decisions = new Map()
@@ -477,7 +477,7 @@ import '../styles.css'
       evidenceDialog.querySelector('[aria-label="要关联到的非证据节点"]').value = target.id
       evidenceDialog.querySelector('[aria-label="证据摘要或原文摘录"]').value = '手工输入的合成来源摘录。'
       evidenceDialog.querySelector('[aria-label="来源名称"]').value = '隔离手工来源'
-      evidenceDialog.querySelector('[aria-label="来源链接"]').value = 'https://example.test/manual-source'
+      evidenceDialog.querySelector('[aria-label="来源链接"]').value = 'https://www.reuters.com/fixture/manual-source'
       evidenceDialog.querySelector('[aria-label="来源发布时间"]').value = '2026-09-12'
       evidenceDialog.querySelector('[aria-label="适用时间"]').value = '2026Q3'
       evidenceDialog.querySelector('button[type="submit"]').click()
@@ -494,7 +494,7 @@ import '../styles.css'
       readerTab.click()
       /* 用户决定：读者页不要时间回放、也不要全节点关系图——两者已连代码一并删除。
          这里改为断言"回放块不存在"，并把"选节点"改走观点卡片（图下线后的等价路径）。 */
-      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-cluster-canvas'), '主题读者视图挂载')
+      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-brief'), '主题读者视图挂载')
       check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
         !themeMount.querySelector('.rdr-replay-details') && events.length === liveEventCount)
       const readerNode = themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`)

@@ -16,18 +16,10 @@
  */
 import { SOURCE_QUALITY } from './store.js'
 import { readUsage } from './llmlog.js'
+import { SOURCE_KEYWORD_RULES as RULES } from '../shared/evidence-weight.js'
 
 const KINDS = SOURCE_QUALITY.map(([k]) => k)
 const QUALITY = new Map(SOURCE_QUALITY)
-
-const RULES = [
-  ['财报 / 公告', /财报|年报|季报|公告|招股|股东信|10-?[KQ]|业绩快报/i],
-  ['一手数据', /我们跟踪|供应链|产业链调研|调研纪要|访谈|实测|内部数据|我们测算|草根/i],
-  ['券商研报', /研报|中信|中金|海通|广发|招商|我们预计|目标价|评级|买入|增持/i],
-  ['独立媒体', /据报道|据悉|彭博|路透|财新|华尔街日报|第一财经|记者/i],
-  ['自媒体', /公众号|头条号|知乎|小红书|B\s?站|个人观点|笔者认为/i],
-  ['群聊转发', /群里|转发|听说|有人讲|截图|小道消息|内部消息/i],
-]
 
 /** 零依赖兜底：关键词命中即归类，未命中按独立媒体处理。 */
 export function tableLabel(text) {

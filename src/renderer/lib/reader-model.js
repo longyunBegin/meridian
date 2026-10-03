@@ -731,7 +731,7 @@ export const estimateReadSeconds = (model) => {
 /**
  * 计算综合理解横幅数据：最强共识与最大分歧
  * @param {Array} nodes - 投影节点列表
- * @param {Function} evidenceForNode - 获取节点证据的函数
+ * @param {Function} evidenceForNode - (nodeId) => { supports, against, both }，与本文件其它函数同签名
  * @returns {Object|null} { strongest, mostDisputed, nodeCount } 或 null
  */
 export function synthesisSummary(nodes = [], evidenceForNodeFn = null) {
@@ -755,7 +755,7 @@ export function synthesisSummary(nodes = [], evidenceForNodeFn = null) {
     let support = 0, challenge = 0;
     if (evidenceForNodeFn) {
       try {
-        const summary = evidenceForNodeFn({ projection: { nodes } }, node.id);
+        const summary = evidenceForNodeFn(node.id);
         support = (summary.supports?.length || 0) + (summary.both?.length || 0);
         challenge = (summary.against?.length || 0) + (summary.both?.length || 0);
       } catch { /* 忽略 */ }

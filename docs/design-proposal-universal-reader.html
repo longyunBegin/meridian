@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>读者页 · 通用方案草图</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --surface: #fff; --hairline: rgba(0,0,0,.1); --hairline-soft: rgba(0,0,0,.06); --hover: rgba(0,0,0,.05);
+    --text-1: #1d1d1f; --text-2: #55555a; --text-3: #8e8e93; --accent: #0071e3;
+    --orange: #a35800; --red: #c4161c; --green: #1a7f37;
+    --t-caption: 12px; --t-footnote: 13px; --t-body: 14px; --t-title: 17px; --t-large: 26px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text-1); font: var(--t-body)/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  button { font: inherit; color: inherit; }
+  .stage-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center; padding: 10px 24px; background: rgba(245,245,247,.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--hairline); }
+  .stage-bar span { color: var(--text-3); font-size: var(--t-caption); margin-right: 4px; }
+  .stage-btn { padding: 4px 14px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--surface); cursor: pointer; font-size: var(--t-footnote); }
+  .stage-btn.is-active { background: var(--text-1); color: #fff; border-color: var(--text-1); }
+  .stage-note { margin-left: auto; color: var(--text-3); font-size: var(--t-caption); }
+  main { max-width: 880px; margin: 0 auto; padding: 32px 24px 80px; }
+  section { margin: 0 0 40px; }
+  h2 { margin: 0 0 12px; font-size: var(--t-title); }
+  .kicker { margin: 0 0 4px; color: var(--text-3); font-size: var(--t-caption); letter-spacing: .06em; }
+  h1 { margin: 0 0 12px; font-size: var(--t-large); line-height: 1.3; }
+  .maturity { margin: 0 0 14px; padding: 12px 16px; border-left: 3px solid var(--accent); border-radius: 4px; background: var(--surface); font-size: var(--t-body); }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 0; padding: 0; list-style: none; }
+  .facts li { display: grid; }
+  .facts b { font-weight: 600; font-size: var(--t-footnote); font-variant-numeric: tabular-nums; }
+  .facts span { color: var(--text-3); font-size: var(--t-caption); }
+  .hint { margin: 0 0 12px; color: var(--text-3); font-size: var(--t-caption); }
+  .empty { padding: 14px 16px; border: 1px dashed var(--hairline); border-radius: 10px; color: var(--text-2); font-size: var(--t-footnote); }
+  .empty b { color: var(--text-1); }
+  .line { margin: 0 0 14px; padding: 14px 16px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); }
+  .line-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin: 0 0 8px; color: var(--text-3); font-size: var(--t-caption); }
+  .line-head b { color: var(--text-1); font-size: var(--t-footnote); }
+  .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+  .tree ul { margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--hairline); }
+  .row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; padding: 5px 0; }
+  .row.is-root .t { font-size: var(--t-body); font-weight: 600; }
+  .toggle { width: 16px; flex: none; border: 0; background: none; padding: 0; color: var(--text-3); cursor: pointer; font-size: 10px; }
+  .toggle.is-leaf { visibility: hidden; }
+  .rel { flex: none; padding: 0 7px; border-radius: 999px; background: var(--hover); color: var(--text-2); font-size: var(--t-caption); }
+  .rel.is-contra { color: var(--red); }
+  .t { flex: 1 1 260px; min-width: 0; font-size: var(--t-footnote); cursor: pointer; }
+  .t:hover { color: var(--accent); }
+  .type { color: var(--text-3); font-size: var(--t-caption); }
+  .meta { color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+  .pending { color: var(--orange); font-size: var(--t-caption); }
+  .seeabove { color: var(--text-3); font-size: var(--t-caption); font-style: italic; }
+  .state { flex-basis: 100%; margin-left: 24px; color: var(--text-2); font-size: var(--t-caption); }
+  .watch-item { display: grid; grid-template-columns: 200px 1fr; gap: 2px 16px; padding: 10px 0; border-top: 1px solid var(--hairline-soft); }
+  .watch-item .when { grid-row: span 2; color: var(--text-2); font-size: var(--t-footnote); }
+  .watch-item.is-soon .when { color: var(--orange); font-weight: 600; }
+  .watch-item .wt { font-weight: 600; }
+  .watch-item .fx { color: var(--text-2); font-size: var(--t-footnote); }
+  .group { margin: 0 0 18px; }
+  .group-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; }
+  .group-head h3 { margin: 0; font-size: var(--t-body); }
+  .group-head span { color: var(--text-3); font-size: var(--t-caption); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
+  .chip { padding: 1px 10px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--surface); color: var(--text-2); font-size: var(--t-caption); cursor: pointer; }
+  .chip.is-on { border-color: var(--accent); color: var(--accent); }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--hairline-soft); }
+  .list li.is-bare .t { color: var(--text-3); }
+  .more { margin-top: 4px; border: 0; background: none; padding: 0; color: var(--accent); font-size: var(--t-caption); cursor: pointer; }
+  .gloss { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .gloss div { padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); }
+  .gloss b { display: block; font-size: var(--t-footnote); }
+  .gloss span { color: var(--text-2); font-size: var(--t-caption); }
+  .gloss em { color: var(--text-3); font-style: normal; font-size: var(--t-caption); margin-left: 6px; }
+  .annot { margin: 6px 0 0; padding: 8px 12px; border-radius: 8px; background: #fff7e6; color: #7a4b00; font-size: var(--t-caption); }
+</style>
+</head>
+<body>
+<div class="stage-bar">
+  <span>同一个读者页，三种搭建阶段：</span>
+  <button class="stage-btn" data-stage="0">① 刚开始</button>
+  <button class="stage-btn" data-stage="1">② 成形中</button>
+  <button class="stage-btn" data-stage="2">③ 成熟（Sivers 真实数据）</button>
+  <span class="stage-note">①② 为示例主题；③ 为真实账本内容</span>
+</div>
+<main id="page"></main>
+
+<script>
+/* ---------------- 三个阶段的数据（形状与投影一致：节点 + 关系 + 证据） ---------------- */
+const STAGES = [
+  {
+    name: '跟踪固态电池量产进展',
+    nodes: [
+      { id: 'o1', type: 'observation', title: '某电池厂宣布 2026Q4 启动 0.2GWh 固态电池中试线', ev: 1, day: '2026-09-21' },
+      { id: 'o2', type: 'observation', title: '硫化物电解质报价较年初下降约 30%', ev: 1, day: '2026-09-18' },
+      { id: 'o3', type: 'observation', title: '两家车企在发布会上提到 2027 年装车计划', ev: 0, day: null },
+      { id: 'o4', type: 'observation', title: '行业协会发布固态电池术语标准征求意见稿', ev: 1, day: '2026-09-02' },
+    ],
+    edges: [],
+    watch: [],
+    indicators: 0,
+  },
+  {
+    name: '跟踪固态电池量产进展',
+    nodes: [
+      { id: 'c1', type: 'concept', title: '半固态 vs 全固态', detail: '半固态仍含少量液态电解质；全固态完全不含，是量产难点所在' },
+      { id: 'c2', type: 'concept', title: '硫化物电解质', detail: '离子电导率高但对空气敏感，量产工艺门槛最高的一条路线' },
+      { id: 'b1', type: 'object', title: '中试线', detail: '介于实验室与量产之间的小规模产线，用来验证良率与成本' },
+      { id: 'h1', type: 'hypothesis', title: '全固态电池 2027 年难以大规模装车', ev: 2, day: '2026-09-21', settle: '2027-12-31', falsifier: '任一车企 2027 年全固态装车超过 1 万辆' },
+      { id: 'h2', type: 'hypothesis', title: '电解质成本下降会先推动半固态放量', ev: 1, day: '2026-09-18' },
+      { id: 'v1', type: 'viewpoint', title: '良率而不是材料，是当前最大瓶颈', ev: 1, day: '2026-09-25' },
+      { id: 'o1', type: 'observation', title: '某电池厂宣布 2026Q4 启动 0.2GWh 固态电池中试线', ev: 1, day: '2026-09-21', tags: ['产能'] },
+      { id: 'o2', type: 'observation', title: '硫化物电解质报价较年初下降约 30%', ev: 1, day: '2026-09-18', tags: ['成本'] },
+      { id: 'o3', type: 'observation', title: '两家车企在发布会上提到 2027 年装车计划', ev: 0, day: null, tags: ['装车'] },
+      { id: 'o4', type: 'observation', title: '行业协会发布固态电池术语标准征求意见稿', ev: 1, day: '2026-09-02', tags: ['标准'] },
+      { id: 'o5', type: 'observation', title: '中试线良率据报道仍低于 60%', ev: 1, day: '2026-09-25', tags: ['良率'] },
+      { id: 'o6', type: 'observation', title: '半固态电池 8 月装车量环比 +40%', ev: 1, day: '2026-09-10', tags: ['装车'] },
+    ],
+    edges: [
+      { from: 'o5', to: 'v1', rel: 'supports' },
+      { from: 'v1', to: 'h1', rel: 'supports' },
+      { from: 'o1', to: 'h1', rel: 'contradicts' },
+      { from: 'o2', to: 'h2', rel: 'supports' },
+      { from: 'o6', to: 'h2', rel: 'supports' },
+    ],
+    watch: [{ when: '2027-12-31 见分晓', title: '全固态电池 2027 年难以大规模装车', fx: '任一车企 2027 年全固态装车超过 1 万辆', soon: false }],
+    indicators: 3,
+  },
+  {
+    name: '跟踪 Sivers Semiconductors（SIVE.ST）：光子与无线业务的订单、产能与财务进展',
+    nodes: [
+      { id: 's-val', type: 'segment', title: '估值', state: '关键变量：EGM 后的股本结构、无线订单能否复制到光子、在手商机转化率', ev: 0 },
+      { id: 's-dil', type: 'segment', title: '股本稀释', state: 'P11 期权计划待 10-22 EGM 表决；若通过，总摊薄约 6.1%', ev: 1, day: '2026-09-30', settle: '2026-10-22' },
+      { id: 's-cap', type: 'segment', title: '资本路径', state: '为潜在美国双重上市做准备（称 2027H1 可能完成，非承诺）', ev: 1, day: '2026-09-30', settle: '2026-10-22' },
+      { id: 's-biz', type: 'segment', title: '业务', state: '光子重产能投入、无线拿确定性订单', ev: 0 },
+      { id: 's-fin', type: 'segment', title: '财务', state: 'Q2 净销售额 5380 万 SEK（同比 -12%）；在手商机 12 亿美元', ev: 8, day: '2026-09-30' },
+      { id: 's-gov', type: 'segment', title: '治理机制', state: '9 月底完成高管换血；审计机构 Deloitte→EY 待 EGM 表决', ev: 6, day: '2026-09-30' },
+      { id: 'g1', type: 'observation', title: 'Sivers 宣布了无线与光子业务的一系列高管变动', ev: 1, day: '2026-09-28', tags: ['高管变动'] },
+      { id: 'g2', type: 'observation', title: 'Marc Pegulu 于 9 月 28 日起任无线业务董事总经理', ev: 1, day: '2026-09-28', tags: ['高管任命'] },
+      { id: 'g3', type: 'observation', title: 'Harish Krishnaswamy 转任首席战略官', ev: 1, day: '2026-09-28', tags: ['高管任命'] },
+      { id: 'g4', type: 'observation', title: 'David Clark 于 10 月 31 日起任光子业务工程副总裁', ev: 1, day: '2026-09-28', tags: ['高管任命'] },
+      { id: 'g5', type: 'observation', title: 'Andrew McKee 将于 2026 年底从光子 CTO 岗位退休', ev: 1, day: '2026-09-28', tags: ['高管变动'] },
+      { id: 'g6', type: 'observation', title: '特别股东大会议程包括选举会议主席', ev: 1, day: '2026-09-30', tags: ['公司治理'] },
+      { id: 'x1', type: 'observation', title: '特别股东大会议程包括授权董事会定向发行 C 类股决议', ev: 1, day: '2026-09-30', tags: ['股权稀释'] },
+      { id: 'x2', type: 'observation', title: '特别股东大会议程包括长期激励计划决议', ev: 1, day: '2026-09-30', tags: ['股权激励'] },
+      { id: 'x3', type: 'observation', title: '特别股东大会议程包括选举审计师', ev: 1, day: '2026-09-30', tags: ['公司治理'] },
+      { id: 'x4', type: 'observation', title: 'Sivers 称其正从研发驱动转向规模化产品收入', ev: 1, day: '2026-09-28', tags: ['业务转型'] },
+      { id: 'x5', type: 'observation', title: 'Sivers 的股票代码为 STO:SIVE', ev: 1, day: '2026-09-28', tags: ['上市公司'] },
+      { id: 'x6', type: 'observation', title: '特别股东大会议程包括批准议程', ev: 1, day: '2026-09-30', tags: ['公司治理'] },
+      { id: 'x7', type: 'observation', title: '特别股东大会议程包括确认会议合法召集', ev: 1, day: '2026-09-30', tags: ['公司治理'] },
+      { id: 'a1', type: 'axiom', title: '长期激励计划大概率为新管理层配套的激励方案', ev: 2, day: '2026-09-30' },
+      ...['化合物半导体衬底', '砷化镓衬底', '磷化铟衬底', '光子芯片晶圆制造', '射频前端晶圆制造', '光子业务线', '数据中心光模块芯片', '激光雷达发射芯片', '硅光集成芯片', '无线业务线',
+        '基站射频前端模块', '卫星通信射频组件', '车规级无线连接芯片', '光通信设备制造', '智能网联汽车', '卫星互联网运营', '消费电子终端']
+        .map((title, i) => ({ id: `h${i}`, type: 'hypothesis', title, ev: 0 })),
+      ...Array.from({ length: 55 }, (_, i) => ({ id: `ind${i}`, type: 'observation', title: `（观察计划里的指标节点 ${i + 1}）`, ev: 0 })),
+    ],
+    edges: [
+      { from: 's-dil', to: 's-val', rel: 'derives', pending: true },
+      { from: 's-cap', to: 's-val', rel: 'derives', pending: true },
+      { from: 's-biz', to: 's-val', rel: 'derives', pending: true },
+      { from: 's-fin', to: 's-val', rel: 'derives', pending: true },
+      { from: 's-cap', to: 's-dil', rel: 'derives', pending: true },
+      { from: 's-biz', to: 's-fin', rel: 'derives', pending: true },
+      { from: 's-gov', to: 's-biz', rel: 'derives', pending: true },
+      { from: 'g6', to: 's-dil', rel: 'supports' },
+      { from: 'g6', to: 's-cap', rel: 'supports' },
+      ...['g1', 'g2', 'g3', 'g4', 'g5', 'g6'].map((id) => ({ from: id, to: 's-gov', rel: 'supports' })),
+    ],
+    watch: [
+      { when: '2026-10-22 见分晓（还有 18 天）', title: '股本稀释', fx: 'EGM 否决 P11 提案', soon: false },
+      { when: '2026-10-22 见分晓（还有 18 天）', title: '资本路径', fx: '公司明确放弃双重上市计划', soon: false },
+      { when: '未定日期', title: '财务', fx: 'Q3 产品收入增速转负', soon: false },
+    ],
+    indicators: 49,
+  },
+]
+
+const TYPE = {
+  segment: '维度', hypothesis: '假设', viewpoint: '观点', observation: '观察', axiom: '公理',
+  concept: '概念', object: '对象', event: '事件',
+}
+const REL = { supports: '支持', contradicts: '反驳', derives: '推出', influences: '影响', 'depends-on': '是前提', 'belongs-to': '组成' }
+const GROUPS = [
+  { label: '判断', hint: '有人认为——假设与观点', types: ['hypothesis', 'viewpoint'] },
+  { label: '事实', hint: '看到了什么——观察，有证据、证据新的在前', types: ['observation'] },
+  { label: '前提', hint: '默认成立的——公理', types: ['axiom'] },
+  { label: '维度', hint: '没连进主线的维度', types: ['segment'] },
+]
+const ENTITY = ['concept', 'object', 'event']
+
+/* ---------------- 通用模型：只用节点类型、关系、证据 ---------------- */
+function model(stage) {
+  const nodes = stage.nodes
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const claims = nodes.filter((n) => !ENTITY.includes(n.type))
+  const edges = stage.edges.filter((e) => REL[e.rel])
+  /* 统一成「下游 ← 上游」：parent = 被支持/被推出的那条 */
+  const up = new Map(nodes.map((n) => [n.id, []]))
+  const down = new Map(nodes.map((n) => [n.id, []]))
+  for (const e of edges) {
+    const [child, parent] = e.rel === 'depends-on' ? [e.to, e.from] : [e.from, e.to]
+    up.get(parent).push({ id: child, rel: e.rel, pending: !!e.pending })
+    down.get(child).push(parent)
+  }
+  /* 连通的一团 = 一条主线 */
+  const seen = new Set()
+  const lines = []
+  for (const n of claims) {
+    if (seen.has(n.id) || (!up.get(n.id).length && !down.get(n.id).length)) continue
+    const members = []
+    const stack = [n.id]
+    seen.add(n.id)
+    while (stack.length) {
+      const id = stack.pop()
+      members.push(id)
+      for (const x of [...up.get(id).map((r) => r.id), ...down.get(id)]) if (!seen.has(x)) { seen.add(x); stack.push(x) }
+    }
+    const reach = (id, acc = new Set()) => { for (const r of up.get(id)) if (!acc.has(r.id)) { acc.add(r.id); reach(r.id, acc) } return acc.size }
+    const sinks = members.filter((id) => !down.get(id).length).sort((a, b) => reach(b) - reach(a))
+    lines.push({ members, sinks, reach })
+  }
+  lines.sort((a, b) => b.members.length - a.members.length)
+  const inLine = new Set(lines.flatMap((l) => l.members))
+  const loose = claims.filter((n) => !inLine.has(n.id))
+  const withEv = claims.filter((n) => n.ev > 0).length
+  const lastDay = nodes.map((n) => n.day).filter(Boolean).sort().at(-1) || null
+  return { byId, up, claims, lines, loose, withEv, lastDay, entities: nodes.filter((n) => ENTITY.includes(n.type)) }
+}
+
+/* ---------------- 渲染 ---------------- */
+const el = (tag, cls, ...kids) => { const e = document.createElement(tag); if (cls) e.className = cls; for (const k of kids.flat()) if (k != null) e.append(k); return e }
+const meta = (n) => (n.ev ? `证据 ${n.ev}${n.day ? ` · 最近 ${n.day.slice(5)}` : ''}` : '无证据')
+
+function render(index) {
+  const stage = STAGES[index]
+  const m = model(stage)
+  const page = document.getElementById('page')
+  page.replaceChildren()
+
+  /* ① 概览 */
+  const covered = m.claims.length - m.loose.length
+  const sentence = !m.claims.length ? '还没有任何陈述。'
+    : `${m.claims.length} 条陈述，${m.withEv} 条有证据；`
+      + (m.lines.length ? `${covered} 条连成 ${m.lines.length} 条主线，其余 ${m.loose.length} 条还是散点。` : '彼此之间还没有关系，都是散点。')
+  page.append(el('section', null,
+    el('p', 'kicker', '主题'),
+    el('h1', null, stage.name),
+    el('p', 'maturity', sentence),
+    el('ul', 'facts',
+      el('li', null, el('b', null, String(m.claims.length)), el('span', null, '陈述')),
+      el('li', null, el('b', null, String(m.withEv)), el('span', null, '有证据')),
+      el('li', null, el('b', null, String(m.lines.length)), el('span', null, '主线')),
+      m.entities.length ? el('li', null, el('b', null, String(m.entities.length)), el('span', null, '概念 / 对象')) : null,
+      el('li', null, el('b', null, m.lastDay || '—'), el('span', null, '最近一条证据')))))
+
+  /* ② 主线 */
+  const lineSec = el('section', null, el('h2', null, '主线 · 谁支撑谁'))
+  if (!m.lines.length) {
+    lineSec.append(el('div', 'empty', el('b', null, '还没有陈述之间的关系。'), ' 在建设者里给两条陈述连上「支持 / 推出 / 影响」，这里就会出现主线。'))
+  } else {
+    lineSec.append(el('p', 'hint', '每条主线从它的汇点（其它陈述最终指向的那条）展开；缩进一级 = 上游一步。同一条陈述只在离汇点最近的那一处完整展开，别处标明它在哪里展开。'))
+    m.lines.forEach((line, i) => {
+      /* 每条陈述的"家" = 离汇点最近的那一处（广度优先，并列按账本顺序）；只在家里完整展开，别处标「见上文」。 */
+      const home = new Map(line.sinks.map((id) => [id, '#root']))
+      const queue = [...line.sinks]
+      while (queue.length) {
+        const id = queue.shift()
+        for (const r of m.up.get(id)) if (!home.has(r.id)) { home.set(r.id, id); queue.push(r.id) }
+      }
+      const pending = line.members.reduce((s, id) => s + m.up.get(id).filter((r) => r.pending).length, 0)
+      const node = (id, rel, isPending, depth, parent = '#root') => {
+        const n = m.byId.get(id)
+        const kids = m.up.get(id)
+        const repeat = home.get(id) !== parent
+        const li = el('li')
+        const sub = !repeat && kids.length ? el('ul', null, kids.map((r) => node(r.id, r.rel, r.pending, depth + 1, id))) : null
+        const toggle = el('button', `toggle${sub ? '' : ' is-leaf'}`, sub ? (depth >= 2 ? '▸' : '▾') : '')
+        if (sub && depth >= 2) sub.hidden = true
+        toggle.onclick = () => { sub.hidden = !sub.hidden; toggle.textContent = sub.hidden ? '▸' : '▾' }
+        li.append(el('div', `row${depth === 0 ? ' is-root' : ''}`,
+          toggle,
+          rel ? el('span', `rel${rel === 'contradicts' ? ' is-contra' : ''}`, REL[rel]) : null,
+          el('span', 't', n.title),
+          el('span', 'type', TYPE[n.type]),
+          repeat ? el('span', 'seeabove', `在「${m.byId.get(home.get(id))?.title ?? '主线顶端'}」下展开`) : el('span', 'meta', meta(n)),
+          isPending ? el('span', 'pending', '待复核') : null,
+          !repeat && n.state ? el('span', 'state', n.state) : null))
+        if (sub) li.append(sub)
+        return li
+      }
+      const root = line.sinks[0]
+      const extra = line.sinks.length > 1 ? `，另有 ${line.sinks.length - 1} 个汇点` : ''
+      lineSec.append(el('div', 'line',
+        el('div', 'line-head', el('b', null, `主线 ${i + 1}`), el('span', null, `${line.members.length} 条陈述 · 汇向「${m.byId.get(root).title}」${extra}`), pending ? el('span', 'pending', `${pending} 条关系待复核`) : null),
+        el('ul', 'tree', line.sinks.map((id) => node(id, null, false, 0)))))
+    })
+  }
+  page.append(lineSec)
+
+  /* ③ 接下来看什么 */
+  if (stage.watch.length || stage.indicators) {
+    page.append(el('section', null, el('h2', null, '接下来看什么'),
+      stage.watch.map((w) => el('div', `watch-item${w.soon ? ' is-soon' : ''}`, el('span', 'when', w.when), el('span', 'wt', w.title), el('span', 'fx', `推翻条件：${w.fx}`))),
+      stage.indicators ? el('p', 'hint', `▸ 跟踪指标 ${stage.indicators} 个（按频率分组，默认折叠）`) : null))
+  }
+
+  /* ④ 散点：按认知角色分组 */
+  const looseSec = el('section', null, el('h2', null, m.lines.length ? `还没连进主线的陈述 · ${m.loose.length}` : `全部陈述 · ${m.loose.length}`))
+  if (m.lines.length && m.loose.length) looseSec.append(el('p', 'hint', '账本里没有它们和主线之间的关系，读者页不按标题去猜归属。去建设者连上关系，它们就会进入主线。'))
+  for (const g of GROUPS) {
+    const rows = m.loose.filter((n) => g.types.includes(n.type)).sort((a, b) => (b.ev > 0) - (a.ev > 0) || (b.day || '').localeCompare(a.day || ''))
+    if (!rows.length) continue
+    const box = el('div', 'group', el('div', 'group-head', el('h3', null, `${g.label} · ${rows.length}`), el('span', null, g.hint)))
+    const tags = [...new Set(rows.flatMap((n) => n.tags || []))]
+    let active = null
+    const list = el('ul', 'list')
+    let expanded = false
+    const paint = () => {
+      const filtered = rows.filter((n) => !active || (n.tags || []).includes(active))
+      const visible = expanded ? filtered : filtered.slice(0, 6)
+      list.replaceChildren(...visible.map((n) => el('li', n.ev ? '' : 'is-bare', el('span', 't', n.title), el('span', 'type', TYPE[n.type]), el('span', 'meta', meta(n)))))
+      more.hidden = filtered.length <= 6
+      more.textContent = expanded ? '收起' : `展开全部 ${filtered.length} 条`
+    }
+    const more = el('button', 'more')
+    more.onclick = () => { expanded = !expanded; paint() }
+    if (tags.length > 1) {
+      box.append(el('div', 'chips', tags.slice(0, 10).map((tag) => {
+        const chip = el('button', 'chip', tag)
+        chip.onclick = () => { active = active === tag ? null : tag; box.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-on', c.textContent === active)); paint() }
+        return chip
+      })))
+    }
+    box.append(list, more)
+    paint()
+    looseSec.append(box)
+  }
+  page.append(looseSec)
+
+  /* ⑤ 涉及什么：概念 / 对象 / 事件 */
+  const glossSec = el('section', null, el('h2', null, '涉及什么 · 概念与对象'))
+  if (m.entities.length) {
+    glossSec.append(el('div', 'gloss', m.entities.map((n) => el('div', null, el('b', null, n.title, el('em', null, TYPE[n.type])), el('span', null, n.detail || '（还没有写说明）')))))
+  } else {
+    glossSec.append(el('div', 'empty', el('b', null, '还没有概念或对象节点。'), ' 陌生读者最需要的是词汇表——在建设者里新建「概念 / 对象 / 事件」并写一句说明，这里就会出现。'))
+  }
+  page.append(glossSec)
+
+  if (index === 2) {
+    page.append(el('p', 'annot', '注：③ 的主线、维度现状、见分晓、证据日期、条数（92 条陈述 / 12 条在主线 / 80 条散点）都按真实账本；只有 55 个没有证据的指标观察节点用占位标题代替。点任何一条都会打开右侧抽屉（沿用现有抽屉，草图里不展示）。'))
+  }
+
+  document.querySelectorAll('.stage-btn').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.stage) === index))
+}
+
+document.querySelectorAll('.stage-btn').forEach((b) => b.addEventListener('click', () => render(Number(b.dataset.stage))))
+render(0)
+</script>
+</body>
+</html>

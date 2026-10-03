@@ -48,7 +48,7 @@ export default async function ({ port, shotsDir }) {
     assert.match(sourcePolicy, /不会自动抓取 URL、创建观点或写入主题事实/)
     await sourceDialog.$('[aria-label="来源标题"]').setValue('合成待审核来源')
     await sourceDialog.$('[aria-label="来源名称"]').setValue('隔离合成输入')
-    await sourceDialog.$('[aria-label="来源链接"]').setValue('https://example.test/reader-builder-source')
+    await sourceDialog.$('[aria-label="来源链接"]').setValue('https://www.reuters.com/fixture/reader-builder-source')
     await sourceDialog.$('[aria-label="来源原文或摘录"]').setValue('仅供原生界面验收的合成原文：该记录应先进入待审核来源队列，不得自动成为主题观点。')
     await sourceDialog.$("//button[contains(normalize-space(.), '保存到待处理')]").click()
     await waitUntil(browser, async () => browser.execute(() => [...document.querySelectorAll('.builder-queue-item')]
@@ -97,7 +97,7 @@ export default async function ({ port, shotsDir }) {
     await targetSelect.selectByAttribute('value', targetOptions[0].value)
     await evidenceDialog.$('[aria-label="证据摘要或原文摘录"]').setValue('合成来源记载：本条只为验证证据、关系和来源事件路径，不表示外部事实。')
     await evidenceDialog.$('[aria-label="来源名称"]').setValue('隔离合成验收来源')
-    await evidenceDialog.$('[aria-label="来源链接"]').setValue('https://example.test/meridian-review-source')
+    await evidenceDialog.$('[aria-label="来源链接"]').setValue('https://www.reuters.com/fixture/meridian-review-source')
     await evidenceDialog.$('[aria-label="来源发布时间"]').setValue('2026-09-25')
     await evidenceDialog.$('[aria-label="适用时间"]').setValue('2026Q3')
     await evidenceDialog.$('[data-entry-save]').click()

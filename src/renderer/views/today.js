@@ -1,7 +1,10 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndViewTheme } from '../app.js'
-import { confColor, nodePath, inferInboxThemeId, inferInboxThemeIds, inboxRouteValid, splitInboxPicked } from './shared.js'
+import { confColor, nodePath, inferInboxThemeIds } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
+import { openThemeBuilder } from './theme.js'
+import { checkSourceUrl, sourceHostOf, sourceUrlOf } from '../../shared/evidence-source.js'
+import { SOURCE_VIA_LABEL, suggestWeight, weightFormula, weightText } from '../../shared/evidence-weight.js'
 
 const m = window.meridian
 
@@ -12,7 +15,6 @@ let picked = new Set()
 let inboxLoading = false
 let renderSeq = 0
 let selectedInboxId = null
-const overrides = new Map()
 const resolving = new Set()
 // 抽取进度：抽取中的条目独立成「抽取中」分组（置顶），组头一条进度条 + 取消按钮。
 // 整页重画成本高（全量 inbox 过 IPC），进度事件只做定点 DOM 修补；
@@ -47,26 +49,23 @@ function relativeTime(value) {
   if (hours < 24) return `${hours} 小时前`
   return `${Math.floor(hours / 24)} 天前`
 }
-const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
-
-/** 条目自己的主题：抽取路由所用的主题（新数据直接记在条目上）。 */
-function itemThemeId(item) {
-  return inferInboxThemeId(item, cachedAllNodes, state.themeId)
+/** 条目明确属于的存活主题（记在条目上的 / 抽取挂点反推的），按记下的顺序，第一个是主主题。
+ *  不拿「当前主题」兜底：交给主题只交用户在「属于主题」里看得见的那几个。 */
+function memberThemeIds(item) {
+  const live = new Set((state.themes || []).filter((t) => !t.deletedAt).map((t) => t.id))
+  return inferInboxThemeIds(item, cachedAllNodes, null).filter((id) => live.has(id))
 }
-/** 多主题：返回条目的主题 ID 数组 */
-function itemThemeIds(item) {
-  return inferInboxThemeIds(item, cachedAllNodes, state.themeId)
+/** 条目的来源链接（只认真实的 http(s) 网址，口径见 shared/evidence-source.js）；没有返回 null。 */
+const itemSourceUrl = (item) => sourceUrlOf(item?.provenance?.url)
+/** 为什么这条现在交不出去；能交时返回空串（与后端 inbox:dispatch 的校验同口径）。 */
+function dispatchBlocker(item) {
+  if (item.kind === 'reading') return '读数挂到指标上，不交给主题'
+  if (!String(item.text || '').trim()) return '这条没有原文，交不出去'
+  if (!itemSourceUrl(item)) return '先补上来源链接（原文所在网页的网址），才能交给主题'
+  if (!memberThemeIds(item).length) return '先选这条数据属于哪个主题'
+  return ''
 }
-function itemThemeNodes(item) {
-  const tid = itemThemeId(item)
-  return cachedAllNodes.filter((node) => node.themeId === tid)
-}
-/** 条目级 override 键：跟着条目自己的主题走，不跟当前主题 */
-const ovKey = (item) => overrideKey(item.id, itemThemeId(item))
-
-function hasValidInboxRoute(item, themeNodes) {
-  return inboxRouteValid(item, themeNodes, overrides.get(ovKey(item)) || {})
-}
+const themeName = (themeId) => (state.themes || []).find((t) => t.id === themeId)?.name || '未知主题'
 
 export async function renderToday(mid) {
   if (state.view !== 'today') return
@@ -86,8 +85,10 @@ export async function renderToday(mid) {
   // 序列化过 IPC，而 refresh() 挂在 db:changed 上——改任何东西都会重跑。
   // 窗口随「加载更多」扩大，重渲染不会缩回第一页。
   const pageSize = Math.max(inboxLimit, inboxItems.length)
-  const [due, calib, inboxPage, conflicts, ignored] = await Promise.all([
+  const [due, calib, inboxPage, conflicts, ignored, judgeCounts] = await Promise.all([
     m.due(), m.calibration(), m.inboxList({ limit: pageSize, offset: 0 }), m.conflicts(), m.inboxIgnored(),
+    // 待判数只是去建设者的入口，拿不到不该拖垮今日页
+    Promise.resolve().then(() => m.themeJudgeCounts()).catch(() => null),
   ])
   if (seq !== renderSeq || state.view !== 'today') return
   const previousIndex = inboxItems.findIndex((item) => item.id === selectedInboxId)
@@ -95,7 +96,6 @@ export async function renderToday(mid) {
   inboxTotal = inboxPage.total
   const ids = new Set(inboxItems.map((item) => item.id))
   picked = new Set([...picked].filter((id) => ids.has(id)))
-  for (const key of overrides.keys()) if (!ids.has(key.slice(key.indexOf(':') + 1))) overrides.delete(key)
   if (!ids.has(selectedInboxId)) selectedInboxId = inboxItems[Math.max(0, Math.min(previousIndex, inboxItems.length - 1))]?.id || null
 
   const allNodes = await m.allNodes()
@@ -136,7 +136,15 @@ export async function renderToday(mid) {
         '待确认 ', h('b', {}, String(inboxTotal))),
       h('span', { class: 'today-summary-sep' }, '·'),
       h('button', { type: 'button', class: 'today-summary-link', onclick: () => scrollTo(mid, 'due-section') },
-        '今日结算 ', h('b', {}, String(due.length)))),
+        '今日结算 ', h('b', {}, String(due.length))),
+      /* 今日只分拣；交出去的数据在各主题建设者里判。这里给每个还有待判的主题一个入口。 */
+      ...judgeEntries(judgeCounts).flatMap(({ themeId, total }) => [
+        h('span', { class: 'today-summary-sep' }, '·'),
+        h('button', {
+          type: 'button', class: 'today-summary-link today-summary-judge', title: `去「${themeName(themeId)}」的建设者判`,
+          onclick: () => openThemeBuilder(themeId),
+        }, `${themeName(themeId)} 待判 `, h('b', {}, String(total))),
+      ])),
 
     renderInboxWorkspace(mid, seq, allNodes),
     renderIgnoredProposals(ignored, allNodes),
@@ -226,6 +234,53 @@ export async function renderToday(mid) {
   ))
 }
 
+/** 有待判的存活主题，按主题列表顺序；counts 缺失 / 格式不对时为空。 */
+function judgeEntries(response) {
+  const counts = response?.ok ? response.counts : null
+  if (!counts || typeof counts !== 'object') return []
+  return (state.themes || [])
+    .filter((theme) => !theme.deletedAt && Number(counts[theme.id]?.total) > 0)
+    .map((theme) => ({ themeId: theme.id, total: Number(counts[theme.id].total) }))
+}
+
+/**
+ * 逐条交给主题：先落账（inbox:dispatch，按条目幂等），成功后才接受条目（inbox:resolve，进同步 outbox）。
+ * 一条失败不影响其余；失败的留在待确认里，重试不会重复计入。
+ */
+async function dispatchItems(chosen) {
+  const outcome = { done: 0, proposals: 0, engineErrors: 0, themes: new Set(), failures: [] }
+  for (const item of chosen) {
+    try {
+      const res = await m.inboxDispatch(item.id, memberThemeIds(item))
+      if (!res?.ok) throw new Error(res?.error || '交给主题失败')
+      await m.inboxResolve(item.id, 'accept')
+      outcome.done += 1
+      outcome.proposals += Number(res.stanceProposals) || 0
+      if (res.engineError) outcome.engineErrors += 1
+      for (const themeId of res.themeIds || []) outcome.themes.add(themeId)
+      picked.delete(item.id)
+    } catch (error) {
+      outcome.failures.push(error?.message || String(error))
+    }
+  }
+  return outcome
+}
+
+function dispatchResultToast({ done, proposals, engineErrors, themes, failures }) {
+  if (!done) {
+    toast(`交给主题失败：${failures[0] || '请重试'}`, 'var(--red)')
+    return
+  }
+  const themeIds = [...themes]
+  const where = themeIds.length === 1 ? `「${themeName(themeIds[0])}」` : ` ${themeIds.length} 个主题`
+  const parts = [`${done} 条已交给${where}，进入建设者待判`]
+  if (proposals) parts.push(`模型先给了 ${proposals} 条表态建议`)
+  if (engineErrors) parts.push(`${engineErrors} 条模型没读成，按原文待判`)
+  if (failures.length) parts.push(`${failures.length} 条失败：${failures[0]}`)
+  toast(parts.join('；'), failures.length ? 'var(--orange)' : undefined,
+    { label: '去判', onClick: () => openThemeBuilder(themeIds[0]) })
+}
+
 function renderIgnoredProposals(items, nodes) {
   if (!items.length) return null
   return h('details', { class: 'card ignored-proposals' },
@@ -294,7 +349,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
 
   // 按筛选过滤列表（不改变 items 本体，只影响展示）
   const visibleItems = items.filter((item) => {
-    if (inboxThemeFilter && itemThemeId(item) !== inboxThemeFilter) return false
+    if (inboxThemeFilter && !memberThemeIds(item).includes(inboxThemeFilter)) return false
     if (inboxStatusFilter === 'pending' && item.extracted !== false) return false
     if (inboxStatusFilter === 'done' && item.extracted === false) return false
     return true
@@ -323,11 +378,13 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   const count = h('span')
   /* 批量语义提示：哪些选中项已经绑过主题——用户问的就是"都绑定了为什么还要我选主题" */
   const assignNote = h('span', { class: 'inbox-batch-note', hidden: true })
+  const linkNote = h('span', { class: 'inbox-batch-note is-warn', hidden: true })
   // 复选框全开：分拣语义是"选中这批处理"，批量栏按选中成分自适应可用操作。
-  // 未抽取条目可勾选 → 抽取所选 / 忽略所选；已抽取且挂点有效 → 批量入库。
+  // 有主题、有原文的 → 交给主题；未抽取的 → 抽取所选（只为让系统猜主题）；任何选中项 → 忽略所选。
   const isSelectable = (item) => !resolving.has(item.id)
-  const overrideOf = (item, tid) => overrides.get(overrideKey(item.id, tid)) || {}
-  const splitPicked = () => splitInboxPicked(items, picked, cachedAllNodes, state.themeId, overrideOf)
+  const pickedItems = () => items.filter((item) => picked.has(item.id))
+  const dispatchablePicked = () => pickedItems().filter((item) => !dispatchBlocker(item))
+  const extractablePicked = () => pickedItems().filter((item) => item.extracted === false)
   const pickAll = h('button', {
     class: 'btn inbox-pick-all',
     onclick: () => {
@@ -337,10 +394,10 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       updateBatch()
     },
   })
-  const importPicked = h('button', {
-    class: 'btn btn-primary inbox-import-picked',
-    onclick: () => resolve(splitPicked().importable, 'accept'),
-  }, '批量入库')
+  const dispatchPicked = h('button', {
+    class: 'btn btn-primary inbox-dispatch-picked',
+    onclick: () => resolve(dispatchablePicked(), 'dispatch'),
+  }, '交给主题')
   // 批量抽取主题选择器：默认「自动」（要点最多的主题）；手动指定后，
   // 本次抽取的条目都记到该主题下，后续入库跟着条目自己的主题走。
   // （liveThemes 已在函数顶部定义）
@@ -350,7 +407,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
   const extractPicked = h('button', {
     class: 'btn inbox-extract-picked',
-    onclick: () => resolve(splitPicked().extractable, 'extract'),
+    onclick: () => resolve(extractablePicked(), 'extract'),
   }, '抽取所选')
   const ignorePicked = h('button', {
     class: 'btn inbox-ignore-picked',
@@ -367,13 +424,13 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       const tid = assignThemePick.value
       if (!tid) { toast('请先选择要分配到的主题', 'var(--red)'); return }
       // 多主题：只处理尚未包含该主题的条目（加入而非覆盖）
-      const targets = items.filter((item) => picked.has(item.id) && !itemThemeIds(item).includes(tid))
+      const targets = items.filter((item) => picked.has(item.id) && !memberThemeIds(item).includes(tid))
       if (!targets.length) { toast('所选项都已包含该主题，不需要再分配'); return }
       assignPicked.disabled = true
       let okCount = 0
       for (const item of targets) {
         try {
-          const nextTids = [...itemThemeIds(item), tid]
+          const nextTids = [...memberThemeIds(item), tid]
           const res = await m.inboxSetThemes(item.id, nextTids)
           if (res?.ok) {
             item.extractedThemeIds = res.themeIds
@@ -382,13 +439,12 @@ function renderInboxWorkspace(mid, seq, allNodes) {
           }
         } catch { /* 单条失败继续 */ }
       }
-      const themeName = liveThemes.find((t) => t.id === tid)?.name || ''
       toast(okCount === targets.length
-        ? `已分配 ${okCount} 条到「${themeName}」`
-        : `已分配 ${okCount}/${targets.length} 条到「${themeName}」，${targets.length - okCount} 条失败`)
+        ? `已分配 ${okCount} 条到「${themeName(tid)}」`
+        : `已分配 ${okCount}/${targets.length} 条到「${themeName(tid)}」，${targets.length - okCount} 条失败`)
       picked.clear()
-      updateBatch()
-      rerender ? rerender() : onRouteChange()
+      assignPicked.disabled = false
+      await refresh()
     },
   }, '分配到主题')
 
@@ -396,13 +452,14 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     const available = items.filter(isSelectable)
     pickAll.textContent = available.length && available.every((item) => picked.has(item.id)) ? '取消全选' : '全选'
     pickAll.disabled = !available.length
-    const { importable, extractable } = splitPicked()
+    const dispatchable = dispatchablePicked()
+    const extractable = extractablePicked()
     count.textContent = `已选 ${picked.size} 条`
-    // 渐进式披露：没选中时底部栏只是状态条，不跟详情的「确认入库」抢主操作；
+    // 渐进式披露：没选中时底部栏只是状态条，不跟详情的「交给主题」抢主操作；
     // 选中后按成分出现对应批量入口，按钮带数字，一眼知道作用范围。
-    importPicked.hidden = !importable.length
-    importPicked.textContent = `批量入库（${importable.length}）`
-    importPicked.disabled = !importable.length || importable.some((item) => resolving.has(item.id))
+    dispatchPicked.hidden = !dispatchable.length
+    dispatchPicked.textContent = `交给主题（${dispatchable.length}）`
+    dispatchPicked.disabled = !dispatchable.length || dispatchable.some((item) => resolving.has(item.id))
     extractPicked.hidden = !extractable.length
     extractPicked.textContent = `抽取所选（${extractable.length}）`
     extractPicked.disabled = !extractable.length || extractable.some((item) => resolving.has(item.id))
@@ -410,13 +467,14 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     ignorePicked.hidden = !picked.size
     ignorePicked.textContent = `忽略所选（${picked.size}）`
     ignorePicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
-    // 批量分配：只有"还没绑定主题"的选中项才需要选主题；已绑定的一律不再要求重选。
-    const pickedItems = items.filter((item) => picked.has(item.id))
-    const boundPicked = pickedItems.filter((item) => itemThemeId(item))
-    const unboundPicked = pickedItems.filter((item) => !itemThemeId(item))
-    const boundNames = [...new Set(boundPicked
-      .map((item) => liveThemes.find((t) => t.id === itemThemeId(item))?.name)
-      .filter(Boolean))]
+    // 批量分配：只有"还没属于任何主题"的选中项才需要选主题；已属于的一律不再要求重选。
+    const chosen = pickedItems().filter((item) => item.kind !== 'reading')
+    const boundPicked = chosen.filter((item) => memberThemeIds(item).length)
+    const unboundPicked = chosen.filter((item) => !memberThemeIds(item).length)
+    const boundNames = [...new Set(boundPicked.flatMap((item) => memberThemeIds(item).map(themeName)))]
+    const missingLink = chosen.filter((item) => !itemSourceUrl(item))
+    linkNote.hidden = !missingLink.length
+    linkNote.textContent = missingLink.length ? `${missingLink.length} 条缺来源链接，逐条点开补上后才能交给主题` : ''
     assignThemePick.hidden = !unboundPicked.length
     assignPicked.hidden = !unboundPicked.length
     assignPicked.textContent = `分配到主题（${unboundPicked.length}）`
@@ -428,7 +486,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         : `所选中 ${boundPicked.length} 条已归入「${boundNames.join('、')}」，不需要再选主题。`)
       : ''
     // 抽取主题同理：选中的都绑好了就不需要再指定
-    extractThemePick.hidden = !extractable.length || !extractable.some((item) => !itemThemeId(item))
+    extractThemePick.hidden = !extractable.length || !extractable.some((item) => !memberThemeIds(item).length)
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
@@ -450,34 +508,20 @@ function renderInboxWorkspace(mid, seq, allNodes) {
 
   async function resolve(chosen, action) {
     if (!chosen.length || chosen.some((item) => resolving.has(item.id))) return
-    if (action === 'accept' && chosen.some((item) => !itemThemeId(item) || !hasValidInboxRoute(item, itemThemeNodes(item)))) {
-      toast('请先为所选信息选择其主题下的目标环节。', 'var(--red)')
-      return
+    if (action === 'dispatch') {
+      const blocked = chosen.find((item) => dispatchBlocker(item))
+      if (blocked) { toast(dispatchBlocker(blocked), 'var(--red)'); return }
     }
     for (const item of chosen) resolving.add(item.id)
     updateBatch()
     select(selectedInboxId)
     try {
-      if (action === 'accept') {
-        // 按条目各自主题分组入库：今日收件箱是全局的，一批勾选可能横跨多个主题
-        const groups = new Map()
-        for (const item of chosen) {
-          const tid = itemThemeId(item)
-          if (!groups.has(tid)) groups.set(tid, [])
-          groups.get(tid).push(item)
-        }
-        let total = 0
-        for (const [tid, group] of groups) {
-          const ovMap = Object.fromEntries(group.map((item) => [item.id, overrides.get(overrideKey(item.id, tid)) || {}]))
-          const result = await m.inboxImport(tid, group, ovMap)
-          total += result.results.length
-          for (const item of group) { picked.delete(item.id); overrides.delete(overrideKey(item.id, tid)) }
-        }
-        toast(`${total} 条要点已归位`)
+      if (action === 'dispatch') {
+        dispatchResultToast(await dispatchItems(chosen))
       } else if (action === 'extract') {
         const themeId = extractThemePick.value || undefined
         const res = await runExtract(chosen.map((item) => item.id), themeId)
-        for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
+        for (const item of chosen) picked.delete(item.id)
         extractResultToast(res)
       } else {
         if (chosen.length === 1) {
@@ -487,7 +531,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
           const res = await m.inboxResolveMany(chosen.map((item) => item.id), 'reject')
           toast(`已忽略 ${res?.resolved?.length ?? chosen.length} 条`)
         }
-        for (const item of chosen) { picked.delete(item.id); overrides.delete(ovKey(item)) }
+        for (const item of chosen) picked.delete(item.id)
       }
     } catch (e) {
       toast('处理失败：' + (e.message || '请重试'), 'var(--red)')
@@ -644,7 +688,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
   }
 
   appendItems(extractingItems, { head: extractingGroupHead() })
-  appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '核对信息，再归位到脉络') })
+  appendItems(extractedItems, { head: groupHead('已抽取', extractedItems.length, '选好主题，交给建设者去判') })
   appendItems(waitItems, { head: groupHead('待抽取', waitItems.length, null, [extractAll]) })
   appendItems(unmatchedItems, { head: groupHead('未匹配', unmatchedItems.length, null, [extractUnmatched, clearUnmatched]) })
 
@@ -676,7 +720,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
       loadMore,
-      h('div', { class: 'inbox-import-bar' }, count, assignNote, extractThemePick, extractPicked, importPicked, assignThemePick, assignPicked, ignorePicked),
+      h('div', { class: 'inbox-import-bar' }, count, linkNote, assignNote, extractThemePick, extractPicked, assignThemePick, assignPicked, dispatchPicked, ignorePicked),
     ),
     detail,
   ))
@@ -691,19 +735,15 @@ function renderInboxWorkspace(mid, seq, allNodes) {
 function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const lemmas = item.lemmas || []
   const title = item.title || lemmas[0]?.title || '未命名信息'
-  // 已分配到主题的条目默认折叠显示（视觉弱化，避免与待处理项混淆）
-  // 多主题模型：extractedThemeIds 数组；向后兼容单主题 extractedThemeId
-  const assignedThemeIds = itemThemeIds(item)
-  const isAssigned = assignedThemeIds.length > 0
+  /* 选了主题只是分拣的一半（还没交出去），所以不弱化；主题 pills 与详情「属于主题」同一来源。
+     勾选高亮由 updateBatch 写的 data-on 驱动（样式见 demo-components.css 末尾）。 */
   const liveThemes = (state.themes || []).filter((t) => !t.deletedAt)
-  // 条目主题：多主题数组 + lemmas 已归位的不同主题也计入（用于"跨 N 个主题"）
-  const themeIds = new Set(assignedThemeIds)
-  for (const lm of lemmas) if (lm.mappedTopic) themeIds.add(lm.mappedTopic)
-  const itemThemes = [...themeIds].map((tid) => liveThemes.find((t) => t.id === tid)).filter(Boolean)
+  const itemThemes = memberThemeIds(item).map((tid) => liveThemes.find((t) => t.id === tid)).filter(Boolean)
   // 相对时间：设计稿显示"33 分钟前"；createdAt 是 ISO 字符串
   const relTime = relativeTime(item.createdAt)
   const extracted = item.extracted !== false
-  return h('div', { class: `inbox-item inbox2-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
+  const missingLink = item.kind !== 'reading' && !itemSourceUrl(item)
+  return h('div', { class: 'inbox-item inbox2-item', dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,
@@ -731,14 +771,11 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
         itemThemes.length > 1 ? h('span', { class: 'inbox2-cross-badge' }, `跨 ${itemThemes.length} 个主题`) : null,
       ) : null,
       // 状态徽标：已抽取 N 条要点（绿）/ 未提取到要点（橙）
-      // 状态徽标：已归位 N 条（设计稿的 done 态）/ 已抽取 N 条要点（绿）/ 未提取到要点（橙）
       h('span', { class: 'inbox2-item-status' },
-        lemmas.some((lemma) => lemma.mappedTopic && lemma.mappedAtom)
-          ? h('span', { class: 'inbox2-badge is-done' }, `已归位 ${lemmas.filter((lemma) => lemma.mappedTopic && lemma.mappedAtom).length} 条`)
-          : null,
         extracted
           ? h('span', { class: 'inbox2-badge is-ok' }, `✓ 已抽取 ${lemmas.length} 条要点`)
           : h('span', { class: 'inbox2-badge is-warn' }, '⚠ 未提取到要点'),
+        missingLink ? h('span', { class: 'inbox2-badge is-nolink', title: '外部数据必须带真实的来源链接；补上后才能交给主题' }, '缺来源链接') : null,
         lemmas.some((lemma) => lemma.action === 'merge') ? h('span', { class: 'feed-dup' }, '可合并') : null,
         lemmas.some((lemma) => lemma.conflicts?.length) ? h('span', { class: 'cf' }, '有冲突') : null,
         resolving.has(item.id) ? h('span', {}, '处理中…') : null,
@@ -754,6 +791,66 @@ function unextractedNote(item) {
   return '标签库没有命中，留档不抽取。'
 }
 
+/**
+ * 详情「来源」：外部数据必须指向真实的来源网页。有链接 → 显示域名、可打开、可改；没有 → 就地补上。
+ * 链接由后端 inbox:setSourceUrl 按同一口径校验后写入；这里先做一次同口径的即时校验，省一次往返。
+ * 下方给出进主题时的建议权重（来源类型 × 硬度），让分拣时就知道这条数据大概多重。
+ */
+function renderSourceSection(item, { busy, onSaved }) {
+  if (item.kind === 'reading') return null
+  const url = itemSourceUrl(item)
+  const suggestion = suggestWeight({
+    url: url || '', labelType: item.label?.kind || '', sourceLabel: item.provenance?.sourceLabel || '', text: item.text || '',
+  })
+  const weightNote = h('p', { class: 'inbox-detail-note inbox-weight-note' },
+    `进主题时的建议权重 ${weightText(suggestion.weight)} = ${weightFormula(suggestion.weight)}（来源类型${SOURCE_VIA_LABEL[suggestion.sourceVia]}）。`,
+    '模型拆出的单句按各自有没有具体数字算硬度；建设者判的时候可以改。')
+  const input = h('input', {
+    class: 'txt inbox-source-input', type: 'url', maxlength: '2048', value: url || '',
+    placeholder: 'https://…（原文所在网页的网址）', 'aria-label': '来源链接', disabled: busy,
+  })
+  const error = h('p', { class: 'inbox-source-error', role: 'alert', hidden: true })
+  const save = h('button', { type: 'button', class: 'btn btn-primary inbox-source-save', disabled: busy }, url ? '保存' : '补上链接')
+  const editor = h('div', { class: 'inbox-source-editor', hidden: Boolean(url) }, input, save)
+  const showError = (message) => {
+    error.hidden = false
+    error.textContent = message
+  }
+  const submit = async () => {
+    const checked = checkSourceUrl(input.value)
+    if (!checked.ok) { showError(`来源链接不可用：${checked.error}`); input.focus(); return }
+    save.disabled = true
+    try {
+      const res = await m.inboxSetSourceUrl(item.id, checked.url)
+      if (!res?.ok) throw new Error(res?.error || '保存失败')
+      item.provenance = res.provenance
+      toast(url ? '来源链接已更新' : '已补上来源链接')
+      onSaved()
+    } catch (err) {
+      save.disabled = false
+      showError(err?.message || String(err))
+    }
+  }
+  save.addEventListener('click', submit)
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); submit() }
+  })
+  const current = url
+    ? h('div', { class: 'inbox-source-current' },
+      h('span', { class: 'inbox-source-host', title: url }, sourceHostOf(url)),
+      h('button', { type: 'button', class: 'btn inbox-source-link', onclick: () => m.openExternal(url) }, icon('export', 12), '打开原文'),
+      h('button', {
+        type: 'button', class: 'btn inbox-source-edit', disabled: busy,
+        onclick: (event) => { editor.hidden = false; event.currentTarget.hidden = true; input.focus() },
+      }, '改链接'))
+    : h('p', { class: 'inbox-source-missing' }, item.provenance?.url
+      ? `记下的链接不可用（${checkSourceUrl(item.provenance.url).error}）：外部数据必须指向真实的来源网页，补上后才能交给主题。`
+      : '缺来源链接：外部数据必须指向真实的来源网页，补上后才能交给主题。')
+  return h('section', { class: `inbox-detail-section inbox-source${url ? '' : ' is-missing'}` },
+    h('h4', { class: 'inbox-section-title' }, '来源'),
+    current, editor, error, weightNote)
+}
+
 function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rerender) {
   clear(panel)
   /* 没有选中项时给占位，而不是让详情列空白（也兜住"当前筛选把选中项滤掉了"这种情形）。 */
@@ -764,56 +861,21 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
     ))
     return
   }
-  // 条目级主题：勾选、挂点下拉、归位图、入库都跟着条目自己的主题走，
-  // 与渲染层当前主题无关——今日收件箱是全局的。
-  const themeNodes = itemThemeNodes(item)
+  // 今日只分拣：决定这条数据属于哪些主题（或忽略）。表态（佐证 / 反对 / 中立）在各主题建设者里判。
   const unextracted = item.extracted === false
   const lemmas = item.lemmas || []
-  const editable = !unextracted && lemmas.some((lemma) => lemma.action !== 'merge')
   const label = item.label || {}
-  const ov = overrides.get(ovKey(item)) || {}
   const busy = resolving.has(item.id)
-  const theme = state.themes.find((t) => t.id === itemThemeId(item))
-  const conf = ov.confidence ?? lemmas[0]?.confidence ?? 50
-  const sourceUrl = item.provenance?.url
-  // 主题切换器：换主题只改条目身上的 extractedThemeId；重渲染后归位图、
-  // 目标环节下拉、挂点校验都跟着新主题走，旧主题的手动挂点按主题键隔离。
   const liveThemes = state.themes.filter((t) => !t.deletedAt)
-  const themeSelect = h('select', {
-    class: 'inbox-theme-select', id: 'inbox-theme', disabled: busy || !liveThemes.length,
-    title: '切换条目主题',
-    onchange: async (e) => {
-      const tid = e.target.value
-      if (!tid || tid === itemThemeId(item)) return
-      e.target.disabled = true
-      try {
-        const res = await m.inboxSetTheme(item.id, tid)
-        if (res?.ok) {
-          item.extractedThemeId = tid
-          toast(`已切换到「${state.themes.find((t) => t.id === tid)?.name}」`)
-          rerender ? rerender() : onRouteChange()
-          onRouteChange()
-        } else {
-          toast('切换主题失败：' + (res?.error || '请重试'), 'var(--red)')
-          e.target.value = itemThemeId(item)
-        }
-      } catch (err) {
-        toast('切换主题失败：' + (err.message || '请重试'), 'var(--red)')
-        e.target.value = itemThemeId(item)
-      } finally {
-        e.target.disabled = busy
-      }
-    },
-  }, ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
-  themeSelect.value = itemThemeId(item) || ''
-  const confirm = h('button', {
-    class: 'btn btn-primary inbox-confirm', disabled: busy || !theme || !lemmas.length || !hasValidInboxRoute(item, themeNodes),
-    onclick: () => onResolve([item], 'accept'),
-  }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
-  const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
-  // ---- 属于主题 pills：多选 toggle（点击加入/移除主题）
-  // 多主题模型：item.extractedThemeIds 数组；点击 pill 切换该主题的归属
-  const currentTids = new Set(itemThemeIds(item))
+  const members = memberThemeIds(item)
+  const blocker = dispatchBlocker(item)
+  const dispatch = item.kind === 'reading' ? null : h('button', {
+    class: 'btn btn-primary inbox-dispatch', disabled: busy || Boolean(blocker),
+    title: blocker || `第一个主题「${themeName(members[0])}」由模型先给表态建议，其余主题按原文待判`,
+    onclick: () => onResolve([item], 'dispatch'),
+  }, members.length > 1 ? `交给 ${members.length} 个主题` : '交给主题')
+  // ---- 属于主题 pills：多选 toggle（点击加入/移除主题），顺序即交出去时的主次
+  const currentTids = new Set(members)
   const belongPills = h('div', { class: 'inbox2-belong-pills' },
     h('span', { class: 'inbox2-belong-label' }, '属于主题'),
     ...liveThemes.map((t) => {
@@ -828,7 +890,7 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         onclick: async () => {
           if (busy) return
           // toggle：已在则移除，不在则加入
-          const nextTids = itemThemeIds(item)
+          const nextTids = memberThemeIds(item)
           const idx = nextTids.indexOf(t.id)
           if (idx >= 0) nextTids.splice(idx, 1)
           else nextTids.push(t.id)
@@ -855,18 +917,25 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
         relativeTime(item.createdAt) || item.createdAt || '时间未记录'),
       // 大标题
       h('h3', { class: 'inbox2-title', id: 'inbox-detail-title', title: item.title || lemmas[0]?.title || '未命名信息' }, item.title || lemmas[0]?.title || '未命名信息'),
-      // 属于主题 pills 行
-      belongPills,
+      // 属于主题 pills 行（读数挂指标，不分主题）
+      item.kind === 'reading' ? null : belongPills,
       // 提示文案（小字灰色）
-      h('p', { class: 'inbox2-hint' }, '点击主题标签可将这条数据加入或移出该主题。要点归位时目标原子的可选范围，取决于这条数据属于哪些主题。'),
+      h('p', { class: 'inbox2-hint' }, item.kind === 'reading'
+        ? '读数不交给主题：在下方选一个指标挂上去。'
+        : '点主题标签选这条数据属于哪些主题。交出去后它进入这些主题建设者的「待判」：第一个主题由模型先给表态建议，其余主题按原文待判。'),
       h('div', { class: 'inbox-detail-meta' },
         typeof label.quality === 'number' ? h('span', {}, `来源质量 ${Math.round(label.quality * 100)}%`) : null,
-        /^https?:\/\//i.test(sourceUrl || '') ? h('button', {
-          class: 'btn inbox-source-link', onclick: () => m.openExternal(sourceUrl),
-        }, icon('export', 12), '查看来源') : null,
       ),
     ),
     h('div', { class: 'inbox-detail-scroll' },
+      renderSourceSection(item, {
+        busy,
+        onSaved: () => {
+          document.querySelector(`.inbox-item[data-id="${CSS.escape(item.id)}"] .inbox2-badge.is-nolink`)?.remove()
+          onRouteChange()
+          rerender?.()
+        },
+      }),
       item.kind === 'route-proposal' ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '系统建议归位'),
         h('p', { class: 'inbox-detail-note' }, `主题：${item.matchedTheme?.name || '未指定'} · 标签：${(item.matchedTags || []).map((tag) => tag.name).join('、') || '无'}`),
@@ -907,143 +976,20 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
       unextracted ? h('section', { class: 'inbox-detail-section' },
         h('h4', { class: 'inbox-section-title' }, '未抽取'),
         h('p', { class: 'inbox-detail-note' }, unextractedNote(item)),
-        h('p', { class: 'inbox-detail-note' }, '原文已留在本地。勾选后点「抽取所选」，或直接点分组旁的「抽取这 N 条」。'),
+        h('p', { class: 'inbox-detail-note' }, '不抽取也能交给主题：选好主题直接交，建设者按原文判。抽取只是让系统先猜主题、列出要点。'),
       ) : h('section', { class: 'inbox-detail-section' },
-        h('h4', { class: 'inbox-section-title' }, `提取的要点 · ${lemmas.length}`),
-        lemmas.length ? h('div', { class: 'prop-list' },
-          ...lemmas.map((lemma, idx) => {
-            const mapped = lemma.mappedTopic && lemma.mappedAtom
-            const lemmaId = lemma.id || `lemma-${idx}`
-            // 已归位：显示 mapped-summary + 取消归位
-            if (mapped) {
-              const themeName = state.themes.find((t) => t.id === lemma.mappedTopic)?.name || '未知主题'
-              const atomName = (cachedAllNodes || []).find((n) => n.id === lemma.mappedAtom)?.title || '未知原子'
-              const stanceLabel = lemma.stance === 'challenge' ? '反驳' : '佐证'
-              const card = h('div', { class: 'prop mapped' },
-                h('div', { class: 'prop-text' }, lemma.title),
-                h('div', { class: 'mapped-summary' },
-                  '已归位 ', h('span', { class: 'arrow' }, '→'), ' ',
-                  h('b', {}, themeName), ' · ', h('b', {}, atomName), ' · ',
-                  h('span', {}, stanceLabel)),
-                h('div', { class: 'prop-map-row' },
-                  h('button', { type: 'button', class: 'btn btn-ghost', style: { marginLeft: 'auto' },
-                    onclick: async () => {
-                      // 取消归位：清除映射字段（跨视图连接点的逆操作）
-                      delete lemma.mappedTopic; delete lemma.mappedAtom; delete lemma.stance; delete lemma.mappedAt
-                      toast('已取消归位')
-                      rerender ? rerender() : onRouteChange()
-                    } }, '取消归位'),
-                  h('button', { type: 'button', class: 'btn btn-ghost',
-                    onclick: () => {
-                      // 跳转到建设者并选中对应原子（跨视图唯一的连接点）
-                      sessionStorage.setItem('meridian:builderJump', JSON.stringify({ themeId: lemma.mappedTopic, atomId: lemma.mappedAtom }))
-                      location.hash = `#/theme/${lemma.mappedTopic}/builder`
-                    } }, '去建设者查看 →')))
-              return card
-            }
-            // 未归位：主题 → 原子级联 + 立场（照搬 demo 结构）
-            const themeSel = h('select', { class: 'prop-select topic-select', 'aria-label': '选择主题', dataset: { propTopic: lemmaId } },
-              h('option', { value: '' }, '选主题…'),
-              ...liveThemes.map((t) => h('option', { value: t.id }, t.name)))
-            const atomSel = h('select', { class: 'prop-select', disabled: true, 'aria-label': '选择原子', dataset: { propTarget: lemmaId } },
-              h('option', { value: '' }, '先选主题'))
-            const stanceBtns = h('div', { class: 'stance' },
-              h('button', { type: 'button', class: 'stance-btn active support', dataset: { propStance: lemmaId, stance: 'support' } }, '佐证'),
-              h('button', { type: 'button', class: 'stance-btn', dataset: { propStance: lemmaId, stance: 'challenge' } }, '反驳'))
-            let stance = lemma.stance || 'support'
-            // 同步初始立场按钮状态
-            stanceBtns.querySelectorAll('.stance-btn').forEach((b) => {
-              const active = b.dataset.stance === stance
-              b.classList.toggle('active', active)
-              b.classList.toggle('support', active && stance === 'support')
-              b.classList.toggle('challenge', active && stance === 'challenge')
-            })
-            stanceBtns.querySelectorAll('.stance-btn').forEach((b) => b.addEventListener('click', () => {
-              stanceBtns.querySelectorAll('.stance-btn').forEach((x) => {
-                x.classList.remove('active', 'support', 'challenge')
-              })
-              b.classList.add('active', b.dataset.stance)
-              stance = b.dataset.stance
-              lemma.stance = stance
-            }))
-            themeSel.addEventListener('change', () => {
-              const tid = themeSel.value
-              lemma.mappedTopic = tid || null
-              lemma.mappedAtom = null // 换主题时清空原子（照搬 demo 逻辑）
-              const atoms = (cachedAllNodes || []).filter((n) => n.themeId === tid && !n.archived && !n.invalidated)
-              atomSel.innerHTML = ''
-              atomSel.append(h('option', { value: '' }, atoms.length ? '选原子…' : '该主题暂无原子'))
-              atoms.forEach((a) => atomSel.append(h('option', { value: a.id }, a.title || '未命名原子')))
-              atomSel.disabled = !atoms.length
-            })
-            atomSel.addEventListener('change', async () => {
-              const aid = atomSel.value
-              if (!aid) return
-              const tid = themeSel.value
-              // 归位：更新 lemma 的映射字段（跨视图连接点）
-              lemma.mappedTopic = tid; lemma.mappedAtom = aid; lemma.stance = stance
-              lemma.mappedAt = new Date().toISOString()
-              try {
-                // 多主题：确保映射的主题在条目的主题列表中（加入而非覆盖）
-                const currentTids = itemThemeIds(item)
-                if (!currentTids.includes(tid)) currentTids.push(tid)
-                const themeRes = await m.inboxSetThemes(item.id, currentTids)
-                if (!themeRes?.ok) throw new Error(themeRes?.error || '归位失败')
-                item.extractedThemeIds = themeRes.themeIds
-                item.extractedThemeId = themeRes.themeIds[0] || null
-                // 追加 evidence 到映射的原子（主主题，带原子关联）
-                // 注意：后端要 text 字段（之前传 statement 是 bug，已修复）
-                const evidenceInput = {
-                  text: lemma.title, rel: stance === 'challenge' ? 'contradicts' : 'supports',
-                  sourceItemId: item.id, sourceItemTitle: item.title,
-                  sourceOrigin: item.provenance?.sourceLabel || item.provenance?.platform || '',
-                }
-                await m.chainAddEvidence(tid, aid, evidenceInput)
-                // 多主题分发：向该条目所属的其他每个主题账本各追加一次未映射证据
-                // （每本账自洽：证据在账本里，映射关系由各主题自行决定）
-                const otherTids = itemThemeIds(item).filter((x) => x !== tid)
-                let distributed = 0
-                const failures = []
-                for (const otherTid of otherTids) {
-                  try {
-                    await m.chainAddUnmappedEvidence(otherTid, evidenceInput)
-                    distributed++
-                  } catch (err) {
-                    failures.push(otherTid)
-                  }
-                }
-                const atomName = (cachedAllNodes || []).find((n) => n.id === aid)?.title || aid
-                if (failures.length > 0) {
-                  toast(`已归位 → ${atomName}；${failures.length} 个主题分发失败`, 'var(--orange)')
-                } else if (distributed > 0) {
-                  toast(`已归位 → ${atomName}（已同步到 ${distributed} 个其他主题）`)
-                } else {
-                  toast(`已归位 → ${atomName}`)
-                }
-                rerender ? rerender() : onRouteChange()
-              } catch (e) { toast(e.message || '归位失败', 'var(--red)') }
-            })
-            const card = h('div', { class: 'prop' },
-              h('div', { class: 'prop-text' }, lemma.title),
-              h('div', { class: 'prop-map-row' },
-                h('label', { class: 'prop-field' },
-                  h('span', { class: 'prop-field-label' }, '归到哪个主题'), themeSel),
-                h('label', { class: 'prop-field' },
-                  h('span', { class: 'prop-field-label' }, '挂到哪个原子'), atomSel)),
-              h('div', { class: 'prop-map-row is-single' },
-                h('div', { class: 'prop-field' },
-                  h('span', { class: 'prop-field-label' }, '这条要点是佐证还是反驳'), stanceBtns)))
-            return card
-          }),
-        ) : h('p', { class: 'inbox-detail-note' }, '未提取到可入库的要点。你可以忽略，或补充原文后重新捕获。'),
+        h('h4', { class: 'inbox-section-title' }, `要点 · ${lemmas.length}`),
+        lemmas.length
+          ? h('div', { class: 'prop-list' },
+            ...lemmas.map((lemma) => h('div', { class: 'prop' }, h('div', { class: 'prop-text' }, lemma.title || '未命名要点'))))
+          : h('p', { class: 'inbox-detail-note' }, '没有提取到要点；原文照样可以交给主题，或者忽略。'),
+        lemmas.length ? h('p', { class: 'inbox-detail-note' }, '交出去后，要点跟着原文进主题，在建设者的判卡和读者页的数据详情里作为上下文出现；表态仍按原文在建设者里判。') : null,
       ),
-      // 「确认归位」旧区块已删除：逐条要点的归位 UI 已在上面的 .prop 卡片里（选主题→选原子→立场→确认），
-      // 整条级别的 renderProposalDraft 草稿与之功能重复，不再需要。
     ),
     h('footer', { class: 'inbox-detail-actions' },
-      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : unextracted ? '未抽取 · 原文已留档' : `${lemmas.length} 条要点待核对`),
+      h('span', { class: 'inbox-action-note' }, busy ? '正在处理…' : (blocker || `交给：${members.map(themeName).join('、')}`)),
       h('button', { class: 'btn inbox-reject', disabled: busy, onclick: () => onResolve([item], 'reject') }, '忽略'),
-      confirm,
+      dispatch,
     ),
   )
 }

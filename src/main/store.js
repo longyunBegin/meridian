@@ -8,22 +8,15 @@ import { DatabaseSync } from 'node:sqlite'
 import { initSchema, dbToRows, rowsToDb, TABLES } from '../../service/db-schema.mjs'
 import { getEvents as getChainEvents } from './chain-events.js'
 import { dataDirectory } from './runtime-services.js'
+import { SOURCE_QUALITY } from '../shared/evidence-weight.js'
 
 const DATA_FILE = () => join(dataDirectory(), 'meridian.json')
 /** SQLite durability 文件。存在即表示"已切换到 SQLite 持久层"，load/persist 都走它；
  *  不存在则走 legacy JSON 路径（向后兼容，测试也走这条）。 */
 const SQLITE_FILE = () => join(dataDirectory(), 'meridian.sqlite')
 
-/** 来源质量基准表。打标器只负责选类型，质量分一律由这张表裁决。 */
-export const SOURCE_QUALITY = [
-  ['财报 / 公告', 0.95],
-  ['一手数据', 0.9],
-  ['券商研报', 0.8],
-  ['独立媒体', 0.65],
-  ['自媒体', 0.5],
-  ['群聊转发', 0.35],
-  ['道听途说', 0.2],
-]
+/** 来源质量基准表（定义在 shared/evidence-weight.js，权重同样由它裁决）。打标器只负责选类型，质量分一律由这张表裁决。 */
+export { SOURCE_QUALITY }
 const QUALITY = new Map(SOURCE_QUALITY)
 
 /** us-gaap 常用标签置顶——探活实测过的高频标签，带中文标签方便辨识 */
@@ -1819,6 +1812,21 @@ export function setInboxThemes(id, themeIds) {
     item.extractedThemeId = ids[0]
   } else {
     delete item.extractedThemeId
+  }
+  persist()
+  return item
+}
+
+/** 给条目补来源链接：url 由调用方校验并规范化；只写 provenance.url，来源名 / 平台缺省时用域名补上，已有的不覆盖。 */
+export function setInboxSourceUrl(id, url, host) {
+  const item = load().inbox.find((i) => i.id === id)
+  if (!item) return null
+  const prior = item.provenance && typeof item.provenance === 'object' ? item.provenance : {}
+  item.provenance = {
+    ...prior,
+    url,
+    sourceLabel: String(prior.sourceLabel || '').trim() || host,
+    platform: String(prior.platform || '').trim() || host,
   }
   persist()
   return item

@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Meridian · 观点图谱提案（强度 × 来源 判断图）</title>
+<style>
+:root{
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --bg:#f5f5f7; --window:#ececed; --surface:#fff; --surface-2:rgba(29,29,31,.035); --surface-3:rgba(29,29,31,.06);
+  --text:#1d1d1f; --text-2:rgba(29,29,31,.68); --text-3:rgba(29,29,31,.55);
+  --line:rgba(0,0,0,.09); --line-2:rgba(0,0,0,.14);
+  --accent:#0071e3; --accent-soft:rgba(0,113,227,.1);
+  --green:#1f7a35; --green-dot:#34c759; --green-soft:rgba(52,199,89,.10);
+  --red:#b3261e;   --red-dot:#ff3b30;   --red-soft:rgba(255,59,48,.11);
+  --orange:#8a5200;--orange-dot:#ff9500;--orange-soft:rgba(255,149,0,.10);
+  --purple:#6b3fa0;--purple-dot:#af52de;--purple-soft:rgba(175,82,222,.08);
+  --r-lg:14px; --r:11px; --r-sm:8px;
+  --shadow:0 1px 2px rgba(0,0,0,.04),0 10px 30px -14px rgba(0,0,0,.14);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.05);
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+html[data-theme="dark"]{
+  --bg:#1c1c1e; --window:#161618; --surface:#242426; --surface-2:rgba(255,255,255,.045); --surface-3:rgba(255,255,255,.075);
+  --text:#f5f5f7; --text-2:rgba(245,245,247,.7); --text-3:rgba(245,245,247,.55);
+  --line:rgba(255,255,255,.11); --line-2:rgba(255,255,255,.17);
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.16);
+  --green:#30d158; --green-dot:#30d158; --green-soft:rgba(48,209,88,.10);
+  --red:#ff6961;   --red-dot:#ff453a;   --red-soft:rgba(255,69,58,.15);
+  --orange:#ffb340;--orange-dot:#ff9f0a;--orange-soft:rgba(255,159,10,.10);
+  --purple:#d0a3ff;--purple-dot:#bf5af2;--purple-soft:rgba(191,90,242,.09);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 16px 40px -18px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:13px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+h1,h2,h3,h4,p,ul{margin:0}
+ul{padding:0;list-style:none}
+.num{font-variant-numeric:tabular-nums}
+.topbar{height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--window);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600}
+.brand-mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,var(--accent),var(--purple-dot));color:#fff;
+  font-size:13px;font-weight:700;display:grid;place-items:center}
+.brand-sub{color:var(--text-3);font-weight:400;font-size:12px}
+.grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:12px;color:var(--text-2)}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 20px 80px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.cap{font-size:11.5px;color:var(--text-3);line-height:1.5}
+
+.hero{padding:18px 22px 16px;margin-bottom:16px}
+.kicker{font-size:12px;color:var(--text-3)}
+.hero h1{font-size:24px;line-height:1.25;letter-spacing:-.02em;font-weight:650;margin-top:6px}
+.metrics{display:flex;gap:28px;margin-top:14px;flex-wrap:wrap}
+.metric .v{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.metric .k{font-size:11.5px;color:var(--text-3)}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+@media (max-width:1000px){.layout{grid-template-columns:minmax(0,1fr)}}
+.map-card{padding:14px 16px 12px}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.bar + .bar{margin-top:8px}
+.bar .k{font-size:11.5px;color:var(--text-3);margin-right:4px;min-width:36px}
+.fchip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;
+  background:var(--surface);font-size:12px;color:var(--text-2);transition:background .15s var(--ease)}
+.fchip:hover{background:var(--surface-2)}
+.fchip[aria-pressed="true"]{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 40%,var(--line));color:var(--text);font-weight:600}
+.fchip .n{font-family:var(--mono);font-size:11px;color:var(--text-3)}
+.sw{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+.sw.hollow{background:transparent!important;border:1.5px solid var(--text-3)}
+.sw.ring{background:transparent!important;border:2px solid var(--red-dot)}
+
+.banner{margin-top:10px;display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:var(--r-sm);
+  background:var(--surface-2);font-size:12.5px;color:var(--text-2)}
+.banner b{color:var(--text)}
+.banner .go{margin-left:auto;color:var(--accent);font-weight:600;white-space:nowrap}
+
+#map{display:block;width:100%;height:auto;margin-top:10px;user-select:none}
+.q-bg{pointer-events:none}
+.axis text{font-size:11px;fill:var(--text-3)}
+.axis .tick{stroke:var(--line)}
+.axis .frame{stroke:var(--line-2);fill:none}
+.mid-line{stroke:var(--text-3);stroke-dasharray:4 4;opacity:.55}
+.q-label{font-size:12px;font-weight:650}
+.q-hint{font-size:10.5px;fill:var(--text-3)}
+.strip-bg{fill:var(--surface-2);stroke:var(--line);stroke-dasharray:3 3}
+.node{cursor:pointer;transition:opacity .15s var(--ease)}
+.node:focus{outline:none}
+.node:focus-visible .dot{stroke:var(--accent);stroke-width:2.5}
+.node.is-dim{opacity:.16}
+.node.is-faded{opacity:.07;pointer-events:none}
+.node .dot{stroke:var(--surface);stroke-width:1.5}
+.node .dot.is-uncat{fill:var(--surface);stroke:var(--text-3);stroke-width:1.6}
+.node .ring{fill:none;stroke:var(--red-dot);stroke-width:2}
+.node .sel{fill:none;stroke:var(--accent);stroke-width:2}
+.lbl{fill:var(--text);pointer-events:none;paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round;transition:opacity .15s var(--ease)}
+.lbl.is-dim,.lbl.is-faded{opacity:.12}
+.edge{fill:none;stroke-width:1.7}
+.edge.supports{stroke:var(--green-dot)}
+.edge.contradicts{stroke:var(--red-dot);stroke-dasharray:5 4}
+.edge.derives,.edge.related{stroke:var(--text-3)}
+.edge-lbl{font-size:10.5px;fill:var(--text-2);paint-order:stroke;stroke:var(--surface);stroke-width:3px}
+.tip rect{fill:var(--surface);stroke:var(--line-2)}
+.tip text{fill:var(--text);font-size:11.5px}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:var(--text-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend .ln{width:18px;height:0;border-top:2px solid var(--green-dot)}
+.legend .ln.dash{border-top:2px dashed var(--red-dot)}
+
+.side{padding:16px;position:sticky;top:70px;display:grid;gap:12px}
+.side h3{font-size:15px;font-weight:650;line-height:1.4}
+.side h4{font-size:11.5px;color:var(--text-3);font-weight:600;margin-bottom:6px}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:11.5px;font-weight:550;white-space:nowrap}
+.pill.ok{background:var(--green-soft);color:var(--green)}
+.pill.bad{background:var(--red-soft);color:var(--red)}
+.pill.warn{background:var(--orange-soft);color:var(--orange)}
+.pill.rev{background:var(--purple-soft);color:var(--purple)}
+.pill.ghost{background:var(--surface-2);color:var(--text-2)}
+.why{display:grid;gap:5px;font-size:12.5px;color:var(--text-2)}
+.why b{color:var(--text);font-weight:600}
+.next{padding:9px 11px;border-radius:var(--r-sm);background:var(--accent-soft);font-size:12.5px;color:var(--text)}
+.rel{display:flex;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--line);font-size:12.5px;cursor:pointer}
+.rel:first-of-type{border-top:0}
+.rel:hover{color:var(--accent)}
+.rel .tag{font-size:11px;color:var(--text-3);font-family:var(--mono);flex:none}
+.qrow{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0}
+.qrow .n{margin-left:auto;font-family:var(--mono);color:var(--text-3)}
+
+.list-card{margin-top:16px;padding:14px 16px}
+.list-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+.list-head h2{font-size:15px;font-weight:650}
+.grp{margin-top:10px}
+.grp-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;color:var(--text-2);padding:6px 0;border-bottom:1px solid var(--line)}
+.grp-head .n{color:var(--text-3);font-weight:400}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 120px 170px 64px 96px;gap:12px;align-items:center;padding:7px 4px;border-bottom:1px solid var(--line);font-size:12.5px;border-radius:6px}
+.row:hover{background:var(--surface-2)}
+.row.is-selected{background:var(--accent-soft)}
+.row .t{font-weight:550;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.str{display:flex;align-items:center;gap:7px}
+.str .track{flex:1;height:5px;border-radius:3px;background:var(--surface-3);position:relative;overflow:hidden}
+.str .track i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:3px}
+.str .track b{position:absolute;top:-2px;bottom:-2px;left:50%;border-left:1px dashed var(--text-3)}
+.str .v{font-family:var(--mono);font-size:11px;width:40px;text-align:right;white-space:nowrap}
+.str .v.empty{color:var(--text-3);font-family:var(--font)}
+.bal{display:grid;grid-template-columns:1fr 1px 1fr;align-items:center;gap:0;height:14px}
+.bal .l{display:flex;justify-content:flex-end}
+.bal .l i{height:7px;background:var(--green-dot);border-radius:3px 0 0 3px}
+.bal .r i{display:block;height:7px;background:var(--red-dot);border-radius:0 3px 3px 0}
+.bal .c{height:14px;background:var(--line-2)}
+.bal-num{font-family:var(--mono);font-size:10.5px;color:var(--text-3);display:flex;justify-content:space-between;margin-top:1px}
+.src{font-family:var(--mono);font-size:11px;color:var(--text-2)}
+
+.notes{margin-top:16px;padding:16px 18px;display:grid;gap:8px}
+.notes h2{font-size:15px;font-weight:650;margin-bottom:4px}
+.notes li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;font-size:12.5px;color:var(--text-2);line-height:1.6}
+.notes .n{font-family:var(--mono);color:var(--text-3)}
+.notes b{color:var(--text)}
+.selfcheck{margin-top:16px;padding:14px 16px;font-family:var(--mono);font-size:11.5px;color:var(--text-2);white-space:pre-wrap;line-height:1.7}
+.selfcheck .bad{color:var(--red)}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">M</span><span>Meridian</span><span class="brand-sub">观点图谱提案 · 强度 × 来源 判断图</span></div>
+  <div class="grow"></div>
+  <label class="chip">数据规模
+    <select id="scale-pick" style="background:none;border:0;color:inherit;font:inherit">
+      <option value="12" selected>12 条（按截图规模构造）</option>
+      <option value="60">60 条（合成）</option>
+      <option value="200">200 条（合成）</option>
+    </select></label>
+  <button class="chip" id="mode-toggle">◐ 明暗</button>
+</header>
+
+<div class="wrap">
+  <section class="card hero">
+    <div class="kicker">主题 · 观点图谱 · <span id="data-note"></span></div>
+    <h1>Sivers Semiconductors（开发测试）</h1>
+    <div class="metrics" id="metrics"></div>
+  </section>
+
+  <div class="layout">
+    <section class="card map-card" aria-label="观点判断图">
+      <div class="bar" id="bucket-bar"><span class="k">看哪类</span></div>
+      <div class="bar" id="cat-bar"><span class="k">分类</span></div>
+      <div class="banner" id="uncat-banner" hidden></div>
+      <svg id="map" role="group" aria-label="观点判断图：横轴为独立来源档位，纵轴为强度，颜色为主题分类，红色外环为有争议"></svg>
+      <div class="legend">
+        <span><b style="font-weight:600">位置</b> = 横轴独立来源 × 纵轴强度</span>
+        <span><i class="sw" style="background:#0a84ff"></i><i class="sw" style="background:#30b0c7"></i><i class="sw" style="background:#af52de"></i>颜色 = 主题分类</span>
+        <span><i class="sw hollow"></i>灰色空心 = 未分类</span>
+        <span><i class="sw ring"></i>红色外环 = 有争议</span>
+        <span><i class="ln"></i>支持 <i class="ln dash"></i>挑战（仅在悬浮或选中时显示）</span>
+      </div>
+    </section>
+    <aside class="card side" id="side" aria-live="polite"></aside>
+  </div>
+
+  <section class="card list-card">
+    <div class="list-head"><h2>逐条清单</h2><span class="cap">按分类分组；组内先看有争议、强但证据薄的。点一行即在图上选中。</span></div>
+    <div id="list"></div>
+  </section>
+
+  <section class="card notes">
+    <h2>相对现状改了什么、为什么</h2>
+    <ul>
+      <li><span class="n">01</span><span><b>x/y 位置改为表达数据。</b>现状是向日葵螺旋，点在簇内的位置不带任何信息；现在横轴 = 独立来源档位，纵轴 = 强度，位置本身就是结论。</span></li>
+      <li><span class="n">02</span><span><b>分类从"大圆面积"降级为"颜色 + 筛选"。</b>分类只是名称，不需要占画布七成的面积；未分类不再是画面上最大的圆，而是一行可点的提示。</span></li>
+      <li><span class="n">03</span><span><b>证据状况不丢。</b>没有来源 ⇔ 第 1 列；单一来源 ⇔ 第 2 列；多来源一致 ⇔ 第 3/4 列且无红环；有争议 ⇔ 红环（必然 ≥1 条已表态来源）。可以从位置 + 外环完整推回去。</span></li>
+      <li><span class="n">04</span><span><b>两条分界线都沿用现有口径。</b>竖线 = <code>claimStateOf</code> 的「多来源一致」（sources ≥ 2）；横线 = 新观点默认强度 50（<code>domain-commands.js</code>），严格大于 50 才算"强"。</span></li>
+      <li><span class="n">05</span><span><b>"没记录"不再画成"弱"。</b>强度为 null 的观点放进底部带子，横向仍按来源档位对齐；不会出现在 0 上（避开 <code>Number(null) === 0</code>）。</span></li>
+      <li><span class="n">06</span><span><b>标题常显 + 确定性避让</b>（右 → 左 → 下 → 上，放不下才收进悬浮）；≤40 条全部尝试，超过只给前 14 条优先级最高的（选中 → 有争议 → 强但证据薄 → 强度高）。</span></li>
+      <li><span class="n">07</span><span><b>关系线默认不画</b>，悬浮/选中某点才画它自己的边并压暗其余点，避免现状那种跨簇的长淡线。</span></li>
+      <li><span class="n">08</span><span><b>现状图例里的字面 <code>**…**</code></b> 是把 Markdown 当纯文本输出的 bug，改成可视化图例后自然消失。</span></li>
+    </ul>
+  </section>
+
+  <section class="card selfcheck" id="selfcheck" aria-label="布局自检"></section>
+</div>
+
+<script>
+'use strict'
+/* ───────────── 口径常量（全部对齐现有代码，不新造数字） ───────────── */
+const CATEGORY_COLORS = ['#0a84ff', '#30b0c7', '#af52de', '#ff9500', '#34c759', '#ff375f', '#5e5ce6', '#8e8e93'] // theme-network.js
+const UNCATEGORIZED = '未分类'           // reader-model.js UNCATEGORIZED_LABEL
+const NEUTRAL = 50                        // domain-commands.js 新观点默认强度
+const MULTI_SOURCE = 2                    // claimStateOf：sources ≥ 2 才算多来源
+const TIERS = ['没有来源', '单一来源', '2 家', '3 家以上']
+const LABEL_ALL_MAX = 40
+const LABEL_CHARS = 14
+const RELATION_LABEL = { supports: '支持', contradicts: '挑战', derives: '推导', supersedes: '修订', related: '相关' } // chain-ui-model.js
+const BUCKETS = {
+  contested: { label: '有争议', hint: '同时收到支持与反对（红色外环）', tone: 'bad', color: 'var(--red-dot)' },
+  thin: { label: '强但证据薄', hint: '强度高于中性，但独立来源不到 2 家', tone: 'warn', color: 'var(--orange-dot)' },
+  solid: { label: '站得住', hint: '2 家以上独立来源，强度高于中性', tone: 'ok', color: 'var(--green-dot)' },
+  weak: { label: '多源但偏弱', hint: '2 家以上来源，强度却不高于中性', tone: 'rev', color: 'var(--purple-dot)' },
+  early: { label: '早期假设', hint: '来源不到 2 家，强度也不高于中性', tone: 'ghost', color: 'var(--text-3)' },
+  unrated: { label: '未评估强度', hint: '还没有强度记录——不是强度 0', tone: 'ghost', color: 'var(--text-3)' },
+}
+const BUCKET_ORDER = ['contested', 'thin', 'solid', 'weak', 'early', 'unrated']
+const RANK = Object.fromEntries(BUCKET_ORDER.map((key, i) => [key, i]))
+const NEXT_STEP = {
+  contested: '打开双边清单，判断反对证据是否成立；成立就下调强度或修订观点。',
+  thin: '补一条独立来源（与现有来源的 sourceLabel 不同），否则这条强度没有支撑。',
+  solid: '可以作为这个主题的结论候选，关注适用时间是否过期即可。',
+  weak: '多家来源但强度不高：检查是否有挑战证据拉低了强度，或来源只是弱相关。',
+  early: '保持观察；有新数据时优先补到这里。',
+  unrated: '在建设者里给它一个强度（手填权重或引擎估算），它才能进入图上的象限。',
+}
+
+/* ───────────── 纯函数：与 reader-claim-map.js 同口径 ───────────── */
+const cmpId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+function strengthOf(raw) {
+  if (raw == null || raw === '') return null // Number(null) === 0：缺强度必须是 null
+  const value = Number(raw)
+  return Number.isFinite(value) ? Math.round(Math.max(0, Math.min(100, value))) : null
+}
+function claimStateOf({ support = 0, challenge = 0, sources = 0 }) {
+  if (support + challenge === 0) return 'none'
+  if (support > 0 && challenge > 0) return 'contested'
+  if (sources <= 1) return 'single'
+  return 'settled'
+}
+/* 来源档位：已表态为 0 → 第 0 列；否则按独立来源数，<=1 都归「单一来源」，与 claimStateOf 的 single 判定一致。 */
+function tierOf({ stated, sources }) {
+  if (stated === 0) return 0
+  if (sources >= 3) return 3
+  if (sources === MULTI_SOURCE) return 2
+  return 1
+}
+function regionOf(strength, tier) {
+  if (strength == null) return 'unrated'
+  const top = strength > NEUTRAL
+  const right = tier >= MULTI_SOURCE
+  return top ? (right ? 'solid' : 'thin') : (right ? 'weak' : 'early')
+}
+function enrich(raw, categories) {
+  const support = Math.max(0, raw.support | 0)
+  const challenge = Math.max(0, raw.challenge | 0)
+  const stated = support + challenge
+  const sources = stated === 0 ? 0 : Math.max(0, Math.min(stated, raw.sources | 0))
+  const strength = strengthOf(raw.strength)
+  const category = String(raw.category || '').trim()
+  const categoryName = category || UNCATEGORIZED
+  const index = categories.indexOf(category)
+  const tier = tierOf({ stated, sources })
+  const state = claimStateOf({ support, challenge, sources })
+  const region = regionOf(strength, tier)
+  return {
+    id: raw.id, title: String(raw.title || '未命名观点').trim() || '未命名观点',
+    category, categoryName, color: category && index >= 0 ? CATEGORY_COLORS[index % CATEGORY_COLORS.length] : null,
+    support, challenge, stated, sources, strength, tier, state, region,
+    bucket: state === 'contested' ? 'contested' : region,
+  }
+}
+const clip = (text, max) => { const chars = Array.from(String(text)); return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : chars.join('') }
+
+/**
+ * 布局：输入顺序无关（内部全部按 强度/档位 + id 排序），同样的数据永远画在同一处。
+ * 点只在本列内、且不越过中性线做避让；未评估强度的点进底部带子，横向仍按档位对齐。
+ */
+function layoutJudgmentMap(rows, opt = {}) {
+  const width = opt.width ?? 880
+  const plotHeight = opt.plotHeight ?? 360
+  const r = opt.radius ?? 7
+  const fs = r >= 7 ? 11.5 : 10.5
+  const selectedId = opt.selectedId ?? null
+  const visible = opt.visibleIds ?? null
+  const padL = 54, padR = 14, padT = 26, axisH = 36, stripCap = 22
+  const x0 = padL, x1 = width - padR, colW = (x1 - x0) / TIERS.length
+  const y0 = padT, y1 = padT + plotHeight
+  const inner = plotHeight - 2 * r - 8
+  const yOf = (s) => y0 + r + 4 + (1 - s / 100) * inner
+  const yMid = yOf(NEUTRAL)
+  const xMid = x0 + MULTI_SOURCE * colW
+  const colLeft = (t) => x0 + t * colW
+  const halo = (row) => (row.state === 'contested' ? 3.5 : 0)
+  const nodes = new Map()
+
+  const step = 2 * r + 3
+  const K = Math.max(0, Math.floor((colW / 2 - r - 2) / step))
+  const offsets = (J) => {
+    const out = []
+    for (let i = -K; i <= K; i++) for (let j = -J; j <= J; j++) out.push({ i, j, c: Math.abs(i) + 3 * Math.abs(j) + (i < 0 ? 0.1 : 0) + (j < 0 ? 0.05 : 0) })
+    return out.sort((a, b) => a.c - b.c || a.i - b.i || a.j - b.j)
+  }
+  const near = offsets(2), far = offsets(5)
+  const placed = TIERS.map(() => [])
+  let overflow = 0
+  const rated = rows.filter((row) => row.strength != null).sort((a, b) => b.strength - a.strength || cmpId(a, b))
+  for (const row of rated) {
+    const t = row.tier, left = colLeft(t), right = left + colW
+    const cx0 = left + colW / 2, cy0 = yOf(row.strength)
+    const top = row.strength > NEUTRAL
+    const re = r + halo(row)
+    const fits = (cx, cy) => cx - re >= left + 1 && cx + re <= right - 1 && cy - re >= y0 && cy + re <= y1
+      && (top ? cy < yMid : cy >= yMid)
+      && placed[t].every((p) => (p.cx - cx) ** 2 + (p.cy - cy) ** 2 >= (p.re + re + 1) ** 2)
+    let spot = null
+    for (const list of [near, far]) {
+      for (const o of list) {
+        const cx = cx0 + o.i * step, cy = cy0 + o.j * step
+        if (fits(cx, cy)) { spot = { cx, cy }; break }
+      }
+      if (spot) break
+    }
+    if (!spot) { spot = { cx: cx0, cy: cy0 }; overflow++ }
+    const node = { id: row.id, row, r, re, cx: spot.cx, cy: spot.cy, idealY: cy0, area: 'plot' }
+    placed[t].push(node)
+    nodes.set(row.id, node)
+  }
+
+  const unrated = rows.filter((row) => row.strength == null).sort((a, b) => a.tier - b.tier || cmpId(a, b))
+  const roomy = unrated.length <= 12
+  const pitchX = 2 * (r + 3.5) + 2 // 按带红环的最大半径留间距，两个有争议的点相邻也不重叠
+  const pitchY = roomy ? Math.max(pitchX, fs + 8) : pitchX
+  const perRow = roomy ? 1 : Math.max(1, Math.floor((colW - 12) / pitchX))
+  const byTier = TIERS.map(() => [])
+  for (const row of unrated) byTier[row.tier].push(row)
+  const stripRows = Math.max(1, ...byTier.map((list) => Math.ceil(list.length / perRow)))
+  const stripY0 = y1 + axisH
+  const stripY1 = stripY0 + stripCap + stripRows * pitchY + 6
+  byTier.forEach((list, t) => list.forEach((row, i) => {
+    nodes.set(row.id, {
+      id: row.id, row, r, re: r + halo(row), idealY: null, area: 'strip',
+      cx: colLeft(t) + 8 + r + (i % perRow) * pitchX,
+      cy: stripY0 + stripCap + pitchY / 2 + Math.floor(i / perRow) * pitchY,
+    })
+  }))
+
+  /* 标签：按优先级逐个尝试 右 → 左 → 下 → 上；与已放标签、可见点（含红环）都不相交才放。 */
+  const lh = fs + 4
+  const textWidth = (text) => Array.from(text).reduce((w, ch) => w + (/[\u2E80-\uFFFF]/.test(ch) ? fs : fs * 0.6), 0) + 2
+  const isVisible = (id) => !visible || visible.has(id)
+  const visibleNodes = [...nodes.values()].filter((n) => isVisible(n.id))
+  const priority = (a, b) => Number(b.id === selectedId) - Number(a.id === selectedId)
+    || RANK[a.bucket] - RANK[b.bucket] || (b.strength ?? -1) - (a.strength ?? -1) || cmpId(a, b)
+  const order = rows.filter((row) => isVisible(row.id)).sort(priority)
+  const budget = opt.labelAll === false ? (opt.labelBudget ?? 14) : Infinity
+  const labels = [], hidden = new Set()
+  for (const row of order) {
+    const n = nodes.get(row.id)
+    if (row.id !== selectedId && labels.length >= budget) { hidden.add(row.id); continue }
+    const text = clip(row.title, LABEL_CHARS), w = textWidth(text)
+    const bounds = n.area === 'plot' ? { x0, y0, x1, y1 } : { x0, y0: stripY0 + stripCap - 4, x1, y1: stripY1 }
+    const candidates = [
+      { side: 'right', x: n.cx + n.re + 4, y: n.cy - lh / 2 },
+      { side: 'left', x: n.cx - n.re - 4 - w, y: n.cy - lh / 2 },
+      { side: 'below', x: n.cx - w / 2, y: n.cy + n.re + 2 },
+      { side: 'above', x: n.cx - w / 2, y: n.cy - n.re - 2 - lh },
+    ]
+    const hit = candidates.find((c) => {
+      const box = { x: c.x, y: c.y, w, h: lh }
+      return box.x >= bounds.x0 && box.x + w <= bounds.x1 && box.y >= bounds.y0 && box.y + lh <= bounds.y1
+        && labels.every((o) => !rectHit(o, box))
+        && visibleNodes.every((m) => m.id === n.id || !circleHit(m, box))
+    })
+    if (!hit) { hidden.add(row.id); continue }
+    labels.push({ id: row.id, x: hit.x, y: hit.y, w, h: lh, text, side: hit.side })
+  }
+  return {
+    width, height: stripY1 + 4, fs, r, inner, opt,
+    plot: { x0, x1, y0, y1, yMid, xMid, colW, yOf }, strip: { y0: stripY0, y1: stripY1, cap: stripCap },
+    nodes, labels, hidden, overflow,
+  }
+}
+function rectHit(a, b) { return a.x < b.x + b.w + 1 && b.x < a.x + a.w + 1 && a.y < b.y + b.h && b.y < a.y + a.h }
+function circleHit(m, box) {
+  const nx = Math.max(box.x, Math.min(m.cx, box.x + box.w))
+  const ny = Math.max(box.y, Math.min(m.cy, box.y + box.h))
+  return (nx - m.cx) ** 2 + (ny - m.cy) ** 2 < (m.re + 1) ** 2
+}
+
+/* ───────────── 合成数据（与截图同规模；不是真实结论） ───────────── */
+const CATEGORIES = ['技术路线', '产能与制造', '市场与竞争']
+const BASE_ROWS = [
+  { id: 'c01', title: '毫米波波束成形 IC 是公司的护城河', category: '技术路线', strength: null, support: 0, challenge: 0, sources: 0 },
+  { id: 'c02', title: 'Fab 产能利用率决定毛利拐点', category: '产能与制造', strength: 58, support: 2, challenge: 1, sources: 2 },
+  { id: 'c03', title: 'InP 光芯片良率仍是主要瓶颈', category: '产能与制造', strength: 50, support: 0, challenge: 0, sources: 0 },
+  { id: 'c04', title: '卫星通信终端需求 2027 年起量', category: '市场与竞争', strength: null, support: 0, challenge: 0, sources: 0 },
+  { id: 'c05', title: '与大厂的 CPO 合作已进入量产验证', category: '市场与竞争', strength: 78, support: 1, challenge: 0, sources: 1 },
+  { id: 'c06', title: '光模块国产替代挤压其数通份额', category: '', strength: 46, support: 0, challenge: 0, sources: 0 },
+  { id: 'c07', title: '28GHz FWA 订单的持续性存疑', category: '', strength: 66, support: 1, challenge: 0, sources: 1 },
+  { id: 'c08', title: '毛利率已经见底', category: '', strength: 40, support: 1, challenge: 0, sources: 1 },
+  { id: 'c09', title: '资本开支高峰已经过去', category: '', strength: 71, support: 2, challenge: 0, sources: 1 },
+  { id: 'c10', title: '管理层指引偏保守', category: '', strength: 34, support: 1, challenge: 2, sources: 3 },
+  { id: 'c11', title: '现金跑道足以支撑到 2027 年底', category: '', strength: null, support: 0, challenge: 0, sources: 0 },
+  { id: 'c12', title: '欧洲芯片法案补贴已经落地', category: '', strength: 82, support: 3, challenge: 0, sources: 3 },
+]
+const BASE_EDGES = [
+  { from: 'c02', to: 'c08', rel: 'supports' },
+  { from: 'c03', to: 'c02', rel: 'supports' },
+  { from: 'c05', to: 'c04', rel: 'derives' },
+  { from: 'c10', to: 'c09', rel: 'contradicts' },
+  { from: 'c06', to: 'c05', rel: 'contradicts' },
+  { from: 'c12', to: 'c11', rel: 'supports' },
+]
+function mulberry32(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const SUBJECTS = ['毫米波业务', '光芯片线', '卫星终端', 'FWA 订单', 'CPO 合作', '欧洲补贴', '数通客户', '库存周期', '毛利率', '资本开支', '现金跑道', '管理层指引']
+const PREDICATES = ['将在两个季度内改善', '仍受良率拖累', '依赖单一大客户', '已被市场充分定价', '存在下修风险', '受益于国产替代', '取决于产能爬坡', '短期难以兑现']
+function synthesize(n) {
+  const rand = mulberry32(20261003 + n)
+  const rows = []
+  for (let i = 0; i < n; i++) {
+    const category = rand() < 0.35 ? '' : CATEGORIES[Math.floor(rand() * CATEGORIES.length)]
+    const p = rand()
+    const stated = p < 0.3 ? 0 : p < 0.55 ? 1 : p < 0.75 ? 2 : p < 0.9 ? 3 : 4 + Math.floor(rand() * 3)
+    const challenge = stated > 1 && rand() < 0.3 ? 1 + Math.floor(rand() * Math.min(2, stated - 1)) : 0
+    const sources = stated === 0 ? 0 : 1 + Math.floor(rand() * stated)
+    const strength = rand() < 0.15 ? null : Math.round(8 + rand() * 88)
+    rows.push({
+      id: `s${String(i + 1).padStart(3, '0')}`,
+      title: `#${i + 1} ${SUBJECTS[i % SUBJECTS.length]}${PREDICATES[(i * 7 + Math.floor(i / SUBJECTS.length)) % PREDICATES.length]}`,
+      category, strength, support: stated - challenge, challenge, sources,
+    })
+  }
+  const edges = [], seen = new Set()
+  for (let i = 0; i < n; i++) {
+    if (rand() >= 0.18) continue
+    const j = Math.floor(rand() * n)
+    if (j === i) continue
+    const key = `${rows[i].id}>${rows[j].id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const q = rand()
+    edges.push({ from: rows[i].id, to: rows[j].id, rel: q < 0.5 ? 'supports' : q < 0.75 ? 'contradicts' : 'derives' })
+  }
+  return { rows, edges }
+}
+
+/* ───────────── 状态与渲染 ───────────── */
+const NS = 'http://www.w3.org/2000/svg'
+const svgEl = (tag, attrs = {}, text) => {
+  const el = document.createElementNS(NS, tag)
+  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, String(v))
+  if (text != null) el.textContent = text
+  return el
+}
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag)
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v)
+    else if (k === 'style') el.setAttribute('style', v)
+    else el.setAttribute(k, v === true ? '' : String(v))
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)))
+  return el
+}
+const svg = document.getElementById('map')
+const state = { rows: [], edges: [], selected: null, hover: null, bucket: null, cats: new Set(), layout: null, layers: null }
+
+function load(n) {
+  const data = n === 12 ? { rows: BASE_ROWS, edges: BASE_EDGES } : synthesize(n)
+  state.rows = data.rows.map((row) => enrich(row, CATEGORIES))
+  const ids = new Set(state.rows.map((row) => row.id))
+  state.edges = data.edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to)
+  state.selected = null; state.hover = null; state.bucket = null; state.cats = new Set()
+  document.getElementById('data-note').textContent = n === 12 ? '合成数据（与截图同规模：12 条观点、3 个分类 + 未分类）' : `合成数据 ${n} 条（种子固定，可复现）`
+  renderAll()
+}
+const byId = (id) => state.rows.find((row) => row.id === id)
+const isVisible = (row) => (!state.bucket || row.bucket === state.bucket) && (!state.cats.size || state.cats.has(row.categoryName))
+
+function renderAll() { renderMetrics(); renderBars(); renderMap(); renderSide(); renderList() }
+
+function renderMetrics() {
+  const rows = state.rows
+  const uncat = rows.filter((row) => !row.category).length
+  const items = [
+    [rows.length, '观点'], [CATEGORIES.length, '分类'],
+    [rows.reduce((sum, row) => sum + row.stated, 0), '已表态证据'],
+    [rows.filter((row) => row.state === 'contested').length, '有争议'],
+    [rows.filter((row) => row.bucket === 'thin').length, '强但证据薄'],
+    [uncat, '未分类'],
+  ]
+  document.getElementById('metrics').replaceChildren(...items.map(([v, k]) => h('div', { class: 'metric' }, h('div', { class: 'v num' }, v), h('div', { class: 'k' }, k))))
+}
+
+function renderBars() {
+  const bucketBar = document.getElementById('bucket-bar')
+  bucketBar.replaceChildren(h('span', { class: 'k' }, '看哪类'), ...BUCKET_ORDER.map((key) => {
+    const count = state.rows.filter((row) => row.bucket === key).length
+    return h('button', {
+      class: 'fchip', type: 'button', 'aria-pressed': String(state.bucket === key), title: BUCKETS[key].hint, disabled: count === 0 || null,
+      style: count === 0 ? 'opacity:.45;cursor:default' : null,
+      onclick: () => { state.bucket = state.bucket === key ? null : key; renderAll() },
+    }, h('i', { class: `sw${key === 'contested' ? ' ring' : ''}`, style: key === 'contested' ? null : `background:${BUCKETS[key].color}` }), BUCKETS[key].label, h('span', { class: 'n' }, count))
+  }))
+  const names = [...CATEGORIES, UNCATEGORIZED]
+  const catBar = document.getElementById('cat-bar')
+  catBar.replaceChildren(h('span', { class: 'k' }, '分类'), ...names.map((name, i) => {
+    const count = state.rows.filter((row) => row.categoryName === name).length
+    const uncat = name === UNCATEGORIZED
+    return h('button', {
+      class: 'fchip', type: 'button', 'aria-pressed': String(state.cats.has(name)),
+      onclick: () => { state.cats.has(name) ? state.cats.delete(name) : state.cats.add(name); renderAll() },
+    }, h('i', { class: `sw${uncat ? ' hollow' : ''}`, style: uncat ? null : `background:${CATEGORY_COLORS[i]}` }), name, h('span', { class: 'n' }, count))
+  }))
+  const uncat = state.rows.filter((row) => !row.category).length
+  const banner = document.getElementById('uncat-banner')
+  banner.hidden = uncat === 0
+  if (uncat) {
+    const pct = Math.round((uncat / state.rows.length) * 100)
+    banner.replaceChildren(h('span', {}, h('b', {}, `${uncat} 条观点还没分类`), `（占 ${pct}%）。分类只决定颜色，不影响位置。`),
+      h('span', { class: 'go' }, '去「主题设置 → 分类管理」归类 →'))
+  }
+}
+
+function renderMap() {
+  const rows = state.rows
+  const big = rows.length > LABEL_ALL_MAX
+  const visibleIds = new Set(rows.filter(isVisible).map((row) => row.id))
+  const L = layoutJudgmentMap(rows, {
+    width: 880, plotHeight: big ? 440 : 360, radius: big ? 5.5 : 7,
+    selectedId: state.selected, visibleIds, labelAll: !big, labelBudget: 14,
+  })
+  state.layout = L
+  const { plot, strip } = L
+  svg.setAttribute('viewBox', `0 0 ${L.width} ${L.height}`)
+  svg.replaceChildren()
+
+  const defs = svgEl('defs')
+  for (const [rel, color] of [['supports', 'var(--green-dot)'], ['contradicts', 'var(--red-dot)'], ['derives', 'var(--text-3)'], ['related', 'var(--text-3)']]) {
+    const marker = svgEl('marker', { id: `arr-${rel}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' })
+    marker.append(svgEl('path', { d: 'M0,0 L10,5 L0,10 z', style: `fill:${color}` }))
+    defs.append(marker)
+  }
+  svg.append(defs)
+
+  const quads = [
+    ['thin', plot.x0, plot.y0, plot.xMid - plot.x0, plot.yMid - plot.y0, 'var(--orange-soft)', 'var(--orange)'],
+    ['solid', plot.xMid, plot.y0, plot.x1 - plot.xMid, plot.yMid - plot.y0, 'var(--green-soft)', 'var(--green)'],
+    ['early', plot.x0, plot.yMid, plot.xMid - plot.x0, plot.y1 - plot.yMid, 'var(--surface-2)', 'var(--text-2)'],
+    ['weak', plot.xMid, plot.yMid, plot.x1 - plot.xMid, plot.y1 - plot.yMid, 'var(--purple-soft)', 'var(--purple)'],
+  ]
+  const bg = svgEl('g', { class: 'q-bg' })
+  for (const [key, x, y, w, hgt, fill, ink] of quads) {
+    bg.append(svgEl('rect', { x, y, width: w, height: hgt, style: `fill:${fill}` }))
+    const right = key === 'solid' || key === 'weak'
+    const top = key === 'thin' || key === 'solid'
+    const tx = right ? x + w - 10 : x + 10
+    const ty = top ? y + 18 : y + hgt - 22
+    bg.append(svgEl('text', { class: 'q-label', x: tx, y: ty, 'text-anchor': right ? 'end' : 'start', style: `fill:${ink}` }, BUCKETS[key].label))
+    bg.append(svgEl('text', { class: 'q-hint', x: tx, y: ty + 14, 'text-anchor': right ? 'end' : 'start' }, BUCKETS[key].hint))
+  }
+  svg.append(bg)
+
+  const axis = svgEl('g', { class: 'axis' })
+  for (const s of [0, 25, 50, 75, 100]) {
+    const y = plot.yOf(s)
+    axis.append(svgEl('line', { class: 'tick', x1: plot.x0, x2: plot.x1, y1: y, y2: y, style: s === NEUTRAL ? 'stroke:none' : null }))
+    axis.append(svgEl('text', { x: plot.x0 - 8, y: y + 4, 'text-anchor': 'end' }, s === NEUTRAL ? '50 中性' : String(s)))
+  }
+  for (let t = 1; t < TIERS.length; t++) {
+    if (t === MULTI_SOURCE) continue
+    const x = plot.x0 + t * plot.colW
+    axis.append(svgEl('line', { class: 'tick', x1: x, x2: x, y1: plot.y0, y2: plot.y1 }))
+  }
+  TIERS.forEach((label, t) => axis.append(svgEl('text', { x: plot.x0 + (t + 0.5) * plot.colW, y: plot.y1 + 16, 'text-anchor': 'middle' }, label)))
+  axis.append(svgEl('text', { x: plot.x1, y: plot.y1 + 30, 'text-anchor': 'end' }, '独立来源 →'))
+  axis.append(svgEl('text', { x: plot.x0 - 8, y: plot.y0 - 10, 'text-anchor': 'end' }, '强度 ↑'))
+  axis.append(svgEl('rect', { class: 'frame', x: plot.x0, y: plot.y0, width: plot.x1 - plot.x0, height: plot.y1 - plot.y0 }))
+  axis.append(svgEl('line', { class: 'mid-line', x1: plot.x0, x2: plot.x1, y1: plot.yMid, y2: plot.yMid }))
+  axis.append(svgEl('line', { class: 'mid-line', x1: plot.xMid, x2: plot.xMid, y1: plot.y0, y2: plot.y1 }))
+  const unratedCount = rows.filter((row) => row.strength == null).length
+  axis.append(svgEl('rect', { class: 'strip-bg', x: plot.x0, y: strip.y0, width: plot.x1 - plot.x0, height: strip.y1 - strip.y0, rx: 8 }))
+  axis.append(svgEl('text', { x: plot.x0 + 10, y: strip.y0 + 15 }, unratedCount
+    ? `未评估强度 · ${unratedCount} 条（还没有强度记录，不是强度 0；横向仍按来源档位对齐）`
+    : '没有未评估强度的观点'))
+  svg.append(axis)
+
+  const edgeLayer = svgEl('g', { class: 'edges' })
+  const nodeLayer = svgEl('g', { class: 'nodes' })
+  const labelLayer = svgEl('g', { class: 'labels' })
+  const tipLayer = svgEl('g', { class: 'tips' })
+  svg.append(edgeLayer, nodeLayer, labelLayer, tipLayer)
+
+  const drawOrder = [...L.nodes.values()].sort((a, b) => Number(a.row.id === state.selected) - Number(b.row.id === state.selected) || cmpId(a, b))
+  for (const n of drawOrder) {
+    const row = n.row
+    const faded = !visibleIds.has(row.id)
+    const g = svgEl('g', {
+      class: `node${faded ? ' is-faded' : ''}`, 'data-id': row.id, transform: `translate(${n.cx.toFixed(2)} ${n.cy.toFixed(2)})`,
+      tabindex: faded ? -1 : 0, role: 'button',
+      'aria-label': `观点「${row.title}」：${BUCKETS[row.bucket].label}；强度 ${row.strength == null ? '未评估' : row.strength}；独立来源 ${row.sources} 家；支持 ${row.support} · 反对 ${row.challenge}；分类 ${row.categoryName}`,
+    })
+    if (row.id === state.selected) g.append(svgEl('circle', { class: 'sel', r: n.re + 4 }))
+    if (row.state === 'contested') g.append(svgEl('circle', { class: 'ring', r: n.r + 2.5 }))
+    g.append(svgEl('circle', { class: `dot${row.color ? '' : ' is-uncat'}`, r: n.r, style: row.color ? `fill:${row.color}` : null }))
+    nodeLayer.append(g)
+  }
+  for (const label of L.labels) {
+    labelLayer.append(svgEl('text', {
+      class: 'lbl', 'data-id': label.id, x: (label.x + 1).toFixed(2), y: (label.y + label.h / 2).toFixed(2),
+      'dominant-baseline': 'central', style: `font-size:${L.fs}px`,
+    }, label.text))
+  }
+  state.layers = { edgeLayer, nodeLayer, labelLayer, tipLayer }
+  applyFocus()
+  renderSelfCheck(L)
+}
+
+/* 悬浮/选中：只画焦点自己的边，压暗无关点；焦点或邻居的标签被收起时补一个浮签。 */
+function applyFocus() {
+  const L = state.layout, layers = state.layers
+  if (!L || !layers) return
+  const focus = state.hover ?? state.selected
+  layers.edgeLayer.replaceChildren()
+  layers.tipLayer.replaceChildren()
+  const nodeEls = layers.nodeLayer.querySelectorAll('.node')
+  const labelEls = layers.labelLayer.querySelectorAll('.lbl')
+  if (!focus || !L.nodes.has(focus)) {
+    nodeEls.forEach((el) => el.classList.remove('is-dim'))
+    labelEls.forEach((el) => el.classList.remove('is-dim'))
+    return
+  }
+  const incident = state.edges.filter((e) => e.from === focus || e.to === focus)
+  const keep = new Set([focus, ...incident.flatMap((e) => [e.from, e.to])])
+  nodeEls.forEach((el) => el.classList.toggle('is-dim', !keep.has(el.dataset.id)))
+  labelEls.forEach((el) => el.classList.toggle('is-dim', !keep.has(el.dataset.id)))
+  for (const e of incident) {
+    const a = L.nodes.get(e.from), b = L.nodes.get(e.to)
+    const mx = (a.cx + b.cx) / 2, my = (a.cy + b.cy) / 2
+    const dx = b.cx - a.cx, dy = b.cy - a.cy
+    const len = Math.hypot(dx, dy) || 1
+    const bend = (e.from < e.to ? 1 : -1) * Math.min(60, len * 0.18)
+    const c = { x: mx - (dy / len) * bend, y: my + (dx / len) * bend }
+    const unit = (p, q) => { const l = Math.hypot(q.x - p.x, q.y - p.y) || 1; return { x: (q.x - p.x) / l, y: (q.y - p.y) / l } }
+    const u0 = unit({ x: a.cx, y: a.cy }, c), u1 = unit(c, { x: b.cx, y: b.cy })
+    const s = { x: a.cx + u0.x * (a.re + 2), y: a.cy + u0.y * (a.re + 2) }
+    const t = { x: b.cx - u1.x * (b.re + 3), y: b.cy - u1.y * (b.re + 3) }
+    const rel = RELATION_LABEL[e.rel] ? e.rel : 'related'
+    layers.edgeLayer.append(svgEl('path', {
+      class: `edge ${rel}`, d: `M${s.x.toFixed(1)},${s.y.toFixed(1)} Q${c.x.toFixed(1)},${c.y.toFixed(1)} ${t.x.toFixed(1)},${t.y.toFixed(1)}`,
+      'marker-end': `url(#arr-${rel})`,
+    }))
+    const mid = { x: 0.25 * s.x + 0.5 * c.x + 0.25 * t.x, y: 0.25 * s.y + 0.5 * c.y + 0.25 * t.y }
+    layers.edgeLayer.append(svgEl('text', { class: 'edge-lbl', x: mid.x, y: mid.y, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, RELATION_LABEL[rel]))
+  }
+  for (const id of keep) {
+    if (!L.hidden.has(id) && L.labels.some((label) => label.id === id)) continue
+    const n = L.nodes.get(id)
+    const text = clip(n.row.title, id === focus ? 28 : LABEL_CHARS)
+    const w = Array.from(text).reduce((sum, ch) => sum + (/[\u2E80-\uFFFF]/.test(ch) ? 11.5 : 7), 0) + 14
+    const x = n.cx + n.re + 6 + w <= L.width - 2 ? n.cx + n.re + 6 : n.cx - n.re - 6 - w
+    const g = svgEl('g', { class: 'tip' })
+    g.append(svgEl('rect', { x, y: n.cy - 11, width: w, height: 22, rx: 6 }))
+    g.append(svgEl('text', { x: x + 7, y: n.cy, 'dominant-baseline': 'central' }, text))
+    layers.tipLayer.append(g)
+  }
+}
+
+function select(id) {
+  state.selected = state.selected === id ? null : id
+  renderMap(); renderSide(); renderList()
+}
+svg.addEventListener('pointerover', (event) => {
+  const g = event.target.closest?.('.node')
+  const id = g && !g.classList.contains('is-faded') ? g.dataset.id : null
+  if (id !== state.hover) { state.hover = id; applyFocus() }
+})
+svg.addEventListener('pointerleave', () => { state.hover = null; applyFocus() })
+svg.addEventListener('click', (event) => {
+  const g = event.target.closest?.('.node')
+  if (g) select(g.dataset.id)
+  else if (state.selected) select(state.selected)
+})
+svg.addEventListener('keydown', (event) => {
+  const g = event.target.closest?.('.node')
+  if (g && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(g.dataset.id) }
+})
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.selected) select(state.selected) })
+
+function renderSide() {
+  const side = document.getElementById('side')
+  const row = state.selected ? byId(state.selected) : null
+  if (!row) {
+    side.replaceChildren(
+      h('h3', {}, '怎么读这张图'),
+      h('div', { class: 'why' },
+        h('span', {}, h('b', {}, '越往右'), '：独立来源越多（同一来源的多篇只算 1 家）。'),
+        h('span', {}, h('b', {}, '越往上'), '：强度越高；虚线 = 中性 50。'),
+        h('span', {}, h('b', {}, '左上角'), '最值得先看：看着强，但没几家来源撑着。'),
+        h('span', {}, h('b', {}, '红色外环'), '：同时有支持和反对。'),
+        h('span', {}, '悬浮看关系，点击看详情；Esc 取消选中。')),
+      h('div', {}, h('h4', {}, '分布'), ...BUCKET_ORDER.map((key) => h('div', { class: 'qrow' },
+        h('span', { class: `pill ${BUCKETS[key].tone}` }, BUCKETS[key].label),
+        h('span', { class: 'cap' }, BUCKETS[key].hint),
+        h('span', { class: 'n' }, state.rows.filter((r) => r.bucket === key).length)))))
+    return
+  }
+  const region = BUCKETS[row.region]
+  const relations = state.edges.filter((e) => e.from === row.id || e.to === row.id).map((e) => {
+    const outgoing = e.from === row.id
+    const other = byId(outgoing ? e.to : e.from)
+    return { other, text: outgoing ? `它${RELATION_LABEL[e.rel] || '相关'} →` : `← 被${RELATION_LABEL[e.rel] || '相关'}` }
+  }).sort((a, b) => cmpId(a.other, b.other))
+  side.replaceChildren(
+    h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
+      h('span', { class: `pill ${BUCKETS[row.bucket].tone}` }, BUCKETS[row.bucket].label),
+      h('span', { class: 'pill ghost' }, h('i', { class: `sw${row.color ? '' : ' hollow'}`, style: row.color ? `background:${row.color}` : null }), row.categoryName)),
+    h('h3', {}, row.title),
+    h('div', {}, h('h4', {}, '为什么在这个位置'), h('div', { class: 'why' },
+      h('span', {}, h('b', {}, '横轴：'), row.stated ? `${row.sources} 家独立来源（已表态 ${row.stated} 条：支持 ${row.support} · 反对 ${row.challenge}）` : '还没有已表态的来源', ` → 「${TIERS[row.tier]}」列`),
+      h('span', {}, h('b', {}, '纵轴：'), row.strength == null ? '没有强度记录 → 底部「未评估」带子' : `强度 ${row.strength}（${row.strength > NEUTRAL ? '高于' : '不高于'}中性 50）`),
+      h('span', {}, h('b', {}, '区域：'), `${region.label}——${region.hint}`),
+      row.state === 'contested' ? h('span', {}, h('b', {}, '状态：'), '有争议（红色外环）') : null)),
+    h('div', { class: 'next' }, h('b', {}, '下一步：'), NEXT_STEP[row.bucket]),
+    h('div', {}, h('h4', {}, `观点之间的关系 · ${relations.length}`), relations.length
+      ? relations.map(({ other, text }) => h('div', { class: 'rel', onclick: () => select(other.id) }, h('span', { class: 'tag' }, text), h('span', {}, clip(other.title, 22))))
+      : h('div', { class: 'cap' }, '还没有声明过与其他观点的关系。')))
+}
+
+function renderList() {
+  const maxSide = Math.max(1, ...state.rows.map((row) => Math.max(row.support, row.challenge)))
+  const names = [...CATEGORIES, UNCATEGORIZED]
+  const groups = names.map((name, i) => ({ name, color: name === UNCATEGORIZED ? null : CATEGORY_COLORS[i], rows: state.rows.filter((row) => row.categoryName === name && isVisible(row)) }))
+    .filter((g) => g.rows.length)
+  const list = document.getElementById('list')
+  if (!groups.length) { list.replaceChildren(h('div', { class: 'cap', style: 'padding:10px 0' }, '当前筛选下没有观点。')); return }
+  list.replaceChildren(...groups.map((g) => h('div', { class: 'grp' },
+    h('div', { class: 'grp-head' }, h('i', { class: `sw${g.color ? '' : ' hollow'}`, style: g.color ? `background:${g.color}` : null }), g.name, h('span', { class: 'n' }, `${g.rows.length} 条`)),
+    ...g.rows.slice().sort((a, b) => RANK[a.bucket] - RANK[b.bucket] || (b.strength ?? -1) - (a.strength ?? -1) || cmpId(a, b)).map((row) => h('div', {
+      class: `row${row.id === state.selected ? ' is-selected' : ''}`,
+    },
+      h('button', { class: 't', type: 'button', title: row.title, onclick: () => select(row.id) }, row.title),
+      h('div', { class: 'str' },
+        h('div', { class: 'track' }, row.strength == null ? null : h('i', { style: `width:${row.strength}%` }), h('b', {})),
+        h('span', { class: `v${row.strength == null ? ' empty' : ''}` }, row.strength == null ? '未评估' : row.strength)),
+      h('div', {},
+        h('div', { class: 'bal', title: `支持 ${row.support} · 反对 ${row.challenge}` },
+          h('div', { class: 'l' }, h('i', { style: `width:${(row.support / maxSide) * 100}%` })),
+          h('div', { class: 'c' }),
+          h('div', { class: 'r' }, h('i', { style: `width:${(row.challenge / maxSide) * 100}%` }))),
+        h('div', { class: 'bal-num' }, h('span', {}, `支持 ${row.support}`), h('span', {}, `反对 ${row.challenge}`))),
+      h('span', { class: 'src' }, `${row.sources} 家`),
+      h('span', { class: `pill ${BUCKETS[row.bucket].tone}` }, BUCKETS[row.bucket].label))))))
+}
+
+/* ───────────── 自检：把布局规则当断言跑一遍 ───────────── */
+function renderSelfCheck(L) {
+  const out = []
+  const check = (pass, message) => out.push({ pass, message })
+  const nodes = [...L.nodes.values()]
+  const plotNodes = nodes.filter((n) => n.area === 'plot')
+  const badSide = plotNodes.filter((n) => {
+    const left = L.plot.x0 + n.row.tier * L.plot.colW
+    const inColumn = n.cx - n.re >= left && n.cx + n.re <= left + L.plot.colW
+    const vertical = n.row.strength > NEUTRAL ? n.cy < L.plot.yMid : n.cy >= L.plot.yMid
+    const horizontal = (n.row.tier >= MULTI_SOURCE) === (n.cx >= L.plot.xMid)
+    return !(inColumn && vertical && horizontal)
+  })
+  check(!badSide.length, `${plotNodes.length} 个有强度的点都在自己的来源档位列内，且在两条分界线的正确一侧${badSide.length ? `（违规：${badSide.map((n) => n.id).join(', ')}）` : ''}`)
+  const unrated = nodes.filter((n) => n.row.strength == null)
+  check(unrated.every((n) => n.area === 'strip' && n.cy > L.plot.y1), `${unrated.length} 个未评估强度的点全部在底部带子里，没有画在 0 上`)
+  let overlaps = 0
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const a = nodes[i], b = nodes[j]
+    if ((a.cx - b.cx) ** 2 + (a.cy - b.cy) ** 2 < (a.re + b.re) ** 2) overlaps++
+  }
+  check(overlaps === 0 && L.overflow === 0, `点与点不重叠（重叠 ${overlaps} 对，找不到空位 ${L.overflow} 个）`)
+  const maxShift = plotNodes.reduce((m, n) => Math.max(m, Math.abs(n.cy - n.idealY)), 0)
+  const shiftPts = (maxShift / L.inner) * 100
+  check(shiftPts <= 6, `为避让产生的最大纵向位移 = ${shiftPts.toFixed(1)} 个强度点（阈值 6；不会越过中性线）`)
+  let labelOverlaps = 0, labelOnDot = 0
+  const visibleNodes = nodes.filter((n) => !L.opt.visibleIds || L.opt.visibleIds.has(n.id))
+  for (let i = 0; i < L.labels.length; i++) {
+    for (let j = i + 1; j < L.labels.length; j++) if (rectHit(L.labels[i], L.labels[j])) labelOverlaps++
+    for (const n of visibleNodes) if (n.id !== L.labels[i].id && circleHit(n, L.labels[i])) labelOnDot++
+  }
+  check(labelOverlaps === 0 && labelOnDot === 0, `常显标签 ${L.labels.length} 个，收进悬浮 ${L.hidden.size} 个；标签互不相交（${labelOverlaps}），不压其他点（${labelOnDot}）`)
+  let worst = 0
+  state.layers.labelLayer.querySelectorAll('.lbl').forEach((el) => {
+    const label = L.labels.find((item) => item.id === el.dataset.id)
+    if (label) worst = Math.max(worst, el.getComputedTextLength() - label.w)
+  })
+  check(worst <= 2, `标签估宽 ≥ 实测宽度（最差超出 ${worst.toFixed(1)}px；>2px 说明估宽公式需要调）`)
+  const again = layoutJudgmentMap(state.rows.slice().reverse(), L.opt)
+  const sig = (layout) => JSON.stringify([...layout.nodes.values()].map((n) => [n.id, n.cx.toFixed(3), n.cy.toFixed(3)]).sort()) + JSON.stringify(layout.labels.map((l) => [l.id, l.side]).sort())
+  check(sig(again) === sig(L), '输入顺序倒过来重新布局，坐标与标签位置完全一致（确定性）')
+  const ringCount = state.rows.filter((row) => row.state === 'contested').length
+  const expected = state.rows.filter((row) => row.support > 0 && row.challenge > 0).length
+  check(ringCount === expected, `红环数 ${ringCount} = 同时有支持与反对的观点数 ${expected}`)
+  const recon = state.rows.every((row) => {
+    if (row.state === 'none') return row.tier === 0
+    if (row.state === 'single') return row.tier === 1
+    if (row.state === 'settled') return row.tier >= MULTI_SOURCE
+    return row.tier >= 1
+  })
+  check(recon, '证据状况可由「列 + 红环」完整还原（none ⇔ 第 1 列，single ⇔ 第 2 列，settled ⇔ 第 3/4 列无环）')
+  const el = document.getElementById('selfcheck')
+  el.replaceChildren(h('div', { style: 'font-weight:600;color:var(--text);margin-bottom:4px;font-family:var(--font)' }, `布局自检 · ${out.filter((c) => c.pass).length}/${out.length} 通过`),
+    ...out.map((c) => h('div', { class: c.pass ? '' : 'bad' }, `${c.pass ? '✓' : '✗'} ${c.message}`)))
+}
+
+document.getElementById('scale-pick').addEventListener('change', (event) => load(Number(event.target.value)))
+document.getElementById('mode-toggle').addEventListener('click', () => {
+  const root = document.documentElement
+  root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'
+})
+window.addEventListener('error', (event) => {
+  const el = document.getElementById('selfcheck')
+  el.append(h('div', { class: 'bad' }, `✗ 脚本错误：${event.message}`))
+})
+load(12)
+</script>
+</body>
+</html>

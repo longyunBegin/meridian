@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>读者页 · 原子看板草图</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --surface: #fff; --hairline: rgba(0,0,0,.1); --hairline-soft: rgba(0,0,0,.06); --hover: rgba(0,0,0,.05);
+    --text-1: #1d1d1f; --text-2: #55555a; --text-3: #8e8e93; --accent: #0071e3;
+    --support: #1a7f37; --against: #c4161c; --neutral: #8e8e93; --split: #b25e00; --origin: #c7c7cc;
+    --t-caption: 12px; --t-footnote: 13px; --t-body: 14px; --t-title: 17px; --t-large: 26px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text-1); font: var(--t-body)/1.6 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  button { font: inherit; color: inherit; }
+  .stage-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; align-items: center; padding: 10px 24px; background: rgba(245,245,247,.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--hairline); }
+  .stage-bar > span { color: var(--text-3); font-size: var(--t-caption); margin-right: 4px; }
+  .stage-btn { padding: 4px 14px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--surface); cursor: pointer; font-size: var(--t-footnote); }
+  .stage-btn.is-active { background: var(--text-1); color: #fff; border-color: var(--text-1); }
+  .stage-note { margin-left: auto; color: var(--text-3); font-size: var(--t-caption); }
+  main { max-width: 880px; margin: 0 auto; padding: 32px 24px 80px; }
+  section { margin: 0 0 36px; }
+  h2 { margin: 0 0 10px; font-size: var(--t-title); }
+  .kicker { margin: 0 0 4px; color: var(--text-3); font-size: var(--t-caption); letter-spacing: .06em; }
+  h1 { margin: 0 0 12px; font-size: var(--t-large); line-height: 1.3; }
+  .verdict { margin: 0 0 14px; padding: 12px 16px; border-left: 3px solid var(--accent); border-radius: 4px; background: var(--surface); }
+  .hint { margin: 0 0 10px; color: var(--text-3); font-size: var(--t-caption); }
+  /* 检验进度：一条横条看全局 */
+  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--hover); margin: 0 0 8px; }
+  .bar span { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; font-size: var(--t-caption); color: var(--text-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .legend b { color: var(--text-1); font-variant-numeric: tabular-nums; margin-left: 3px; }
+  .totals { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 14px 0 0; padding: 0; list-style: none; }
+  .totals li { display: grid; }
+  .totals b { font-size: var(--t-footnote); font-variant-numeric: tabular-nums; }
+  .totals span { color: var(--text-3); font-size: var(--t-caption); }
+  /* 原子看板 */
+  .group { margin: 0 0 18px; padding: 12px 16px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); }
+  .group.is-quiet { background: transparent; border-style: dashed; }
+  .group-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; }
+  .group-head i { width: 10px; height: 10px; border-radius: 3px; flex: none; align-self: center; }
+  .group-head h3 { margin: 0; font-size: var(--t-body); }
+  .group-head span { color: var(--text-3); font-size: var(--t-caption); }
+  .atoms { list-style: none; margin: 0; padding: 0; }
+  .atom { border-top: 1px solid var(--hairline-soft); }
+  .atom-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 150px; gap: 12px; align-items: center; width: 100%; padding: 8px 0; border: 0; background: none; text-align: left; cursor: pointer; }
+  .atom-row:hover .atom-title { color: var(--accent); }
+  .atom-title { font-size: var(--t-footnote); }
+  .atom-type { margin-left: 6px; color: var(--text-3); font-size: var(--t-caption); }
+  .stance { display: flex; gap: 2px; align-items: center; }
+  .stance span { height: 8px; border-radius: 2px; }
+  .stance em { margin-left: 6px; color: var(--text-2); font-style: normal; font-size: var(--t-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .atom-meta { color: var(--text-3); font-size: var(--t-caption); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .atom-detail { margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: var(--bg); font-size: var(--t-caption); }
+  .atom-detail h4 { margin: 8px 0 4px; font-size: var(--t-caption); color: var(--text-2); }
+  .atom-detail h4:first-child { margin-top: 0; }
+  .atom-detail ul { list-style: none; margin: 0; padding: 0; }
+  .atom-detail li { display: flex; gap: 8px; padding: 3px 0; }
+  .atom-detail .src { color: var(--text-1); }
+  .atom-detail .when { color: var(--text-3); margin-left: auto; white-space: nowrap; }
+  .atom-detail .none { color: var(--text-3); }
+  .chip { flex: none; padding: 0 7px; border-radius: 999px; font-size: var(--t-caption); }
+  .chip.s { color: var(--support); background: rgba(26,127,55,.1); }
+  .chip.a { color: var(--against); background: rgba(196,22,28,.1); }
+  .chip.n { color: var(--text-2); background: var(--hover); }
+  .chip.o { color: var(--text-2); background: transparent; border: 1px solid var(--hairline); }
+  .more { margin-top: 4px; border: 0; background: none; padding: 0; color: var(--accent); font-size: var(--t-caption); cursor: pointer; }
+  .feed { list-style: none; margin: 0; padding: 0; }
+  .feed li { display: grid; grid-template-columns: 90px 64px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--hairline-soft); font-size: var(--t-footnote); }
+  .feed .d { color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+  .feed .to { color: var(--text-3); font-size: var(--t-caption); }
+  .feed .to b { color: var(--text-1); font-weight: 500; }
+  .empty { padding: 12px 16px; border: 1px dashed var(--hairline); border-radius: 10px; color: var(--text-2); font-size: var(--t-footnote); }
+  .watch li { display: grid; grid-template-columns: 200px 1fr; gap: 2px 16px; padding: 8px 0; border-top: 1px solid var(--hairline-soft); }
+  .watch { list-style: none; margin: 0; padding: 0; font-size: var(--t-footnote); }
+  .watch .fx { grid-column: 2; color: var(--text-2); font-size: var(--t-caption); }
+  .annot { margin: 6px 0 0; padding: 8px 12px; border-radius: 8px; background: #fff7e6; color: #7a4b00; font-size: var(--t-caption); }
+</style>
+</head>
+<body>
+<div class="stage-bar">
+  <span>同一个读者页：</span>
+  <button class="stage-btn" data-stage="0">① 新主题（刚拆完原子）</button>
+  <button class="stage-btn" data-stage="1">② Sivers 今天（真实数据）</button>
+  <button class="stage-btn" data-stage="2">③ 运转之后（示例）</button>
+  <span class="stage-note">点任意原子，就地展开出处与表态明细</span>
+</div>
+<main id="page"></main>
+
+<script>
+/*
+ * 数据形状：原子 + 挂在原子上的外部数据。每条外部数据有 role：
+ *   origin = 出处（原子就是从这条数据里抽出来的）；s / a / n = 独立数据的佐证 / 反对 / 中立。
+ * 判定出处的规则（来自账本里的明确字段，不靠位置猜）：
+ *   新引擎：外部数据的 sourceRef === 原子的 sourceRef；旧数据：sourceKind === 'legacy-node-source'。
+ */
+const D = (src, when, role) => ({ src, when, role })
+const PRESS = '财报 / 公告'
+const STAGES = [
+  {
+    name: '跟踪固态电池量产进展',
+    atoms: [
+      { t: '某电池厂宣布 2026Q4 启动 0.2GWh 固态电池中试线', type: '观察', data: [D('电池厂官网公告', '2026-09-21', 'origin')] },
+      { t: '硫化物电解质报价较年初下降约 30%', type: '观察', data: [D('行业周报', '2026-09-18', 'origin')] },
+      { t: '中试线良率仍低于 60%', type: '观察', data: [D('产业媒体', '2026-09-25', 'origin')] },
+      { t: '全固态电池 2027 年难以大规模装车', type: '假设', data: [] },
+      { t: '电解质成本下降会先推动半固态放量', type: '假设', data: [] },
+      { t: '两家车企计划 2027 年装车', type: '观察', data: [D('发布会实录', '2026-09-12', 'origin')] },
+    ],
+    watch: [],
+  },
+  {
+    name: '跟踪 Sivers Semiconductors（SIVE.ST）：光子与无线业务的订单、产能与财务进展',
+    atoms: [
+      { t: '财务', type: '维度', data: Array.from({ length: 8 }, (_, i) => D('维度更新记录（旧系统）', i < 3 ? '2026-09-30' : '日期未记录', 's')) },
+      ...[
+        ['Sivers 宣布了无线与光子业务的一系列高管变动', '2026-09-28'], ['Sivers 的股票代码为 STO:SIVE', '2026-09-28'],
+        ['Marc Pegulu 于 9 月 28 日起任无线业务董事总经理', '2026-09-28'], ['Harish Krishnaswamy 转任首席战略官', '2026-09-28'],
+        ['David Clark 于 10 月 31 日起任光子业务工程副总裁', '2026-09-28'], ['Andrew McKee 将于 2026 年底从光子 CTO 岗位退休', '2026-09-28'],
+        ['Sivers 称其正从研发驱动转向规模化产品收入', '2026-09-28'], ['特别股东大会议程包括选举会议主席', '2026-09-30'],
+        ['特别股东大会议程包括选举一至两名会议记录核验人', '2026-09-30'], ['特别股东大会议程包括编制并批准投票名单', '2026-09-30'],
+        ['特别股东大会议程包括批准议程', '2026-09-30'], ['特别股东大会议程包括确认会议合法召集', '2026-09-30'],
+        ['特别股东大会议程包括选举审计师', '2026-09-30'], ['特别股东大会议程包括长期激励计划决议', '2026-09-30'],
+        ['特别股东大会议程包括授权董事会定向发行 C 类股决议', '2026-09-30'], ['Marc Pegulu 出任 Wireless 董事总经理', '2026-09-30'],
+        ['David Clark 出任 Photonics 工程副总裁', '2026-09-30'],
+      ].map(([t, when]) => ({ t, type: '观察', data: [D(PRESS, when, 'origin')] })),
+      { t: '长期激励计划大概率为新管理层配套的激励方案', type: '公理', data: [D(PRESS, '2026-09-30', 'origin'), D(PRESS, '2026-09-30', 'origin')] },
+      ...['估值', '股本稀释', '资本路径', '业务', '治理机制'].map((t) => ({ t, type: '维度', data: [] })),
+      ...['化合物半导体衬底', '砷化镓衬底', '磷化铟衬底', '光子芯片晶圆制造', '射频前端晶圆制造', '光子业务线', '数据中心光模块芯片', '激光雷达发射芯片', '硅光集成芯片',
+        '无线业务线', '基站射频前端模块', '卫星通信射频组件', '车规级无线连接芯片', '光通信设备制造', '智能网联汽车', '卫星互联网运营', '消费电子终端'].map((t) => ({ t, type: '假设', data: [] })),
+      ...['化合物半导体衬底价格', '衬底出货量', '良率', '砷化镓衬底价格', '磷化铟衬底价格', '光子芯片晶圆代工价格'].map((t) => ({ t, type: '观察', data: [] })),
+      ...Array.from({ length: 45 }, (_, i) => ({ t: `（观察计划里的指标节点 ${i + 7}）`, type: '观察', data: [] })),
+    ],
+    watch: [
+      ['2026-10-22 见分晓（还有 18 天）', '股本稀释', 'EGM 否决 P11 提案'],
+      ['2026-10-22 见分晓（还有 18 天）', '资本路径', '公司明确放弃双重上市计划'],
+    ],
+  },
+  {
+    name: '跟踪固态电池量产进展',
+    atoms: [
+      { t: '中试线良率仍低于 60%', type: '观察', data: [D('产业媒体', '2026-09-25', 'origin'), D('券商调研纪要', '2026-10-08', 'a'), D('设备商访谈', '2026-10-15', 's')] },
+      { t: '全固态电池 2027 年难以大规模装车', type: '假设', data: [D('车企 A 交流会', '2026-10-02', 's'), D('车企 B 公告', '2026-10-12', 'a'), D('行业协会报告', '2026-10-14', 's')] },
+      { t: '两家车企计划 2027 年装车', type: '观察', data: [D('发布会实录', '2026-09-12', 'origin'), D('车企 A 澄清公告', '2026-10-09', 'a')] },
+      { t: '硫化物电解质报价较年初下降约 30%', type: '观察', data: [D('行业周报', '2026-09-18', 'origin'), D('原料供应商报价单', '2026-10-03', 's'), D('第三方价格指数', '2026-10-10', 's')] },
+      { t: '电解质成本下降会先推动半固态放量', type: '假设', data: [D('半固态装车月报', '2026-10-11', 's'), D('券商深度报告', '2026-10-13', 's')] },
+      { t: '某电池厂宣布 2026Q4 启动 0.2GWh 固态电池中试线', type: '观察', data: [D('电池厂官网公告', '2026-09-21', 'origin'), D('环评公示', '2026-10-06', 's')] },
+      { t: '固态电池术语国家标准将于 2027 年发布', type: '观察', data: [D('协会征求意见稿', '2026-09-02', 'origin'), D('标准委官网', '2026-10-05', 'n')] },
+      { t: '半固态电池 8 月装车量环比 +40%', type: '观察', data: [D('装车量月报', '2026-09-10', 'origin')] },
+      { t: '某电池厂良率爬坡快于预期', type: '观察', data: [D('自媒体文章', '2026-10-01', 'origin')] },
+      { t: '全固态电池成本 2028 年降到液态电池 1.5 倍以内', type: '假设', data: [] },
+    ],
+    watch: [['2027-12-31 见分晓', '全固态电池 2027 年难以大规模装车', '任一车企 2027 年全固态装车超过 1 万辆']],
+  },
+]
+
+const STATES = [
+  { key: 'split', label: '有分歧', hint: '既有佐证也有反对——最该看的', color: 'var(--split)' },
+  { key: 'against', label: '被反驳', hint: '独立数据只有反对', color: 'var(--against)' },
+  { key: 'support', label: '被佐证', hint: '有出处之外的独立佐证', color: 'var(--support)' },
+  { key: 'neutral', label: '只有中立', hint: '独立数据提到了，但没表态', color: 'var(--neutral)' },
+  { key: 'origin', label: '只有出处', hint: '只有它被抽出来的那条来源，还没被检验', color: 'var(--origin)', quiet: true },
+  { key: 'none', label: '没有外部数据', hint: '拆出来了，但还没有任何来源', color: 'transparent', quiet: true },
+]
+
+function classify(atom) {
+  const c = { s: 0, a: 0, n: 0, origin: 0 }
+  for (const d of atom.data) c[d.role] += 1
+  const key = c.s && c.a ? 'split' : c.a ? 'against' : c.s ? 'support' : c.n ? 'neutral' : c.origin ? 'origin' : 'none'
+  const dated = atom.data.map((d) => d.when).filter((w) => /^\d{4}-/.test(w)).sort()
+  return { ...atom, c, key, latest: dated.at(-1) || null, origins: atom.data.filter((d) => d.role === 'origin') }
+}
+
+const el = (tag, cls, ...kids) => { const e = document.createElement(tag); if (cls) e.className = cls; for (const k of kids.flat()) if (k != null && k !== false) e.append(k); return e }
+const ROLE = { s: '佐证', a: '反对', n: '中立', origin: '出处' }
+
+function stanceBar(a) {
+  const box = el('span', 'stance')
+  for (const [n, color] of [[a.c.s, 'var(--support)'], [a.c.a, 'var(--against)'], [a.c.n, 'var(--neutral)']]) {
+    for (let i = 0; i < Math.min(n, 6); i++) { const s = el('span'); s.style.cssText = `width:10px;background:${color}`; box.append(s) }
+  }
+  const independent = a.c.s + a.c.a + a.c.n
+  box.append(el('em', null, independent ? `佐证 ${a.c.s} · 反对 ${a.c.a}${a.c.n ? ` · 中立 ${a.c.n}` : ''}` : (a.c.origin ? '未检验' : '—')))
+  return box
+}
+
+function detail(a) {
+  const box = el('div', 'atom-detail')
+  box.append(el('h4', null, '出处'))
+  box.append(a.origins.length
+    ? el('ul', null, a.origins.map((d) => el('li', null, el('span', 'chip o', '出处'), el('span', 'src', d.src), el('span', 'when', d.when))))
+    : el('p', 'none', '没有记录出处（这个原子不是从某条外部数据里抽出来的，是拆主题时直接建的）。'))
+  const independent = a.data.filter((d) => d.role !== 'origin').sort((x, y) => (y.when || '').localeCompare(x.when || ''))
+  box.append(el('h4', null, `独立外部数据 · ${independent.length}`))
+  box.append(independent.length
+    ? el('ul', null, independent.map((d) => el('li', null, el('span', `chip ${d.role}`, ROLE[d.role]), el('span', 'src', d.src), el('span', 'when', d.when))))
+    : el('p', 'none', '还没有出处之外的数据对它表态。'))
+  box.append(el('h4', null, '其它'))
+  box.append(el('p', 'none', '与其它原子的关系、见分晓日期、推翻条件、修订历史——放在这里（正式实现沿用右侧抽屉）。'))
+  return box
+}
+
+function render(index) {
+  const stage = STAGES[index]
+  const atoms = stage.atoms.map(classify)
+  const count = (key) => atoms.filter((a) => a.key === key).length
+  const tested = atoms.filter((a) => a.c.s + a.c.a + a.c.n > 0).length
+  const tot = atoms.reduce((t, a) => ({ s: t.s + a.c.s, a: t.a + a.c.a, n: t.n + a.c.n, o: t.o + a.c.origin }), { s: 0, a: 0, n: 0, o: 0 })
+  const latest = atoms.map((a) => a.latest).filter(Boolean).sort().at(-1) || '—'
+  const page = document.getElementById('page')
+  page.replaceChildren()
+
+  /* ① 一句话 + 检验进度 */
+  const sentence = `${atoms.length} 个原子；${tested} 个被出处之外的外部数据检验过`
+    + (count('split') ? `，其中 ${count('split')} 个有分歧` : '')
+    + (count('against') ? `、${count('against')} 个被反驳` : '')
+    + `；${count('origin')} 个只有出处，${count('none')} 个还没有任何外部数据。`
+  const bar = el('div', 'bar')
+  for (const s of STATES) { const n = count(s.key); if (!n) continue; const seg = el('span'); seg.style.cssText = `width:${(n / atoms.length) * 100}%;background:${s.color}`; seg.title = `${s.label} ${n}`; bar.append(seg) }
+  page.append(el('section', null,
+    el('p', 'kicker', '主题'),
+    el('h1', null, stage.name),
+    el('p', 'verdict', sentence),
+    bar,
+    el('ul', 'legend', STATES.map((s) => el('li', null, el('i', null), s.label, el('b', null, String(count(s.key)))))),
+    el('ul', 'totals',
+      el('li', null, el('b', null, `${tot.s} / ${tot.a} / ${tot.n}`), el('span', null, '独立数据：佐证 / 反对 / 中立')),
+      el('li', null, el('b', null, String(tot.o)), el('span', null, '出处（不计入表态）')),
+      el('li', null, el('b', null, latest), el('span', null, '最近一条外部数据')))))
+  page.querySelectorAll('.legend i').forEach((i, k) => { i.style.background = STATES[k].color; if (STATES[k].key === 'none') i.style.border = '1px solid var(--hairline)' })
+
+  /* ② 原子看板 */
+  const board = el('section', null, el('h2', null, '原子看板 · 外部数据怎么说'),
+    el('p', 'hint', '按检验状态分组；组内按独立数据条数、再按最近日期排。出处只说明原子从哪来，不算佐证。'))
+  for (const s of STATES) {
+    const rows = atoms.filter((a) => a.key === s.key)
+      .sort((x, y) => (y.c.s + y.c.a + y.c.n) - (x.c.s + x.c.a + x.c.n) || (y.latest || '').localeCompare(x.latest || ''))
+    if (!rows.length) continue
+    const head = el('div', 'group-head', el('i', null), el('h3', null, `${s.label} · ${rows.length}`), el('span', null, s.hint))
+    head.querySelector('i').style.cssText = `background:${s.color};${s.key === 'none' ? 'border:1px solid var(--hairline)' : ''}`
+    const list = el('ul', 'atoms')
+    const limit = s.quiet ? 4 : 8
+    let expanded = false
+    const more = el('button', 'more')
+    const paint = () => {
+      list.replaceChildren(...(expanded ? rows : rows.slice(0, limit)).map((a) => {
+        const li = el('li', 'atom')
+        const row = el('button', 'atom-row',
+          el('span', null, el('span', 'atom-title', a.t), el('span', 'atom-type', a.type)),
+          stanceBar(a),
+          el('span', 'atom-meta', a.origins[0] ? `出处：${a.origins[0].src}` : (a.latest ? `最近 ${a.latest}` : '')))
+        let open = null
+        row.onclick = () => { if (open) { open.remove(); open = null } else { open = detail(a); li.append(open) } }
+        li.append(row)
+        return li
+      }))
+      more.hidden = rows.length <= limit
+      more.textContent = expanded ? '收起' : `展开全部 ${rows.length} 个`
+    }
+    more.onclick = () => { expanded = !expanded; paint() }
+    paint()
+    board.append(el('div', `group${s.quiet ? ' is-quiet' : ''}`, head, list, more))
+  }
+  page.append(board)
+
+  /* ③ 最近进来的外部数据 */
+  const feed = atoms.flatMap((a) => a.data.map((d) => ({ ...d, atom: a.t }))).filter((d) => /^\d{4}-/.test(d.when))
+    .sort((x, y) => y.when.localeCompare(x.when)).slice(0, 6)
+  page.append(el('section', null, el('h2', null, '最近进来的外部数据'),
+    feed.length
+      ? el('ul', 'feed', feed.map((d) => el('li', null, el('span', 'd', d.when), el('span', `chip ${d.role === 'origin' ? 'o' : d.role}`, ROLE[d.role]), el('span', null, d.src, el('span', 'to', ' → ', el('b', null, d.atom))))))
+      : el('div', 'empty', '还没有任何外部数据进来。')))
+
+  /* ④ 接下来看什么 */
+  if (stage.watch.length) {
+    page.append(el('section', null, el('h2', null, '接下来看什么'),
+      el('ul', 'watch', stage.watch.map(([when, t, fx]) => el('li', null, el('span', null, when), el('b', null, t), el('span', 'fx', `推翻条件：${fx}`))))))
+  }
+
+  if (index === 1) {
+    page.append(el('p', 'annot', '注：② 的条数与分组按真实账本 + 出处规则算出（92 个原子：1 个被佐证、18 个只有出处、73 个没有外部数据）；只有 45 个没有数据的指标节点用占位标题代替。「财务」的 8 条佐证是旧系统里这个维度的更新记录，不是它的出处。'))
+  }
+  document.querySelectorAll('.stage-btn').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.stage) === index))
+}
+
+document.querySelectorAll('.stage-btn').forEach((b) => b.addEventListener('click', () => render(Number(b.dataset.stage))))
+render(1)
+</script>
+</body>
+</html>

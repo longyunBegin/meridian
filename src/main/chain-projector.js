@@ -16,6 +16,9 @@
 import { getEvents, appendEvent, appendEvents as appendEventBatch, hasUnmigratedNodeSources, migrateThemeToEvents, NODE_TYPES, REL_TYPES } from './chain-events.js'
 import { updateConfidence, estimateStrength } from './engine-confidence.js'
 import { digest } from './reading-store.js'
+import { JUDGE_STANCES, STANCE_RELS, evidenceJudgeState } from '../shared/judge.js'
+import { normalizePoints, sourceUrlOf } from '../shared/evidence-source.js'
+import { evidenceWeightOf, weightOf } from '../shared/evidence-weight.js'
 import { randomUUID } from 'node:crypto'
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -86,6 +89,37 @@ function shortTitle(s, n = 28) {
   return parts.length > n ? parts.slice(0, n - 1).join('') + '…' : t
 }
 
+const trimmedOrNull = (value) => (typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '') || null
+
+/**
+ * 旧数据迁移写过一类"只改分层"的修订（oldValue/newValue 都是「未分层 / 第N层」）。
+ * 投影不再使用分层（节点上的 layerNote 已写明），这类修订不能覆盖观点的现状文本。
+ */
+const LAYER_MARK = /^(未分层|第[一二三四五六七八九十百零〇0-9]+层)$/
+function isLayerOnlyCorrection(payload) {
+  return LAYER_MARK.test(String(payload?.oldValue ?? '').trim()) && LAYER_MARK.test(String(payload?.newValue ?? '').trim())
+}
+
+/** 观察计划（旧 lemma 的 scaffold）：关键问题、跟踪指标（含频率）、推翻条件；形状不对就是 null。 */
+function normalizeScaffold(raw) {
+  if (!isObj(raw)) return null
+  const questions = (Array.isArray(raw.answer) ? raw.answer : [raw.answer])
+    .map(trimmedOrNull).filter(Boolean)
+  const seen = new Set()
+  const indicators = []
+  for (const item of Array.isArray(raw.indicators) ? raw.indicators : []) {
+    const name = trimmedOrNull(isObj(item) ? item.name : item)
+    if (!name) continue
+    const cadence = isObj(item) ? trimmedOrNull(item.cadence) : null
+    const key = `${name}\u0000${cadence || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    indicators.push({ name, cadence })
+  }
+  const falsifier = trimmedOrNull(raw.falsifier)
+  return questions.length || indicators.length || falsifier ? { questions, indicators, falsifier } : null
+}
+
 /**
  * claimLineage(events, claimEventId) → { head, lineage }
  * 沿 supersedes 链走到最新版本。head = 最新事件 id（可能是更正事件）。
@@ -153,6 +187,12 @@ export function projectEvents(events) {
       /* L2：原子分类来自主题自定义词表；没有分类时保持 null，不在事件里编造领域类型。 */
       atomCategory: String(p.atomCategory || '').trim() || null,
       applicability: String(p.applicability || '').trim() || null,
+      /* 旧 lemma 的结构字段：segment = 主题的维度；读者页用它们画骨架与"接下来看什么"。 */
+      claimType: trimmedOrNull(p.claimType),
+      falsifier: trimmedOrNull(p.falsifier),
+      settleAt: trimmedOrNull(p.settleAt),
+      scaffold: normalizeScaffold(p.scaffold),
+      tags: [...new Set((Array.isArray(p.tags) ? p.tags : []).map(trimmedOrNull).filter(Boolean))],
       sourceKind: p.sourceKind || null,
       sourceRef: p.sourceRef || `event:${e.id}`,
       eventIds: [e.id],
@@ -166,6 +206,11 @@ export function projectEvents(events) {
   for (const e of events) {
     if (e.type !== 'evidence.appended') continue
     const p = e.payload || {}
+    /* 旧格式证据把出处放在 legacySource 里：label 实测等于 kind（"券商研报"），是来源类型而非来源名，
+       所以只进 sourceCategory，不冒充 sourceLabel（否则"按来源名去重"会把类型当成独立来源）。
+       legacySource.at 是记录日期（实测与抓取日同日、晚于原文日期），不冒充发布日期。 */
+    const legacy = isObj(p.legacySource) ? p.legacySource : {}
+    const legacyUrl = isHttpUrl(legacy.url) ? String(legacy.url).trim() : null
     const node = addNode({
       id: e.id,
       kind: 'evidence',
@@ -187,12 +232,20 @@ export function projectEvents(events) {
          未来的快照/回放）都拿不到 URL 与来源，回放出来的模型就失去溯源。 */
       evidenceRefs: uniqueEvidenceRefs(p.evidenceRefs || []),
       sourceLabel: String(p.sourceLabel || '').trim() || null,
-      sourceUrl: String(p.sourceUrl || '').trim() || null,
+      sourceUrl: String(p.sourceUrl || '').trim() || legacyUrl,
       sourcePublishedAt: p.sourcePublishedAt || null,
-      sourceFetchedAt: p.sourceFetchedAt || null,
+      sourceFetchedAt: p.sourceFetchedAt || trimmedOrNull(legacy.fetchedAt),
+      sourceCategory: trimmedOrNull(legacy.kind),
+      legacySourceAt: trimmedOrNull(legacy.at),
       ingestedAt: p.ingestedAt || null,
+      recordedAt: trimmedOrNull(e.at),
       applicability: String(p.applicability || '').trim() || null,
       targetNodeIds: explicitEvidenceTargetIds(p),
+      /* 要点：抽取出来的要点跟着原文进主题，当判的上下文，不单独计数。 */
+      points: normalizePoints(p.points),
+      /* 权重：引擎复核落下的证据，权重是人确认时给的；其余进主题时记的是建议，判的时候由 signal.reviewed 覆盖。 */
+      weight: weightOf(p.weight),
+      weightSource: weightOf(p.weight) ? (p.sourceKind === 'engine-reviewed' ? 'judged' : 'suggested') : null,
       eventIds: [e.id],
       provenanceEventIds: [e.id],
       external: false,
@@ -210,12 +263,17 @@ export function projectEvents(events) {
     node.eventIds = lineage
     for (const eid of lineage) nodeOfEvent.set(eid, nodeId)
     if (head !== e.id) {
-      const lastCorrection = byId.get(head)
       node.superseded = true
-      const p = lastCorrection?.payload || {}
-      if (String(p.newValue ?? '').trim()) node.currentText = String(p.newValue)
-      node.correctionReason = p.reason || ''
-      if (Object.hasOwn(p, 'applicability')) node.applicability = String(p.applicability || '').trim() || null
+      const textCorrection = lineage.slice(1).map((id) => byId.get(id))
+        .filter((event) => event && !isLayerOnlyCorrection(event.payload)).at(-1) || null
+      if (textCorrection) {
+        const p = textCorrection.payload || {}
+        if (String(p.newValue ?? '').trim()) node.currentText = String(p.newValue)
+        node.correctionReason = p.reason || ''
+        if (Object.hasOwn(p, 'applicability')) node.applicability = String(p.applicability || '').trim() || null
+      } else {
+        node.correctionReason = byId.get(head)?.payload?.reason || ''
+      }
     }
   }
 
@@ -366,6 +424,15 @@ export function projectEvents(events) {
     if (target) {
       target.eventIds ||= []
       if (!target.eventIds.includes(reviewEvent.id)) target.eventIds.push(reviewEvent.id)
+      /* 「判」把证据判给某个原子：复核里写明的目标原子取代原先建议的目标（旧挂载只是待复核的建议），
+         否则换原子判过之后，原来那个原子身上还会残留一条"中立"。只认现存的非证据节点。 */
+      const judgedTarget = review.decision === 'rejected' ? null : nodes.get(trimmedOrNull(review.targetNodeId))
+      if (judgedTarget && !judgedTarget.external && judgedTarget.kind !== 'evidence') target.targetNodeIds = [judgedTarget.id]
+      const judgedWeight = review.decision === 'rejected' ? null : weightOf(review.weight)
+      if (judgedWeight) {
+        target.weight = judgedWeight
+        target.weightSource = 'judged'
+      }
     }
   }
 
@@ -741,6 +808,8 @@ export function appendUnmappedEvidence(themeId, input = {}) {
   const evidenceRefs = isHttpUrl(sourceUrl)
     ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
     : []
+  const points = normalizePoints(input.points)
+  const weight = weightOf(input.weight)
   // 保留来源条目引用，便于追溯
   const events = [
     {
@@ -750,13 +819,18 @@ export function appendUnmappedEvidence(themeId, input = {}) {
       payload: {
         text,
         sourceLabel: String(input.sourceLabel || '').trim(),
-        sourceKind: 'multi-theme-evidence',
+        sourceKind: String(input.sourceKind || '').trim() === 'fed-evidence' ? 'fed-evidence' : 'multi-theme-evidence',
         sourceRef,
         evidenceRefs,
+        ...(isHttpUrl(sourceUrl) ? { sourceUrl } : {}),
+        ...(String(input.sourcePublishedAt || '').trim() ? { sourcePublishedAt: String(input.sourcePublishedAt).trim().slice(0, 100) } : {}),
+        ...(String(input.ingestedAt || '').trim() ? { ingestedAt: String(input.ingestedAt).trim().slice(0, 100) } : {}),
         // 未映射：没有 targetNodeId，等待该主题内用户归因
         ...(input.sourceItemId ? { sourceItemId: String(input.sourceItemId) } : {}),
         ...(input.sourceItemTitle ? { sourceItemTitle: String(input.sourceItemTitle).slice(0, 200) } : {}),
         ...(input.sourceOrigin ? { sourceOrigin: String(input.sourceOrigin).slice(0, 100) } : {}),
+        ...(points.length ? { points } : {}),
+        ...(weight ? { weight } : {}),
       },
     },
   ]
@@ -774,11 +848,15 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   /* 用户可以在确认时**自己给这条证据的权重**（=证据强度，0–1）：给了就用它，没给才用引擎算的。
      不新增事件类型——权重本来就在证据/置信度事件的载荷里，这里只是允许人工覆盖，
      并在载荷里标 strengthSource 便于区分"模型算的"与"人定的"。 */
-  const manualWeight = (() => {
-    if (input?.weight == null || input.weight === '') return null
+  /* 建设者「判」给的是 { 来源类型, 硬度 }：分值由 shared/evidence-weight 重算（不信任外部数值），
+     并作为这条证据的权重落账；老的复核卡仍可直接给 0–1 的数值。 */
+  const sourceWeight = decision === 'rejected' ? null : weightOf(input?.weight)
+  const manualWeight = sourceWeight ? sourceWeight.value : (() => {
+    if (input?.weight == null || input.weight === '' || typeof input.weight === 'object') return null
     const value = Number(input.weight)
     return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null
   })()
+  const strengthSource = sourceWeight ? 'source-weight' : 'manual'
   /* change 从"写死的方向/性质/标签"收敛为一句自由备注：可选、不做枚举校验、不参与强度计算。
      旧账本里的 {direction,nature,themeTag} 归一成 {note} 后仍能比对重放意图。 */
   const normalizeChange = (value) => {
@@ -790,7 +868,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
   const change = decision === 'rejected' ? null : normalizeChange(input.change || recommendation.change)
   const targetNodeId = input.targetNodeId || recommendation.propositionId || null
   const relation = input.rel || recommendation.rel
-  const reviewIntent = { decision, change, targetNodeId, rel: relation, title: String(input.title || '').trim() }
+  const reviewIntent = { decision, change, targetNodeId, rel: relation, title: String(input.title || '').trim(), weight: sourceWeight }
   if (priorReview) {
     const priorIntent = {
       decision: priorReview.payload.decision,
@@ -798,6 +876,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       targetNodeId: priorReview.payload.targetNodeId || null,
       rel: priorReview.payload.rel || null,
       title: priorReview.payload.title || '',
+      weight: weightOf(priorReview.payload.weight),
     }
     if (JSON.stringify(priorIntent) === JSON.stringify(reviewIntent)) return { ok: true, replayed: true, events: [], review: priorReview }
     throw new Error('该建议已有决定；不能通过重放改变已确认内容')
@@ -812,7 +891,10 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
 
   if (decision !== 'rejected') {
     if (!sourceQuote || !sourceQuoteVerified) throw new Error('原文摘录无法与来源核验，不能将它作为证据追加')
-    const sourceUrl = String(proposal.payload.sourceUrl || '').trim()
+    /* 链接顺序与建设者判卡展示一致（renderer/lib/judge-queue.js proposalUrl）：建议里记的合格链接 →
+       原条目当前的链接（建议早于补链接时；由主进程按 payload.inboxId 查出后传入 fallbackSourceUrl）→ 建议里记的原值。 */
+    const recordedUrl = String(proposal.payload.sourceUrl || '').trim()
+    const sourceUrl = sourceUrlOf(recordedUrl) ? recordedUrl : (sourceUrlOf(input?.fallbackSourceUrl) || recordedUrl)
     const validUrl = isHttpUrl(sourceUrl)
     const evidenceId = stableId('evidence')
     const sourceRef = `engine-recommendation:${recommendationId}`
@@ -828,10 +910,13 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
       ...(proposal.payload.sourceFetchedAt ? { sourceFetchedAt: proposal.payload.sourceFetchedAt } : {}),
       ...(proposal.payload.ingestedAt ? { ingestedAt: proposal.payload.ingestedAt } : {}),
       ...(statement.timeWindow ? { applicability: statement.timeWindow } : {}),
+      ...(validUrl ? { sourceUrl } : {}),
+      ...(normalizePoints(proposal.payload.sourcePoints).length ? { points: normalizePoints(proposal.payload.sourcePoints) } : {}),
+      ...(sourceWeight ? { weight: sourceWeight } : {}),
       scores: {
         ...(Number.isFinite(recommendation.matchScore) ? { matchScore: recommendation.matchScore } : {}),
         ...(Number.isFinite(recommendation.strength) ? { attributionStrength: recommendation.strength } : {}),
-        ...(manualWeight != null ? { effectiveStrength: manualWeight, strengthSource: 'manual' }
+        ...(manualWeight != null ? { effectiveStrength: manualWeight, strengthSource }
           : (Number.isFinite(recommendation.effectiveStrength) ? { effectiveStrength: recommendation.effectiveStrength } : {})),
         ...(Number.isFinite(proposal.payload.metaMultiplier) ? { metaMultiplier: proposal.payload.metaMultiplier } : {}),
       },
@@ -903,7 +988,7 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
         if (newPercent !== oldPercent) drafts.push({ id: stableId('confidence'), actor: 'user', type: 'confidence.updated', payload: {
           nodeId: target.id, oldConfidence: oldPercent, newConfidence: newPercent,
           strength: effectiveStrength, attributionStrength: recommendation.strength,
-          strengthSource: manualWeight != null ? 'manual' : 'engine',
+          strengthSource: manualWeight != null ? strengthSource : 'engine',
           reason: `${relation === 'supports' ? '支持' : '反驳'}证据：${sourceQuote.slice(0, 50)}`,
           evidenceEventId: evidenceId,
         } })
@@ -917,10 +1002,98 @@ export function reviewEngineRecommendation(themeId, recommendationEventId, decis
     ...(targetNodeId ? { targetNodeId } : {}),
     ...(relation ? { rel: relation } : {}),
     ...(String(input.title || '').trim() ? { title: String(input.title).trim() } : {}),
+    ...(sourceWeight ? { weight: sourceWeight } : {}),
   }
   drafts.push({ id: stableId('review'), actor: 'user', type: 'signal.reviewed', payload: reviewPayload })
   const appended = appendEventBatch(themeId, drafts)
   return { ok: true, replayed: false, events: appended.filter((event) => !event.replayed), review: appended.at(-1) }
+}
+
+/**
+ * 建设者「判」：对一条待判证据下结论，一个批次原子追加。
+ * - 佐证 / 反对：relation.declared（证据 → 原子）+ signal.reviewed(accepted, targetNodeId)；原子有强度时按手工补证同一公式更新；
+ * - 中立：只写 signal.reviewed(accepted, targetNodeId)——证据挂到原子上、没有表态边，就是中立；
+ * - 不相关：signal.reviewed(rejected)，证据从此不计入任何原子。
+ * 证据身上已有的佐证 / 反驳边：与结论一致的保留（待复核则追加确认，不重复声明、不重复更新强度），其余追加驳回。
+ * 只接 evidenceJudgeState 认定的待判证据；事件 id 由 (主题, 证据) 决定，同一结论重放返回 replayed，不同结论拒绝。
+ */
+export function judgeEvidence(themeId, evidenceId, input = {}) {
+  const stance = String(input?.stance || '')
+  if (!JUDGE_STANCES.includes(stance)) throw new Error('请选择佐证、反对、中立或不相关')
+  const events = getEvents(themeId)
+  const stableId = (kind) => `evt:judge:${kind}:${digest({ themeId, evidenceId: String(evidenceId) }).slice(0, 24)}`
+  const atomId = stance === 'irrelevant' ? null : String(input?.atomId || '').trim() || null
+  if (input?.weight != null && !weightOf(input.weight)) throw new Error('权重无效：请选择来源类型与硬度')
+  const projection = projectEvents(events)
+  const evidence = projection.nodes.find((node) => node.id === evidenceId && node.nodeType === 'evidence' && !node.external)
+  /* 权重：判的时候给了 { 来源类型, 硬度 } 就用它；没给就用证据当前的权重（进主题时的建议 / 旧数据按同一规则现算）。
+     判过之后投影里的权重就是判定时的那个，所以同一结论不带权重重放时仍然一致。不相关不记权重。 */
+  const weight = atomId && evidence ? weightOf(input?.weight) || evidenceWeightOf(evidence).weight : null
+  const reviewPayload = {
+    signalEventId: String(evidenceId),
+    decision: stance === 'irrelevant' ? 'rejected' : 'accepted',
+    ...(atomId ? { targetNodeId: atomId, rel: stance } : {}),
+    ...(weight ? { weight } : {}),
+    reason: '建设者判定',
+  }
+  const priorReview = events.find((event) => event.id === stableId('review'))
+  if (priorReview) {
+    if (JSON.stringify(priorReview.payload) === JSON.stringify(reviewPayload)) return { ok: true, replayed: true, events: [] }
+    throw new Error('这条证据已经判过；如需改判，请追加更正')
+  }
+
+  if (!evidence) throw new Error('找不到这条证据')
+  if (evidence.archived || evidence.invalidated) throw new Error('这条证据已归档或失效')
+  if (!evidenceJudgeState(evidence, projection.edges)) throw new Error('这条证据已经判过；如需改判，请追加更正')
+
+  const drafts = []
+  const atom = stance === 'irrelevant' ? null : projection.nodes.find((node) => node.id === atomId && !node.external
+    && !node.archived && !node.invalidated && node.nodeType !== 'evidence')
+  if (stance !== 'irrelevant' && !atom) throw new Error('请选择一个未归档、未失效的原子')
+  /* 待复核证据身上可能带着旧的佐证 / 反驳边（同样只是建议）。判定即定论：与结论一致的那条保留
+     （仍待复核就追加确认，不再重复声明），其余一律追加驳回——否则改判后旧原子上会残留一条表态。 */
+  const stanceEdges = projection.edges.filter((edge) => edge.from === evidence.id && STANCE_RELS.has(edge.rel)
+    && edge.reviewDecision !== 'rejected')
+  const kept = atom && STANCE_RELS.has(stance) ? stanceEdges.find((edge) => edge.rel === stance && edge.to === atom.id) || null : null
+  const eventById = new Map(events.map((event) => [event.id, event]))
+  const reviewEdge = (edge, decision) => {
+    const original = eventById.get(edge.eventId)?.payload || {}
+    drafts.push({
+      id: `evt:judge:edge-review:${digest({ themeId, evidenceId: String(evidenceId), edge: edge.eventId }).slice(0, 24)}`,
+      actor: 'user', type: 'relation.declared', payload: {
+        rel: edge.rel, from: copyValue(original.from), to: copyValue(original.to),
+        reviewStatus: 'pending-review', reviewOf: edge.eventId, reviewDecision: decision,
+        decisionReason: decision === 'rejected' ? '建设者判定为其他结论' : '建设者判定',
+        sourceKind: 'user-judged', sourceRef: `judge:${evidence.id}`,
+      },
+    })
+  }
+  for (const edge of stanceEdges) {
+    if (edge !== kept) reviewEdge(edge, 'rejected')
+    else if (edge.pendingReview) reviewEdge(edge, 'confirmed')
+  }
+  if (atom) {
+    if (STANCE_RELS.has(stance) && !kept) {
+      drafts.push({ id: stableId('relation'), actor: 'user', type: 'relation.declared', payload: {
+        rel: stance, from: { eventId: evidence.id }, to: { eventId: atom.id },
+        sourceKind: 'user-judged', sourceRef: `judge:${evidence.id}`,
+      } })
+      if (atom.confidence != null && Number.isFinite(Number(atom.confidence))) {
+        const oldPercent = Number(atom.confidence)
+        const strength = weight.value
+        const newFraction = updateConfidence(oldPercent / 100, strength, stance)
+        const newPercent = newFraction == null ? oldPercent : Math.round(newFraction * 100)
+        if (newPercent !== oldPercent) drafts.push({ id: stableId('confidence'), actor: 'user', type: 'confidence.updated', payload: {
+          nodeId: atom.id, oldConfidence: oldPercent, newConfidence: newPercent, strength, strengthSource: 'source-weight',
+          reason: `${stance === 'supports' ? '支持' : '反驳'}证据：${String(evidence.currentText || evidence.title || '').slice(0, 50)}`,
+          evidenceEventId: evidence.id,
+        } })
+      }
+    }
+  }
+  drafts.push({ id: stableId('review'), actor: 'user', type: 'signal.reviewed', payload: reviewPayload })
+  const appended = appendEventBatch(themeId, drafts)
+  return { ok: true, replayed: false, events: appended.filter((event) => !event.replayed) }
 }
 
 /** Declare a user-authored semantic edge; this records a relationship, not verified causality. */

@@ -37,7 +37,7 @@ const inboxItem = (id, extra = {}) => ({
   id, title: `合成收件箱 ${id}`, text: `仅供自动化使用的合成原文（${id}）。`,
   createdAt: '2026-09-30T10:00:00.000Z', extracted: false, matchScore: 0.72,
   label: { kind: '合成来源', quality: 0.8 },
-  provenance: { platform: 'synthetic-fixture', sourceLabel: '合成来源', url: 'https://example.test/inbox' },
+  provenance: { platform: 'synthetic-fixture', sourceLabel: '合成来源', url: 'https://www.reuters.com/fixture/inbox' },
   ...extra,
 })
 
@@ -69,10 +69,28 @@ window.meridian = {
     }
     return { ok: true, extracted: ids.length, total: ids.length }
   },
-  async inboxImport(themeId, selected, overrides) {
-    fixture.calls.push(['inboxImport', themeId, selected.map((row) => row.id), overrides])
-    fixture.items = fixture.items.filter((row) => !selected.some((item) => item.id === row.id))
-    return { ok: true, results: selected.map((row) => ({ id: row.id })) }
+  async inboxDispatch(id, themeIds) {
+    fixture.calls.push(['inboxDispatch', id, [...themeIds]])
+    return { ok: true, inboxId: id, themeIds: [...themeIds], stanceProposals: 1, proposalEventIds: ['synthetic-proposal'], evidenceId: null, others: [] }
+  },
+  async inboxSetThemes(id, themeIds) {
+    fixture.calls.push(['inboxSetThemes', id, [...themeIds]])
+    const item = fixture.items.find((row) => row.id === id)
+    if (item) {
+      item.extractedThemeIds = [...themeIds]
+      item.extractedThemeId = themeIds[0]
+    }
+    return { ok: true, themeIds: [...themeIds] }
+  },
+  async inboxSetSourceUrl(id, url) {
+    fixture.calls.push(['inboxSetSourceUrl', id, url])
+    const item = fixture.items.find((row) => row.id === id)
+    if (!item) return { ok: false, error: '收件箱条目不存在' }
+    item.provenance = { ...(item.provenance || {}), url }
+    return { ok: true, inboxId: id, url, provenance: { ...item.provenance } }
+  },
+  async themeJudgeCounts() {
+    return { ok: true, counts: { [themes[0].id]: { proposal: 1, pending: 0, unmapped: 1, total: 2 }, [themes[1].id]: { proposal: 0, pending: 0, unmapped: 0, total: 0 } } }
   },
   async inboxResolve(id, decision) {
     fixture.calls.push(['inboxResolve', id, decision])
@@ -187,6 +205,12 @@ check('今日空状态可辨认，待确认数清零', document.querySelector('.
   && document.querySelector('.today-summary')?.textContent.includes('0'))
 check('今日结算、校准曲线和空态说明同时可见', document.querySelector('.today-page')?.textContent.includes('到期未结算')
   && document.querySelector('.today-page')?.textContent.includes('命题校准曲线'))
+{
+  const judgeLinks = [...document.querySelectorAll('.today-summary .today-summary-judge')]
+  check('今日摘要只给还有待判的主题一个去建设者的入口', judgeLinks.length === 1
+    && judgeLinks[0].textContent.includes(`${themes[0].name} 待判`) && judgeLinks[0].textContent.includes('2'),
+  judgeLinks.map((el) => el.textContent).join('|'))
+}
 
 await clickNav('数据源')
 await waitFor(() => document.querySelector('.sources-page .source-record'), '数据源记录')
@@ -232,10 +256,7 @@ fixture.items = [
   inboxItem('unmatched-synthetic-1', { matchScore: 0 }),
   inboxItem('route-synthetic-1', {
     extracted: true, extractedThemeId: themes[0].id,
-    lemmas: [{
-      title: '已抽取合成命题', action: 'new', parentId: null, confidence: 70,
-      mappedTopic: themes[0].id, mappedAtom: 'synthetic-viewpoint-a',
-    }],
+    lemmas: [{ title: '已抽取合成命题', action: 'new', parentId: null, confidence: 70 }],
   }),
   inboxItem('reading-synthetic-1', {
     kind: 'reading', readingId: 'pending-reading-synthetic-1', extracted: false,
@@ -281,26 +302,39 @@ await waitFor(() => document.querySelector('.inbox-item[data-id="extract-synthet
 check('批量抽取只提交明确勾选项并把投影更新到已抽取分组', fixture.calls.some((call) => call[0] === 'inboxExtract'
   && call[1].length === 1 && call[1][0] === 'extract-synthetic-1')
   && [...document.querySelectorAll('.inbox-group-label')].some((el) => el.textContent === '已抽取'))
-const importCheckbox = document.querySelector('.inbox-item[data-id="extract-synthetic-1"] .inbox-ck')
-importCheckbox.checked = true
-importCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
-document.querySelector('.inbox-import-picked').click()
-await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxImport'), '批量入库')
-check('批量入库仅提交已选且挂点校验通过的条目，并按其主题写入', fixture.calls.some((call) => call[0] === 'inboxImport'
-  && call[1] === themes[0].id && call[2].includes('extract-synthetic-1')))
+const dispatchCheckbox = document.querySelector('.inbox-item[data-id="extract-synthetic-1"] .inbox-ck')
+dispatchCheckbox.checked = true
+dispatchCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
+{
+  const checkedRow = document.querySelector('.inbox-item[data-id="extract-synthetic-1"]')
+  const otherRow = [...document.querySelectorAll('#inbox-section .inbox-item')].find((row) => row !== checkedRow && row.dataset.on !== 'true' && row.dataset.sel !== 'true')
+  const style = getComputedStyle(checkedRow)
+  check('勾选的行高亮：不透明、底色与未勾选行不同、带左侧强调条', checkedRow.dataset.on === 'true' && style.opacity === '1'
+    && Boolean(otherRow) && style.backgroundColor !== getComputedStyle(otherRow).backgroundColor && style.boxShadow.includes('inset'),
+  JSON.stringify({ on: checkedRow.dataset.on, opacity: style.opacity, bg: style.backgroundColor, other: otherRow && getComputedStyle(otherRow).backgroundColor, shadow: style.boxShadow }))
+}
+check('勾选有主题有原文的条目：批量栏给「交给主题（1）」，不再有批量入库',
+  document.querySelector('.inbox-dispatch-picked')?.textContent === '交给主题（1）' && !document.querySelector('.inbox-import-picked'))
+document.querySelector('.inbox-dispatch-picked').click()
+await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxResolve' && call[1] === 'extract-synthetic-1'), '交给主题后接受条目')
+{
+  const dispatchAt = fixture.calls.findIndex((call) => call[0] === 'inboxDispatch' && call[1] === 'extract-synthetic-1')
+  const acceptAt = fixture.calls.findIndex((call) => call[0] === 'inboxResolve' && call[1] === 'extract-synthetic-1')
+  check('批量交给主题：按条目自己的主题落账，落账成功后才接受', dispatchAt >= 0 && acceptAt > dispatchAt
+    && JSON.stringify(fixture.calls[dispatchAt][2]) === JSON.stringify([themes[0].id]) && fixture.calls[acceptAt][2] === 'accept')
+}
 
 const routeRow = document.querySelector('.inbox-item[data-id="route-synthetic-1"] .inbox-body')
 routeRow.click()
-/* 详情重做后主题归属改成 pill（.inbox2-belong-pill）；旧的 select.inbox-theme-select 只剩死代码。 */
 await waitFor(() => document.querySelector('.inbox-detail .inbox2-belong-pill'), '已抽取条目主题选择')
+check('详情不再给逐条要点的主题 / 原子 / 立场映射，要点只读', !document.querySelector('.inbox-detail .prop-select, .inbox-detail .stance-btn')
+  && document.querySelector('.inbox-detail .prop-text')?.textContent === '已抽取合成命题')
 const targetThemePill = [...document.querySelectorAll('.inbox-detail .inbox2-belong-pill')]
   .find((pill) => pill.textContent.includes(themes[1].name))
 targetThemePill.click()
-await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxSetTheme'), '收件箱主题切换')
-check('已抽取收件箱条目可以明确切换主题并调用对应桥接命令', fixture.calls.some((call) => call[0] === 'inboxSetTheme'
-  && call[1] === 'route-synthetic-1' && call[2] === themes[1].id))
-check('已归位的条目在列表行给出 done 态徽标与数量', [...document.querySelectorAll('.inbox-item[data-id="route-synthetic-1"] .inbox2-badge.is-done')]
-  .some((el) => el.textContent.includes('已归位 1 条')))
+await waitFor(() => document.querySelector('.inbox-detail .inbox-dispatch')?.textContent === '交给 2 个主题', '加入第二个主题')
+check('点主题标签把条目加入第二个主题（原主题保持为主主题）', fixture.calls.some((call) => call[0] === 'inboxSetThemes'
+  && call[1] === 'route-synthetic-1' && JSON.stringify(call[2]) === JSON.stringify([themes[0].id, themes[1].id])))
 {
   const kicker = document.querySelector('#inbox-section .inbox2-kicker')?.textContent.trim() || ''
   check('详情眉标的时间是相对时间，而不是原始 ISO 时间戳',
@@ -309,7 +343,11 @@ check('已归位的条目在列表行给出 done 态徽标与数量', [...docume
 const sourceLink = document.querySelector('.inbox-detail .inbox-source-link')
 sourceLink?.click()
 check('查看来源链接调用受控外部打开桥接，不在 fixture 导航外网', fixture.calls.some((call) => call[0] === 'openExternal'
-  && call[1] === 'https://example.test/inbox'))
+  && call[1] === 'https://www.reuters.com/fixture/inbox'))
+document.querySelector('.inbox-detail .inbox-dispatch').click()
+await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxResolve' && call[1] === 'route-synthetic-1'), '单条交给主题')
+check('单条交给主题：按「属于主题」的顺序交出（第一个是主主题）', fixture.calls.some((call) => call[0] === 'inboxDispatch'
+  && call[1] === 'route-synthetic-1' && JSON.stringify(call[2]) === JSON.stringify([themes[0].id, themes[1].id])))
 
 const unmatchedRow = document.querySelector('.inbox-item[data-id="unmatched-synthetic-1"] .inbox-body')
 unmatchedRow.click()
@@ -317,6 +355,37 @@ document.querySelector('.inbox-detail .inbox-reject').click()
 await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxResolve'), '忽略收件箱条目')
 check('单条忽略写入显式 reject 决定', fixture.calls.some((call) => call[0] === 'inboxResolve'
   && call[1] === 'unmatched-synthetic-1' && call[2] === 'reject'))
+
+fixture.items = [inboxItem('nolink-synthetic-1', {
+  extracted: true, extractedThemeId: themes[0].id, lemmas: [{ title: '没有链接的要点' }],
+  provenance: { platform: 'synthetic-fixture', sourceLabel: '合成来源' },
+})]
+await import('../app.js').then(({ refresh }) => refresh())
+await waitFor(() => document.querySelector('.inbox-item[data-id="nolink-synthetic-1"]'), '缺链接条目')
+check('缺来源链接的条目：列表行标「缺来源链接」', document.querySelector('.inbox-item[data-id="nolink-synthetic-1"] .inbox2-badge.is-nolink')?.textContent === '缺来源链接')
+document.querySelector('.inbox-item[data-id="nolink-synthetic-1"] .inbox-body').click()
+await waitFor(() => document.querySelector('.inbox-detail .inbox-source.is-missing'), '缺链接详情')
+check('缺来源链接：详情给补链接输入框，交给主题按钮禁用并说明原因', Boolean(document.querySelector('.inbox-detail .inbox-source-input'))
+  && document.querySelector('.inbox-detail .inbox-dispatch')?.disabled === true
+  && document.querySelector('.inbox-detail .inbox-action-note')?.textContent.includes('来源链接'))
+{
+  const sourceInput = document.querySelector('.inbox-detail .inbox-source-input')
+  sourceInput.value = 'https://example.test/fake'
+  document.querySelector('.inbox-detail .inbox-source-save').click()
+  await waitFor(() => !document.querySelector('.inbox-detail .inbox-source-error')?.hidden, '示例域名报错')
+  check('补链接：示例域名在界面上直接拒绝，不调后端', !fixture.calls.some((call) => call[0] === 'inboxSetSourceUrl')
+    && document.querySelector('.inbox-detail .inbox-source-error')?.textContent.includes('示例'))
+  document.querySelector('.inbox-detail .inbox-source-input').value = 'https://www.reuters.com/fixture/nolink'
+  document.querySelector('.inbox-detail .inbox-source-save').click()
+  await waitFor(() => document.querySelector('.inbox-detail .inbox-source-host'), '补链接后显示域名')
+  check('补链接：合格的链接写入后显示域名，交给主题可用，列表行不再标缺链接',
+    fixture.calls.some((call) => call[0] === 'inboxSetSourceUrl' && call[1] === 'nolink-synthetic-1' && call[2] === 'https://www.reuters.com/fixture/nolink')
+    && document.querySelector('.inbox-detail .inbox-source-host')?.textContent === 'reuters.com'
+    && document.querySelector('.inbox-detail .inbox-dispatch')?.disabled === false
+    && !document.querySelector('.inbox-item[data-id="nolink-synthetic-1"] .inbox2-badge.is-nolink'))
+  check('详情给出进主题时的建议权重（来源类型 × 硬度）', /建议权重 0\.65 = 独立媒体 0\.65 × 硬数据 1\.0（来源类型按链接域名）/.test(document.querySelector('.inbox-detail .inbox-weight-note')?.textContent || ''),
+    document.querySelector('.inbox-detail .inbox-weight-note')?.textContent)
+}
 
 fixture.items = Array.from({ length: 51 }, (_, index) => inboxItem(`page-synthetic-${index + 1}`, { matchScore: 0 }))
 await import('../app.js').then(({ refresh }) => refresh())

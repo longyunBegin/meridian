@@ -14,6 +14,11 @@ import { h, clear, mount, toast } from '../lib/dom.js'
 import { renderEnginePipeline, renderReviewTraceBar } from '../components/engine-review.js'
 import { renderEvidenceComposer } from '../components/evidence-relation-editor.js'
 import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/builder-workbench.js'
+import { renderJudgeCard, renderFeedForm } from '../components/builder-judge.js'
+import { buildJudgeQueue, JUDGE_KIND_LABEL, JUDGE_STANCE_LABEL } from '../lib/judge-queue.js'
+import { PROPOSAL_STANCE_OF_REL } from '../../shared/judge.js'
+import { weightFormula, weightText, weightTier } from '../../shared/evidence-weight.js'
+import { sourceUrlOf } from '../../shared/evidence-source.js'
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
 import { DIRECTION_META, NATURE_META } from '../lib/reader-model.js'
@@ -582,6 +587,7 @@ async function loadConcept(theme, ledgerPane, opts) {
      */
     const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待审')
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
+    const feedButton = h('button', { type: 'button', class: 'btn btn-sm btn-primary builder-queue-feed' }, '喂一条数据')
     const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
     const addManualOpinion = () => {
       // 在右侧详情区内联渲染新增原子表单（非弹窗）
@@ -594,10 +600,10 @@ async function loadConcept(theme, ledgerPane, opts) {
     const queue = h('aside', { class: 'builder-intake-queue', 'aria-label': '来源与建议队列' },
       h('div', { class: 'builder-queue-head-v2' },
         h('div', { class: 'builder-queue-title-row' },
-          h('h3', {}, '待归因'), queueCount),
-        h('p', { class: 'builder-queue-desc' }, '外部数据归因、AI 建议的新增/修改原子，都进入这里等待人工确认。'),
+          h('h3', {}, '待处理'), queueCount),
+        h('p', { class: 'builder-queue-desc' }, '待判：一条数据对某个原子是佐证、反对、中立还是不相关。改结构：模型建议新增或修订原子。'),
         h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab),
-        addNode),
+        h('div', { class: 'builder-queue-actions' }, feedButton, addNode)),
       queueList)
     const detail = h('section', { class: 'builder-intake-review', 'aria-label': '来源与建议审核详情' },
       h('p', { class: 'chain-note' }, '选择一条来源或建议，查看其证据、映射目标与变更预览。'))
@@ -616,23 +622,36 @@ async function loadConcept(theme, ledgerPane, opts) {
       }
       return reviews
     }
-    // 跨视图分工：建设者=精修层，右栏只保留原子级建议（新增/修改/合并原子）
-    // 数据归因类（某条数据归到某个原子）已在收件箱处理，这里过滤掉
+    // 队列两段：「待判」= 数据对原子的表态（判卡一步写成佐证 / 反对 / 中立 / 不相关），
+    // 「改结构」= 新增 / 修订原子的建议与旧账本里待复核的关系。证据的待复核和表态建议都归「待判」，不在改结构里重复出现。
+    let judgeAtoms = []
+    let inboxSourceUrls = {}
     const buildEntries = (items) => {
-      const all = buildWorkbenchEntries(items, buildSignals(), resolvedReviews(), verdictState)
-      return all.filter((entry) => {
-        // 保留：legacy-signal（旧账本信号）、proposal 中的原子级（new-proposition=新增，supersedes=修改）
-        if (entry.kind === 'legacy-signal') return true
+      const projection = viewState.projection
+      const judge = buildJudgeQueue({ events: verifiedEvents, nodes: projectedNodes(projection), edges: projection.allEdges || projection.edges || [], inboxSourceUrls })
+      judgeAtoms = judge.atoms
+      const judgeEntries = judge.items.map((item) => ({ id: `judge:${item.key}`, kind: 'judge', judge: item, decision: null }))
+      const structural = buildWorkbenchEntries(items, buildSignals(), resolvedReviews(), verdictState).filter((entry) => {
+        if (entry.kind === 'legacy-signal') return entry.signal.type !== 'evidence.appended' || Boolean(entry.decision)
         if (entry.kind !== 'proposal') return false
         const rec = entry.result?.recommendation || {}
         const kind = entry.result?.kind || rec.kind
-        if (kind === 'new-proposition') return true // 新增原子
-        if (rec.rel === 'supersedes') return true // 修改原子描述
-        // TODO: 合并原子建议（待后端支持 kind='merge'）
-        return false // 数据归因类（supports/contradicts/related）在收件箱处理
+        if (kind === 'new-proposition') return true
+        if (rec.rel === 'supersedes') return true
+        return Boolean(entry.decision) && Object.hasOwn(PROPOSAL_STANCE_OF_REL, rec.rel)
       })
+      return [...judgeEntries, ...structural]
+    }
+    const judgeSuggestionText = (item) => {
+      const { atomId, atomTitle, stance } = item.suggestion || {}
+      if (!atomId && !stance) return '还没有建议，需要你选原子和结论'
+      return `建议：${stance ? JUDGE_STANCE_LABEL[stance] : '结论待定'} · ${atomId ? atomTitle || '原子' : '原子待选'}`
     }
     const entryTitle = (entry) => {
+      if (entry.kind === 'judge') {
+        const quote = (entry.judge.quote || '').replace(/\s+/g, ' ')
+        return quote ? (quote.length > 60 ? `${quote.slice(0, 60)}…` : quote) : '（原文缺失）'
+      }
       if (entry.kind === 'legacy-signal') return entry.signal.text || `待复核事件 ${entry.signal.id}`
       const item = entry.item
       const sourceTitle = item.title || item.label?.title || item.provenance?.sourceLabel || item.provenance?.url || `来源 ${item.id}`
@@ -670,7 +689,36 @@ async function loadConcept(theme, ledgerPane, opts) {
       let selected = visible.find((entry) => entry.id === selectedEntryId) || visible[0]
       selectedEntryId = selected.id
       persistQueueState()
+      const judgeVisible = visible.filter((entry) => entry.kind === 'judge').length
+      const structuralVisible = visible.length - judgeVisible
+      let lastGroup = null
       for (const entry of visible) {
+        const group = entry.kind === 'judge' ? 'judge' : 'structure'
+        if (queueMode === 'pending' && group !== lastGroup) {
+          queueList.append(h('div', { class: 'builder-queue-group', role: 'presentation' },
+            group === 'judge' ? `待判 · ${judgeVisible}` : `改结构 · ${structuralVisible}`))
+          lastGroup = group
+        }
+        if (entry.kind === 'judge') {
+          const judgeItem = entry.judge
+          queueList.append(h('button', {
+            type: 'button', class: `builder-queue-item-v2 is-judge${entry.id === selected.id ? ' is-selected' : ''}`,
+            role: 'option', 'aria-selected': String(entry.id === selected.id), 'data-entry-id': entry.id,
+            onclick: () => { selectedEntryId = entry.id; persistQueueState(); renderQueue() },
+          },
+          h('div', { class: 'builder-queue-item-top' },
+            h('span', { class: `builder-queue-badge is-judge-${judgeItem.kind}` }, JUDGE_KIND_LABEL[judgeItem.kind]),
+            h('span', { class: 'builder-queue-item-source-v2' }, judgeItem.sourceName || '来源未标注'),
+            judgeItem.date ? h('span', { class: 'builder-queue-item-date' }, `${judgeItem.date.kind} ${judgeItem.date.day}`) : null,
+            judgeItem.weight?.weight
+              ? h('span', { class: `builder-queue-item-weight is-${weightTier(judgeItem.weight.weight)}`, title: `建议权重 = ${weightFormula(judgeItem.weight.weight)}` },
+                `权重 ${weightText(judgeItem.weight.weight)}`)
+              : null,
+            judgeItem.url ? null : h('span', { class: 'builder-queue-item-nolink' }, '缺链接')),
+          h('strong', { class: 'builder-queue-item-title-v2' }, entryTitle(entry)),
+          h('p', { class: 'builder-queue-item-desc' }, judgeSuggestionText(judgeItem))))
+          continue
+        }
         const item = entry.item || {}
         // 类型徽标：数据 / 修原子 / 新原子（对齐设计稿）
         let typeBadge, typeClass
@@ -712,6 +760,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('span', { class: `builder-queue-status-v2${entry.decision ? ' is-done' : ''}` }, `● ${status}`))
         queueList.append(button)
       }
+      queueList.querySelector('.builder-queue-item-v2.is-selected')?.scrollIntoView({ block: 'nearest' })
       renderSelected(selected)
     }
     const setQueueMode = (mode) => {
@@ -722,14 +771,29 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     pendingTab.addEventListener('click', () => setQueueMode('pending'))
     processedTab.addEventListener('click', () => setQueueMode('processed'))
+    // 没记合格链接的模型建议：按 inboxId 取原条目当前的链接兜底（已交给主题的条目不在 inboxList 里，单独查）。
+    const loadInboxSourceUrls = async () => {
+      if (!m.inboxSourceUrls) return {}
+      const ids = [...new Set(verifiedEvents
+        .filter((event) => event.type === 'engine.recommendation.proposed' && !sourceUrlOf(event.payload?.sourceUrl))
+        .map((event) => String(event.payload?.inboxId || '').trim())
+        .filter(Boolean))]
+      if (!ids.length) return {}
+      try {
+        const r = await m.inboxSourceUrls(ids)
+        return r?.urls && typeof r.urls === 'object' ? r.urls : {}
+      } catch { return {} }
+    }
     const loadInbox = async () => {
       let items = []
+      const urlsPending = loadInboxSourceUrls()
       try {
         if (m.inboxList) {
           const r = await m.inboxList()
           items = Array.isArray(r) ? r : (r?.items || [])
         }
       } catch { /* 忽略 */ }
+      inboxSourceUrls = await urlsPending
       currentItems = items
       const titleEl = head.querySelector('.inbox-title')
       if (titleEl && items.length) titleEl.append(h('span', { class: 'live' }))
@@ -891,14 +955,61 @@ async function loadConcept(theme, ledgerPane, opts) {
               saveBtn))))
       requestAnimationFrame(() => titleInput.focus())
     }
+    const renderFeed = () => {
+      clear(detail)
+      queueList.querySelectorAll('.builder-queue-item-v2.is-selected').forEach((node) => {
+        node.classList.remove('is-selected')
+        node.setAttribute('aria-selected', 'false')
+      })
+      detail.append(renderFeedForm({
+        themeId: theme.id,
+        api: m,
+        onFed: (response) => {
+          const firstProposal = Array.isArray(response?.proposalEventIds) ? response.proposalEventIds[0] : null
+          queueMode = 'pending'
+          selectedEntryId = firstProposal ? `judge:proposal:${firstProposal}`
+            : response?.evidenceId ? `judge:evidence:${response.evidenceId}` : null
+          persistQueueState()
+          opts.onChanged?.()
+        },
+        onCancel: () => renderQueue(),
+      }))
+    }
+    feedButton.addEventListener('click', renderFeed)
+    /* 判完前进到下一条：先在同组里往后、再往前，同组判空了才落到别的组（判是连续快判，不被结构审阅打断）。 */
+    const nextPendingEntryId = (entryId) => {
+      const pending = filterWorkbenchEntries(buildEntries(currentItems), 'pending')
+      const index = pending.findIndex((candidate) => candidate.id === entryId)
+      if (index < 0) return null
+      const kind = pending[index].kind
+      const sameKind = (candidate) => candidate && candidate.kind === kind
+      const after = pending.slice(index + 1).find(sameKind)
+      const before = pending.slice(0, index).reverse().find(sameKind)
+      return (after || before || pending[index + 1] || pending[index - 1] || null)?.id || null
+    }
     const renderSelected = (entry) => {
       clear(detail)
-      updateFlowSteps(entry)
       if (!entry) {
         detail.append(h('div', { class: 'builder-review-empty' },
           h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),
           h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择一条开始审阅'),
           h('p', {}, '确认前保持主题投影不变；每一项决定都保留为可回放事件。')))
+        return
+      }
+      if (entry.kind === 'judge') {
+        const card = renderJudgeCard({
+          item: entry.judge,
+          atoms: judgeAtoms,
+          themeId: theme.id,
+          api: m,
+          onJudged: () => {
+            selectedEntryId = nextPendingEntryId(entry.id)
+            persistQueueState()
+            opts.onChanged?.()
+          },
+        })
+        detail.append(card)
+        requestAnimationFrame(() => { if (card.isConnected) card.focus({ preventScroll: true }) })
         return
       }
       if (entry.kind === 'legacy-signal') {

@@ -134,10 +134,37 @@ server.listen(0, host, () => {
   process.stdout.write(`${JSON.stringify({ ready: true, host, port })}\n`)
 })
 
-function shutdown() {
+/* Tauri 外壳只在 RunEvent::Exit 时回收本进程；外壳被信号结束（dev 重启、崩溃、kill）时本进程会变成孤儿，
+   继续持有过期的内存账本、改写 agent-port.json，之后任何一次整文件写回都会覆盖新实例的数据。
+   所以自己盯着父进程：被过继（ppid 变了）或父进程已不存在，就停止接活并退出。 */
+const PARENT_POLL_MS = 2000
+const EXIT_GRACE_MS = 1000 // > store 的 120ms 落盘防抖：父进程死前已确认的写入先落盘
+const parentPid = process.ppid
+function parentGone() {
+  if (process.ppid !== parentPid) return true
+  try {
+    process.kill(parentPid, 0)
+    return false
+  } catch (error) {
+    return error?.code === 'ESRCH'
+  }
+}
+
+let shuttingDown = false
+function shutdown({ exit = false } = {}) {
+  if (shuttingDown) return
+  shuttingDown = true
+  clearInterval(parentWatch)
   stopScheduler?.()
   server.close()
   agentServer?.close?.()
+  if (exit) setTimeout(() => process.exit(0), EXIT_GRACE_MS)
 }
-process.once('SIGTERM', shutdown)
-process.once('SIGINT', shutdown)
+const parentWatch = setInterval(() => {
+  if (!parentGone()) return
+  console.error(`[sidecar] parent ${parentPid} is gone; shutting down`)
+  shutdown({ exit: true })
+}, PARENT_POLL_MS)
+parentWatch.unref()
+process.once('SIGTERM', () => shutdown())
+process.once('SIGINT', () => shutdown())

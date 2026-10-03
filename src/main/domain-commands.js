@@ -9,7 +9,7 @@ import {
   appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, setInboxThemes, getInboxThemeIds, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, setInboxThemes, setInboxSourceUrl, getInboxThemeIds, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -35,11 +35,16 @@ import {
 } from './chain-store.js'
 import { generateChainDraft } from './chain-draft.js'
 import { runEnginePipeline } from './engine-pipeline.js'
+import { buildMockPipeline } from './mock-engine.js'
 import { estimateStrength } from './engine-confidence.js'
+import { PROPOSAL_STANCE_OF_REL, countJudgeItems, reviewedSignalIds } from '../shared/judge.js'
+import { checkSourceUrl, normalizePoints, sourceHostOf, sourceUrlOf } from '../shared/evidence-source.js'
+import { suggestWeight } from '../shared/evidence-weight.js'
 import {
-  getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
+  projectEvents, getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
   archiveProjectedNode, appendEvidenceToProjectedNode, appendUnmappedEvidence, declareProjectedRelation, reviewProjectedRelation,
   createProjectedNode, renameProjectedNode, categorizeProjectedNode, setProjectedConfidence, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
+  judgeEvidence,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
 import { isUrl, inferChannel, fetchUrl } from './fetcher.js'
@@ -49,6 +54,22 @@ import { ingestReadings } from './reading-ingest.js'
 
 function hashText(text) {
   return createHash('sha256').update(text).digest('hex').slice(0, 16)
+}
+
+/** 建设者「喂」进来的收件箱条目标记：今日收件箱据此认出它们，theme:feed 据此去重。 */
+const FED_LABEL = '手工喂入'
+
+const MISSING_SOURCE_URL = '外部数据必须带真实的来源链接（http / https 网址）'
+
+/** 条目进主题时的建议权重（来源类型 × 硬度）；statementType 是引擎对单句的硬 / 软判断，整条原文不传。 */
+function itemWeightSuggestion(item, statementType = '') {
+  return suggestWeight({
+    url: sourceUrlOf(item?.provenance?.url) || '',
+    labelType: item?.label?.kind || '',
+    sourceLabel: item?.provenance?.sourceLabel || '',
+    text: item?.text || '',
+    statementType,
+  })
 }
 
 function restoreArchivedProjectionNode(themeId, sourceRef, reason = '') {
@@ -650,8 +671,25 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     const event = appendChainEvent(themeId, { type: 'signal.reviewed', payload, actor: 'user' })
     return { ok: true, event }
   })
-  commands.register('chain:reviewEngineRecommendation', (themeId, eventId, decision, input = {}) =>
-    reviewEngineRecommendation(themeId, eventId, decision, input))
+  /* 旧建议可能早于原条目补链接：兜底链接只由主进程按建议里的 inboxId 查原条目得出，调用方传的 fallbackSourceUrl 一律丢弃。 */
+  commands.register('chain:reviewEngineRecommendation', (themeId, eventId, decision, input = {}) => {
+    const { fallbackSourceUrl: _untrusted, ...rest } = input && typeof input === 'object' ? input : {}
+    const proposal = getChainEvents(themeId).find((event) => event.id === eventId && event.type === 'engine.recommendation.proposed')
+    const inboxId = String(proposal?.payload?.inboxId || '').trim()
+    const fallbackSourceUrl = inboxId ? sourceUrlOf(getInboxItem(inboxId)?.provenance?.url) : null
+    return reviewEngineRecommendation(themeId, eventId, decision, fallbackSourceUrl ? { ...rest, fallbackSourceUrl } : rest)
+  })
+  // 原条目 id → 当前合格来源链接（只读；建设者给没记链接的旧建议兜底展示，和上面落账同一口径）。
+  commands.register('inbox:sourceUrls', (ids) => {
+    const wanted = new Set((Array.isArray(ids) ? ids : []).slice(0, 500).map((id) => String(id || '').trim()).filter(Boolean))
+    const urls = {}
+    for (const id of wanted) {
+      const url = sourceUrlOf(getInboxItem(id)?.provenance?.url)
+      if (url) urls[id] = url
+    }
+    return { ok: true, urls }
+  })
+  commands.register('chain:judgeEvidence', (themeId, evidenceId, input = {}) => judgeEvidence(themeId, evidenceId, input))
   // 收件箱挂载 → 事件账本（本地命令，不进 outbox）。
   commands.register('chain:mountEvent', (themeId, payload) => mountDraftToEvents(themeId, payload))
   commands.register('chain:mount', (themeId, payload = {}) => {
@@ -702,118 +740,213 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     return { ok: true, draft: res.draft }
   })
   /* 引擎只生成可审核建议；事实和关系由 chain:reviewEngineRecommendation 在用户确认后原子追加。 */
+  /* Mock 模式：主题内未归档、未失效的原子（不含证据与外部占位），按账本顺序交给 mock-engine。 */
   /**
-   * Mock 模式用的预设 pipeline（不调 LLM，用于 UI 测试）。
-   * 这里不预设任何领域：主体取条目标题，属性用中性说法，数值只从原文里抓到的数字来，
-   * 时间窗口只在原文确实写了时才带（否则留空，不编造）。摘录必须是原文的逐字片段，
-   * 否则 sourceQuoteVerified 会把确认按钮挡住——这条闸门在 mock 下也照常生效。
+   * 老缓存（没记主题）是否属于 themeId。条目的主题可能被改过，不能拿条目当前主题认，按内容认：
+   * - 引用了原子：引用的原子必须全是该主题里的活原子（账本里可能已有旧版跨主题复用写下的建议，不能拿来作证）；
+   * - 没引用原子（只有新建原子结果）：该主题账本里有这条条目写下的建议，才说明是在这里算的。
    */
-  function buildMockPipeline(item, themeId) {
-    const body = String(item.text || '').replace(/\s+/g, ' ').trim()
-    const text = body.slice(0, 80)
-    const subject = String(item.title || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '未命名来源'
-    const numbers = [...body.matchAll(/(\d+(?:[.,]\d+)?)\s*(%|％|亿元|万元|万台|万|亿|倍|个|条|天)?/g)]
-      .slice(0, 3)
-      .map((match) => `${match[1]}${match[2] || ''}`)
-    const timeMatch = body.match(/20\d{2}\s*年(?:\s*\d{1,2}\s*月)?|20\d{2}\s*Q[1-4]|\d{1,2}\s*月(?:\d{1,2}\s*日)?/)
-    const timeWindow = timeMatch ? timeMatch[0].replace(/\s+/g, '') : ''
-    const mockStatement = {
-      subject, attribute: '规模', value: numbers[0] || '未量化', timeWindow, type: 'hard',
-      sourceText: text,  // 后端用 sourceText 做原文验证
+  function legacyPipelineFits(pipeline, itemId, themeId) {
+    const events = getChainEvents(themeId)
+    const referenced = [...new Set((pipeline.results || []).map((result) => result?.proposition?.id).filter(Boolean))]
+    if (referenced.length) {
+      const atoms = new Set(projectEvents(events).nodes
+        .filter((node) => node.nodeType !== 'evidence' && !node.archived && !node.invalidated && !node.external)
+        .map((node) => node.id))
+      return referenced.every((id) => atoms.has(id))
     }
-    const mockStatement2 = {
-      subject, attribute: '趋势', value: numbers[1] || '未量化', timeWindow, type: 'soft',
-      sourceText: text,
+    return events.some((event) => event.type === 'engine.recommendation.proposed' && event.payload?.inboxId === String(itemId))
+  }
+  function mockAtomsOf(themeId) {
+    const nodes = getChainProjection(themeId).nodes || []
+    return nodes.filter((node) => node.nodeType !== 'evidence' && !node.archived && !node.invalidated && !node.external)
+      .sort((a, b) => (a.createdSeq ?? 0) - (b.createdSeq ?? 0))
+      .map((node) => ({ id: node.id, title: node.title, status: node.status }))
+  }
+  commands.register('engine:runPipeline', (inboxId) => runEngineForItem(inboxId))
+  /**
+   * 建设者「喂」：把一条外部数据直接喂进本主题。原文落成收件箱条目，引擎（mock 模式下为 mock）读一遍，
+   * 生成可判的表态建议；一条表态建议都没有（没提到任何原子 / 模型不可用）时，原文作为"未挂原子"的证据进入待判队列——
+   * 喂进来的数据永远有一个可判的落点。全部落账成功后条目才标为已接受，失败则留在今日收件箱里，不丢。
+   */
+  commands.register('theme:feed', async (themeId, input = {}) => {
+    const theme = load().themes.find((candidate) => candidate.id === themeId && !candidate.deletedAt)
+    if (!theme) return { ok: false, error: '主题不存在或已删除' }
+    const pasted = String(input?.text || '').trim()
+    let url = String(input?.url || '').trim()
+    let text = pasted
+    if (isUrl(pasted)) {
+      url = url || pasted
+      text = ''
     }
-    const mockStatement3 = {
-      subject, attribute: '约束', value: numbers[2] || '未量化', timeWindow, type: 'hard',
-      sourceText: text,
+    if (!url) return { ok: false, reason: 'missing-source-url', error: `${MISSING_SOURCE_URL}；粘贴原文时请在「来源链接」里填上它的出处` }
+    const checkedUrl = checkSourceUrl(url)
+    if (!checkedUrl.ok) return { ok: false, reason: 'invalid-source-url', error: `来源链接不可用：${checkedUrl.error}` }
+    url = checkedUrl.url
+    let fetchedAt = null
+    if (!text && url) {
+      const fetched = String(await fetchUrl(url).catch(() => '') || '').trim()
+      if (fetched.length <= 50) return { ok: false, error: '抓不到这个链接的正文；请直接粘贴原文' }
+      text = fetched
+      fetchedAt = new Date().toISOString()
     }
-    // 找现有的原子作为归因目标
-    let targetAtom = null
-    let secondAtom = null
-    try {
-      const proj = getChainProjection(themeId)
-      const candidates = (proj.nodes || []).filter((n) => !n.archived && !n.invalidated && !n.external)
-      if (candidates.length > 0) {
-        const c = candidates[0]
-        targetAtom = { id: c.id, title: c.title, status: c.status }
-      }
-      if (candidates.length > 1) {
-        const c2 = candidates[1]
-        secondAtom = { id: c2.id, title: c2.title, status: c2.status }
-      }
-    } catch { /* ignore */ }
-    const results = []
-    // 案例1：信号归因到已有原子（支持）
-    if (targetAtom) {
-      results.push({
-        kind: 'evidence',
-        statement: mockStatement,
-        match: { propositionId: targetAtom.id, score: 0.85 },
-        attribution: {
-          rel: 'supports',
-          strength: 0.7,
-          reason: 'Mock：该信号支持目标原子的当前理解',
-          change: { note: 'Mock：规模信号（支持）' },
-        },
-        proposition: targetAtom,
-        metaCount: 0,
-        metaMultiplier: 1,
-      })
+    if (!text) return { ok: false, error: '请粘贴原文或链接' }
+    /* 同一主题里同一段原文只喂一次：已落账的直接拒绝（否则同一条数据会被计两次）；
+       上次没落账、还在收件箱里待处理的，复用那一条重跑——建议 id 由条目 id 决定，重跑不会重复写。 */
+    const normalized = text.replace(/\s+/g, ' ')
+    const prior = (load().inbox || []).find((candidate) => candidate.extractedThemeId === themeId
+      && candidate.label?.kind === FED_LABEL && String(candidate.text || '').trim().replace(/\s+/g, ' ') === normalized)
+    if (prior && prior.status !== 'pending') {
+      return { ok: false, duplicate: true, inboxId: prior.id, error: `这段原文已经喂进本主题（${String(prior.createdAt || '').slice(0, 10) || '更早'}），不再重复计入` }
     }
-    // 案例2：信号归因到已有原子（反驳）
-    if (secondAtom) {
-      results.push({
-        kind: 'evidence',
-        statement: mockStatement3,
-        match: { propositionId: secondAtom.id, score: 0.78 },
-        attribution: {
-          rel: 'contradicts',
-          strength: 0.6,
-          reason: 'Mock：该信号与目标原子的当前理解存在分歧',
-          change: { note: 'Mock：约束信号（反驳）' },
-        },
-        proposition: secondAtom,
-        metaCount: 0,
-        metaMultiplier: 1,
-      })
-    }
-    // 案例3：建议新增原子（无匹配目标）
-    results.push({
-      kind: 'new-proposition',
-      statement: mockStatement2,
-      match: null,
-      proposition: null,
-      suggestedTitle: mockStatement2.subject + '·' + mockStatement2.attribute,
-      attribution: {
-        rel: 'related',
-        strength: 1,
-        reason: 'Mock：未找到匹配的原子，建议新建原子节点',
-        change: { note: mockStatement2.attribute.slice(0, 200) },
+    const now = new Date().toISOString()
+    const channel = inferChannel(url)
+    const sourceLabel = String(input?.sourceLabel || '').trim() || channel?.platform || FED_LABEL
+    const publishedAt = String(input?.publishedAt || '').trim() || null
+    /* 上次没落账的同一段原文：这次带的链接写回条目（旧条目可能还没有链接），再按同一条目重跑。 */
+    if (prior && sourceUrlOf(prior.provenance?.url) !== url) setInboxSourceUrl(prior.id, url, sourceHostOf(url))
+    const item = prior ? getInboxItem(prior.id) : addInboxItem({
+      text, title: firstSentence(text), extracted: true, extractedThemeId: themeId, createdAt: now,
+      label: { kind: FED_LABEL },
+      provenance: {
+        sourceLabel, platform: channel?.platform || FED_LABEL,
+        url, ...(publishedAt ? { publishedAt } : {}), ...(fetchedAt ? { fetchedAt } : {}),
       },
-      metaCount: 0,
-      metaMultiplier: 1,
     })
+    const landed = await landItem(item, themeId)
+    if (!landed.ok) {
+      emit('db:changed')
+      return { ...landed, inboxId: item.id }
+    }
+    resolveInboxItem(item.id, 'accept')
+    emit('db:changed')
     return {
-      statements: [mockStatement, mockStatement2, mockStatement3],
-      results,
-      diagnostics: [],
-      metaCount: 0,
-      metaMultiplier: 1,
-      status: 'done',
+      ok: true, inboxId: item.id, stanceProposals: landed.proposalEventIds.length, proposalEventIds: landed.proposalEventIds,
+      unmapped: Boolean(landed.evidenceId), evidenceId: landed.evidenceId, mocked: landed.mocked, engineError: landed.engineError,
+    }
+  })
+  /**
+   * 今日「交给主题」：把一条待确认的原文落进它所属的主题，与建设者「喂」同一条落账路径。
+   * themeIds 第一个是主主题（跑引擎出表态建议），其余主题各收一条未挂原子证据，由各自建设者判。
+   * 只落账、不裁决：成功后由界面再走 inbox:resolve 接受条目（那一步进同步 outbox）；落账按条目幂等，失败可直接重试。
+   */
+  commands.register('inbox:dispatch', async (inboxId, themeIds) => {
+    const item = getInboxItem(String(inboxId || ''))
+    if (!item) return { ok: false, error: '收件箱条目不存在' }
+    if (item.status !== 'pending') return { ok: false, error: '这条已经处理过' }
+    if (item.kind === 'reading') return { ok: false, error: '读数请挂到指标上，不交给主题' }
+    if (!String(item.text || '').trim()) return { ok: false, error: '这条信息没有原文，无法交给主题' }
+    if (!sourceUrlOf(item.provenance?.url)) {
+      return { ok: false, reason: 'missing-source-url', error: `${MISSING_SOURCE_URL}；先在今日详情里补上链接再交给主题` }
+    }
+    const liveThemeIds = new Set(load().themes.filter((theme) => !theme.deletedAt).map((theme) => theme.id))
+    const targets = [...new Set((Array.isArray(themeIds) ? themeIds : []).map((id) => String(id || '').trim()))]
+      .filter((id) => liveThemeIds.has(id))
+    if (!targets.length) return { ok: false, error: '先选这条数据属于哪个主题' }
+    if (!setInboxThemes(item.id, targets)) return { ok: false, error: '主题不存在或已删除' }
+    const landed = await landItem(getInboxItem(item.id), targets[0], targets.slice(1))
+    emit('db:changed')
+    if (!landed.ok) return { ...landed, inboxId: item.id }
+    return {
+      ok: true, inboxId: item.id, themeIds: targets, stanceProposals: landed.proposalEventIds.length,
+      proposalEventIds: landed.proposalEventIds, evidenceId: landed.evidenceId, others: landed.others,
+      mocked: landed.mocked, engineError: landed.engineError,
+    }
+  })
+  /**
+   * 今日「补来源链接」：只对还待处理的非读数条目生效（已交出去的数据在主题账本里，改条目不会改账本）。
+   * 链接按 shared/evidence-source 的口径校验并规范化后写入 provenance.url。
+   */
+  commands.register('inbox:setSourceUrl', (inboxId, url) => {
+    const item = getInboxItem(String(inboxId || ''))
+    if (!item) return { ok: false, error: '收件箱条目不存在' }
+    if (item.status !== 'pending') return { ok: false, error: '这条已经处理过，来源链接以主题账本里记下的为准' }
+    if (item.kind === 'reading') return { ok: false, error: '读数不需要来源链接' }
+    const checked = checkSourceUrl(url)
+    if (!checked.ok) return { ok: false, error: `来源链接不可用：${checked.error}` }
+    const updated = setInboxSourceUrl(item.id, checked.url, sourceHostOf(checked.url))
+    if (!updated) return { ok: false, error: '收件箱条目不存在' }
+    emit('db:changed')
+    return { ok: true, inboxId: updated.id, url: checked.url, provenance: { ...updated.provenance } }
+  })
+  /** 每个主题的待判条数（与建设者待判队列同一口径），今日据此给出去判的入口。只读，不触发旧数据迁移。 */
+  commands.register('theme:judgeCounts', () => {
+    const counts = {}
+    for (const theme of load().themes) {
+      if (theme.deletedAt) continue
+      const events = getChainEvents(theme.id)
+      const { nodes, edges } = projectEvents(events)
+      counts[theme.id] = countJudgeItems({ events, nodes, edges })
+    }
+    return { ok: true, counts }
+  })
+  /** 条目原文在某主题里已落下的未挂原子证据（按来源条目认）：重试时复用，不重复写。 */
+  function fedEvidenceOf(themeId, itemId) {
+    return getChainEvents(themeId).find((event) => event.type === 'evidence.appended'
+      && event.payload?.sourceKind === 'fed-evidence' && event.payload?.sourceItemId === itemId) || null
+  }
+  function appendItemEvidence(themeId, item, now) {
+    const existing = fedEvidenceOf(themeId, item.id)
+    if (existing) return existing.id
+    const source = String(item.provenance?.sourceLabel || item.provenance?.platform || item.label?.kind || FED_LABEL).trim()
+    const appended = appendUnmappedEvidence(themeId, {
+      text: String(item.text || '').trim(), sourceLabel: source, url: sourceUrlOf(item.provenance?.url) || '',
+      sourceKind: 'fed-evidence', sourceItemId: item.id, sourceItemTitle: item.title, sourceOrigin: source,
+      sourcePublishedAt: item.provenance?.publishedAt || null, ingestedAt: item.createdAt || now,
+      points: normalizePoints(item.lemmas), weight: itemWeightSuggestion(item).weight,
+    })
+    const evidence = appended.find((event) => event.type === 'evidence.appended')
+    if (!evidence) throw new Error('证据没有写入账本')
+    return evidence.id
+  }
+  /**
+   * 一条原文落进主题的唯一路径（喂 / 交给主题共用）：
+   * - 主主题：引擎只出表态建议（不出新原子建议）；一条都没有（没提到原子 / 模型不可用）时，整条原文作为未挂原子证据；
+   * - 其余主题：各一条未挂原子证据。
+   * 每一步都按条目幂等（建议 id 由条目决定，证据按 sourceItemId 复用），中途失败重试不会重复计入。
+   */
+  async function landItem(item, primaryThemeId, otherThemeIds = []) {
+    const now = new Date().toISOString()
+    const engine = await runEngineForItem(item.id, { stanceOnly: true, themeId: primaryThemeId })
+    const stanceProposalIds = engine.ok
+      ? [...new Set((engine.pipeline.results || []).filter((result) => result.kind === 'evidence' && result.proposalEventId
+        && Object.hasOwn(PROPOSAL_STANCE_OF_REL, result.recommendation?.rel)).map((result) => result.proposalEventId))]
+      : []
+    /* 落点看全部表态建议（之前判过的也算落过，不再补一条未挂原子证据）；回给界面的只有还待判的。 */
+    const reviewed = reviewedSignalIds(getChainEvents(primaryThemeId))
+    const proposalEventIds = stanceProposalIds.filter((id) => !reviewed.has(id))
+    try {
+      const evidenceId = stanceProposalIds.length ? null : appendItemEvidence(primaryThemeId, item, now)
+      const others = otherThemeIds.map((themeId) => ({ themeId, evidenceId: appendItemEvidence(themeId, item, now) }))
+      return {
+        ok: true, proposalEventIds, evidenceId, others,
+        mocked: engine.pipeline?.mocked === true, engineError: engine.ok ? null : engine.error,
+      }
+    } catch (error) {
+      return { ok: false, error: `原文已留在今日收件箱，但没能写入主题：${error?.message || error}` }
     }
   }
-  commands.register('engine:runPipeline', async (inboxId) => {
+  /**
+   * @param {string} inboxId
+   * @param {{ stanceOnly?: boolean, themeId?: string }} [options]
+   *   stanceOnly：只落「对既有原子的表态」建议，不落新建原子建议——
+   *   喂进来的数据只走「判」，没对上任何原子的整条进待判由人挂原子，避免同一条数据同时出现在新原子建议和待判里。
+   *   themeId：在哪个主题里读（默认条目自己的主题）；今日把一条原文交给多个主题时，主主题不一定是条目原先的主题。
+   */
+  async function runEngineForItem(inboxId, { stanceOnly = false, themeId: targetThemeId = null } = {}) {
     const item = getInboxItem(inboxId)
     if (!item) return { ok: false, error: '收件箱条目不存在' }
-    const themeId = item.extractedThemeId || item.themeId || null
+    const defaultThemeId = item.extractedThemeId || item.themeId || null
+    const themeId = targetThemeId || defaultThemeId
     if (!themeId) return { ok: false, error: '条目没有关联主题' }
-    let pipeline = item.enginePipeline?.status === 'done' ? item.enginePipeline : null
+    /* 缓存的流水线只对算它的那个主题有效（建议里的原子 id 属于那个主题）。 */
+    const cached = item.enginePipeline?.status === 'done' ? item.enginePipeline : null
+    const cacheFits = Boolean(cached) && (cached.themeId ? cached.themeId === themeId : legacyPipelineFits(cached, item.id, themeId))
+    let pipeline = cacheFits ? cached : null
     if (!pipeline) {
-      // Mock 模式：不调 LLM，直接返回预设的抽取与归因结果（用于 UI 测试）
+      // Mock 模式：不调 LLM，按原文与原子标题的字面重合给确定性建议（用于界面与流程测试）
       if (process.env.MERIDIAN_MOCK_ENGINE === '1') {
-        pipeline = buildMockPipeline(item, themeId)
+        pipeline = buildMockPipeline(item, mockAtomsOf(themeId))
         pipeline.ranAt = new Date().toISOString()
         pipeline.mocked = true
       } else {
@@ -862,6 +995,11 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
       const attribution = result.attribution || {}
       const proposition = result.proposition || null
       const kind = result.kind === 'new-proposition' || statement.type === 'relational' ? 'new-proposition' : 'evidence'
+      /* 跳过的结果原样留在缓存里：缓存是引擎的读数，不随这一次落账口径收窄。 */
+      if (stanceOnly && kind === 'new-proposition') {
+        results.push(result)
+        continue
+      }
       const rel = ['supports', 'contradicts', 'derives', 'supersedes', 'related'].includes(attribution.rel) ? attribution.rel : 'related'
       const suggestedTitle = result.suggestedTitle || (kind === 'new-proposition'
         ? `${statement.subject || ''} ${statement.attribute || ''}：${statement.value || ''}` : proposition?.title)
@@ -912,16 +1050,19 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
         sourcePublishedAt: item.provenance?.publishedAt || item.provenance?.sourcePublishedAt || item.provenance?.sourceDate || null,
         sourceFetchedAt: item.provenance?.fetchedAt || null,
         ingestedAt: item.createdAt || item.capturedAt || null,
+        /* 判的上下文与建议权重：来源类型对整条原文定一次；硬度看这一句（statement.type），在判卡上与来源类型相乘。 */
+        sourceType: itemWeightSuggestion(item).weight.sourceType,
+        ...(normalizePoints(item.lemmas).length ? { sourcePoints: normalizePoints(item.lemmas) } : {}),
         } })
       }
     }
     try {
       if (drafts.length) appendChainEvents(themeId, drafts)
-      pipeline = { ...pipeline, results, status: 'done', ranAt: pipeline.ranAt || new Date().toISOString() }
+      pipeline = { ...pipeline, results, status: 'done', ranAt: pipeline.ranAt || new Date().toISOString(), themeId }
       setInboxEnginePipeline(inboxId, pipeline)
-      return { ok: true, pipeline }
+      return { ok: true, pipeline, themeId }
     } catch (error) { return { ok: false, error: error?.message || String(error) } }
-  })
+  }
 
   commands.register('chain:readingMap', (themeId) => ({ ok: true, map: getReadingMap(themeId) }))
   commands.register('chain:setReadingMap', (themeId, map) => ({ ok: true, map: setReadingMap(themeId, map) }))

@@ -76,7 +76,7 @@
       const item = {
         id: 'synthetic-inbox',
         createdAt: '2026-09-21T10:00:00.000Z',
-        provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://example.test/synthetic-source', publishedAt: '2026-09-18', fetchedAt: '2026-09-21T09:55:00.000Z' },
+        provenance: { platform: 'synthetic-test', sourceLabel: '隔离合成来源', url: 'https://www.reuters.com/fixture/synthetic-source', publishedAt: '2026-09-18', fetchedAt: '2026-09-21T09:55:00.000Z' },
         enginePipeline: {
           status: 'done',
           statements: [
@@ -197,6 +197,8 @@
       const evidence = {
         id: 'ev-evidence', nodeType: 'evidence', kind: 'evidence', title: '隔离来源摘录', currentText: '仅供渲染测试的合成证据摘录。',
         detail: '', status: 'pending', createdSeq: 1, sourceKind: 'engine-reviewed', sourceRef: 'synthetic-source',
+        sourceLabel: '隔离合成来源', sourceUrl: 'https://www.reuters.com/fixture/synthetic-source',
+        sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-21T09:55:00.000Z',
         eventIds: ['ev-evidence'], provenanceEventIds: ['ev-evidence'],
       }
       const support = { id: 'ev-support', eventId: 'ev-support', seq: 2, rel: 'supports', relationGroup: 'argument', from: evidence.id, to: product.id, pendingReview: false, reviewDecision: null }
@@ -212,7 +214,7 @@
       }
       const currentEvents = [
         { id: 'ev-evidence', seq: 1, at: '2026-09-20T12:00:00.000Z', type: 'evidence.appended', payload: {
-          text: '仅供渲染测试的合成证据摘录。', sourceLabel: '隔离合成来源', sourceUrl: 'https://example.test/synthetic-source',
+          text: '仅供渲染测试的合成证据摘录。', sourceLabel: '隔离合成来源', sourceUrl: 'https://www.reuters.com/fixture/synthetic-source',
           sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-21T09:55:00.000Z', ingestedAt: '2026-09-21T10:00:00.000Z',
           applicability: '2026Q2', scores: { matchScore: 0.84, attributionStrength: 0.62, effectiveStrength: 0.527 },
         } },
@@ -220,7 +222,7 @@
         { id: 'ev-association', seq: 3, at: '2026-09-22T12:00:00.000Z', type: 'relation.declared', payload: { rel: 'influences', from: { eventId: driver.id }, to: { eventId: product.id } } },
         { id: 'correction-product', seq: 4, at: '2026-09-23T08:00:00.000Z', type: 'correction.appended', supersedes: 'node-product-created', payload: {
           oldValue: '原始说明（历史字段）', newValue: '更新后的产品判断。', text: '修订所依据的合成来源摘录。',
-          sourceKind: 'engine-reviewed', sourceLabel: '隔离修订来源', sourceUrl: 'https://example.test/revision-source',
+          sourceKind: 'engine-reviewed', sourceLabel: '隔离修订来源', sourceUrl: 'https://www.reuters.com/fixture/revision-source',
           sourcePublishedAt: '2026-09-18', sourceFetchedAt: '2026-09-22T09:00:00.000Z', ingestedAt: '2026-09-21T10:00:00.000Z',
           applicability: '2026Q2', scores: { matchScore: 0.82, attributionStrength: 0.6 },
         } },
@@ -240,10 +242,31 @@
       currentRoot.setAttribute('data-snapshot', 'current')
       document.querySelector('#fixture-root').append(historicRoot, currentRoot)
       await wait()
-      check('读者视图以观点分簇缩略图为主结构，并明确拒绝由支持数推导整体走向',
-        Boolean(currentRoot.querySelector('.rdr-cluster-canvas'))
-        && !currentRoot.querySelector('.rdr-overall-direction')
-        && currentRoot.textContent.includes('大圆 = 主题分类'))
+      check('读者视图以「一句话 + 原子看板」为主结构，不由支持数推导整体走向',
+        Boolean(currentRoot.querySelector('.rdr-brief'))
+        && Boolean(currentRoot.querySelector('.rdr-board'))
+        && !currentRoot.querySelector('.rdr-pyramid')
+        && !currentRoot.querySelector('.rdr-overall-direction'))
+      check('一句话结论只用计数拼：出处之外的独立佐证让原子进入「被佐证」，没有数据的进入「没有外部数据」',
+        (currentRoot.querySelector('.rdr-brief-verdict')?.textContent || '') === '2 个原子；1 个被出处之外的外部数据检验过；1 个还没有任何外部数据。'
+        && (currentRoot.querySelector('.rdr-group.is-support')?.textContent || '').includes('产品判断')
+        && (currentRoot.querySelector('.rdr-group.is-none')?.textContent || '').includes('供应链驱动'),
+        currentRoot.querySelector('.rdr-brief-verdict')?.textContent || '(无)')
+      const productRow = currentRoot.querySelector('.rdr-atom-row[data-atom-id="vp-product"]')
+      productRow.click()
+      await wait()
+      const drawer = currentRoot.querySelector('.rdr-detail')
+      check('点原子开抽屉：独立数据逐条带来源与原文链接，修订历史与原子关系都在',
+        drawer.classList.contains('is-open')
+        && drawer.textContent.includes('独立外部数据 · 1')
+        && drawer.textContent.includes('隔离合成来源')
+        && Boolean(drawer.querySelector('.rdr-ev-link[href="https://www.reuters.com/fixture/synthetic-source"]'))
+        && drawer.textContent.includes('修订历史 · 1')
+        && [...drawer.querySelectorAll('.rdr-atomd-rel-target')].some((button) => button.textContent === '供应链驱动'),
+        drawer.textContent.slice(0, 200))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await wait()
+      check('Esc 关闭抽屉并把焦点还给触发的原子行', !drawer.classList.contains('is-open') && document.activeElement === productRow)
       /* 用户决定：读者页不要时间回放（播放 / 与当前对比 / 返回当前模型）。
          回放 UI 已从界面移除，这里改为断言"回放块不可见"；原来的 4 条行为断言
          （时间线对比 / 播放推进 / 暂停 / 返回当前状态）随功能一起下线——

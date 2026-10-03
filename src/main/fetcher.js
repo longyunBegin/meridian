@@ -5,31 +5,10 @@
  * 通道推断由域名决定：arxiv 是一手数据、公众号是自媒体——这是事实不是判断。
  */
 
-/** 域名 → 来源类型映射。命中即归类，质量分由 SOURCE_QUALITY 表裁决。 */
-const DOMAIN_MAP = [
-  ['arxiv.org', '一手数据'],
-  ['mp.weixin.qq.com', '自媒体'],
-  ['wechat.com', '自媒体'],
-  ['eastmoney.com', '财报 / 公告'],
-  ['cninfo.com.cn', '财报 / 公告'],
-  ['sse.com.cn', '财报 / 公告'],
-  ['szse.cn', '财报 / 公告'],
-  ['caixin.com', '独立媒体'],
-  ['reuters.com', '独立媒体'],
-  ['bloomberg.com', '独立媒体'],
-  ['ft.com', '独立媒体'],
-  ['wsj.com', '独立媒体'],
-  ['nytimes.com', '独立媒体'],
-  ['thepaper.cn', '独立媒体'],
-  ['zhihu.com', '自媒体'],
-  ['xueqiu.com', '自媒体'],
-  ['36kr.com', '自媒体'],
-  ['cs.com.cn', '券商研报'],
-  ['cicc.com', '券商研报'],
-  ['htsec.com', '券商研报'],
-  ['gf.com.cn', '券商研报'],
-  ['cmschina.com', '券商研报'],
-]
+import { SOURCE_DOMAIN_TYPES } from '../shared/evidence-weight.js'
+
+/** 域名 → 来源类型映射（定义在 shared/evidence-weight.js）。命中即归类，质量分由 SOURCE_QUALITY 表裁决。 */
+const DOMAIN_MAP = SOURCE_DOMAIN_TYPES
 
 /** 检测文本是否为 URL：以 http(s):// 开头，无换行，无空格 */
 export function isUrl(text) {

@@ -2901,11 +2901,13 @@ ok('C5: 场景名有中文映射', Object.keys(SCENARIO_LABELS).includes('extrac
 
 ok('D: today.js 三态分组', todaySrcGov.includes("groupHead('已抽取'") && todaySrcGov.includes("groupHead('待抽取'") && todaySrcGov.includes("groupHead('未匹配'"))
 ok('D: today.js 有「抽取这 N 条」「清空未匹配」', todaySrcGov.includes('`抽取这 ${waitItems.length} 条`') && todaySrcGov.includes('清空未匹配'))
-ok('D: 未抽取条目可勾选但不进批量入库',
+ok('D: 今日分拣——有主题有原文即可交给主题（不看抽取），未抽取的另可抽取',
   todaySrcGov.includes('const isSelectable = (item) => !resolving.has(item.id)') &&
-  todaySrcGov.includes("resolve(splitPicked().importable, 'accept')") &&
-  todaySrcGov.includes("resolve(splitPicked().extractable, 'extract')"))
-ok('D: 未抽取详情不给归位表单', todaySrcGov.includes('const unextracted = item.extracted === false') && todaySrcGov.includes('const editable = !unextracted'))
+  todaySrcGov.includes("resolve(dispatchablePicked(), 'dispatch')") &&
+  todaySrcGov.includes("resolve(extractablePicked(), 'extract')") &&
+  todaySrcGov.includes('m.inboxDispatch(item.id, memberThemeIds(item))'))
+ok('D: 今日不逐条映射原子、不直接入库（表态在建设者里判）', todaySrcGov.includes('const unextracted = item.extracted === false')
+  && !/inboxImport|chainAddEvidence|chainAddUnmappedEvidence|确认入库|批量入库/.test(todaySrcGov))
 ok('D: 三态样式就位', stylesSrcS45.includes('.inbox-group-head'))
 ok('D: bridge 有 inboxExtract / inboxClearUnextracted', pjGov.includes('inboxExtract') && pjGov.includes('inboxClearUnextracted'))
 ok('C5/C6: bridge 有 llmUsage、无 channelMatchRates', pjGov.includes('llmUsage:') && !pjGov.includes('channelMatchRates'))
