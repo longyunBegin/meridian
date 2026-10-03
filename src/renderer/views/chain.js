@@ -1379,12 +1379,19 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
       const affectedId = (() => {
         try { return affectedNodeIdForEvent(e, handlers.projection, events) || null } catch { return null }
       })()
+      /* 没有可打开的对象时不要把按钮藏起来——用户会以为"这条没功能"。
+         给一个禁用按钮并把原因写在 title 里：建议尚未落到对象，或对象已不在当前投影。 */
       const openButton = affectedId && handlers.onOpenAffected
         ? h('button', {
           type: 'button', class: 'btn cog-event-open',
           onclick: () => handlers.onOpenAffected(affectedId, e),
         }, '看这条改变了什么')
-        : null
+        : h('button', {
+          type: 'button', class: 'btn cog-event-open is-unavailable', disabled: true,
+          title: e.type === 'engine.recommendation.proposed' || e.type === 'engine.recommendation'
+            ? '这是一条还没采纳的建议，尚未落到具体对象；确认后才会产生节点'
+            : '这条事件指向的对象已不在当前投影里（可能已归档或失效）',
+        }, '没有可打开的对象')
       const disclosure = h('details', { class: 'cog-ev-disclosure' },
         h('summary', { class: 'cog-ev-summary', title: compactEventSummary(e) },
           h('span', { class: `cog-ev-dot${isCorrection || isReviewEvent ? ' orange' : ''}`, 'aria-hidden': 'true' }),
