@@ -13,7 +13,6 @@
 import { h, clear, mount, toast } from '../lib/dom.js'
 import { renderEnginePipeline, renderReviewTraceBar } from '../components/engine-review.js'
 import { renderEvidenceComposer } from '../components/evidence-relation-editor.js'
-import { renderBuilderHistoryTimeline } from '../components/builder-history-timeline.js'
 import { buildWorkbenchEntries, filterWorkbenchEntries } from '../components/builder-workbench.js'
 import { state, setView, selectNode } from '../app.js'
 import { resolveEventReference } from '../lib/chain-reference.js'
@@ -120,7 +119,6 @@ export function renderChainSection(theme, opts = {}) {
   /* 建设者：1:1 对齐 demo — .meridian-theme > .builder > .sidebar + .builder-main */
   const sidebar = h('aside', { class: 'sidebar', 'aria-label': '建设者导航' })
   const mainStage = h('main', { class: 'builder-main', 'aria-label': '建设者主舞台' })
-  const historyFooter = h('div', { class: 'builder-history-host' })
   const builderLayout = h('div', { class: 'meridian-theme' },
     h('div', { class: 'builder' }, sidebar, mainStage))
   concept.append(ledgerBackdrop, ledgerPane, builderLayout)
@@ -165,7 +163,7 @@ export function renderChainSection(theme, opts = {}) {
       h('div', { class: 'chain-kicker' }, '主题建设'),
       ),
     h('div', { class: 'cog-global-actions' }, addNodeBtn, integrityBadge, ledgerButton))
-  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, toolbar, concept, historyFooter)
+  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, toolbar, concept)
   const viewOpts = {
     ...opts,
     closeLedger,
@@ -173,7 +171,6 @@ export function renderChainSection(theme, opts = {}) {
     ledgerTitleId: drawerTitleId,
     sidebar,
     mainStage,
-    historyFooter,
     onViewAtSequence: opts.onViewAtSequence,
     onReturnLive: opts.onReturnLive,
     addNodeBtn,
@@ -243,12 +240,6 @@ async function loadConcept(theme, ledgerPane, opts) {
   const events = evRes?.events || []
   const verifiedEvents = verifiedLedgerPrefix(events, proj.integrity)
   const validPrefixSeq = verifiedEvents.length
-  if (opts.historyFooter) {
-    clear(opts.historyFooter).append(renderBuilderHistoryTimeline(verifiedEvents, {
-      onViewAtSequence: opts.onViewAtSequence,
-      onReturnLive: opts.onReturnLive,
-    }))
-  }
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
   const writeBlocked = proj.integrity?.ok === false
   if (opts.addNodeBtn) {
@@ -1619,8 +1610,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
     searchTools, searchResults, searchPager, searchError,
     graphCanvas,
     h('details', { class: 'cog-graph-legend-wrap' }, h('summary', {}, '图例'), graphLegend),
-    help,
-    h('details', { class: 'cog-graph-time-wrap' }, h('summary', {}, '时间轴'), timeControls))
+    help)
   stage.append(graphToolbar, h('div', { class: 'cog-workspace-grid' }, graphMain, pointInspector))
   let currentView = { projection: proj, selectedSeq: null, events: [] }
   let currentFocus = null
