@@ -60,33 +60,47 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
 
   /* 最值得先看的两条：优先"最站得住 / 分歧最大"；这两个判据都不成立时（例如强度还没被来源推起来），
      退而给"来源最多的两条"——同样是从真实数据推出来的，不编。 */
-  const picks = []
-  if (strongest && nodeCount && Number(strongest.strength) > 0) picks.push({ tag: '最站得住', id: strongest.id, title: strongest.title, strength: strongest.strength })
-  if (disputed && disputed.id !== strongest?.id) picks.push({ tag: '分歧最大', id: disputed.id, title: disputed.title })
-  if (picks.length < 2) {
-    const ranked = claims.map((node) => ({ node, ...countsFor(node) }))
-      .filter((row) => row.support + row.challenge > 0)
-      .sort((a, b) => (b.support + b.challenge) - (a.support + a.challenge))
-    for (const row of ranked) {
-      if (picks.length >= 2) break
-      if (picks.some((pick) => pick.id === row.node.id)) continue
-      picks.push({ tag: '来源最多', id: row.node.id, title: titleOf(row.node) })
+  /* 最值得先看的 5 条：排序口径写在页面上，每张卡都写「为什么排这里」。
+     顺序 = 读者最该先知道的：① 两边都有人（争议）② 一个来源都没有（空洞）
+     ③ 只有一家来源（脆弱）④ 独立来源最多（最有据）。全部从真实数据推；强度为空就不显示。 */
+  const scored = claims.map((node) => {
+    const s = countsFor(node)
+    const stated = s.support + s.challenge
+    const both = s.support > 0 && s.challenge > 0
+    const gap = stated === 0
+    const single = !gap && s.sources <= 1
+    const score = both
+      ? 100 - Math.abs(s.support - s.challenge) * 10 + Math.min(20, stated * 4)
+      : gap ? 80 : single ? 60 : 40 + Math.min(20, s.sources * 5)
+    const reason = both
+      ? (s.support === s.challenge
+        ? `反对与支持一样多（${s.support} : ${s.challenge}）`
+        : `两边都有证据（支持 ${s.support} · 反对 ${s.challenge}）`)
+      : gap ? '一个来源都还没有'
+        : single ? `只有 1 家来源（${s.support ? '支持' : '反对'} ${stated} 条）`
+          : `${s.sources} 家独立来源、没有反对`
+    const rawStrength = Number(node.confidence ?? node.strength)
+    return {
+      node, support: s.support, challenge: s.challenge, sources: s.sources, score, reason,
+      strength: Number.isFinite(rawStrength) && rawStrength > 0 ? Math.round(rawStrength) : null,
+      tag: both ? '有争议' : gap ? '没有来源' : single ? '单一来源' : '最有据',
     }
-  }
+  }).sort((a, b) => b.score - a.score || String(a.node?.id).localeCompare(String(b.node?.id)))
+  const picks = scored.slice(0, 5)
 
   const pickRow = (pick) => {
-    const { support, challenge, sources } = countsFor({ id: pick.id })
     const bits = []
-    if (support || challenge) bits.push(`支持 ${support} · 反对 ${challenge}`)
-    if (sources) bits.push(`独立来源 ${sources} 家`)
+    if (pick.support || pick.challenge) bits.push(`支持 ${pick.support} · 反对 ${pick.challenge}`)
+    if (pick.sources) bits.push(`独立来源 ${pick.sources} 家`)
     return h('li', { class: 'rdr-conclusion-pick' },
       h('span', { class: 'rdr-conclusion-tag' }, pick.tag),
-      h('span', { class: 'rdr-conclusion-pick-title' }, pick.title),
-      Number(pick.strength) > 0 ? h('span', { class: 'rdr-conclusion-strength' }, `强度 ${pick.strength}%`) : null,
+      h('span', { class: 'rdr-conclusion-pick-title' }, pick.node?.title || '未命名观点'),
+      pick.strength ? h('span', { class: 'rdr-conclusion-strength' }, `强度 ${pick.strength}%`) : null,
       h('span', { class: 'rdr-conclusion-counts' }, bits.join(' · ') || '还没有已表态的来源'),
+      pick.reason ? h('span', { class: 'rdr-conclusion-reason' }, pick.reason) : null,
       onOpenClaim ? h('button', {
         type: 'button', class: 'btn btn-sm rdr-conclusion-open',
-        onclick: () => onOpenClaim(pick.id),
+        onclick: () => onOpenClaim(pick.node?.id),
       }, '看它的理由') : null)
   }
 
@@ -101,7 +115,8 @@ export function renderReaderConclusion({ summary = null, claims = [], gaps = [],
         h('strong', {}, `观点覆盖率 ${withEvidence} / ${nodeCount}`),
         h('span', {}, `（${coverage}%）至少有 1 条已表态来源的观点 ÷ 全部观点。它不是"结论为真的概率"。`))),
     picks.length ? h('div', { class: 'rdr-conclusion-block' },
-      h('h3', { class: 'rdr-conclusion-head' }, '最值得先看的两条'),
+      h('h3', { class: 'rdr-conclusion-head' }, '最值得先看的 5 条'),
+      h('p', { class: 'rdr-conclusion-caliber' }, '排序口径：先看两边都有证据的和一个来源都没有的，再看只有单一来源的，最后看来源最扎实的。'),
       h('ul', { class: 'rdr-conclusion-picks' }, ...picks.map(pickRow))) : null,
     h('div', { class: 'rdr-conclusion-block' },
       h('h3', { class: 'rdr-conclusion-head' }, '现在最缺的'),

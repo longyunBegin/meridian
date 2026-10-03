@@ -1597,3 +1597,6 @@ body.tauri-macos{
 .cog-ledger-search:hover { border-color: var(--line-2); }
 .cog-ledger-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .review-badge-done { color: var(--green-text); background: color-mix(in srgb, var(--green) 12%, transparent); }
+.rdr-conclusion-reason { flex: 1 1 100%; color: var(--text-2); font-size: var(--t-caption); }
+.rdr-conclusion-reason::before { content: "▸"; color: var(--accent); margin-right: 6px; }
+.rdr-conclusion-caliber { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
