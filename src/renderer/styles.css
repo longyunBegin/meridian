@@ -1064,7 +1064,7 @@ body.tauri-macos{
     background: rgba(28, 28, 30, 0.72);
   }
 }/* ============ 主题认知链 ============ */
-.chain-section{margin-top: 20px; }/* 当前认知图（概念 01 + 02）：左账本 + 右图谱 */
+.chain-section{margin-top:8px; }/* 当前认知图（概念 01 + 02）：左账本 + 右图谱 */
 .cog-concept{display: grid; grid-template-columns: 400px 40px minmax(0, 1fr); gap: 0; margin-top: 12px; align-items: stretch; }.cog-graph-pane{min-width: 0; }.cog-stage{margin-top: 0; }
 @media (max-width: 1100px) {.cog-concept{grid-template-columns: 1fr; }.cog-proj-divider{display: none; }.cog-ledger-pane{max-height: 420px; margin-bottom: 12px; }
 }/* 只读投影分隔 */

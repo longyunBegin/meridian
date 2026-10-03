@@ -109,7 +109,6 @@ export function renderChainSection(theme, opts = {}) {
   const drawerId = `cog-ledger-drawer-${++chainSectionCounter}`
   const drawerTitleId = `${drawerId}-title`
   const integrityBadge = h('span', { class: 'cog-integrity-badge is-pending', role: 'status', 'aria-live': 'polite', 'data-ledger-status': '' }, '账本校验中…')
-  const addNodeBtn = h('button', { type: 'button', class: 'btn', disabled: true }, '＋ 添加节点')
   const concept = h('div', { class: 'cog-concept cog-reading-layout' })
   const ledgerBackdrop = h('div', { class: 'cog-ledger-backdrop', hidden: true, 'aria-hidden': 'true' })
   const ledgerPane = h('aside', {
@@ -158,12 +157,9 @@ export function renderChainSection(theme, opts = {}) {
     type: 'button', class: 'btn cog-ledger-open', 'aria-controls': drawerId, 'aria-expanded': 'false',
     onclick: openLedger,
   }, h('span', { 'aria-hidden': 'true' }, '▤'), h('span', {}, '账本'))
-  const toolbar = h('header', { class: 'chain-path-h cog-global-toolbar' },
-    h('div', { class: 'cog-global-brand' },
-      h('div', { class: 'chain-kicker' }, '主题建设'),
-      ),
-    h('div', { class: 'cog-global-actions' }, addNodeBtn, integrityBadge, ledgerButton))
-  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, toolbar, concept)
+  /* 顶部那条「主题建设」工具栏已删除：它里面的校验徽标与账本按钮早就被移进建设者头部、
+     添加节点在侧栏，DOM 节点被搬走后只剩一个空壳，白占一条 58px 的栏 + 外边距。 */
+  const wrap = h('section', { class: 'chain-section', 'aria-label': '主题建设' }, concept)
   const viewOpts = {
     ...opts,
     closeLedger,
@@ -173,7 +169,6 @@ export function renderChainSection(theme, opts = {}) {
     mainStage,
     onViewAtSequence: opts.onViewAtSequence,
     onReturnLive: opts.onReturnLive,
-    addNodeBtn,
     integrityBadge,
     ledgerButton,
     onChanged: () => {
@@ -242,11 +237,6 @@ async function loadConcept(theme, ledgerPane, opts) {
   const validPrefixSeq = verifiedEvents.length
   const viewState = { projection: { ...proj, allEvents: events }, selectedSeq: null, events: verifiedEvents }
   const writeBlocked = proj.integrity?.ok === false
-  if (opts.addNodeBtn) {
-    opts.addNodeBtn.disabled = writeBlocked
-    opts.addNodeBtn.title = writeBlocked ? '事件账本校验异常，不能追加节点' : ''
-    opts.addNodeBtn.onclick = () => openEntryDialog(theme, viewState.projection, 'node', opts)
-  }
   updateThemeStats(opts.themeStats, proj, events)
   let ledgerController = null
   const sectionEl = ledgerPane.closest('.chain-section')
