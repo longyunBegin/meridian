@@ -9,7 +9,8 @@ import { drawThemeNetwork } from '../lib/theme-network-render.js'
 import { evidenceForNode } from '../lib/chain-workbench-model.js'
 import {
   filterReaderNodes, nodeCategory, buildSynthesisAxis, buildArgumentOutline, strengthSparkline,
-  buildGapList, buildDebateBoard, buildChronicle, synthesisSummary, UNCATEGORIZED_LABEL,
+  buildGapList, buildDebateBoard, buildChronicle, buildAdjacencyMatrix, matrixReplacesGraph,
+  synthesisSummary, UNCATEGORIZED_LABEL,
 } from '../lib/reader-model.js'
 import { renderSynthesisAxis } from '../components/reader-synthesis-axis.js'
 import { renderArgumentOutline } from '../components/reader-argument-outline.js'
@@ -17,6 +18,7 @@ import { renderSmallMultiples } from '../components/reader-small-multiples.js'
 import { renderGapList } from '../components/reader-gaps.js'
 import { renderDebateBoard } from '../components/reader-debate-board.js'
 import { renderChronicle } from '../components/reader-chronicle.js'
+import { renderAdjacencyMatrix } from '../components/reader-matrix.js'
 import {
   GRAPH_FRAME_EDGE_LIMIT, GRAPH_FRAME_NODE_LIMIT, searchGraphNodes, selectGraphWindow,
   verifiedLedgerPrefix,
@@ -429,6 +431,17 @@ export function renderReaderView(theme, opts = {}) {
     }
 
     const renderGraph = () => {
+      /* R6 的规模规则（§10.0 结论第 3 条）：≥300 节点不再画全图，如实说明已换成矩阵。
+         工具栏与面板保留，计数与提示仍可读。 */
+      if (matrixReplacesGraph(currentNodes.length)) {
+        graphCanvas.classList.remove('is-overview')
+        graphCanvas.replaceChildren(h('p', { class: 'rdr-frame-note', role: 'status' },
+          `这个主题有 ${currentNodes.length} 个节点（≥300）：图谱已自动降级为矩阵视图——力导向在千级节点上不再是可读结构，矩阵里找块状结构更快。矩阵在上方「邻接矩阵」区。`))
+        countStatus.textContent = `已降级为矩阵 · ${currentNodes.length} 个节点`
+        lodBadge.textContent = 'LOD 点阵 · ≥300 已降级为矩阵'
+        lodBadge.classList.add('is-degraded')
+        return
+      }
       /* render() 会重建画布，所以每次重画都把全览状态贴回去。 */
       graphCanvas.classList.toggle('is-overview', overviewMode)
       const type = typeFilter.value
@@ -776,6 +789,9 @@ export function renderReaderView(theme, opts = {}) {
     /* R3 双边清单 / R4 编年史：同样是"图以外的有序结构"，读得完、跟得上时间。 */
     const debateHost = h('div', { class: 'rdr-debate-host' })
     const chronicleHost = h('div', { class: 'rdr-chronicle-host' })
+    /* R6 邻接矩阵：行＝原子、列＝外部数据（可切原子×原子）；≥300 节点时图自动换成它。 */
+    const matrixHost = h('div', { class: 'rdr-matrix-host' })
+    let matrixMode = 'atom-evidence'
     const todoKeys = new Set()
     let inboxCache = null
     const loadInboxItems = async () => {
@@ -848,6 +864,16 @@ export function renderReaderView(theme, opts = {}) {
         onFocusEvidence: focusAtom,
         onFocusAtom: focusAtom,
       }))
+      matrixHost.replaceChildren(renderAdjacencyMatrix(
+        buildAdjacencyMatrix({ nodes: currentNodes, edges: allEdgesOf(currentProjection), mode: matrixMode }),
+        {
+          mode: matrixMode,
+          degraded: matrixReplacesGraph(currentNodes.length),
+          selectedId: state.selectedNodeId,
+          onFocus: focusAtom,
+          onModeChange: (next) => { matrixMode = next; renderStructure() },
+        },
+      ))
       chronicleHost.replaceChildren(renderChronicle(buildChronicle({ events: state.events, nodes: allNodesOf(state.projection) }), {
         onFocusEvidence: focusAtom,
         onOpenSource: (url) => globalThis.window?.meridian?.openExternal?.(url),
@@ -921,7 +947,7 @@ export function renderReaderView(theme, opts = {}) {
               h('span', { class: 'rdr-pill' }, `${verifiedEvents.length} 条外部数据`))))
       }
     } catch { /* 横幅计算失败不阻塞主视图 */ }
-    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, chronicleHost, gapsHost, workspace)
+    article.replaceChildren(toolbar, ...(synthesisBanner ? [synthesisBanner] : []), axisBox, outlineHost, debateHost, multiplesHost, matrixHost, chronicleHost, gapsHost, workspace)
     renderSearch()
     renderInspector()
     renderGraph()

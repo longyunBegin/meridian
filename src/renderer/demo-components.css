@@ -1310,6 +1310,30 @@
 .meridian-theme .rdr-chronicle-item.is-unstated .rdr-chronicle-stance { color:var(--text-3); }
 .meridian-theme .rdr-chronicle-delta { color:var(--text-2); font-size:10px; }
 .meridian-theme .rdr-chronicle-link { padding:0; border:0; background:none; color:var(--accent); font-size:10px; font-weight:600; cursor:pointer; }
+/* R6 邻接矩阵 */
+.meridian-theme .rdr-matrix { margin:12px 0 0; padding:12px 14px; border:1px solid var(--hairline); border-radius:12px; background:var(--surface); overflow:hidden; }
+.meridian-theme .rdr-matrix-modes { display:flex; gap:6px; }
+.meridian-theme .rdr-matrix-mode.is-active { border-color:var(--accent); color:var(--accent); }
+.meridian-theme .rdr-matrix-degraded { margin:4px 0 0; padding:6px 8px; border-radius:8px; background:rgba(255,149,0,.12); color:#ff9500; font-size:10.5px; }
+.meridian-theme .rdr-matrix-table { border-collapse:separate; border-spacing:2px; margin-top:8px; max-width:100%; }
+.meridian-theme .rdr-matrix-corner, .meridian-theme .rdr-matrix-col { color:var(--text-3); font-size:9px; font-weight:500; text-align:center; white-space:nowrap; }
+.meridian-theme .rdr-matrix-rowhead { text-align:left; white-space:nowrap; padding-right:6px; }
+.meridian-theme .rdr-matrix-atom { padding:0; border:0; background:none; color:var(--text-1); font-size:10.5px; font-weight:600; cursor:pointer; }
+.meridian-theme .rdr-matrix-row.is-selected .rdr-matrix-atom { color:var(--accent); }
+.meridian-theme .rdr-matrix-cell { width:16px; height:16px; padding:0; border:1px solid var(--line); border-radius:3px; background:var(--bg); text-align:center; vertical-align:middle; }
+.meridian-theme .rdr-matrix-dot { display:block; width:100%; height:100%; border:0; border-radius:2px; cursor:pointer; background:none; }
+.meridian-theme .rdr-matrix-cell.is-supports { background:#34c759; border-color:#34c759; }
+.meridian-theme .rdr-matrix-cell.is-contradicts { background:#ff3b30; border-color:#ff3b30; }
+.meridian-theme .rdr-matrix-cell.is-derives { background:#af52de; border-color:#af52de; }
+.meridian-theme .rdr-matrix-cell.is-attached { background:repeating-linear-gradient(45deg, var(--text-3) 0 2px, transparent 2px 5px); border-color:var(--line); }
+.meridian-theme .rdr-matrix-cell.is-related { background:#8e8e93; border-color:#8e8e93; }
+.meridian-theme .rdr-matrix-legend { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; color:var(--text-2); font-size:10px; }
+.meridian-theme .rdr-matrix-legend-item { display:inline-flex; align-items:center; gap:4px; }
+.meridian-theme .rdr-matrix-swatch { width:10px; height:10px; border-radius:2px; border:1px solid var(--line); }
+.meridian-theme .rdr-matrix-swatch.is-supports { background:#34c759; }
+.meridian-theme .rdr-matrix-swatch.is-contradicts { background:#ff3b30; }
+.meridian-theme .rdr-matrix-swatch.is-derives { background:#af52de; }
+.meridian-theme .rdr-matrix-swatch.is-attached { background:repeating-linear-gradient(45deg, var(--text-3) 0 2px, transparent 2px 5px); }
 .meridian-theme .review-ai-note { font-size:12px; color:var(--text-3); margin:0; }
 .meridian-theme .review-advanced { margin-bottom:16px; }
 .meridian-theme .review-advanced summary { font-size:13px; color:var(--text-2); cursor:pointer; }

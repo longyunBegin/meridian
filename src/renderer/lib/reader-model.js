@@ -149,6 +149,80 @@ export function buildArgumentOutline(nodes = [], evidenceForNodeFn = null) {
 }
 
 /**
+ * R6 邻接矩阵（§10.1 第 7 项）：行＝原子、列＝外部数据（mode='atom-atom' 时列＝原子）。
+ *
+ * 为什么要有它：边一密，node-link 就成毛线球；人眼在矩阵里找"块状结构"远快于看图。
+ * 单元格状态：supports / contradicts / derives（已声明）→ attached（挂上了但还没表态）→ 空。
+ * 行按分类与标题排、列按"共同支撑哪几个原子"排（签名相同的列聚在一起），块状结构就会自己显出来。
+ */
+export function buildAdjacencyMatrix({ nodes = [], edges = [], mode = 'atom-evidence' } = {}) {
+  const live = asArray(nodes).filter((node) => node && !node.archived)
+  const atomRows = live.filter((node) => networkNodeType(node) !== 'evidence')
+  const rows = atomRows.map((node) => ({
+    id: node.id, title: titleOf(node), category: nodeCategory(node), strength: confidenceValue(node.confidence),
+  }))
+  const columnNodes = mode === 'atom-atom' ? atomRows : live.filter((node) => networkNodeType(node) === 'evidence')
+  const rowIndex = new Map(rows.map((row, index) => [row.id, index]))
+
+  const declared = new Map()
+  const rank = { supports: 5, contradicts: 5, derives: 4, supersedes: 3, related: 2 }
+  for (const edge of asArray(edges)) {
+    if (!edge || edge.reviewDecision === 'rejected') continue
+    const key = `${edge.from}->${edge.to}`
+    const previous = declared.get(key)
+    if (!previous || (rank[edge.rel] || 0) > (rank[previous] || 0)) declared.set(key, edge.rel)
+  }
+
+  const stateFor = (atomId, column) => {
+    if (mode === 'atom-atom') {
+      const rel = declared.get(`${column.id}->${atomId}`) || declared.get(`${atomId}->${column.id}`)
+      return rel === 'contradicts' ? 'contradicts' : rel === 'supports' ? 'supports' : rel === 'derives' ? 'derives' : rel ? 'related' : null
+    }
+    const rel = declared.get(`${column.id}->${atomId}`)
+    if (rel === 'contradicts' || rel === 'supports' || rel === 'derives') return rel
+    const attached = asArray(column.targetNodeIds).includes(atomId)
+      || asArray(atomRows[rowIndex.get(atomId)]?.evidenceNodeIds || []).includes(column.id)
+    return attached ? 'attached' : null
+  }
+
+  /* 行：分类 → 标题（分类顺序即主题词表顺序，未分类排最后）；列：签名 → 填充数 → 标题。
+     签名用**排序后的行**算，块状结构才会和显示的行对齐；签名相同的列相邻，
+     就会形成"这几条证据一起支撑那几个原子"的块。 */
+  const orderedRows = [...rows].sort((a, b) => (a.category === UNCATEGORIZED_LABEL ? 1 : 0) - (b.category === UNCATEGORIZED_LABEL ? 1 : 0)
+    || String(a.category).localeCompare(String(b.category)) || String(a.title).localeCompare(String(b.title)))
+  const columns = columnNodes.map((node) => {
+    const signature = orderedRows.map((row) => (stateFor(row.id, node) ? '1' : '0')).join('')
+    return {
+      id: node.id, title: titleOf(node), category: nodeCategory(node), signature,
+      /* 目标原子要跟着列对象走：渲染阶段只用排序后的列，丢了它就会把"挂上未表态"看成空格。 */
+      targetNodeIds: asArray(node.targetNodeIds),
+      filled: signature.split('').filter((flag) => flag === '1').length,
+    }
+  })
+  const orderedColumns = [...columns].sort((a, b) => String(b.signature).localeCompare(String(a.signature))
+    || b.filled - a.filled || String(a.title).localeCompare(String(b.title)))
+  const cells = orderedRows.map((row) => orderedColumns.map((column) => stateFor(row.id, column)))
+  const filled = cells.flat().filter(Boolean).length
+  return {
+    mode,
+    rows: orderedRows,
+    columns: orderedColumns,
+    cells,
+    stats: { atoms: orderedRows.length, columns: orderedColumns.length, filled, density: cells.length ? filled / (orderedRows.length * orderedColumns.length) : 0 },
+  }
+}
+
+/**
+ * R6 的规模规则（§10.0 结论第 3 条）：≥300 节点时图自动换成矩阵，
+ * 并如实标注，而不是卡死或假装画完了。
+ */
+export const GRAPH_TO_MATRIX_THRESHOLD = 300
+
+export function matrixReplacesGraph(nodeCount) {
+  return Number(nodeCount) >= GRAPH_TO_MATRIX_THRESHOLD
+}
+
+/**
  * R3 双边清单（§10.1 第 4 项）：支持一列 / 挑战一列 / 中间当前强度。
  * 图里"反驳"只是一条红线，极易被忽略；并排两列才能直接读"争议点到底在哪"。
  * 只列有支持的或有的挑战的原子（两边都空的不算争议），按"两边都多"优先排序。

@@ -1,6 +1,7 @@
 import {
   deriveReaderModel, estimateReadSeconds, filterReaderNodes, buildSynthesisAxis, buildArgumentOutline,
-  strengthSparkline, buildGapList, buildDebateBoard, buildChronicle, parseApplicabilityEnd, UNCATEGORIZED_LABEL,
+  strengthSparkline, buildGapList, buildDebateBoard, buildChronicle, buildAdjacencyMatrix, matrixReplacesGraph,
+  parseApplicabilityEnd, UNCATEGORIZED_LABEL,
 } from '../src/renderer/lib/reader-model.js'
 
 let passed = 0
@@ -178,6 +179,33 @@ const now = Date.parse('2026-10-02T12:00:00.000Z')
   check('R5 每条缺口都给出可执行的待办文案',
     gaps.find((gap) => gap.kind === 'no-evidence').todo === '为「无证据原子」补一条外部数据'
     && gaps.find((gap) => gap.kind === 'expired-evidence').todo.includes('更新'))
+
+  /* R6 邻接矩阵：块状结构 + 规模规则 */
+  const matrixNodes = [
+    { id: 'm1', nodeType: 'viewpoint', title: '甲原子', atomCategory: '技术路线' },
+    { id: 'm2', nodeType: 'viewpoint', title: '乙原子', atomCategory: '商业模式' },
+    { id: 'me1', nodeType: 'evidence', title: '证据一', targetNodeIds: ['m1'] },
+    { id: 'me2', nodeType: 'evidence', title: '证据二', targetNodeIds: ['m1'] },
+    { id: 'me3', nodeType: 'evidence', title: '证据三', targetNodeIds: ['m2'] },
+  ]
+  const matrixEdges = [
+    { id: 'mr1', from: 'me1', to: 'm1', rel: 'supports' },
+    { id: 'mr2', from: 'me3', to: 'm2', rel: 'contradicts' },
+  ]
+  const matrix = buildAdjacencyMatrix({ nodes: matrixNodes, edges: matrixEdges })
+  check('R6 矩阵行按分类排序、列按共同归属重排成块（同签名的列相邻）',
+    matrix.rows.map((row) => row.title).join() === '乙原子,甲原子'
+    && matrix.columns.map((column) => column.title).join() === '证据三,证据一,证据二'
+    && matrix.columns[1].signature === matrix.columns[2].signature)
+  check('R6 单元格区分已声明立场与"挂上未表态"，并统计密度',
+    matrix.cells[1][1] === 'supports' && matrix.cells[0][0] === 'contradicts'
+    && matrix.cells[1][2] === 'attached' && matrix.stats.filled === 3
+    && Math.abs(matrix.stats.density - 0.5) < 1e-9)
+  const atomMatrix = buildAdjacencyMatrix({ nodes: matrixNodes, edges: matrixEdges, mode: 'atom-atom' })
+  check('R6 可切原子×原子：证据边不算原子间关系，结果为真空矩阵',
+    atomMatrix.rows.length === 2 && atomMatrix.columns.length === 2 && atomMatrix.stats.filled === 0)
+  check('R6 规模规则：≥300 节点才把图换成矩阵',
+    matrixReplacesGraph(21) === false && matrixReplacesGraph(299) === false && matrixReplacesGraph(300) === true)
 
   /* R3 双边清单 / R4 编年史：并排读争议、按时间读来源 */
   const debateNodes = [

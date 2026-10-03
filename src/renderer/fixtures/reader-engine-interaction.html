@@ -501,6 +501,45 @@
       check('R4 编年史不出现账本术语（事件序号 / 哈希）',
         !/seq|哈希|第 \d+ 条/.test(structureRoot.querySelector('.rdr-chronicle')?.textContent || ''))
 
+      /* R6 邻接矩阵 + ≥300 节点自动替代图 */
+      check('R6 矩阵行列重排后区分支持 / 挑战 / 挂上未表态',
+        structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
+        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-supports'))
+        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-contradicts'))
+        && Boolean(structureRoot.querySelector('.rdr-matrix-cell.is-attached')))
+      structureRoot.querySelector('.rdr-matrix-cell.is-supports .rdr-matrix-dot')?.click()
+      await wait()
+      check('R6 点击矩阵单元格定位到该外部数据',
+        structureRoot.querySelector('.rdr-inspector-title')?.textContent === '支持用的外部数据')
+      structureRoot.querySelector('.rdr-matrix-mode[aria-pressed="false"]')?.click()
+      await wait()
+      check('R6 可切原子 × 原子（外部数据的边不算原子间关系，矩阵为空）',
+        structureRoot.querySelectorAll('.rdr-matrix-row').length === 2
+        && structureRoot.querySelectorAll('.rdr-matrix-table .rdr-matrix-cell.is-empty').length === 4)
+      const bigNodes = [{
+        id: 'big-v1', nodeType: 'viewpoint', kind: 'claim', title: '大主题原子', detail: '', currentText: '大主题原子',
+        confidence: 60, status: 'pending', archived: false, external: false, createdSeq: 1, eventIds: [], provenanceEventIds: [], evidenceCount: 300,
+      }]
+      for (let index = 0; index < 300; index++) {
+        bigNodes.push({
+          id: `big-e${index}`, nodeType: 'evidence', kind: 'evidence', title: `外部数据 ${index}`, currentText: `外部数据 ${index}`,
+          status: 'pending', archived: false, external: false, createdSeq: index + 2, eventIds: [], provenanceEventIds: [],
+          targetNodeIds: ['big-v1'], evidenceCount: 0,
+        })
+      }
+      const bigProjection = { nodes: bigNodes, allNodes: bigNodes, edges: [], allEdges: [], integrity: { ok: true }, eventCount: 1 }
+      const bigRoot = renderReaderView({ name: '大规模合成主题' }, {
+        loadProjection: async () => bigProjection, loadEvents: async () => [], onOpenBuilder: () => {},
+      })
+      document.querySelector('#fixture-root').append(bigRoot)
+      await wait()
+      check('R6 ≥300 节点时图谱位置自动换成矩阵并如实标注（不假装画完了）',
+        !bigRoot.querySelector('.rdr-map-panel .cog-network-svg')
+        && (bigRoot.querySelector('.rdr-frame-note')?.textContent || '').includes('已自动降级为矩阵')
+        && (bigRoot.querySelector('.rdr-node-count')?.textContent || '').includes('已降级为矩阵')
+        && Boolean(bigRoot.querySelector('.rdr-matrix-degraded'))
+        && bigRoot.querySelectorAll('.rdr-matrix-row').length === 1)
+
       /* R5 缺口清单 + P1-5 回流 */
       const gapItems = [...structureRoot.querySelectorAll('.rdr-gap-item')]
       check('R5 缺口清单覆盖缺外部数据 / 已过期 / 未归位三类',
