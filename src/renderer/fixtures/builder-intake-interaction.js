@@ -498,20 +498,13 @@ import '../styles.css'
       const liveEventCount = events.length
       const readerTab = themeMount.querySelector('.theme-view-tab')
       readerTab.click()
-      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-time-slider')
-        && !themeMount.querySelector('.rdr-time-slider').disabled, '主题读者视图与可回放时间轴')
-      const replaySlider = themeMount.querySelector('.rdr-time-slider')
-      replaySlider.value = '0'
-      replaySlider.dispatchEvent(new Event('input', { bubbles: true }))
-      replaySlider.dispatchEvent(new Event('change', { bubbles: true }))
-      await waitFor(() => commandCalls.some((call) => call[0] === 'chainProjectionAt')
-        && !themeMount.querySelector('.rdr-live-button').hidden, '真实时间轴加载历史投影')
-      check('读者时间轴实际请求已校验事件前缀，以只读方式回放且不改账本',
-        themeMount.querySelector('.rdr-time-status')?.textContent.includes('只读回放')
-        && commandCalls.some((call) => call[0] === 'chainProjectionAt' && call[1] === theme.id)
+      /* 用户决定：读者页不要时间回放（与当前对比 / 播放 / 返回当前模型一并去掉）。
+         回放 UI 已从界面移除，这里改为断言"回放块不可见"，不再驱动它。
+         注意：回放块与其内部 DOM 暂留（下一步连代码一起清），所以不断言元素不存在。 */
+      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-replay-details'), '主题读者视图挂载')
+      check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
+        Boolean(themeMount.querySelector('.rdr-replay-details')?.hidden)
         && events.length === liveEventCount)
-      themeMount.querySelector('.rdr-live-button').click()
-      await waitFor(() => themeMount.querySelector('.rdr-time-status')?.textContent.includes('当前模型'), '退出历史回放')
       const readerNode = themeMount.querySelector(`.rdr-graph-canvas .cog-node[data-node-id="${target.id}"]`)
       readerNode.focus()
       readerNode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
