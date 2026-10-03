@@ -277,6 +277,35 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn inbox-ignore-picked',
     onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'reject'),
   }, '忽略所选')
+  // 批量分配到主题：选主题后，所选项的 extractedThemeId 批量更新
+  const assignThemePick = h('select', {
+    class: 'inbox-assign-theme', title: '分配到主题：所选项将出现在该主题建设者的待归因队列',
+  }, h('option', { value: '' }, '选择主题…'),
+    ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
+  const assignPicked = h('button', {
+    class: 'btn inbox-assign-picked',
+    onclick: async () => {
+      const tid = assignThemePick.value
+      if (!tid) { toast('请先选择要分配到的主题', 'var(--red)'); return }
+      const targets = items.filter((item) => picked.has(item.id))
+      if (!targets.length) return
+      assignPicked.disabled = true
+      let okCount = 0
+      for (const item of targets) {
+        try {
+          const res = await m.inboxSetTheme(item.id, tid)
+          if (res?.ok) { item.extractedThemeId = tid; okCount++ }
+        } catch { /* 单条失败继续 */ }
+      }
+      const themeName = liveThemes.find((t) => t.id === tid)?.name || ''
+      toast(okCount === targets.length
+        ? `已分配 ${okCount} 条到「${themeName}」`
+        : `已分配 ${okCount}/${targets.length} 条到「${themeName}」，${targets.length - okCount} 条失败`)
+      picked.clear()
+      updateBatch()
+      rerender ? rerender() : onRouteChange()
+    },
+  }, '分配到主题')
 
   function updateBatch() {
     const available = items.filter(isSelectable)
@@ -296,6 +325,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     ignorePicked.hidden = !picked.size
     ignorePicked.textContent = `忽略所选（${picked.size}）`
     ignorePicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
+    // 批量分配：有选中项时显示
+    assignThemePick.hidden = !picked.size
+    assignPicked.hidden = !picked.size
+    assignPicked.textContent = `分配到主题（${picked.size}）`
+    assignPicked.disabled = !picked.size || [...picked].some((id) => resolving.has(id))
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
@@ -534,7 +568,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
       h('div', { class: 'inbox-list-toolbar' }, h('span', {}, '信息列表 · ↑↓ 切换'), pickAll),
       list,
       loadMore,
-      h('div', { class: 'inbox-import-bar' }, count, extractThemePick, extractPicked, importPicked, ignorePicked),
+      h('div', { class: 'inbox-import-bar' }, count, extractThemePick, extractPicked, importPicked, assignThemePick, assignPicked, ignorePicked),
     ),
     detail,
   ))
@@ -546,7 +580,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
 function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const lemmas = item.lemmas || []
   const title = item.title || lemmas[0]?.title || '未命名信息'
-  return h('div', { class: 'inbox-item', dataset: { id: item.id } },
+  // 已分配到主题的条目默认折叠显示（视觉弱化，避免与待处理项混淆）
+  const isAssigned = Boolean(item.extractedThemeId)
+  return h('div', { class: `inbox-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,

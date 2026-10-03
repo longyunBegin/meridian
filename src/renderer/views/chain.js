@@ -390,7 +390,7 @@ async function loadConcept(theme, ledgerPane, opts) {
           onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
           h('span', { class: 'icon', 'aria-hidden': 'true' }, '◷'),
-          h('span', {}, '待处理工作台'),
+          h('span', {}, '待归因工作台'),
           h('span', { class: 'n' }, String(inboxCount)))),
       h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
@@ -775,12 +775,12 @@ async function loadConcept(theme, ledgerPane, opts) {
     }
     addNode.addEventListener('click', addManualOpinion)
     const queueCount = h('span', { class: 'builder-queue-count' }, '0')
-    const queueList = h('div', { class: 'builder-queue-list', role: 'listbox', 'aria-label': '待处理来源、建议与旧账本信号', tabindex: '0' },
+    const queueList = h('div', { class: 'builder-queue-list', role: 'listbox', 'aria-label': '待归因来源、建议与旧账本信号', tabindex: '0' },
       h('p', { class: 'chain-note' }, '正在加载…'))
     const queue = h('aside', { class: 'builder-intake-queue', 'aria-label': '来源与建议队列' },
       h('div', { class: 'builder-queue-head-v2' },
         h('div', { class: 'builder-queue-title-row' },
-          h('h3', {}, '待处理'), queueCount),
+          h('h3', {}, '待归因'), queueCount),
         h('p', { class: 'builder-queue-desc' }, '外部数据归因、AI 建议的新增/修改原子，都进入这里等待人工确认。'),
         h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab),
         addNode),
@@ -830,7 +830,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       clear(queueList)
       if (!visible.length) {
         queueList.append(h('p', { class: 'builder-queue-empty' }, queueMode === 'processed'
-          ? '这里会保留已确认或已驳回的建议。' : entries.length ? '当前没有待处理来源、建议或旧信号。' : '收件箱中暂无来源；可以接入一条来源，或手工录入观点。'))
+          ? '这里会保留已确认或已驳回的建议。' : entries.length ? '当前没有待归因来源、建议或旧信号。' : '收件箱中暂无来源；可以接入一条来源，或手工录入观点。'))
         if (queueMode === 'pending' && !entries.length) queueList.append(h('div', { class: 'builder-empty-actions' },
           h('button', { type: 'button', class: 'btn btn-sm', onclick: addManualOpinion }, '手动新增一个原子')))
         selectedEntryId = null
@@ -1069,7 +1069,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       if (!entry) {
         detail.append(h('div', { class: 'builder-review-empty' },
           h('span', { class: 'builder-review-empty-mark', 'aria-hidden': 'true' }, '◌'),
-          h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择待处理项目'),
+          h('h2', {}, queueMode === 'processed' ? '尚无已处理建议' : '选择待归因项目'),
           h('p', {}, '确认前保持主题投影不变；每一项决定都保留为可回放事件。')))
         return
       }
