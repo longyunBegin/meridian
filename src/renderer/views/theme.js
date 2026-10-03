@@ -227,7 +227,7 @@ export function renderTheme(mid) {
   const opsEl = renderThemeOpsSection(theme)
   for (const el of [metaEl, viewHost]) if (el) body.append(el)
   const headActions = h('div', { class: 'theme-reference-right' },
-    h('span', { class: 'theme-reference-context' }, '事件账本 · 可追溯'), opsEl)
+    opsEl)
   head.append(leading, viewSwitch, headActions)
   mid.append(head, body)
 

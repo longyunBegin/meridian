@@ -6,13 +6,11 @@ export const GRAPH_FRAME_EDGE_LIMIT = 72
 
 let pendingEventJump = null
 
-export function verifiedLedgerPrefix(events = [], integrity) {
-  const rows = Array.isArray(events) ? events : []
-  const length = integrity?.ok === true
-    ? rows.length
-    : Number.isSafeInteger(integrity?.lastValidSeq)
-      ? Math.max(0, Math.min(rows.length, integrity.lastValidSeq)) : 0
-  return rows.slice(0, length)
+/* 用户要求删除账本校验的 UI。第一步：界面**不再按校验结果截断事件**，一律显示全部事件。
+   函数名与签名保持不变，所有调用点无需改动（integrity 参数被忽略）。
+   注意：这一步只动显示；verifyChain 守卫仍在（第二步再处理）。 */
+export function verifiedLedgerPrefix(events = []) {
+  return Array.isArray(events) ? events : []
 }
 
 export function eventsThroughSequence(events = [], integrity, selectedSeq = null) {
