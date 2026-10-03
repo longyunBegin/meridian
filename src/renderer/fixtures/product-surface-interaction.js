@@ -230,7 +230,10 @@ fixture.items = [
   inboxItem('unmatched-synthetic-1', { matchScore: 0 }),
   inboxItem('route-synthetic-1', {
     extracted: true, extractedThemeId: themes[0].id,
-    lemmas: [{ title: '已抽取合成命题', action: 'new', parentId: null, confidence: 70 }],
+    lemmas: [{
+      title: '已抽取合成命题', action: 'new', parentId: null, confidence: 70,
+      mappedTopic: themes[0].id, mappedAtom: 'synthetic-viewpoint-a',
+    }],
   }),
   inboxItem('reading-synthetic-1', {
     kind: 'reading', readingId: 'pending-reading-synthetic-1', extracted: false,
@@ -279,6 +282,8 @@ targetThemePill.click()
 await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxSetTheme'), '收件箱主题切换')
 check('已抽取收件箱条目可以明确切换主题并调用对应桥接命令', fixture.calls.some((call) => call[0] === 'inboxSetTheme'
   && call[1] === 'route-synthetic-1' && call[2] === themes[1].id))
+check('已归位的条目在列表行给出 done 态徽标与数量', [...document.querySelectorAll('.inbox-item[data-id="route-synthetic-1"] .inbox2-badge.is-done')]
+  .some((el) => el.textContent.includes('已归位 1 条')))
 const sourceLink = document.querySelector('.inbox-detail .inbox-source-link')
 sourceLink?.click()
 check('查看来源链接调用受控外部打开桥接，不在 fixture 导航外网', fixture.calls.some((call) => call[0] === 'openExternal'

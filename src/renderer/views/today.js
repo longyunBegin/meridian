@@ -707,7 +707,11 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
         itemThemes.length > 1 ? h('span', { class: 'inbox2-cross-badge' }, `跨 ${itemThemes.length} 个主题`) : null,
       ) : null,
       // 状态徽标：已抽取 N 条要点（绿）/ 未提取到要点（橙）
+      // 状态徽标：已归位 N 条（设计稿的 done 态）/ 已抽取 N 条要点（绿）/ 未提取到要点（橙）
       h('span', { class: 'inbox2-item-status' },
+        lemmas.some((lemma) => lemma.mappedTopic && lemma.mappedAtom)
+          ? h('span', { class: 'inbox2-badge is-done' }, `已归位 ${lemmas.filter((lemma) => lemma.mappedTopic && lemma.mappedAtom).length} 条`)
+          : null,
         extracted
           ? h('span', { class: 'inbox2-badge is-ok' }, `✓ 已抽取 ${lemmas.length} 条要点`)
           : h('span', { class: 'inbox2-badge is-warn' }, '⚠ 未提取到要点'),
