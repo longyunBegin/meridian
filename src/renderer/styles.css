@@ -1590,3 +1590,10 @@ body.tauri-macos{
 .rdr-more-summary { padding: var(--sp-3) var(--sp-5); color: var(--text-2); font-size: var(--t-footnote); font-weight: var(--fw-semibold); cursor: pointer; }
 .rdr-more[open] > .rdr-more-summary { border-bottom: 1px solid var(--hairline-soft); }
 .rdr-more > *:not(summary) { padding: 0 var(--sp-5) var(--sp-4); }
+
+/* 账本搜索框（此前被我误删样式，这里重做） */
+.cog-ledger-search { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--hairline); border-radius: var(--r-pill); background: var(--surface-solid); color: var(--text-1); font-size: var(--t-footnote); }
+.cog-ledger-search::placeholder { color: var(--text-3); }
+.cog-ledger-search:hover { border-color: var(--line-2); }
+.cog-ledger-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.review-badge-done { color: var(--green-text); background: color-mix(in srgb, var(--green) 12%, transparent); }

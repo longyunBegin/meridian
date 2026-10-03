@@ -1268,6 +1268,13 @@ function renderLedgerPanel(pane, theme, events, integrity, handlers = {}) {
   const next = h('button', { type: 'button', class: 'btn cog-page-btn', onclick: () => setPage(page + 1) }, '较新')
   const pagination = h('div', { class: 'cog-pagination', 'aria-label': '账本分页' }, prev, pageLabel, next)
   /* mount 会跳过 null/false：原生 append(null) 会追加字符串 "null"（用户截图里那行 null 就是这么来的）。 */
+  /* 长标题被省略号截断时，悬浮要能看到全文（用户反馈）。
+     委托监听按需写入 title，避免给每一行都挂属性。 */
+  pane.addEventListener('mouseover', (event) => {
+    const cell = event.target?.closest?.('.cog-ev-summary-text, .cog-ev-title, .cog-ev-row-title')
+    if (cell && !cell.title) cell.title = cell.textContent
+  })
+
   mount(pane,
     h('div', { class: 'cog-ledger-head' },
       h('span', { class: 'cog-ledger-num' }, '01'),

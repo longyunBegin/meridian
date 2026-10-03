@@ -329,13 +329,15 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
           ? `为「${targetTitle}」追加一条支持信号；来源 ${shortId}。`
           : `为「${targetTitle}」追加一条「${polarityLabel}」关系；来源 ${shortId}。`
 
+    /* 徽标跟着决定状态走：已处理的不该再显示待人工确认。 */
+    const stateBadge = h('span', { class: 'review-badge-pending' }, '待人工确认')
     const aiNote = h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。')
     const footHint = h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。')
     const card = h('li', { class: 'review-card-v2' },
       // 头部
       h('div', { class: 'review-card-head' },
         h('span', { class: 'review-card-kicker' }, `外部数据归因 · ${shortId}`),
-        h('span', { class: 'review-badge-pending' }, '待人工确认')),
+        stateBadge),
       // 来源卡片
       h('div', { class: 'review-source-card' },
         h('div', { class: 'review-source-title-row' },
@@ -404,6 +406,9 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
        已决策就只展示当时的决定与它会产生的变化（用户："已处理的数据应该是读的状态"）。 */
     const makeReadOnly = (decisionText) => {
       status.textContent = '已处理 · 只读'
+      stateBadge.textContent = /驳回/.test(decisionText) ? '已驳回' : '已确认'
+      stateBadge.classList.remove('review-badge-pending')
+      stateBadge.classList.add('review-badge-done')
       footHint.textContent = decisionText
       confirm.hidden = true
       reject.hidden = true
