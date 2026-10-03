@@ -1553,7 +1553,13 @@ function isExpiredUnmatched(i) {
 }
 
 export function allInbox() {
-  return load().inbox.filter((i) => i.status === 'pending' && !i.ignored && !isExpiredUnmatched(i))
+  const data = load()
+  // 兼容旧格式 inboxItems（dev 数据仍在使用）
+  const legacy = (data.inboxItems || []).filter((i) => i.status === 'pending')
+  const current = data.inbox.filter((i) => i.status === 'pending' && !i.ignored && !isExpiredUnmatched(i))
+  // 去重（按 id）
+  const seen = new Set(current.map((i) => i.id))
+  return [...current, ...legacy.filter((i) => !seen.has(i.id))]
 }
 
 export function ignoredInbox() {
