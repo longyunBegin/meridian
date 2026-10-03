@@ -257,10 +257,10 @@ input[type="text"], input[type="url"], input[type="number"], input[type="date"],
   font-size: var(--t-body);
   font-weight: 400;
   color: var(--text-2);
-  transition: background 120ms var(--ease), color 120ms var(--ease);
+  transition: background-color var(--dur-1) var(--ease-out-soft), color var(--dur-1) var(--ease-out-soft), transform var(--dur-1) var(--ease-out-soft);
   width: 100%;
   text-align: left;
-}.nav-item:hover{background: var(--hover); }.nav-item[aria-selected="true"]{background: var(--active); color: var(--text); font-weight: 600; }.nav-item .badge{margin-left: auto; }.side-label{
+}.nav-item:hover{background: var(--hover); }.nav-item:active{transform: scale(0.985); }.nav-item[aria-selected="true"]{background: var(--active); color: var(--text); font-weight: 600; }.nav-item .badge{margin-left: auto; }.side-label{
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -282,8 +282,8 @@ input[type="text"], input[type="url"], input[type="number"], input[type="date"],
   color: var(--text-2);
   width: 100%;
   text-align: left;
-  transition: background 120ms var(--ease);
-}.theme-item:hover{background: var(--hover); color: var(--text); }.theme-item[aria-selected="true"]{background: var(--active); color: var(--text); font-weight: 600; }.theme-item span{overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }/* 主题色块：7×7px 圆角方，一眼区分主题 */
+  transition: background-color var(--dur-1) var(--ease-out-soft), color var(--dur-1) var(--ease-out-soft), transform var(--dur-1) var(--ease-out-soft);
+}.theme-item:hover{background: var(--hover); color: var(--text); }.theme-item:active{transform: scale(0.985); }.theme-item[aria-selected="true"]{background: var(--active); color: var(--text); font-weight: 600; }.theme-item span{overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }/* 主题色块：7×7px 圆角方，一眼区分主题 */
 .sw{width: 7px; height: 7px; border-radius: var(--r-sm); flex: none; }.theme-item .count{margin-left: auto; font-size: var(--t-caption); color: var(--text-3); font-variant-numeric: tabular-nums; }.theme-wrap{display: flex; align-items: center; gap: 2px; position: relative; }.theme-wrap .theme-item{flex: 1; }/* hover 才冒出来的 ⋯ 必须常占位（visibility 显隐），不能 display:none↔flex：
  * 后者会让整行重排，鼠标正要点主题名时目标在指针底下移位，
  * 点下去命中的是 ⋯（弹出重命名行）而不是选中主题。 */

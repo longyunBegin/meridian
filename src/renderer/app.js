@@ -396,6 +396,7 @@ export function setView(v, auditKind) {
   state.view = v
   if (auditKind) state.auditKind = auditKind
   if (v === 'theme' && state.loadedTheme !== state.themeId) return refresh()
+  markViewEntry()
   render()
 }
 
@@ -413,6 +414,11 @@ export async function settleAndViewTheme(id, correct) {
 }
 
 // ------------------------------------------------------------ 渲染
+
+/** 视图切换时给新面板一个轻量入场（跨视图过渡）。
+ *  用显式标记而不是每次 render 都播：数据刷新（refresh）不应把整个面板再抖一遍。 */
+let viewEntryAnimate = false
+export function markViewEntry() { viewEntryAnimate = true }
 
 function render() {
   document.querySelector('.app').dataset.view = state.view
@@ -757,6 +763,11 @@ function renderMid() {
     else renderVault(mid, state.auditKind)
   }
   else if (state.view === 'settings') renderSettings(mid)
+  // 跨视图过渡：只在视图切换时给整个新面板一次轻量淡入（refresh 不触发）
+  if (viewEntryAnimate) {
+    for (const el of mid.children) el.classList.add('u-fade')
+    viewEntryAnimate = false
+  }
 }
 
 /** 没有任何主题时，今日页主区就是创建页——和点侧栏 + 进来的是同一个组件。 */
