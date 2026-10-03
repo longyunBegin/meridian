@@ -152,6 +152,8 @@ export function renderReaderView(theme, opts = {}) {
     h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpenBuilder?.('network') }, '进入建设者视图'))
 
   let refreshGeneration = 0
+  /* 全览开关（面板装不下一屏时用）：挂在 reader 视图闭包上，跨多次 render 保持。 */
+  let overviewMode = false
   const render = (currentProjection, rawEvents, selectedSeq = null, replayProjection = null) => {
     const generation = ++refreshGeneration
     const integrity = currentProjection?.integrity || {}
@@ -412,6 +414,8 @@ export function renderReaderView(theme, opts = {}) {
     }
 
     const renderGraph = () => {
+      /* render() 会重建画布，所以每次重画都把全览状态贴回去。 */
+      graphCanvas.classList.toggle('is-overview', overviewMode)
       const type = typeFilter.value
       const status = statusFilter.value
       const category = categoryFilter.value
@@ -653,12 +657,24 @@ export function renderReaderView(theme, opts = {}) {
         integrity.ok === false ? h('span', { class: 'rdr-integrity-badge is-error', role: 'alert' }, `校验异常 · 有效前缀 ${integrity.lastValidSeq || 0}`)
           : h('span', { class: 'rdr-integrity-badge is-ok', role: 'status' }, `已校验 · ${verifiedEvents.length} 条事件`)))
 
+    /* 全览：默认关（保持卡片原始可读尺寸），开了就把整张图缩进面板一屏——
+       不需要滚动也能看全 21 个节点，代价是字变小。开关状态跟随这次挂载，不写任何数据。 */
+    const overviewButton = h('button', {
+      type: 'button', class: 'btn btn-sm rdr-overview-toggle', 'aria-pressed': String(overviewMode),
+      onclick: () => {
+        overviewMode = !overviewMode
+        overviewButton.setAttribute('aria-pressed', String(overviewMode))
+        overviewButton.textContent = overviewMode ? '全览 · 开' : '全览'
+        graphCanvas.classList.toggle('is-overview', overviewMode)
+      },
+    }, overviewMode ? '全览 · 开' : '全览')
+
     const controls = h('section', { class: 'rdr-map-panel', 'aria-label': '主题模型网络' },
       h('div', { class: 'rdr-map-toolbar' },
         h('div', {}, h('strong', { class: 'rdr-map-heading' }, '原子节点图谱'),
           h('p', { class: 'rdr-map-sub' }, '节点大小反映强度 · 颜色反映状态 · 实线箭头为论证 · 虚线箭头为版本修订 · 点线为弱关联 · 灰色细点线为证据挂载')),
         countStatus),
-      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter),
+      h('div', { class: 'rdr-search-tools' }, nodeSearch, typeFilter, statusFilter, categoryFilter, overviewButton),
       searchResults, searchStatus,
       h('div', { class: 'rdr-focus-bar' }, focusLabel),
       graphCanvas,

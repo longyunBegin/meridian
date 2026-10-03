@@ -314,6 +314,19 @@
       await wait()
       check('切回全部分类后三个原子都回到画布上', categoryRoot.querySelectorAll('.cog-node').length === 3)
 
+      /* 全览开关：默认关闭（卡片保持原始可读尺寸），打开后给画布加 is-overview。 */
+      const overviewToggle = categoryRoot.querySelector('.rdr-overview-toggle')
+      check('全览开关默认关闭，保持卡片原始尺寸', Boolean(overviewToggle)
+        && overviewToggle.getAttribute('aria-pressed') === 'false'
+        && !categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview'))
+      overviewToggle.click(); await wait()
+      check('打开全览后画布进入 is-overview 且按钮状态同步', categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview')
+        && overviewToggle.getAttribute('aria-pressed') === 'true' && overviewToggle.textContent.includes('开'))
+      overviewToggle.click(); await wait()
+      check('再点一次回到可读模式（开关可逆，不改任何数据）',
+        !categoryRoot.querySelector('.rdr-graph-canvas').classList.contains('is-overview')
+        && overviewToggle.getAttribute('aria-pressed') === 'false')
+
       document.querySelector('#fixture-report').textContent = `PASS (${results.length})\n${results.join('\n')}`
       document.body.dataset.fixture = 'pass'
     } catch (error) {
