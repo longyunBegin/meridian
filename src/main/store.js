@@ -1797,14 +1797,38 @@ export function setInboxExtraction(id, { extracted, matchScore, lemmas, themeId 
 /** 收件箱条目换主题：只改条目身上的 extractedThemeId，不碰命题、挂点与置信度；
  * 挂点有效性由渲染层按新主题重校验（inboxRouteValid），失效的由用户重选。 */
 export function setInboxTheme(id, themeId) {
+  // 向后兼容：单主题设置转为单元素数组
+  return setInboxThemes(id, themeId ? [themeId] : [])
+}
+
+/** 多主题：设置条目的主题列表（extractedThemeIds 数组）。
+ * 为向后兼容，同时维护 extractedThemeId（取第一个）。 */
+export function setInboxThemes(id, themeIds) {
   const db = load()
   const item = db.inbox.find((i) => i.id === id)
   if (!item) return null
-  const theme = db.themes.find((t) => t.id === themeId && !t.deletedAt)
-  if (!theme) return null
-  item.extractedThemeId = themeId
+  const ids = [...new Set((themeIds || []).filter(Boolean))]
+  // 校验所有主题都存在且未删除
+  for (const tid of ids) {
+    const theme = db.themes.find((t) => t.id === tid && !t.deletedAt)
+    if (!theme) return null
+  }
+  item.extractedThemeIds = ids
+  // 向后兼容：保留 extractedThemeId（首个主题）
+  if (ids.length > 0) {
+    item.extractedThemeId = ids[0]
+  } else {
+    delete item.extractedThemeId
+  }
   persist()
   return item
+}
+
+/** 获取条目的主题 ID 列表（向后兼容：无 extractedThemeIds 时从 extractedThemeId 推导）。 */
+export function getInboxThemeIds(item) {
+  if (Array.isArray(item?.extractedThemeIds)) return [...item.extractedThemeIds]
+  if (item?.extractedThemeId) return [item.extractedThemeId]
+  return []
 }
 
 export function inboxCount() {

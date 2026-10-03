@@ -728,6 +728,41 @@ export function appendEvidenceToProjectedNode(themeId, targetNodeId, input = {})
   return appendEventBatch(themeId, events)
 }
 
+/** 多主题分发：向主题账本追加一条未映射的证据（不关联到具体原子）。
+ * 用于一条数据属于多个主题时：已在主主题归位到原子，其他主题各追加一次证据，
+ * 证据在账本里待归因，保持"每主题一本账"各自自洽。
+ * （红区加法：新增函数，不修改现有逻辑） */
+export function appendUnmappedEvidence(themeId, input = {}) {
+  const text = String(input.text || input.statement || '').trim()
+  if (!text) throw new Error('请填写证据摘要或原文摘录')
+  const evidenceId = `evt:evidence:${randomUUID()}`
+  const sourceRef = `multi-theme-evidence:${evidenceId}`
+  const sourceUrl = String(input.url || '').trim()
+  const evidenceRefs = isHttpUrl(sourceUrl)
+    ? [{ type: 'url', id: sourceUrl, title: String(input.sourceLabel || '').trim() || sourceUrl }]
+    : []
+  // 保留来源条目引用，便于追溯
+  const events = [
+    {
+      id: evidenceId,
+      actor: 'user',
+      type: 'evidence.appended',
+      payload: {
+        text,
+        sourceLabel: String(input.sourceLabel || '').trim(),
+        sourceKind: 'multi-theme-evidence',
+        sourceRef,
+        evidenceRefs,
+        // 未映射：没有 targetNodeId，等待该主题内用户归因
+        ...(input.sourceItemId ? { sourceItemId: String(input.sourceItemId) } : {}),
+        ...(input.sourceItemTitle ? { sourceItemTitle: String(input.sourceItemTitle).slice(0, 200) } : {}),
+        ...(input.sourceOrigin ? { sourceOrigin: String(input.sourceOrigin).slice(0, 100) } : {}),
+      },
+    },
+  ]
+  return appendEventBatch(themeId, events)
+}
+
 /** Persist one engine recommendation decision and its consequences as one append-only batch. */
 export function reviewEngineRecommendation(themeId, recommendationEventId, decision, input = {}) {
   if (!['accepted', 'corrected', 'rejected'].includes(decision)) throw new Error('请选择接受、修正或驳回')

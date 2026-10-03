@@ -41,6 +41,24 @@ export function inferInboxThemeId(item, allNodes, currentThemeId) {
   return currentThemeId
 }
 
+/** 多主题：返回条目的主题 ID 列表（向后兼容）。
+ * 优先用 extractedThemeIds 数组；没有则从 extractedThemeId 推导单元素数组；
+ * 再没有则从 lemma 挂点推导；最后回退到当前主题。 */
+export function inferInboxThemeIds(item, allNodes, currentThemeId) {
+  if (Array.isArray(item?.extractedThemeIds) && item.extractedThemeIds.length > 0) {
+    return [...item.extractedThemeIds]
+  }
+  if (item?.extractedThemeId) return [item.extractedThemeId]
+  const fromLemmas = new Set()
+  for (const lemma of item?.lemmas || []) {
+    const node = allNodes.find((n) => n.id === (lemma.mergeInto || lemma.parentId))
+    if (node?.themeId) fromLemmas.add(node.themeId)
+    if (lemma.mappedTopic) fromLemmas.add(lemma.mappedTopic)
+  }
+  if (fromLemmas.size > 0) return [...fromLemmas]
+  return currentThemeId ? [currentThemeId] : []
+}
+
 /** 收件箱条目路由是否有效：每条非合并命题的挂点（建议挂点或用户手动改的挂点）
  * 都必须落在该条目主题的存活节点里，否则勾选/入库都要禁用。 */
 export function inboxRouteValid(item, themeNodes, override = {}) {

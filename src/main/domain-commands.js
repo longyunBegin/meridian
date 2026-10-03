@@ -9,7 +9,7 @@ import {
   appendRaw, getRaw, upsertRaw, rawStats, pruneRaw, clearRaw, today,
   addTicker, removeTicker, nodesByTicker, allTickers,
 
-  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, inboxCount,
+  allInbox, ignoredInbox, addInboxItem, upsertInboxItem, resolveInboxItem, clearInbox, deleteInboxIds, setInboxExtraction, setInboxTheme, setInboxThemes, getInboxThemeIds, inboxCount,
   addIntakeEvent, getIntakeEvent, markIntakeUndone, markIntakeResolved, lastAutoIntakeEvent, intakeSeries,
   bestThemeContext,
   addTrace, allTraces, tracesByTarget, modelCalibration, labelerDivergence, llmUsage,
@@ -38,7 +38,7 @@ import { runEnginePipeline } from './engine-pipeline.js'
 import { estimateStrength } from './engine-confidence.js'
 import {
   getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
-  archiveProjectedNode, appendEvidenceToProjectedNode, declareProjectedRelation, reviewProjectedRelation,
+  archiveProjectedNode, appendEvidenceToProjectedNode, appendUnmappedEvidence, declareProjectedRelation, reviewProjectedRelation,
   createProjectedNode, renameProjectedNode, categorizeProjectedNode, setProjectedConfidence, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
 } from './chain-projector.js'
 import { getEvents as getChainEvents, appendEvent as appendChainEvent, appendEvents as appendChainEvents } from './chain-events.js'
@@ -634,6 +634,8 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
   commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))
+  // 多主题分发：向主题追加未映射证据（加法，不破坏单主题路径）
+  commands.register('chain:addUnmappedEvidence', (themeId, input) => ({ ok: true, events: appendUnmappedEvidence(themeId, input) }))
   commands.register('chain:declareRelation', (themeId, fromNodeId, toNodeId, rel) => ({ ok: true, event: declareProjectedRelation(themeId, fromNodeId, toNodeId, rel) }))
   commands.register('chain:reviewRelation', (themeId, eventId, decision, reason) => ({ ok: true, event: reviewProjectedRelation(themeId, eventId, decision, reason) }))
   commands.register('chain:confirmSignal', (themeId, signalEventId, decision, change = null, reason = '') => {
@@ -1471,7 +1473,15 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
     const item = setInboxTheme(id, themeId)
     if (!item) return { ok: false, error: '条目或主题不存在' }
     emit('db:changed')
-    return { ok: true, themeId: item.extractedThemeId }
+    return { ok: true, themeId: item.extractedThemeId, themeIds: getInboxThemeIds(item) }
+  })
+
+  // 多主题：设置条目的主题列表（加法，不破坏单主题路径）
+  commands.register('inbox:setThemes', (id, themeIds) => {
+    const item = setInboxThemes(id, themeIds)
+    if (!item) return { ok: false, error: '条目或主题不存在' }
+    emit('db:changed')
+    return { ok: true, themeIds: getInboxThemeIds(item) }
   })
 
   // 只读：给同步桥回放 inbox:import 前过滤 VM 侧已接受条目用（import 建节点非幂等）。

@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
 import { state, refresh, settleAndViewTheme } from '../app.js'
-import { confColor, nodePath, inferInboxThemeId, inboxRouteValid, splitInboxPicked } from './shared.js'
+import { confColor, nodePath, inferInboxThemeId, inferInboxThemeIds, inboxRouteValid, splitInboxPicked } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
 
 const m = window.meridian
@@ -52,6 +52,10 @@ const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
 /** 条目自己的主题：抽取路由所用的主题（新数据直接记在条目上）。 */
 function itemThemeId(item) {
   return inferInboxThemeId(item, cachedAllNodes, state.themeId)
+}
+/** 多主题：返回条目的主题 ID 数组 */
+function itemThemeIds(item) {
+  return inferInboxThemeIds(item, cachedAllNodes, state.themeId)
 }
 function itemThemeNodes(item) {
   const tid = itemThemeId(item)
@@ -352,9 +356,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     class: 'btn inbox-ignore-picked',
     onclick: () => resolve(items.filter((item) => picked.has(item.id)), 'reject'),
   }, '忽略所选')
-  // 批量分配到主题：选主题后，所选项的 extractedThemeId 批量更新
+  // 批量分配到主题：多主题模型下，所选项"加入"该主题（已含则跳过）
   const assignThemePick = h('select', {
-    class: 'inbox-assign-theme', title: '分配到主题：所选项将出现在该主题建设者的待归因队列',
+    class: 'inbox-assign-theme', title: '分配到主题：所选项将加入该主题（多选）',
   }, h('option', { value: '' }, '选择主题…'),
     ...liveThemes.map((t) => h('option', { value: t.id, title: t.name }, t.name)))
   const assignPicked = h('button', {
@@ -362,14 +366,20 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     onclick: async () => {
       const tid = assignThemePick.value
       if (!tid) { toast('请先选择要分配到的主题', 'var(--red)'); return }
-      const targets = items.filter((item) => picked.has(item.id) && !itemThemeId(item))
-      if (!targets.length) { toast('所选项都已归入主题，不需要再分配'); return }
+      // 多主题：只处理尚未包含该主题的条目（加入而非覆盖）
+      const targets = items.filter((item) => picked.has(item.id) && !itemThemeIds(item).includes(tid))
+      if (!targets.length) { toast('所选项都已包含该主题，不需要再分配'); return }
       assignPicked.disabled = true
       let okCount = 0
       for (const item of targets) {
         try {
-          const res = await m.inboxSetTheme(item.id, tid)
-          if (res?.ok) { item.extractedThemeId = tid; okCount++ }
+          const nextTids = [...itemThemeIds(item), tid]
+          const res = await m.inboxSetThemes(item.id, nextTids)
+          if (res?.ok) {
+            item.extractedThemeIds = res.themeIds
+            item.extractedThemeId = res.themeIds[0] || null
+            okCount++
+          }
         } catch { /* 单条失败继续 */ }
       }
       const themeName = liveThemes.find((t) => t.id === tid)?.name || ''
@@ -682,11 +692,12 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const lemmas = item.lemmas || []
   const title = item.title || lemmas[0]?.title || '未命名信息'
   // 已分配到主题的条目默认折叠显示（视觉弱化，避免与待处理项混淆）
-  const isAssigned = Boolean(item.extractedThemeId)
+  // 多主题模型：extractedThemeIds 数组；向后兼容单主题 extractedThemeId
+  const assignedThemeIds = itemThemeIds(item)
+  const isAssigned = assignedThemeIds.length > 0
   const liveThemes = (state.themes || []).filter((t) => !t.deletedAt)
-  // 条目主题：单主题模型下取 extractedThemeId；lemmas 已归位的不同主题也计入（用于"跨 N 个主题"）
-  const themeIds = new Set()
-  if (item.extractedThemeId) themeIds.add(item.extractedThemeId)
+  // 条目主题：多主题数组 + lemmas 已归位的不同主题也计入（用于"跨 N 个主题"）
+  const themeIds = new Set(assignedThemeIds)
   for (const lm of lemmas) if (lm.mappedTopic) themeIds.add(lm.mappedTopic)
   const itemThemes = [...themeIds].map((tid) => liveThemes.find((t) => t.id === tid)).filter(Boolean)
   // 相对时间：设计稿显示"33 分钟前"；createdAt 是 ISO 字符串
@@ -800,32 +811,39 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
     onclick: () => onResolve([item], 'accept'),
   }, unextracted ? '抽取后入库' : editable ? '确认入库' : '合并来源')
   const confValue = h('output', { class: 'inbox-conf-val', for: 'inbox-confidence' }, String(Math.round(conf)))
-  // ---- 属于主题 pills（对齐设计稿）：当前主题实底白字，其他虚线"+ 主题名"可点击切换
-  // 注意：当前数据模型是单主题（extractedThemeId），点击虚线 pill 是"切换"而非"多选加入"
-  const currentTid = itemThemeId(item)
+  // ---- 属于主题 pills：多选 toggle（点击加入/移除主题）
+  // 多主题模型：item.extractedThemeIds 数组；点击 pill 切换该主题的归属
+  const currentTids = new Set(itemThemeIds(item))
   const belongPills = h('div', { class: 'inbox2-belong-pills' },
     h('span', { class: 'inbox2-belong-label' }, '属于主题'),
     ...liveThemes.map((t) => {
-      const isCurrent = t.id === currentTid
+      const isMember = currentTids.has(t.id)
       return h('button', {
         type: 'button',
-        class: `inbox2-belong-pill${isCurrent ? ' is-current' : ' is-add'}`,
+        class: `inbox2-belong-pill${isMember ? ' is-current' : ' is-add'}`,
         /* 柔和色调：同一语义色 14% 底 + 该色文字。实底白字会和主按钮抢强调。 */
-        style: isCurrent ? { background: `color-mix(in srgb, ${themeDotColor(t.id)} 14%, transparent)`, color: themeDotColor(t.id) } : {},
-        title: isCurrent ? '当前主题' : `切换到「${t.name}」`,
-        disabled: busy || isCurrent,
+        style: isMember ? { background: `color-mix(in srgb, ${themeDotColor(t.id)} 14%, transparent)`, color: themeDotColor(t.id) } : {},
+        title: isMember ? `已属于「${t.name}」（点击移除）` : `加入「${t.name}」`,
+        disabled: busy,
         onclick: async () => {
-          if (isCurrent || busy) return
+          if (busy) return
+          // toggle：已在则移除，不在则加入
+          const nextTids = itemThemeIds(item)
+          const idx = nextTids.indexOf(t.id)
+          if (idx >= 0) nextTids.splice(idx, 1)
+          else nextTids.push(t.id)
           try {
-            const res = await m.inboxSetTheme(item.id, t.id)
+            const res = await m.inboxSetThemes(item.id, nextTids)
             if (res?.ok) {
-              item.extractedThemeId = t.id
-              toast(`已切换到「${t.name}」`)
+              item.extractedThemeIds = res.themeIds
+              // 向后兼容：同步 extractedThemeId
+              item.extractedThemeId = res.themeIds[0] || null
+              toast(isMember ? `已从「${t.name}」移除` : `已加入「${t.name}」`)
               rerender ? rerender() : onRouteChange()
-            } else toast('切换主题失败：' + (res?.error || '请重试'), 'var(--red)')
-          } catch (err) { toast('切换主题失败：' + (err.message || '请重试'), 'var(--red)') }
+            } else toast('更新主题失败：' + (res?.error || '请重试'), 'var(--red)')
+          } catch (err) { toast('更新主题失败：' + (err.message || '请重试'), 'var(--red)') }
         },
-      }, isCurrent
+      }, isMember
         ? [h('i', { class: 'inbox2-dot is-white' }), t.name]
         : `+ ${t.name}`)
     }),
@@ -966,16 +984,42 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
               lemma.mappedTopic = tid; lemma.mappedAtom = aid; lemma.stance = stance
               lemma.mappedAt = new Date().toISOString()
               try {
-                const res = await m.inboxSetTheme(item.id, tid)
-                if (!res?.ok) throw new Error(res?.error || '归位失败')
-                // 追加 evidence 到原子（经建设者事件）
-                await m.chainAddEvidence(tid, aid, {
-                  statement: lemma.title, stance, weight: 0.7,
+                // 多主题：确保映射的主题在条目的主题列表中（加入而非覆盖）
+                const currentTids = itemThemeIds(item)
+                if (!currentTids.includes(tid)) currentTids.push(tid)
+                const themeRes = await m.inboxSetThemes(item.id, currentTids)
+                if (!themeRes?.ok) throw new Error(themeRes?.error || '归位失败')
+                item.extractedThemeIds = themeRes.themeIds
+                item.extractedThemeId = themeRes.themeIds[0] || null
+                // 追加 evidence 到映射的原子（主主题，带原子关联）
+                // 注意：后端要 text 字段（之前传 statement 是 bug，已修复）
+                const evidenceInput = {
+                  text: lemma.title, rel: stance === 'challenge' ? 'contradicts' : 'supports',
                   sourceItemId: item.id, sourceItemTitle: item.title,
                   sourceOrigin: item.provenance?.sourceLabel || item.provenance?.platform || '',
-                })
+                }
+                await m.chainAddEvidence(tid, aid, evidenceInput)
+                // 多主题分发：向该条目所属的其他每个主题账本各追加一次未映射证据
+                // （每本账自洽：证据在账本里，映射关系由各主题自行决定）
+                const otherTids = itemThemeIds(item).filter((x) => x !== tid)
+                let distributed = 0
+                const failures = []
+                for (const otherTid of otherTids) {
+                  try {
+                    await m.chainAddUnmappedEvidence(otherTid, evidenceInput)
+                    distributed++
+                  } catch (err) {
+                    failures.push(otherTid)
+                  }
+                }
                 const atomName = (cachedAllNodes || []).find((n) => n.id === aid)?.title || aid
-                toast(`已归位 → ${atomName}`)
+                if (failures.length > 0) {
+                  toast(`已归位 → ${atomName}；${failures.length} 个主题分发失败`, 'var(--orange)')
+                } else if (distributed > 0) {
+                  toast(`已归位 → ${atomName}（已同步到 ${distributed} 个其他主题）`)
+                } else {
+                  toast(`已归位 → ${atomName}`)
+                }
                 rerender ? rerender() : onRouteChange()
               } catch (e) { toast(e.message || '归位失败', 'var(--red)') }
             })
