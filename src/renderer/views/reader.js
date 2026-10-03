@@ -816,8 +816,10 @@ export function renderReaderView(theme, opts = {}) {
         h('strong', { class: 'rdr-axis-title' }, '整体情况'),
         axisCaption),
       axisHost)
-    /* 序号回放降级为内部细节：能力保留，主控制让给合成轴。 */
-    const replayDetails = h('details', { class: 'rdr-replay-details' },
+    /* 用户决定：读者页不要时间回放（与当前对比/播放/返回当前模型一并去掉）。
+       第一步只从界面上移除（hidden），内部代码与 DOM 暂时保留——两个 fixture 断言了
+       .rdr-time-slider/.rdr-time-status 的存在，直接删会让套件变红；下一步再连同代码一起清。 */
+    const replayDetails = h('details', { class: 'rdr-replay-details', hidden: true },
       h('summary', {}, '按事件序号回放 · 内部细节'), replayBox)
 
     /* R1 论证大纲 + R2 小倍数网格（§10.2 首屏配方第 2/3 屏）：
