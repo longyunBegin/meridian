@@ -1574,3 +1574,9 @@ body.tauri-macos{
 .rdr-detail-strength-scale { display: flex; justify-content: space-between; color: var(--text-3); font-size: var(--t-caption); }
 .rdr-detail-understanding p { margin: 0; color: var(--text-1); font-size: var(--t-body); line-height: 1.7; }
 .rdr-detail-receipt-weight { flex: none; color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+
+/* 今日收件箱：勾选后整行高亮（用 :has 直接跟随复选框状态，不依赖父组件重渲染） */
+.inbox2-item:has(.inbox-ck:checked) { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
+.inbox2-item:has(.inbox-ck:checked) .inbox2-item-source { color: var(--text-1); font-weight: var(--fw-semibold); }
+.inbox-ck { accent-color: var(--accent); }
+.inbox-ck:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
