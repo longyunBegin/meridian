@@ -10,6 +10,7 @@ const CHROMIUM = process.env.CHROMIUM_BIN || '/usr/bin/chromium'
 
 const FIXTURES = [
   { file: 'builder-intake-interaction.html', name: 'Builder / append-only ledger', complete: /data-fixture="pass"/, report: 'fixture-report' },
+  { file: 'builder-atom-form-interaction.html', name: 'Builder / atom form vocabulary', complete: /data-fixture="pass"/, report: 'fixture-report' },
   { file: 'reader-engine-interaction.html', name: 'Reader / timeline, compare and playback', complete: /data-fixture="pass"/, report: 'fixture-report' },
   { file: 'vault-update-interaction.html', name: 'Vault / archive integrity and updater consent flow', complete: /id="fixture-report"[^>]*data-finished="true"/, report: 'fixture-report' },
   { file: 'product-surface-interaction.html', name: 'Product surfaces / inbox and non-settings routes', complete: /data-fixture="pass"/, report: 'fixture-report' },
