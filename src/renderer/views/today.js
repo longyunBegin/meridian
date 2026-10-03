@@ -34,6 +34,19 @@ function themeDotColor(themeId) {
   const idx = Math.max(0, themes.findIndex((t) => t.id === themeId))
   return THEME_DOT_COLORS[idx % THEME_DOT_COLORS.length]
 }
+
+/** 相对时间（设计稿的「33 分钟前」）：列表行与详情头部共用；时间缺失或落在未来时返回空串。 */
+function relativeTime(value) {
+  if (!value) return ''
+  const diff = Date.now() - new Date(value).getTime()
+  if (!Number.isFinite(diff) || diff < 0) return ''
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return '刚刚'
+  if (mins < 60) return `${mins} 分钟前`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.floor(hours / 24)} 天前`
+}
 const overrideKey = (itemId, themeId = state.themeId) => `${themeId}:${itemId}`
 
 /** 条目自己的主题：抽取路由所用的主题（新数据直接记在条目上）。 */
@@ -667,17 +680,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   for (const lm of lemmas) if (lm.mappedTopic) themeIds.add(lm.mappedTopic)
   const itemThemes = [...themeIds].map((tid) => liveThemes.find((t) => t.id === tid)).filter(Boolean)
   // 相对时间：设计稿显示"33 分钟前"；createdAt 是 ISO 字符串
-  const relTime = (() => {
-    if (!item.createdAt) return ''
-    const diff = Date.now() - new Date(item.createdAt).getTime()
-    if (diff < 0) return ''
-    const mins = Math.floor(diff / 60000)
-    if (mins < 1) return '刚刚'
-    if (mins < 60) return `${mins} 分钟前`
-    const hours = Math.floor(mins / 60)
-    if (hours < 24) return `${hours} 小时前`
-    return `${Math.floor(hours / 24)} 天前`
-  })()
+  const relTime = relativeTime(item.createdAt)
   const extracted = item.extracted !== false
   return h('div', { class: `inbox-item inbox2-item${isAssigned ? ' is-assigned' : ''}`, dataset: { id: item.id } },
     h('input', {
@@ -819,7 +822,8 @@ function renderInboxDetail(panel, item, allNodes, onResolve, onRouteChange, rere
   panel.append(
     h('header', { class: 'inbox-detail-head inbox2-head' },
       // 来源 · 时间（小字灰色，对齐设计稿）
-      h('div', { class: 'inbox2-kicker' }, item.provenance?.platform || label.kind || '未标注来源', ' · ', item.createdAt || ''),
+      h('div', { class: 'inbox2-kicker' }, item.provenance?.platform || label.kind || '未标注来源', ' · ',
+        relativeTime(item.createdAt) || item.createdAt || '时间未记录'),
       // 大标题
       h('h3', { class: 'inbox2-title', id: 'inbox-detail-title', title: item.title || lemmas[0]?.title || '未命名信息' }, item.title || lemmas[0]?.title || '未命名信息'),
       // 属于主题 pills 行
