@@ -226,6 +226,77 @@ const scaffoldWhy = (info) => (!info.hasKey ? '未配置 API key'
   : { timeout: '模型响应超时', empty: '模型无返回', unparsable: '模型返回的结构无法解析' }[info.reason]
     || `调用失败（${info.reason}）`)
 
+const SIDEBAR_W_KEY = 'meridian:sidebar-w'
+const SIDEBAR_W_MIN = 160
+const SIDEBAR_W_MAX = 420
+const SIDEBAR_W_DEFAULT = 206
+
+/** 读出并夹紧侧栏宽度；非法值回退默认。 */
+function clampSidebarWidth(value) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n)) return SIDEBAR_W_DEFAULT
+  return Math.min(SIDEBAR_W_MAX, Math.max(SIDEBAR_W_MIN, n))
+}
+
+function applySidebarWidth(px) {
+  const width = clampSidebarWidth(px)
+  const app = document.querySelector('.app')
+  if (app) app.style.setProperty('--sidebar-w', `${width}px`)
+  const handle = document.querySelector('.sidebar-resizer')
+  if (handle) {
+    handle.setAttribute('aria-valuenow', String(width))
+    handle.setAttribute('aria-valuemin', String(SIDEBAR_W_MIN))
+    handle.setAttribute('aria-valuemax', String(SIDEBAR_W_MAX))
+  }
+  return width
+}
+
+/** 侧栏右缘拖拽调宽；宽度写入 localStorage，键盘 ←/→ 微调。 */
+function installSidebarResize() {
+  const app = document.querySelector('.app')
+  const handle = document.querySelector('.sidebar-resizer')
+  if (!app || !handle) return
+  let saved = SIDEBAR_W_DEFAULT
+  try { saved = clampSidebarWidth(localStorage.getItem(SIDEBAR_W_KEY) || SIDEBAR_W_DEFAULT) } catch { /* 忽略 */ }
+  applySidebarWidth(saved)
+
+  let dragging = false
+  const persist = (width) => {
+    try { localStorage.setItem(SIDEBAR_W_KEY, String(width)) } catch { /* 忽略 */ }
+  }
+  const onMove = (event) => {
+    if (!dragging) return
+    const x = event.clientX ?? event.touches?.[0]?.clientX
+    if (!Number.isFinite(x)) return
+    persist(applySidebarWidth(x))
+  }
+  const onUp = () => {
+    if (!dragging) return
+    dragging = false
+    app.classList.remove('is-resizing-sidebar')
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+  }
+  handle.addEventListener('pointerdown', (event) => {
+    if (event.button != null && event.button !== 0) return
+    event.preventDefault()
+    dragging = true
+    app.classList.add('is-resizing-sidebar')
+    handle.setPointerCapture?.(event.pointerId)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  })
+  handle.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const current = clampSidebarWidth(parseFloat(getComputedStyle(app).getPropertyValue('--sidebar-w')) || SIDEBAR_W_DEFAULT)
+    const next = applySidebarWidth(current + (event.key === 'ArrowRight' ? 12 : -12))
+    persist(next)
+  })
+}
+
 async function boot() {
   state.themes = await m.themes()
   state.settings = await m.settings()
@@ -236,6 +307,7 @@ async function boot() {
     state.themeId = state.themes[0].id
   }
   if (state.themeId) await loadNodes()
+  installSidebarResize()
   render()
   m.onChanged(() => refresh())
   let intakeStatus = null

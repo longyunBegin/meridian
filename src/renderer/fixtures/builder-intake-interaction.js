@@ -572,6 +572,15 @@ import '../styles.css'
         emptyEvents.length === 0 && emptyProjection.nodes.length === 0
         && emptyThemeMount.querySelectorAll('.builder-queue-item-v2').length === 0
         && emptyThemeMount.querySelector('.builder-queue-empty'))
+      emptyThemeMount.querySelector('.theme-view-tab')?.click()
+      await waitFor(() => emptyThemeMount.querySelector('.rdr-empty'), '空主题读者空投影')
+      const emptyReaderText = (emptyThemeMount.querySelector('.rdr-main')?.textContent || '').replace(/\s+/g, ' ').trim()
+      check('空主题读者页不渲染字面量 null（时间轴缺省不得 append null）',
+        !!emptyThemeMount.querySelector('.rdr-empty')
+        && !/(^|\s)null(\s|$)/.test(emptyReaderText)
+        && !emptyThemeMount.querySelector('.rdr-history'))
+      emptyThemeMount.querySelector('.theme-view-tab:nth-child(2)')?.click()
+      await waitFor(() => emptyThemeMount.querySelector('.theme-view-host .builder-intake-queue'), '从空读者回到建设者')
       const firstViewpointButton = emptyThemeMount.querySelector('.builder-queue-add')
       check('新主题“手工添加观点”入口真实可用而非禁用', firstViewpointButton && !firstViewpointButton.disabled)
       firstViewpointButton.click()

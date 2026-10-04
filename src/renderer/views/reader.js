@@ -67,7 +67,9 @@ export function renderReaderView(theme, opts = {}) {
     const currentEdges = allEdgesOf(currentProjection)
     const board = buildAtomBoard({ nodes: currentNodes, edges: currentEdges })
     if (!board.atoms.length) {
-      article.replaceChildren(renderEmpty(), renderTimeline((seq) => { void showAt(seq) }))
+      /* 原生 replaceChildren(null) 会落成文本 "null"；空主题无事件时时间轴为 null。 */
+      const emptyKids = [renderEmpty(), renderTimeline((seq) => { void showAt(seq) })].filter(Boolean)
+      article.replaceChildren(...emptyKids)
       return
     }
     const atomById = new Map(board.atoms.map((atom) => [atom.id, atom]))

@@ -231,7 +231,10 @@ export function renderTheme(mid) {
   const metaEl = renderThemeMetadata(theme)
   const viewHost = h('div', { class: 'theme-view-host' })
   const opsEl = renderThemeOpsSection(theme)
-  for (const el of [metaEl, viewHost]) if (el) body.append(el)
+  /* 原生 append(null) 会变成文本 "null"；无标签时 metaEl 为 null，必须跳过。 */
+  for (const el of [metaEl, viewHost]) {
+    if (el) body.append(el)
+  }
   const headActions = h('div', { class: 'theme-reference-right' },
     opsEl)
   head.append(leading, viewSwitch, headActions)
