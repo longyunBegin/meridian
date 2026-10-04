@@ -873,8 +873,8 @@ input[type="text"], input[type="url"], input[type="number"], input[type="date"],
   display: flex; align-items: flex-start; flex: none; gap: 10px; min-width: 0;
   padding: 12px 10px; border-radius: var(--r-sm);
   border-bottom: 0.5px solid var(--hairline-soft);
-  transition: background 120ms var(--ease);
-}.inbox-item:hover{background: var(--hover); }.inbox-item[data-sel="true"]{background: var(--accent-soft); }/* 勾选（等着批量处理）必须有可见反馈——updateBatch() 一直在写 data-on，样式却缺了这一条。
+  transition: background-color var(--dur-1) var(--ease-out-soft), transform var(--dur-1) var(--ease-out-soft), box-shadow var(--dur-1) var(--ease-out-soft);
+}.inbox-item:hover{background: var(--hover); }.inbox-item:active{transform: scale(0.995); }.inbox-item[data-sel="true"]{background: var(--accent-soft); }/* 勾选（等着批量处理）必须有可见反馈——updateBatch() 一直在写 data-on，样式却缺了这一条。
    勾选与"正在查看"是两种不同的选中：勾选用浅底 + 左侧强调条，避免二者混淆。 */
 #inbox-section .inbox2-item[data-on="true"], .inbox-item[data-on="true"]{
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-solid));
@@ -1717,10 +1717,14 @@ body.tauri-macos{
 .rdr-detail-receipt-weight { flex: none; color: var(--text-3); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
 
 /* 今日收件箱：勾选后整行高亮（用 :has 直接跟随复选框状态，不依赖父组件重渲染） */
+.inbox-item, .inbox2-item { transition: background-color var(--dur-1) var(--ease-out-soft), box-shadow var(--dur-1) var(--ease-out-soft), transform var(--dur-1) var(--ease-out-soft); }
+.inbox-item:active, .inbox2-item:active { transform: scale(0.995); }
 .inbox2-item:has(.inbox-ck:checked) { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
 .inbox2-item:has(.inbox-ck:checked) .inbox2-item-source { color: var(--text-1); font-weight: var(--fw-semibold); }
 .inbox-ck { accent-color: var(--accent); }
 .inbox-ck:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 复选打勾：Native checkbox 也用 accent-color；加一点激活回弹在不破坏原生语义的范围内 */
+.inbox-ck:active { transform: scale(0.9); }
 
 /* ------------------------------------------------------------------ */
 /* 读者页：原子看板——一句话 → 按检验状态分组的原子 → 最近进来的数据 → 接下来看什么 */
