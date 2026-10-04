@@ -33,6 +33,8 @@ export const EVENT_TYPES = [
   'settlement.recorded', // 结算：正确 / 错误（错误即证伪）
   'node.archived', // 归档（墓碑），只读标记
   'node.restored', // 恢复 = 追加新事件，不改写归档历史
+  'node.parked', // 冷冻入库（外部弱信号 → 冷库），只改投影 status，不碰置信度
+  'node.unparked', // 解冻 = 追加新事件，不改写冷冻历史
   'topic.linked', // 主题关联
   'confidence.updated', // 置信度更新（红区已批准，2026-10-02）：贝叶斯公式机械应用
   'engine.recommendation.proposed', // 引擎建议卡片；本身不代表事实已确认

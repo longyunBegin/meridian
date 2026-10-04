@@ -1,7 +1,7 @@
 import { h, icon, clear, $, toast } from './lib/dom.js'
 import { renderToday, inboxPaste } from './views/today.js'
 import { renderTheme } from './views/theme.js'
-import { renderAudit } from './views/audit.js'
+import { renderHealth } from './views/audit.js'
 import { renderVault, renderReadings, renderSources } from './views/vault.js'
 import { renderSettings } from './views/settings.js'
 import { renderInspectorLattice } from './views/inspector.js'
@@ -11,7 +11,11 @@ const m = window.meridian
 export const state = {
   view: 'today',
   auditKind: 'cold',
-  /** 删除命题后要回到的页面（如从墓碑区跳进主题页检查器再删除，应回到墓碑区）。
+  /** 今日页渲染后滚到的区块 id；消费一次。 */
+  focusSection: null,
+  /** 读数页：从今日/旧审计入口进来时提示冲突裁决；消费一次。 */
+  focusReadingConflicts: false,
+  /** 删除命题后要回到的页面（如从冷库/归档跳进主题后再删除，应回到原审计页）。
    *  vault 跳转时设置，deleteNodeWithUndo 消费一次；切主题时清空。 */
   backTo: null,
   /** 正在铺骨架的主题 id。放 state 而不是闭包——addTheme 会触发 db:changed →
@@ -49,14 +53,22 @@ const NAV = [
   { id: 'readings', label: '读数', icon: 'export', key: '⌘3', count: 'readings' },
 ]
 
-/** 审计五视图。台账性质，不是工作面——收在侧栏一组里，默认收起。 */
+/** 收纳与审计三视图。台账性质，不是工作面——收在侧栏一组里，默认收起。 */
 const AUDITS = [
   { id: 'cold', label: '冷库', icon: 'lattice' },
-  { id: 'dead', label: '墓碑区', icon: 'trash' },
-  { id: 'filtered', label: '误杀审计', icon: 'flag' },
-  { id: 'review', label: '复盘', icon: 'settle' },
-  { id: 'conflicts', label: '待裁决冲突', icon: 'flag' },
+  { id: 'archive', label: '归档', icon: 'trash' },
+  { id: 'health', label: '系统健康', icon: 'flag' },
 ]
+const AUDIT_IDS = new Set(AUDITS.map((a) => a.id))
+
+/** 旧 auditKind → 新三视图；conflicts 进读数裁决（返回 null 表示改道 readings）。 */
+function normalizeAuditKind(kind) {
+  if (AUDIT_IDS.has(kind)) return kind
+  if (kind === 'dead') return 'archive'
+  if (kind === 'filtered' || kind === 'review') return 'health'
+  if (kind === 'conflicts') return null
+  return 'cold'
+}
 
 const THEME_COLORS = ['#0071e3', '#af52de', '#34c759', '#ff9500', '#ff2d55', '#00b8b8', '#ff3b30', '#5856d6']
 function themeColor(id) {
@@ -268,20 +280,20 @@ async function boot() {
   m.onInboxPruned((info) => {
     if (info?.removed > 0) toast(`已清理 ${info.removed} 条超过 30 天未处理的待确认`)
   })
+  // 系统通知点击 → 今日待确认（事件名仍叫 due:notify，兼容旧 renderer）
   m.onDueNotify(() => {
     state.view = 'today'
     document.querySelector('.app').dataset.view = 'today'
     renderNav()
     renderMid()
     setTimeout(() => {
-      const firstDue = document.querySelector('#due-section .q')
-      if (firstDue) {
-        firstDue.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        firstDue.classList.add('pulse')
-        setTimeout(() => firstDue.classList.remove('pulse'), 2000)
+      const firstInbox = document.querySelector('#inbox-section .inbox-item, #inbox-section .inbox2-item')
+      if (firstInbox) {
+        firstInbox.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        firstInbox.classList.add('pulse')
+        setTimeout(() => firstInbox.classList.remove('pulse'), 2000)
       } else {
-        const el = document.getElementById('due-section')
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        document.getElementById('inbox-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     }, 300)
   })
@@ -358,7 +370,7 @@ export async function deleteNodeWithUndo(id) {
   const wasSelected = state.selectedId === id
   if (wasSelected) state.selectedId = null
   await refresh()
-  // 从墓碑区跳进来删命题：删完回到上一页（墓碑区），而不是留在主题页
+  // 从冷库/归档跳进来删命题：删完回到上一页，而不是留在主题页
   if (wasSelected && state.backTo) {
     const bt = state.backTo
     state.backTo = null
@@ -393,8 +405,22 @@ export function selectNode(id) {
 }
 
 export function setView(v, auditKind) {
+  if (v === 'audit') {
+    const next = normalizeAuditKind(auditKind || state.auditKind)
+    if (next == null) {
+      // 旧「待裁决冲突」审计入口 → 读数页裁决
+      state.focusReadingConflicts = true
+      state.view = 'readings'
+      markViewEntry()
+      render()
+      return
+    }
+    state.auditKind = next
+    auditOpen = true
+  } else if (auditKind) {
+    state.auditKind = auditKind
+  }
   state.view = v
-  if (auditKind) state.auditKind = auditKind
   if (v === 'theme' && state.loadedTheme !== state.themeId) return refresh()
   markViewEntry()
   render()
@@ -562,18 +588,18 @@ function renderSideFoot() {
   )
 }
 
-/** 侧栏「审计」组：五个台账视图收在一处，默认收起。
- *  它们是出事才看的东西，平铺在侧栏会和主题列表抢注意力。 */
+/** 侧栏「收纳与审计」：冷库 / 归档 / 系统健康，默认收起；进入任一子页时自动展开。 */
 let auditOpen = false
 
 function renderAudits() {
   const wrap = $('#vaults')
   clear(wrap)
+  if (state.view === 'audit') auditOpen = true
   wrap.append(h('button', {
     class: 'vault-item audit-head',
     'aria-expanded': auditOpen ? 'true' : 'false',
     onclick: () => { auditOpen = !auditOpen; renderAudits() },
-  }, icon('flag', 14), h('span', {}, '审计'),
+  }, icon('flag', 14), h('span', {}, '收纳与审计'),
     h('span', { class: 'audit-chev' }, '›')))
 
   if (!auditOpen) return
@@ -592,12 +618,29 @@ async function paintVaultCounts() {
   const set = (id, n) => { const el = document.getElementById(`vc-${id}`); if (el) el.textContent = n ? String(n) : '' }
   try {
     const st = await m.stats()
-    set('cold', st.cold)
-    set('dead', st.dead)
-    set('filtered', st.verdicts)
     set('readings', st.readings)
-    const cs = await m.conflicts()
-    set('conflicts', cs.length)
+    // 冷库 / 归档：跨主题求和。冷库 = 账本冷冻证据 + 旧 lemma cold。
+    try {
+      const themes = state.themes || []
+      let archiveCount = 0
+      let parkedCount = 0
+      for (const t of themes) {
+        const arch = await m.chainArchives(t.id).catch(() => null)
+        archiveCount += Array.isArray(arch?.nodes) ? arch.nodes.length : 0
+        const parked = await m.chainParked?.(t.id).catch(() => null)
+        parkedCount += Array.isArray(parked?.nodes) ? parked.nodes.length : 0
+      }
+      set('archive', archiveCount)
+      set('cold', (st.cold || 0) + parkedCount)
+    } catch {
+      set('archive', 0)
+      set('cold', st.cold || 0)
+    }
+    // 系统健康：用待复核数（误杀口径的"待复核"）
+    try {
+      const fk = await m.falseKill(30).catch(() => null)
+      set('health', fk ? (fk.total - fk.missed) : 0)
+    } catch { set('health', 0) }
   } catch { /* 计数失败不该影响主流程 */ }
 }
 
@@ -758,15 +801,25 @@ function renderMid() {
   } else if (state.view === 'readings') {
     renderReadings(mid)
   } else if (state.view === 'audit') {
-    if (state.auditKind === 'filtered') renderAudit(mid)
-    else if (state.auditKind === 'review') renderVault(mid, 'review')
-    else renderVault(mid, state.auditKind)
+    const kind = normalizeAuditKind(state.auditKind)
+    if (kind == null) {
+      state.focusReadingConflicts = true
+      state.view = 'readings'
+      renderReadings(mid)
+      return
+    }
+    if (kind !== state.auditKind) state.auditKind = kind
+    if (kind === 'health') renderHealth(mid)
+    else renderVault(mid, kind)
   }
   else if (state.view === 'settings') renderSettings(mid)
-  // 跨视图过渡：只在视图切换时给整个新面板一次轻量淡入（refresh 不触发）
+  // 跨视图过渡：只在视图切换时给整个新面板一次轻量淡入（refresh 不触发）。
+  // 用 u-fade（无位移）：u-rise 的位移在 #mid 容器上可能引起视觉异常。
   if (viewEntryAnimate) {
-    for (const el of mid.children) el.classList.add('u-fade')
     viewEntryAnimate = false
+    mid.classList.remove('u-fade')
+    void mid.offsetWidth
+    mid.classList.add('u-fade')
   }
 }
 

@@ -41,8 +41,8 @@ import { PROPOSAL_STANCE_OF_REL, countJudgeItems, reviewedSignalIds } from '../s
 import { checkSourceUrl, normalizePoints, sourceHostOf, sourceUrlOf } from '../shared/evidence-source.js'
 import { suggestWeight } from '../shared/evidence-weight.js'
 import {
-  projectEvents, getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
-  archiveProjectedNode, appendEvidenceToProjectedNode, appendUnmappedEvidence, declareProjectedRelation, reviewProjectedRelation,
+  projectEvents, getChainProjection, getChainProjectionAt, getArchivedProjectionNodes, getParkedProjectionNodes, mountDraftToEvents, restoreProjectedNodes,
+  archiveProjectedNode, parkProjectedNode, unparkProjectedNode, shelfJudgeItem, appendEvidenceToProjectedNode, appendUnmappedEvidence, declareProjectedRelation, reviewProjectedRelation,
   createProjectedNode, renameProjectedNode, categorizeProjectedNode, setProjectedConfidence, correctProjectedNode, invalidateProjectedNode, reviewEngineRecommendation,
   judgeEvidence,
 } from './chain-projector.js'
@@ -654,6 +654,10 @@ function registerDomainCommands({ registry, emit = emitPlatformEvent, getAgentCo
   commands.register('chain:invalidateNode', (themeId, nodeId, reason) => ({ ok: true, event: invalidateProjectedNode(themeId, nodeId, reason) }))
   commands.register('chain:archiveNode', (themeId, sourceRef, reason) => ({ ok: true, event: archiveProjectedNode(themeId, sourceRef, reason) }))
   commands.register('chain:restoreNode', (themeId, sourceRef, reason) => restoreArchivedProjectionNode(themeId, sourceRef, reason))
+  commands.register('chain:parkNode', (themeId, sourceRef, reason) => ({ ok: true, event: parkProjectedNode(themeId, sourceRef, reason) }))
+  commands.register('chain:unparkNode', (themeId, sourceRef, reason) => ({ ok: true, event: unparkProjectedNode(themeId, sourceRef, reason) }))
+  commands.register('chain:getParked', (themeId) => getParkedProjectionNodes(themeId))
+  commands.register('chain:shelfJudgeItem', (themeId, input) => shelfJudgeItem(themeId, input))
   commands.register('chain:addEvidence', (themeId, nodeId, input) => ({ ok: true, events: appendEvidenceToProjectedNode(themeId, nodeId, input) }))
   // 多主题分发：向主题追加未映射证据（加法，不破坏单主题路径）
   commands.register('chain:addUnmappedEvidence', (themeId, input) => ({ ok: true, events: appendUnmappedEvidence(themeId, input) }))

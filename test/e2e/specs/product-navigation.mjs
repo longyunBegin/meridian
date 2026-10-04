@@ -36,24 +36,22 @@ export default async function ({ port }) {
     await waitTextIncludes(browser, '.readings-page', '还没有读数')
 
     await clickButton(browser, '#vaults .audit-head')
-    const auditLabels = await browser.execute(() => [...document.querySelectorAll('#vaults .audit-sub')].map((el) => el.textContent.trim()))
-    assert.deepEqual(auditLabels, ['冷库', '墓碑区', '误杀审计', '复盘', '待裁决冲突'])
+    const auditLabels = await browser.execute(() => [...document.querySelectorAll('#vaults .audit-sub')].map((el) => el.textContent.replace(/\d+/g, '').trim()))
+    assert.deepEqual(auditLabels, ['冷库', '归档', '系统健康'])
 
     const expectedRoutes = [
       ['冷库', '.page-head h1'],
-      ['墓碑区', '.page-head h1'],
-      ['误杀审计', '.audit-tag'],
-      ['复盘', '.page-head h1'],
-      ['待裁决冲突', '.page-head h1'],
+      ['归档', '.page-head h1'],
+      ['系统健康', '.page-head h1'],
     ]
     for (const [label, heading] of expectedRoutes) {
       await clickButton(browser, `//div[@id="vaults"]//button[contains(@class, "audit-sub") and contains(normalize-space(.), "${label}")]`)
-      await waitTextIncludes(browser, '#mid', label)
+      await waitTextIncludes(browser, '#mid', label === '系统健康' ? '系统健康' : label)
       assert.equal(await browser.$('.app').getAttribute('data-view'), 'audit')
       assert.ok(await browser.$(heading).isExisting(), `应挂载 ${label} 页面标题`)
     }
 
-    console.log('[e2e] PASS: 今日/收件箱、数据源、读数、冷库、墓碑区、误杀审计、复盘、待裁决冲突均可达。设置页未访问。')
+    console.log('[e2e] PASS: 今日/收件箱、数据源、读数、冷库、归档、系统健康均可达。设置页未访问。')
   } finally {
     await browser.deleteSession()
   }

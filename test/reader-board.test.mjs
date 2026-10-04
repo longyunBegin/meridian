@@ -4,7 +4,7 @@
  */
 import {
   ATOM_STATES, FEED_LIMIT, LEGACY_ORIGIN_SOURCE_KIND,
-  atomState, buildAtomBoard, calendarDay, evidenceDate, evidenceUrl, isOriginEvidence, parseDay, settleInfo, verdictText,
+  atomBalance, atomState, buildAtomBoard, calendarDay, evidenceDate, evidenceUrl, isOriginEvidence, parseDay, settleInfo, verdictText,
 } from '../src/renderer/lib/reader-board.js'
 
 let passed = 0
@@ -106,6 +106,26 @@ check('原子 = 未归档、非外部、非证据的节点（按账本顺序）'
 check('A：出处 1 条不计入；独立 佐证 1 + 反对 1 → 有分歧',
   byId.get('A').state === 'split' && byId.get('A').origin.length === 1 && byId.get('A').origin[0].evidenceId === 'eA0'
   && same(byId.get('A').tallies, { support: 1, against: 1, both: 0, neutral: 0 }))
+{
+  const balA = byId.get('A').balance
+  check('A 天秤：一边有权重一边没有 → 按条数，避免失真',
+    balA?.mode === 'count' && balA.support === 1 && balA.against === 1 && balA.ratio === 0.5 && balA.againstLeads === false)
+  check('atomBalance 全有权重时按权重求和',
+    atomBalance({
+      tallies: { support: 1, against: 1, both: 0, neutral: 0 },
+      independent: [
+        { stance: 'support', weight: { value: 0.65 } },
+        { stance: 'against', weight: { value: 0.80 } },
+      ],
+    }).mode === 'weight'
+    && atomBalance({
+      tallies: { support: 1, against: 1, both: 0, neutral: 0 },
+      independent: [
+        { stance: 'support', weight: { value: 0.65 } },
+        { stance: 'against', weight: { value: 0.80 } },
+      ],
+    }).againstLeads === true)
+}
 check('A 的独立数据按日期新的在前；非 http(s) 链接丢弃',
   same(byId.get('A').independent.map((row) => [row.evidenceId, row.stance, row.url]), [['eA2', 'against', null], ['eA1', 'support', 'https://www.reuters.com/markets/a1']]))
 {

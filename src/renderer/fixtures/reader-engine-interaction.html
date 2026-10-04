@@ -39,7 +39,7 @@
           return { ok: true, replayed: true }
         }
         const resultEvents = []
-        if (decision === 'accepted') {
+        if (decision === 'accepted' || decision === 'corrected') {
           resultEvents.push({ id: `evidence:${eventId}`, type: 'evidence.appended', payload: { text: 'renderer fixture accepted quote', proposalEventId: eventId } })
           resultEvents.push({ id: `relation:${eventId}`, type: 'relation.declared', payload: { rel: input.rel || 'related', from: { eventId: `evidence:${eventId}` } } })
           if (eventId === 'proposal-evidence') resultEvents.push({ id: `confidence:${eventId}`, type: 'confidence.updated', payload: { oldConfidence: 100, newConfidence: 73.65, strength: 0.527 } })
@@ -130,16 +130,19 @@
         && (cards[0].querySelector('.engine-review-status')?.textContent || '').includes('已驳回'),
         cards[0].querySelector('.engine-review-status')?.textContent || '(无)')
 
-      /* 去领域化后的契约：高级选项只剩 目标原子 / 关系类型 / 备注；备注是自由文本。 */
+      /* 人工覆盖在主路径：目标 / 关系 / 权重可见可改；备注仍在折叠区。改过记 corrected。 */
       const evidenceCard = cards[1]
+      check('归因覆盖控件在主路径，不藏进高级选项', !!evidenceCard.querySelector('.review-override')
+        && evidenceCard.querySelector('.review-override')?.textContent.includes('可改'))
       const relationSelect = evidenceCard.querySelector('.engine-review-select')
       const noteInput = evidenceCard.querySelector('.engine-review-note')
       relationSelect.value = 'contradicts'
+      relationSelect.dispatchEvent(new Event('change', { bubbles: true }))
       noteInput.value = '复核备注'
       byText(evidenceCard, '确认并追加').click()
       await wait()
       const evidenceCall = bridgeCalls.find((call) => call.eventId === 'proposal-evidence')
-      check('关系与自由备注的用户修正原样送交 main review command', evidenceCall?.decision === 'accepted'
+      check('关系与自由备注的用户修正原样送交 main review command，并记成 corrected', evidenceCall?.decision === 'corrected'
         && evidenceCall.input.rel === 'contradicts'
         && JSON.stringify(evidenceCall.input.change) === JSON.stringify({ note: '复核备注' }))
       check('确认后 live region 播报已确认',

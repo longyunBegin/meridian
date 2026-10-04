@@ -85,14 +85,14 @@ function renderThemeVocabulary(theme) {
   return h('div', { style: { marginTop: '12px', borderTop: '1px solid var(--line)', paddingTop: '10px' } },
     h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-2)', fontWeight: '600' } }, '分类管理'),
     h('p', { style: { margin: '2px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)' } },
-      '分类只属于这个主题：新建原子时的「类型」从这里读，没有词表就只显示「未分类」。'),
+      '分类只属于这个主题：新建原子时的「分类」从这里读；种类（概念 / 对象 / 事件 / 观点）是固定的。'),
     vocabularyEditor({
       label: '原子分类', hint: '如 技术路线 / 关键问题',
       values: Array.isArray(config.atomCategories) ? config.atomCategories : [],
       placeholder: '添加一个分类', onSave: (atomCategories) => save({ atomCategories }),
     }),
     vocabularyEditor({
-      label: '关系词表', hint: '主题自定义的关系措辞（留空沿用默认；当前仅存档，图谱与选择器还未接入）',
+      label: '关系词表', hint: '主题自定义的关系措辞（留空沿用默认；当前仅存档，选择器还未接入）',
       values: Array.isArray(config.relationLabels) ? config.relationLabels : [],
       placeholder: '添加一个关系标签', onSave: (relationLabels) => save({ relationLabels }),
     }))

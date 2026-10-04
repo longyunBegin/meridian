@@ -182,24 +182,28 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
       class: 'engine-review-note', type: 'text', maxlength: '200', value: suggestedNote,
       placeholder: '可留空；例如：这条证据改写了哪一点', 'aria-label': '备注（可选）',
     })
-    /* 高级选项：默认只有 目标原子 / 关系类型 / 备注。选到「＋ 新建原子」时才把
-       新原子标题插到关系类型前面；切回已有原子就移除。 */
-    const relationField = h('label', { class: 'engine-review-field' }, '关系类型', relation)
-    const advancedOptions = h('details', { class: 'review-advanced' },
-      h('summary', {}, '高级选项'),
-      h('label', { class: 'engine-review-field' }, '目标原子', targetSelect),
+    /* 人工覆盖必须在主路径上：目标 / 关系 / 权重默认就可见、可改。
+       模型建议只是初值；备注仍放折叠里，避免主路径噪音。 */
+    const relationField = h('label', { class: 'engine-review-field' }, '关系类型（可改）', relation)
+    const overrideControls = h('div', { class: 'review-override', 'aria-label': '人工覆盖模型建议' },
+      h('p', { class: 'review-override-note' }, '下面三项以模型建议为初值，你可以直接改；改过再确认会记成「人工纠正」。'),
+      h('label', { class: 'engine-review-field' }, '目标原子（可改）', targetSelect),
       relationField,
-      h('label', { class: 'engine-review-field' }, '备注', changeNote),
       h('label', { class: 'engine-review-field' }, '权重（0–1，留空用引擎值）', weightInput))
+    const advancedOptions = h('details', { class: 'review-advanced' },
+      h('summary', {}, '备注与其他'),
+      h('label', { class: 'engine-review-field' }, '备注', changeNote))
     const attachTitleField = () => {
       if (titleField.isConnected) return
       ensureTitleInput()
-      advancedOptions.insertBefore(titleField, relationField)
+      overrideControls.insertBefore(titleField, relationField)
     }
     targetSelect.addEventListener('change', () => {
       if (targetSelect.value === '__new__') attachTitleField()
       else titleField.remove()
+      syncSuggestionDisplay()
     })
+    relation.addEventListener('change', () => syncSuggestionDisplay())
     if (targetSelect.value === '__new__') attachTitleField()
     const quoteVerified = statement.sourceQuoteVerified === true
     const warning = !quoteVerified
@@ -208,6 +212,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
         ? h('p', { class: 'engine-review-warning' }, '原文未注明时间窗口；仅语义/主体作为候选，确认前请核对时间适用性。')
         : null
     const quote = h('blockquote', { class: 'engine-review-quote' }, statement.sourceText || '（缺少来源摘录）')
+    const sourceQuote = String(statement.sourceText || '').trim() || '（缺少来源摘录）'
     const beforeText = isNew
       ? '当前投影中尚未创建这条建议原子。'
       : targetNode
@@ -236,6 +241,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
     /* 判决结果的 live region：这段文案给读屏软件播报，视觉上不占位（.sr-only）。
        之前它构造后从未插入 DOM，五处 textContent 赋值等于白写。 */
     const status = h('span', { class: 'engine-review-status sr-only', role: 'status' })
+    const aiTargetId = isNew ? '__new__' : (targetNode?.id || '__new__')
+    const aiRel = suggestion.rel || attribution.rel || 'related'
     const confirm = runButton('确认并追加', async () => {
       confirm.disabled = true; reject.disabled = true
       try {
@@ -251,15 +258,22 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
           input.targetNodeId = userTarget
           input.rel = relation.value
         }
+        const titleChanged = userWantsNew
+          && (titleInput?.value ?? suggestedTitle).trim() !== String(suggestedTitle || '').trim()
+        const corrected = userTarget !== aiTargetId
+          || (!userWantsNew && relation.value !== aiRel)
+          || titleChanged
+          || weightInput.value !== ''
+        const decision = corrected ? 'corrected' : 'accepted'
         if (typeof confirmOverride === 'function') {
           await confirmOverride(input)
         } else {
-          const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, 'accepted', input)
+          const response = await m.chainReviewEngineRecommendation(themeId, result.proposalEventId, decision, input)
           if (response?.ok === false) throw new Error(response.error || '写入失败')
         }
-        result.reviewDecision = 'accepted'
-        status.textContent = '已确认 · 事件已追加'
-        card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision: 'accepted' })
+        result.reviewDecision = decision
+        status.textContent = corrected ? '已确认 · 已按你的修改写入' : '已确认 · 事件已追加'
+        card.classList.add('is-done'); onDone?.({ kind: 'decision', result, decision })
       } catch (cause) { toast(`未能确认：${cause?.message || cause}`, 'var(--red)'); confirm.disabled = false; reject.disabled = false }
     })
     const reject = h('button', { type: 'button', class: 'btn btn-sm' }, '驳回建议')
@@ -302,49 +316,92 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
       { label: '抓取 / 摄入', value: `${fetchedAt ? String(fetchedAt).slice(0, 10) : '未记录'} / ${ingestedAt ? String(ingestedAt).slice(0, 10) : '未记录'}` },
       { label: '适用时间', value: applicability, missing: !applicability },
     ])
-    const targetTitle = targetNode?.title || suggestion.propositionTitle || result.proposition?.title || '未映射目标'
-    const polarity = relation.value || suggestion.rel || 'related'
-    const polarityLabel = { supports: '支持', contradicts: '反驳', derives: '推导', supersedes: '修订', related: '相关' }[polarity] || polarity
-    const weight = Number(suggestion.effectiveStrength ?? suggestion.strength ?? attribution.strength ?? 0.5)
-    // 当前强度与信号统计
-    const curConf = targetNode ? Number(targetNode.confidence ?? 50) : null
-    const curConfPct = curConf != null ? Math.round(curConf > 1 ? curConf : curConf * 100) : null
-    // 预览计算（贝叶斯）
-    const newConf = curConf != null && ['supports', 'contradicts'].includes(polarity)
-      ? previewConfidence(curConf, weight, polarity) : null
-    const newConfPct = newConf != null ? Math.round(newConf * 100) : null
-    /* 设计稿的预览卡带信号计数：同一套 evidenceForNode 口径（支持/挑战/两边都算），
-       和读者视图的强度块保持一致；确认后按本次极性推演目标原子的计数变化。 */
-    const evidenceCounts = (() => {
-      if (!targetNode) return null
-      try {
-        const summary = evidenceForNode({ projection }, targetNode.id)
-        return { supports: summary.supports.length + summary.both.length,
-          challenges: summary.against.length + summary.both.length }
-      } catch { return null }
-    })()
-    const beforeCounts = evidenceCounts
-      ? ` · 支持 ${evidenceCounts.supports} / 挑战 ${evidenceCounts.challenges}` : ''
-    const afterCounts = evidenceCounts ? {
-      supports: evidenceCounts.supports + (polarity === 'supports' ? 1 : 0),
-      challenges: evidenceCounts.challenges + (polarity === 'contradicts' ? 1 : 0),
-    } : null
-    const afterCountsText = afterCounts
-      ? ` · 支持 ${afterCounts.supports} / 挑战 ${afterCounts.challenges}` : ''
-    // 变化描述
-    const changeDesc = isNew
-      ? `将新增原子「${suggestion.title || result.suggestedTitle || '待命名'}」；来源 ${shortId}。`
-      : polarity === 'contradicts'
-        ? `为「${targetTitle}」追加一条挑战信号；来源 ${shortId}。`
-        : polarity === 'supports'
-          ? `为「${targetTitle}」追加一条支持信号；来源 ${shortId}。`
-          : `为「${targetTitle}」追加一条「${polarityLabel}」关系；来源 ${shortId}。`
+    const polarityLabels = { supports: '支持', contradicts: '反驳', derives: '推导', supersedes: '修订', related: '相关' }
+    const suggestionBadge = h('span', { class: 'review-badge-ai' }, 'AI 建议 · 可改')
+    const changeSummaryText = h('span', {}, '')
+    const previewBefore = h('p', {}, '')
+    const previewAfter = h('p', {}, '')
+    const previewSection = h('div', { class: 'review-section' },
+      h('div', { class: 'review-section-head' },
+        h('strong', {}, '确认后变化预览'),
+        h('span', { class: 'review-preview-note' }, '以下仅为预览 · 确认前不写入')),
+      h('div', { class: 'review-preview-row' },
+        h('div', { class: 'review-preview-card' },
+          h('span', { class: 'review-attr-label' }, '● 当前'),
+          previewBefore),
+        h('div', { class: 'review-preview-card is-after' },
+          h('span', { class: 'review-attr-label' }, '● 确认后'),
+          previewAfter)),
+      h('div', { class: 'review-change-summary' },
+        h('strong', {}, '将产生的变化：'), changeSummaryText))
+
+    function syncSuggestionDisplay() {
+      const userTarget = targetSelect.value
+      const userWantsNew = userTarget === '__new__'
+      const selectedAtom = userWantsNew ? null : allAtoms.find((n) => n.id === userTarget)
+      const targetTitle = userWantsNew
+        ? ((titleInput?.value || suggestedTitle || '待命名原子').trim() || '待命名原子')
+        : (selectedAtom?.title || '未映射目标')
+      const polarity = relation.value || 'related'
+      const polarityLabel = polarityLabels[polarity] || polarity
+      const weight = weightInput.value !== ''
+        ? Number(weightInput.value)
+        : Number(suggestion.effectiveStrength ?? suggestion.strength ?? attribution.strength ?? 0.5)
+      const corrected = userTarget !== aiTargetId
+        || (!userWantsNew && polarity !== aiRel)
+        || (userWantsNew && (titleInput?.value ?? suggestedTitle).trim() !== String(suggestedTitle || '').trim())
+        || weightInput.value !== ''
+      suggestionBadge.textContent = corrected ? '已改模型建议' : 'AI 建议 · 可改'
+      suggestionBadge.classList.toggle('is-corrected', corrected)
+
+      const curConf = selectedAtom ? Number(selectedAtom.confidence ?? 50) : null
+      const curConfPct = curConf != null ? Math.round(curConf > 1 ? curConf : curConf * 100) : null
+      const useWeight = Number.isFinite(weight) ? weight : 0.5
+      const newConf = curConf != null && ['supports', 'contradicts'].includes(polarity)
+        ? previewConfidence(curConf, useWeight, polarity) : null
+      const newConfPct = newConf != null ? Math.round(newConf * 100) : null
+      let evidenceCounts = null
+      if (selectedAtom) {
+        try {
+          const summary = evidenceForNode({ projection }, selectedAtom.id)
+          evidenceCounts = {
+            supports: summary.supports.length + summary.both.length,
+            challenges: summary.against.length + summary.both.length,
+          }
+        } catch { evidenceCounts = null }
+      }
+      const beforeCounts = evidenceCounts
+        ? ` · 支持 ${evidenceCounts.supports} / 挑战 ${evidenceCounts.challenges}` : ''
+      const afterCountsText = evidenceCounts
+        ? ` · 支持 ${evidenceCounts.supports + (polarity === 'supports' ? 1 : 0)} / 挑战 ${evidenceCounts.challenges + (polarity === 'contradicts' ? 1 : 0)}`
+        : ''
+      if (userWantsNew) {
+        previewSection.hidden = true
+        changeSummaryText.textContent = `将新增原子「${targetTitle}」；来源 ${shortId}。`
+      } else {
+        previewSection.hidden = false
+        previewBefore.textContent = curConfPct != null
+          ? `${targetTitle}：强度 ${curConfPct}%${beforeCounts}`
+          : `${targetTitle}：尚无强度记录${beforeCounts}`
+        previewAfter.textContent = newConfPct != null
+          ? `${targetTitle}：强度将变为 ${newConfPct}%${afterCountsText}`
+          : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）${afterCountsText}`
+        changeSummaryText.textContent = polarity === 'contradicts'
+          ? `为「${targetTitle}」追加一条挑战信号；来源 ${shortId}。`
+          : polarity === 'supports'
+            ? `为「${targetTitle}」追加一条支持信号；来源 ${shortId}。`
+            : `为「${targetTitle}」追加一条「${polarityLabel}」关系；来源 ${shortId}。`
+      }
+      updateAfterPreview()
+    }
+    weightInput.addEventListener('input', syncSuggestionDisplay)
+    syncSuggestionDisplay()
 
     /* 徽标跟着决定状态走：已处理的不该再显示待人工确认。 */
     const stateBadge = h('span', { class: 'review-badge-pending' }, '待人工确认')
-    const aiNote = h('p', { class: 'review-ai-note' }, '○ AI 只提出映射建议。确认前，原子节点的强度不改变；驳回也不会改写既有模型。')
-    const footHint = h('span', { class: 'review-foot-hint' }, '选择后仅更新当前页面演示状态。')
-    const card = h('li', { class: 'review-card-v2' },
+    const aiNote = h('p', { class: 'review-ai-note' }, '○ 模型只给建议。你可改目标 / 关系 / 权重后再确认；也可直接驳回。确认前不改投影。')
+    const footHint = h('span', { class: 'review-foot-hint' }, '确认或驳回都会写入账本事件。')
+    const card = h('li', { class: 'engine-attr review-card-v2' },
       // 头部
       h('div', { class: 'review-card-head' },
         h('span', { class: 'review-card-kicker' }, `外部数据归因 · ${shortId}`),
@@ -362,45 +419,16 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
           h('div', { class: 'review-quote-label' }, '抽取结果 · 原文线索'),
           h('p', { class: 'review-quote-text' }, `“${extractedQuote}”`)) : null),
       warning,
-      // 建议归因
+      // 归因：模型初值 + 人工可改控件（主路径，不再藏进高级选项）
       h('div', { class: 'review-section' },
         h('div', { class: 'review-section-head' },
-          h('strong', {}, '建议归因'),
-          h('span', { class: 'review-badge-ai' }, 'AI 建议 · 未确认')),
-        h('div', { class: 'review-attr-row' },
-          h('div', { class: 'review-attr-card' },
-            h('span', { class: 'review-attr-label' }, '目标原子'),
-            h('span', { class: 'review-attr-target' },
-              h('span', { class: 'review-dot', style: `background:${targetNode?.color || '#14b8a6'}` }),
-              targetTitle)),
-          h('span', { class: 'review-attr-arrow' }, '→'),
-          h('div', { class: 'review-attr-card' },
-            h('span', { class: 'review-attr-label' }, '极性 / 权重'),
-            h('span', {},
-              h('span', { class: `review-polarity is-${polarity}` }, polarityLabel),
-              h('span', { class: 'review-weight' }, ` 权重 ${weight.toFixed(2)}`))))),
-      // 确认后变化预览
-      !isNew && curConfPct != null ? h('div', { class: 'review-section' },
-        h('div', { class: 'review-section-head' },
-          h('strong', {}, '确认后变化预览'),
-          h('span', { class: 'review-preview-note' }, '以下仅为预览 · 当前模型未改变')),
-        h('div', { class: 'review-preview-row' },
-          h('div', { class: 'review-preview-card' },
-            h('span', { class: 'review-attr-label' }, '● 当前原子强度'),
-            h('p', {}, `${targetTitle}：强度 ${curConfPct}%${beforeCounts}`)),
-          h('div', { class: 'review-preview-card is-after' },
-            h('span', { class: 'review-attr-label' }, '● 确认后'),
-            h('p', {}, newConfPct != null
-              ? `${targetTitle}：强度将变为 ${newConfPct}%${afterCountsText}`
-              : `${targetTitle}：强度不变（${polarityLabel}不直接改变强度）${afterCountsText}`))),
-        h('div', { class: 'review-change-summary' },
-          h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
-        aiNote)
-        : h('div', { class: 'review-change-summary' },
-          h('strong', {}, '将产生的变化：'), h('span', {}, changeDesc)),
+          h('strong', {}, '归因（可改）'),
+          suggestionBadge),
+        overrideControls),
+      previewSection,
+      aiNote,
       // P0-5 溯源条：紧邻变更预览，固定 5 格
       traceBar,
-      // 高级选项（折叠）：新原子标题按需挂载
       advancedOptions,
       // 底部操作
       h('div', { class: 'review-card-foot' },
@@ -410,7 +438,7 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
         h('div', { class: 'review-foot-actions' }, reject, confirm)))
     // 更新按钮文本
     confirm.textContent = '确认并追加'
-    reject.textContent = '驳回'
+    reject.textContent = '驳回建议'
     confirm.disabled = !result.proposalEventId || !quoteVerified
     reject.disabled = !result.proposalEventId
     /* 已处理的数据是**只读**的：不再显示"确认/驳回"这类操作按钮，也不再有"选一下试试"的引导——
@@ -426,6 +454,8 @@ export function renderEnginePipeline(item, { themeId, onDone, projection = {}, o
       targetSelect.disabled = true
       relation.disabled = true
       changeNote.disabled = true
+      weightInput.disabled = true
+      for (const field of overrideControls.querySelectorAll('input, select')) field.disabled = true
       for (const field of advancedOptions.querySelectorAll('input')) field.disabled = true
       aiNote.textContent = '这条建议当时已经处理过；下面是那时的决定，以及它对模型会产生的影响。'
       card.classList.add('is-done', 'is-readonly')

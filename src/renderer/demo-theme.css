@@ -308,7 +308,28 @@
 }.node-stats{
   display:flex;gap:22px;font-size: var(--t-footnote);color:var(--text-2);
   letter-spacing:-.003em;flex-wrap:wrap;
-}.node-stats .item{display:flex;align-items:baseline;gap:6px;}.node-stats .item b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;}.evolution-title{
+}.node-stats .item{display:flex;align-items:baseline;gap:6px;}.node-stats .item b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;}
+.builder-node-ops{margin-top:14px;display:grid;gap:8px;}
+.builder-node-ops-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.builder-node-archive{display:grid;gap:8px;max-width:420px;}
+.builder-node-ops-note{margin:0;font-size:var(--t-caption);color:var(--text-2);line-height:1.5;}
+.builder-node-ops-note.is-error{color:var(--red,#ff3b30);}
+.builder-atom-rail{flex:0 0 auto;max-height:36%;overflow:hidden;display:flex;flex-direction:column;border-top:1px solid var(--line);background:var(--surface);padding:10px 12px 12px;}
+.builder-atom-rail-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;}
+.builder-atom-rail-head h4{margin:0;font-size:var(--t-caption);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);}
+.builder-atom-rail-count{font-size:var(--t-caption);font-variant-numeric:tabular-nums;color:var(--text-2);}
+.builder-atom-rail-hint{margin-left:auto;font-size:var(--t-caption);color:var(--text-3);}
+.builder-atom-rail-list{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:auto;flex:1 1 auto;}
+.builder-atom-rail-item{display:flex;align-items:center;gap:8px;width:100%;margin:0;padding:7px 9px;border:1px solid transparent;border-radius:var(--r-sm);background:transparent;color:var(--text);font:inherit;font-size:var(--t-footnote);text-align:left;cursor:pointer;}
+.builder-atom-rail-item:hover{background:rgba(29,29,31,.05);border-color:var(--line);}
+.builder-atom-rail-title{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.builder-atom-rail-tag{flex:none;font-size:var(--t-caption);color:var(--text-3);}
+.builder-atom-rail-empty{margin:0;font-size:var(--t-caption);color:var(--text-3);line-height:1.45;}
+.builder-intake-queue{display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.builder-queue-head-v2{flex:0 0 auto;}
+.builder-queue-list{display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-height:0;overflow:auto;padding:8px 12px 12px;}
+.builder-queue-item-v2{position:relative;flex:0 0 auto;}
+.evolution-title{
   font-size: var(--t-caption);font-weight:600;
   letter-spacing:1.2px;text-transform:uppercase;
   color:var(--text-3);margin-bottom:20px;

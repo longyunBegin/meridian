@@ -155,9 +155,8 @@ export function renderInspectorLattice(aside) {
     h('button', { type: 'button', class: 'btn btn-icon insp-close', title: '关闭', onclick: () => selectNode(null) }, '✕'),
     title,
     h('div', { class: 'insp-sub' }, nodePath(state.nodes, node.id)),
-    node.status !== 'live' ? h('div', { style: { marginTop: '6px' } },
-      h('span', { class: `badge ${node.status === 'dead' ? 'badge-hypothesis' : 'badge-cold'}` },
-        node.status === 'dead' ? '墓碑区 · 负资产' : '冷库 · 低质但可能为真')) : null,
+    node.status === 'cold' ? h('div', { style: { marginTop: '6px' } },
+      h('span', { class: 'badge badge-cold' }, '冷库 · 低质但可能为真')) : null,
   )
 
   if (node.kind === 'branch') {
@@ -233,7 +232,7 @@ export function renderInspectorLattice(aside) {
         h('div', { class: 'insp-h' }, '传导权重', h('b', {}, node.propagation.toFixed(2))),
         h('div', { class: 'field' }, h('label', {}, '向下游'), segs),
         h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
-          '拖动边上的权重，下游置信度实时跟着变——这才是「传导」被看见。'),
+          '拖动边上的权重，下游权重实时跟着变——这才是「传导」被看见。'),
         h('button', {
           class: 'btn', style: { marginTop: '10px' },
           onclick: async () => { await m.repropagate(node.id); await refresh() },
@@ -434,13 +433,12 @@ export function renderInspectorLattice(aside) {
     h('div', { class: 'insp-section' },
       h('div', { class: 'insp-h' }, '命题'),
       h('div', { class: 'field' }, h('label', {}, '类型'), typeSeg),
-      h('div', { class: 'field' }, h('label', {}, '置信度'), slider,
+      h('div', { class: 'field' }, h('label', {}, '权重'), slider,
         h('span', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)', width: '22px', textAlign: 'right' } }, confOut)),
       h('div', { class: 'bar', style: { width: '100%', height: '4px', marginTop: '6px' } }, bar),
-      // 校准曲线只认「你自己给过的信心」。搬运来的命题带的是来源质量推定的值，
-      // 它进不了曲线——这件事以前是静默的，用户以为自己的曲线已经算上了它。
+      // 搬运来的命题带的是来源质量推定的值；用户拖一次才算自己定的权重。
       confidenceUnowned(node)
-        ? h('p', { class: 'insp-note' }, '这个信心是搬运时按来源质量推定的，还没进你的校准曲线。拖一次滑杆或改一次数字，它才开始算你的。')
+        ? h('p', { class: 'insp-note' }, '这个权重是搬运时按来源质量推定的。拖一次滑杆或改一次数字，才算你自己定的。')
         : null,
     ),
     h('div', { class: 'insp-section' },
@@ -516,13 +514,13 @@ export function renderInspectorLattice(aside) {
       h('div', { class: 'insp-h' }, '结算', settledBadge()),
       h('div', { class: 'field' }, h('label', {}, '到期日'), dueBody),
       h('p', { style: { margin: '8px 0 0', fontSize: 'var(--t-caption)', color: 'var(--text-3)', lineHeight: '1.5' } },
-        '到期后系统会问你：还想下这个注吗？答案进入你的校准曲线。'),
+        '见分晓日：到了这一天，回来对照当初的权重是否站得住。'),
     ),
     h('div', { class: 'insp-section' },
       h('div', { style: { display: 'flex', gap: '4px' } },
         h('button', { class: 'btn', onclick: async () => {
           await m.updateNode(node.id, { status: node.status === 'cold' ? 'live' : 'cold' }); await refresh()
-        } }, node.status === 'cold' ? '移出冷库' : '移入冷库'),
+        } }, node.status === 'cold' ? '解冻' : '冷冻'),
         h('button', { class: 'btn', style: { color: 'var(--red)' }, onclick: () => deleteNodeWithUndo(node.id) }, icon('trash', 13), '删除'),
       ),
     ),

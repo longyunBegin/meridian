@@ -34,6 +34,7 @@ import '../styles.css'
       id: 'viewpoint-synthetic', nodeType: 'viewpoint', kind: 'claim', title: '合成目标观点',
       detail: '用于隔离 UI 测试的目标节点。', currentText: '用于隔离 UI 测试的目标节点。',
       confidence: 60, status: 'pending', archived: false, external: false, createdSeq: 1,
+      sourceRef: 'lemma:synthetic-lemma',
       eventIds: ['synthetic-seed'], provenanceEventIds: ['synthetic-seed'], evidenceCount: 0,
     }
     let projection = {
@@ -255,6 +256,20 @@ import '../styles.css'
       async chainReviewRelation() { return { ok: true } },
       async chainArchiveNode() { return { ok: true } },
       async chainRestoreNode() { return { ok: true } },
+      async chainParkNode() { return { ok: true } },
+      async chainUnparkNode() { return { ok: true } },
+      async chainParked() { return { themeId: theme.id, nodes: [], edges: [] } },
+      async chainShelfJudgeItem() { return { ok: true, mode: 'park' } },
+      async getNode(id) {
+        if (id === 'synthetic-lemma') {
+          return { id: 'synthetic-lemma', kind: 'lemma', title: '合成目标观点', status: 'live', confidence: 60 }
+        }
+        return null
+      },
+      async updateNode(id, patch) {
+        commandCalls.push(['updateNode', id, patch])
+        return { ok: true, id, ...patch }
+      },
     }
 
     try {
@@ -286,6 +301,9 @@ import '../styles.css'
         !host.querySelector('.theme-view-host [data-mode="history"]')
         && !host.querySelector('.theme-view-host .side-nav-history')
         && host.querySelector('.theme-view-host [data-mode="inbox"]')?.classList.contains('active'))
+      check('建设者待处理栏不再挂主题原子轨（归档/冷冻在判卡底部）',
+        !host.querySelector('.theme-view-host .builder-atom-rail')
+        && !!host.querySelector('.theme-view-host .builder-intake-queue'))
       const navLedgerButton = host.querySelector('.theme-view-host button.cog-ledger-open')
       navLedgerButton.click()
       await waitFor(() => {
@@ -527,10 +545,15 @@ import '../styles.css'
       }
       themeMount.querySelector('.rdr-node-identity button').click()
       await waitFor(() => themeMount.querySelector('.theme-view-host .node-view-head'), '从读者定位返回建设者节点页')
-      check('读者定位回到同一节点，且侧栏主入口仍指向待处理工作台',
+      await waitFor(() => themeMount.querySelector('.theme-view-host .builder-node-ops'), '节点页操作条')
+      check('读者定位回到同一原子节点：原子页不挂归档/冷冻（那是外部数据维度）',
         themeMount.querySelector('.node-title')?.textContent === target.title
-        && themeMount.querySelector('[data-mode="inbox"]')?.classList.contains('active')
+        && ![...themeMount.querySelectorAll('.theme-view-host .builder-node-ops-actions button')].some((button) => button.textContent === '归档')
+        && ![...themeMount.querySelectorAll('.theme-view-host .builder-node-ops-actions button')].some((button) => button.textContent === '冷冻' && !button.hidden)
+        && themeMount.querySelector('.theme-view-host .builder-node-ops')?.textContent.includes('外部数据')
         && !themeMount.querySelector('.stream-head'))
+      check('读者定位进入原子节点页后可看完整详情',
+        [...themeMount.querySelectorAll('.builder-node-ops-actions button')].some((button) => button.textContent === '完整详情'))
       themeMount.querySelector('.back-btn').click()
       await waitFor(() => themeMount.querySelector('.theme-view-host .builder-intake-queue'), '节点返回建设者主工作台')
       check('节点返回路径回到新版待处理工作台而非旧信号流',

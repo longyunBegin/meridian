@@ -1396,7 +1396,8 @@ export function stats() {
     due: dueSettlements().length,
     events: propagationEvents(14).length,
     verdicts: db.verdicts.length,
-    conflicts: allConflicts().filter((c) => !c.resolved).length,
+    // 与今日 / 设置同一口径：只计未解决的读数冲突（命题矛盾不进这条）。
+    conflicts: allConflicts().filter((c) => !c.resolved && c.type === 'reading').length,
     premises: sharedPremises().length,
     feeds: 0, // 通道已移除（2026-09-26）：订阅源计数恒为 0
     inbox: inboxCount(),

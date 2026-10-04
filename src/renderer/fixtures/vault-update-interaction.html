@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Meridian graveyard and update UI fixture</title>
+  <title>Meridian vault archive / cold and update UI fixture</title>
   <style>
     html,body{min-height:100%;margin:0;background:#f5f5f7;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#202124}
     body{padding:20px;box-sizing:border-box}
@@ -18,6 +18,7 @@
     <div id="populated-fixture"></div>
     <div id="corrupt-fixture"></div>
     <div id="unparsed-fixture"></div>
+    <div id="cold-fixture"></div>
   </main>
   <pre id="fixture-report">Fixture starting…</pre>
   <script type="module">
@@ -26,23 +27,70 @@
     const goodArchive = {
       themeId: 'good-theme',
       integrity: { ok: true, count: 2, lastValidSeq: 2 },
-      nodes: [{ id: 'archive-claim-1', kind: 'claim', title: '合成归档观点：港口需求已变化', archiveReason: '两份合成来源互相矛盾', archivedAt: '2026-09-30T00:00:00.000Z', sourceRef: 'lemma:legacy-1', sourceKind: 'lemma', evidenceCount: 1, archiveEventIds: ['archive-event-1'] }],
-      edges: [{ id: 'edge-1', eventId: 'edge-1', rel: 'supports', from: 'archive-claim-1', to: 'archive-evidence-1' }],
+      nodes: [{
+        id: 'archive-evidence-1',
+        nodeType: 'evidence',
+        kind: 'evidence',
+        title: '合成归档证据：港口需求已变化',
+        currentText: '港口吞吐同比下滑，现货报价承压。',
+        archiveReason: '两份合成来源互相矛盾',
+        archivedAt: '2026-09-30T00:00:00.000Z',
+        sourceRef: 'fixture:good-evidence',
+        sourceKind: 'shelved-proposal',
+        sourceLabel: '合成来源 A',
+        evidenceCount: 1,
+        provenanceEventIds: ['archive-event-1'],
+      }],
+      edges: [],
     }
     const corruptArchive = {
       themeId: 'corrupt-theme',
       integrity: { ok: false, count: 2, lastValidSeq: 1, reason: 'synthetic hash mismatch' },
-      nodes: [{ id: 'archive-claim-corrupt', kind: 'claim', title: '合成损坏账本：有效前缀归档', archiveReason: '仅为浏览器 fixture', archivedAt: '2026-09-29T00:00:00.000Z', sourceRef: 'fixture:corrupt', archiveEventIds: ['valid-archive-event'] }],
+      nodes: [{
+        id: 'archive-evidence-corrupt',
+        nodeType: 'evidence',
+        kind: 'evidence',
+        title: '合成损坏账本：有效前缀归档',
+        archiveReason: '仅为浏览器 fixture',
+        archivedAt: '2026-09-29T00:00:00.000Z',
+        sourceRef: 'fixture:corrupt',
+        provenanceEventIds: ['valid-archive-event'],
+      }],
       edges: [],
     }
     const fixtures = {
-      'empty-theme': { archive: { integrity: { ok: true, count: 0, lastValidSeq: 0 }, nodes: [], edges: [] }, events: { events: [], integrity: { ok: true, count: 0, lastValidSeq: 0 } } },
-      'good-theme': { archive: goodArchive, events: { events: [{ id: 'cite-event-2', seq: 2, type: 'evidence.appended', payload: { evidenceRefs: [{ type: 'lemma', id: 'legacy-1' }] } }], integrity: goodArchive.integrity } },
-      'corrupt-theme': { archive: corruptArchive, events: { events: [{ id: 'valid-archive-event', seq: 1, type: 'node.archived', payload: { sourceRef: 'fixture:corrupt' } }, { id: 'invalid-event', seq: 2, type: 'evidence.appended', payload: { sourceRef: 'fixture:must-not-be-trusted', evidenceRefs: [{ type: 'lemma', id: 'corrupt-legacy-1' }] } }], integrity: corruptArchive.integrity } },
-      'unparsed-theme': { archive: { nodes: 'malformed nodes', edges: null, integrity: null }, events: { events: { unexpected: true } } },
+      'empty-theme': { archive: { integrity: { ok: true, count: 0, lastValidSeq: 0 }, nodes: [], edges: [] }, parked: { nodes: [] } },
+      'good-theme': { archive: goodArchive, parked: { nodes: [] } },
+      'corrupt-theme': { archive: corruptArchive, parked: { nodes: [] } },
+      'unparsed-theme': { archive: { nodes: 'malformed nodes', edges: null, integrity: null }, parked: { nodes: [] } },
+      'cold-theme': {
+        archive: { integrity: { ok: true, count: 0, lastValidSeq: 0 }, nodes: [], edges: [] },
+        parked: {
+          themeId: 'cold-theme',
+          nodes: [{
+            id: 'parked-1',
+            nodeType: 'evidence',
+            title: '合成冷冻外部数据',
+            currentText: '竞争对手在展会上放出未证实样品进度。',
+            cold: true,
+            sourceRef: 'fixture:parked-1',
+            sourceLabel: '展会简报',
+            parkReason: '弱信号暂存',
+            parkedAt: '2026-10-01T12:00:00.000Z',
+          }],
+          edges: [],
+        },
+      },
     }
-    const legacyNode = { id: 'legacy-1', themeId: 'good-theme', status: 'dead', kind: 'lemma', type: 'claim', title: '合成已证伪旧命题', confidence: 42, settlement: { correct: false }, updatedAt: '2026-09-28T00:00:00.000Z' }
-    const corruptLegacyNode = { id: 'corrupt-legacy-1', themeId: 'corrupt-theme', status: 'dead', kind: 'lemma', type: 'claim', title: '损坏尾部不得引用的合成命题', confidence: 42, settlement: { correct: false } }
+    const legacyColdNode = {
+      id: 'legacy-cold-1',
+      themeId: 'cold-theme',
+      status: 'cold',
+      kind: 'lemma',
+      type: 'hypothesis',
+      title: '合成历史冷库条目',
+      confidence: 51,
+    }
     let activeFixtureNodes = []
     let restoreCalls = 0
     let restoreRef = ''
@@ -52,8 +100,12 @@
       settings: async () => ({}),
       async allNodes() { return activeFixtureNodes },
       async chainArchives(themeId) { return fixtures[themeId]?.archive },
-      async chainEvents(themeId) { return fixtures[themeId]?.events },
+      async chainParked(themeId) { return fixtures[themeId]?.parked || { themeId, nodes: [], edges: [] } },
+      async chainProjection(themeId) {
+        throw new Error(`projection must not be required for ${themeId}`)
+      },
       async chainRestoreNode(_themeId, sourceRef) { restoreCalls++; restoreRef = sourceRef; return { ok: true } },
+      async chainUnparkNode() { return { ok: true } },
       async updateNode() { return { ok: true } },
       async restoreNode() { return { ok: true } },
     }
@@ -74,70 +126,99 @@
       good: { id: 'good-theme', name: '合成：城市港口需求' },
       corrupt: { id: 'corrupt-theme', name: '合成：损坏尾部' },
       unparsed: { id: 'unparsed-theme', name: '合成：未解析返回' },
+      cold: { id: 'cold-theme', name: '合成：冷库主题' },
     }
+
     activeFixtureNodes = []
     state.themes = [themes.empty]
-    await renderVault(document.querySelector('#empty-fixture'), 'dead')
-    check('空墓碑仅显示一个清晰空态，不出现空事件归档控件', !document.querySelector('#empty-fixture .event-archive-section')
-      && document.querySelector('#empty-fixture').textContent.includes('墓碑区是空的'))
+    await renderVault(document.querySelector('#empty-fixture'), 'archive')
+    check('空归档仅显示一个清晰空态，不出现空筛选控件', !document.querySelector('#empty-fixture .event-archive-controls')
+      && document.querySelector('#empty-fixture').textContent.includes('归档是空的'))
 
-    activeFixtureNodes = [legacyNode]
+    activeFixtureNodes = []
     state.themes = [themes.good]
-    await renderVault(document.querySelector('#populated-fixture'), 'dead')
+    await renderVault(document.querySelector('#populated-fixture'), 'archive')
     const populated = document.querySelector('#populated-fixture')
-    check('合成墓碑命题、已归档事件、原因、日期及引用均可读', populated.textContent.includes('合成已证伪旧命题')
-      && populated.textContent.includes('合成归档观点：港口需求已变化')
+    check('合成归档证据、原因、日期可读', populated.textContent.includes('合成归档证据：港口需求已变化')
       && populated.textContent.includes('两份合成来源互相矛盾')
-      && populated.textContent.includes('2026-09-30') && populated.querySelector('.tomb-cite'))
-    check('事件归档详情与恢复入口保留', Boolean(populated.querySelector('.event-archive-details summary'))
+      && populated.textContent.includes('2026-09-30'))
+    check('归档行使用条目列表与恢复入口', Boolean(populated.querySelector('.vault-entries .vault-row'))
       && Boolean(populated.querySelector('button.btn-primary')))
+    const archiveView = populated.querySelector('.vault-view-btn')
+    const themeBeforeArchiveView = state.themeId
+    const viewBeforeArchiveView = state.view
+    archiveView?.click()
+    await settled()
+    check('归档「查看」本页展开详情，不跳建设者', archiveView?.getAttribute('aria-expanded') === 'true'
+      && archiveView?.textContent === '收起'
+      && populated.querySelector('.vault-row.is-open .vault-detail:not([hidden])')?.textContent.includes('港口吞吐')
+      && state.themeId === themeBeforeArchiveView
+      && state.view === viewBeforeArchiveView)
+    archiveView?.click()
+    await settled()
+    check('再次点击收起详情', archiveView?.getAttribute('aria-expanded') === 'false'
+      && populated.querySelector('.vault-detail[hidden]'))
+
     const archiveSearch = populated.querySelector('.event-archive-search')
     archiveSearch.value = '港口需求'
     archiveSearch.dispatchEvent(new Event('input', { bubbles: true }))
     check('事件归档可按文字搜索且不截断标题', populated.querySelectorAll('.event-archive-row').length === 1
       && populated.querySelector('.event-archive-row').textContent.includes('港口需求已变化'))
-    const archiveClaimFilter = [...populated.querySelectorAll('.event-archive-section .tomb-filter')].find((button) => button.textContent === '主张')
-    archiveClaimFilter?.click()
-    check('事件归档类型筛选仍可用并同步 aria-pressed', archiveClaimFilter?.getAttribute('aria-pressed') === 'true'
+    const archiveEvidenceFilter = [...populated.querySelectorAll('.tomb-filter')].find((button) => button.textContent === '证据')
+    archiveEvidenceFilter?.click()
+    check('事件归档类型筛选仍可用并同步 aria-pressed', archiveEvidenceFilter?.getAttribute('aria-pressed') === 'true'
       && populated.querySelector('.event-archive-row'))
-    const deadSection = [...populated.querySelectorAll('.sect')].find((section) => section.querySelector('h2')?.textContent === '归档的命题')
-    deadSection?.querySelector('.tomb-filter:last-child')?.click()
-    await settled()
-    const filteredDeadSection = [...populated.querySelectorAll('.sect')].find((section) => section.querySelector('h2')?.textContent === '归档的命题')
-    check('墓碑低置信度筛选可隐藏不匹配项并说明结果为空', !filteredDeadSection?.querySelector('.tomb-row')
-      && filteredDeadSection?.textContent.includes('这个筛选下没有命题'))
-    filteredDeadSection?.querySelector('.tomb-filter')?.click()
-    await settled()
     populated.querySelector('button.btn-primary')?.click()
     await settled()
-    check('恢复仍追加到合成 sourceRef，不改写旧归档', restoreCalls === 1 && restoreRef === 'lemma:legacy-1')
-
-    const goodSearchAfterRestore = populated.querySelector('.event-archive-search')
-    if (goodSearchAfterRestore) {
-      goodSearchAfterRestore.value = ''
-      goodSearchAfterRestore.dispatchEvent(new Event('input', { bubbles: true }))
-      populated.querySelector('.event-archive-section .tomb-filter')?.click()
+    check('恢复仍追加到合成 sourceRef，不改写旧归档', restoreCalls === 1 && restoreRef === 'fixture:good-evidence')
+    // 模块级搜索条件会带到下一次归档渲染；清掉以免污染损坏账本用例。
+    const clearedSearch = populated.querySelector('.event-archive-search')
+    if (clearedSearch) {
+      clearedSearch.value = ''
+      clearedSearch.dispatchEvent(new Event('input', { bubbles: true }))
     }
 
-    activeFixtureNodes = [corruptLegacyNode]
+    activeFixtureNodes = []
     state.themes = [themes.corrupt]
-    await renderVault(document.querySelector('#corrupt-fixture'), 'dead')
+    await renderVault(document.querySelector('#corrupt-fixture'), 'archive')
     const corrupt = document.querySelector('#corrupt-fixture')
     check('损坏账本显示有效前缀归档和完整性警告，且恢复禁用', corrupt.textContent.includes('校验失败')
       && corrupt.textContent.includes('合成损坏账本：有效前缀归档')
-      && corrupt.querySelector('.event-archive-row .btn-primary')?.disabled === true
-      && corrupt.textContent.includes('损坏尾部不得引用的合成命题')
-      && !corrupt.querySelector('.tomb-cite'))
+      && corrupt.querySelector('.event-archive-row .btn-primary')?.disabled === true)
 
-    activeFixtureNodes = [null, { id: 7, status: 'dead', title: { unexpected: true } }]
+    activeFixtureNodes = []
     state.themes = [themes.unparsed]
     let unparsedThrew = false
-    try { await renderVault(document.querySelector('#unparsed-fixture'), 'dead') } catch { unparsedThrew = true }
+    try { await renderVault(document.querySelector('#unparsed-fixture'), 'archive') } catch { unparsedThrew = true }
     const unparsed = document.querySelector('#unparsed-fixture')
-    check('未解析或形状损坏的数据不会令墓碑页崩溃，并明确报告无法读取', !unparsedThrew
-      && unparsed.textContent.includes('归档返回不完整或无法解析')
-      && unparsed.textContent.includes('账本事件引用无法解析')
-      && unparsed.textContent.includes('节点数据格式异常'))
+    check('未解析或形状损坏的数据不会令归档页崩溃，并明确报告无法读取', !unparsedThrew
+      && unparsed.textContent.includes('归档返回不完整或无法解析'))
+
+    activeFixtureNodes = [legacyColdNode]
+    // 三个主题故意让 chainParked 抛错：页面应软失败，不出现「读取失败」红条。
+    const originalParked = window.meridian.chainParked
+    window.meridian.chainParked = async (themeId) => {
+      if (themeId === 'cold-theme') return originalParked(themeId)
+      throw new Error('synthetic parked failure')
+    }
+    state.themes = [themes.cold, { id: 'broken-theme', name: '坏主题' }, { id: 'broken-theme-2', name: '坏主题2' }, { id: 'broken-theme-3', name: '坏主题3' }]
+    await renderVault(document.querySelector('#cold-fixture'), 'cold')
+    const cold = document.querySelector('#cold-fixture')
+    check('冷库展示冷冻与历史条目，不因个别主题失败刷红', cold.textContent.includes('合成冷冻外部数据')
+      && cold.textContent.includes('合成历史冷库条目')
+      && !cold.textContent.includes('读取失败'))
+    check('冷库行排列为条目列表，操作区含查看与解冻', Boolean(cold.querySelector('.vault-entries .vault-row .vault-acts'))
+      && [...cold.querySelectorAll('.vault-view-btn')].length >= 2
+      && [...cold.querySelectorAll('.btn-primary')].some((button) => button.textContent === '解冻'))
+    const coldView = cold.querySelector('.vault-view-btn')
+    const themeBeforeColdView = state.themeId
+    const viewBeforeColdView = state.view
+    coldView?.click()
+    await settled()
+    check('冷库「查看」展开该条详情，不跳建设者', coldView?.textContent === '收起'
+      && cold.querySelector('.vault-row.is-open .vault-detail:not([hidden])')?.textContent.includes('未证实样品')
+      && state.themeId === themeBeforeColdView
+      && state.view === viewBeforeColdView)
 
     let downloadCalls = 0
     let installCalls = 0
@@ -209,13 +290,6 @@
     await new Promise((resolve) => setTimeout(resolve, 230))
     check('Escape 仅释放提示资源，不触发更新动作', escapeCloseCalls === 1 && !escapeDialog.isConnected,
       `close=${escapeCloseCalls}; connected=${escapeDialog.isConnected}`)
-
-    const refreshedSearch = populated.querySelector('.event-archive-search')
-    if (refreshedSearch) {
-      refreshedSearch.value = ''
-      refreshedSearch.dispatchEvent(new Event('input', { bubbles: true }))
-      populated.querySelector('.event-archive-section .tomb-filter')?.click()
-    }
 
     // Leave an inert, network-free preview visible for visual inspection.
     presentUpdate({ version: '0.2.0-fixture', currentVersion: '0.1.9-fixture', body: '### 版本说明\n- 这只是本地合成预览，不会访问更新服务器。' })

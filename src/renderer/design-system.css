@@ -57,7 +57,7 @@
   /* 层次：一级发丝线、二级轻浮起、三级浮层 */
   --hairline: rgba(0, 0, 0, 0.09);
   --hairline-strong: rgba(0, 0, 0, 0.14);
-  --e-1: 0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 1px rgba(0, 0, 0, 0.03);
+  --e-1: var(--sh-1); /* 收敛：与 --sh-1 同值，不再维护第二套阴影 */
   --e-2: 0 4px 14px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05);
   --e-3: 0 16px 40px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
 
@@ -127,7 +127,7 @@
     --hairline: rgba(255, 255, 255, 0.1);
     --hairline-strong: rgba(255, 255, 255, 0.16);
     --hairline-soft: rgba(255, 255, 255, 0.06);
-    --e-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --e-1: var(--sh-1);
     --e-2: 0 6px 18px rgba(0, 0, 0, 0.45);
     --e-3: 0 18px 44px rgba(0, 0, 0, 0.55);
     --sh-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.28);
@@ -249,7 +249,7 @@ button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-q
 /* 统一状态配方：只在这一处定义"可交互元素"的 hover / active / disabled 语气。
    组件层按需复用，避免各写各的导致手感不一。
    按钮 = 抬升；卡片 = 阴影 + 微缩放；列表行 = 底色淡入（不位移，密集列表不跳）；chip = 渐变强调。 */
-[data-interactive], .is-clickable, .btn, .card, .node-card, .nav-item, .row, .theme-item, .chip, .tag, .inbox-item, .vault-item,
+[data-interactive], .is-clickable, .btn, .card, .node-card, .nav-item, .row, .theme-item, .chip, .tag, .inbox-item, .vault-item, .judge-btn,
 [aria-selected="true"]{
   transition: background-color var(--dur-1) var(--ease-out-soft),
     color var(--dur-1) var(--ease-out-soft),

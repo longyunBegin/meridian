@@ -83,22 +83,22 @@ export function renderReaderAtomDetail({ atom, relations = [], corrections = [],
     weightedSummary(atom.independent),
 
     block(`出处 · ${atom.origin.length}`, atom.origin.length
-      ? h('ul', { class: 'rdr-ev-list' }, ...atom.origin.map((row) => evidenceRow(row, { showStance: false, external: false })))
+      ? h('ul', { class: 'rdr-ev-list u-stagger' }, ...atom.origin.map((row) => evidenceRow(row, { showStance: false, external: false })))
       : h('p', { class: 'rdr-detail-caliber' }, '没有记录出处：这个原子不是从某条外部数据里抽出来的。')),
 
     block(`独立外部数据 · ${atom.independentCount}`, atom.independentCount
-      ? h('ul', { class: 'rdr-ev-list' }, ...atom.independent.map((row) => evidenceRow(row, { showStance: true })))
+      ? h('ul', { class: 'rdr-ev-list u-stagger' }, ...atom.independent.map((row) => evidenceRow(row, { showStance: true })))
       : h('p', { class: 'rdr-detail-caliber' }, '还没有出处之外的数据。新数据进来、在建设者里确认它对这个原子的表态后，会出现在这里。')),
 
     atom.pending.length
       ? block(`待确认 · ${atom.pending.length}`,
-        h('ul', { class: 'rdr-ev-list' }, ...atom.pending.map((row) => evidenceRow(row, { showStance: true }))),
+        h('ul', { class: 'rdr-ev-list u-stagger' }, ...atom.pending.map((row) => evidenceRow(row, { showStance: true }))),
         h('p', { class: 'rdr-detail-caliber' }, '这些数据还没在建设者里确认表态，暂不计入佐证 / 反对 / 中立。'))
       : null,
 
     atom.related.length
       ? block(`修订 / 推导依据 · ${atom.related.length}`,
-        h('ul', { class: 'rdr-ev-list' }, ...atom.related.map((row) => evidenceRow(row, { showStance: true }))),
+        h('ul', { class: 'rdr-ev-list u-stagger' }, ...atom.related.map((row) => evidenceRow(row, { showStance: true }))),
         h('p', { class: 'rdr-detail-caliber' }, '这些数据用来修订或推出这个原子，不算佐证或反对。'))
       : null,
 

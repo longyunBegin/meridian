@@ -91,6 +91,8 @@ const TYPE_LABEL = {
   'settlement.recorded': '结算',
   'node.archived': '归档',
   'node.restored': '恢复',
+  'node.parked': '冷冻',
+  'node.unparked': '解冻',
   'topic.linked': '主题关联',
 }
 const ACTOR_LABEL = { user: '你', migration: '迁移', 'pipeline:capture': '收件箱捕获' }
@@ -331,6 +333,10 @@ async function loadConcept(theme, ledgerPane, opts) {
       if (Array.isArray(inbox)) inboxCount += inbox.length
       else if (inbox && typeof inbox.then === 'function') { /* 异步，稍后刷新 */ }
     } catch { /* 忽略 */ }
+    // 主题原子：导航入口。归档 / 冷冻挂外部数据，不挂原子。
+    const atoms = projectedNodes(viewState.projection)
+      .filter((node) => !node.external && !node.archived && networkNodeType(node) !== 'evidence')
+      .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'zh'))
     opts.sidebar.append(
       h('div', { class: 'brand' },
         h('div', { class: 'brand-mark' }, 'M'),
@@ -339,14 +345,33 @@ async function loadConcept(theme, ledgerPane, opts) {
         h('p', { class: 'side-nav-label' }, '工作台'),
         h('button', {
           type: 'button',
-          class: 'side-nav-item active',
+          class: `side-nav-item${builderMode === 'inbox' ? ' active' : ''}`,
           'data-mode': 'inbox',
-          'aria-current': 'page',
+          'aria-current': builderMode === 'inbox' ? 'page' : null,
           onclick: () => { builderMode = 'inbox'; selectedNodeId = null; renderMain(); renderSidebar(); },
         },
           h('span', { class: 'icon', 'aria-hidden': 'true' }, '◷'),
           h('span', {}, '待归因工作台'),
-          h('span', { class: 'n' }, String(inboxCount)))),
+          h('span', { class: 'n' }, String(inboxCount))),
+        h('p', { class: 'side-nav-label side-nav-secondary-label' }, '主题原子'),
+        ...(atoms.length
+          ? atoms.slice(0, 48).map((atom) => h('button', {
+            type: 'button',
+            class: `side-nav-item${builderMode === 'node' && selectedNodeId === atom.id ? ' active' : ''}`,
+            'data-mode': 'node',
+            'data-node-id': atom.id,
+            'aria-current': builderMode === 'node' && selectedNodeId === atom.id ? 'page' : null,
+            title: atom.title || '未命名原子',
+            onclick: () => {
+              builderMode = 'node'
+              selectedNodeId = atom.id
+              renderMain()
+              renderSidebar()
+            },
+          },
+            h('span', { class: 'icon', 'aria-hidden': 'true' }, '◇'),
+            h('span', {}, atom.title || '未命名原子')))
+          : [h('p', { class: 'side-nav-history' }, '还没有原子')])),
       h('div', { class: 'side-foot' },
         h('b', {}, '数据源'), ' · 事件账本',
         h('br', {}),
@@ -503,7 +528,16 @@ async function loadConcept(theme, ledgerPane, opts) {
           h('span', { class: 'item' }, h('b', {}, String(evolutions.length)), ' 条相关事件'),
           h('span', { class: 'item' }, h('b', {}, String(evidenceSummary.total)), ' 条可导航证据'),
           h('span', { class: 'item' }, `${verifiedEvents.length} 条数据`),
-          h('span', { class: 'item' }, '最近更新 ', h('b', {}, evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—')))),
+          h('span', { class: 'item' }, '最近更新 ', h('b', {}, evolutions.length ? fmtDate(evolutions[evolutions.length - 1].at) : '—')),
+        ),
+        // 归档 / 冷冻只挂外部数据（证据）；原子节点页只留详情入口。
+        renderBuilderNodeOps(theme, node, {
+          onChanged: () => {
+            if (typeof opts.onChanged === 'function') opts.onChanged()
+            else { renderMain(); renderSidebar() }
+          },
+          onOpenDetail: () => openNodeDetail(theme, node, opts).catch((error) => toast(`无法打开详情：${error?.message || error}`, 'var(--red)')),
+        })),
       h('div', { class: 'scroll' },
         h('div', { class: 'scroll-inner' },
           evidenceSection,
@@ -550,7 +584,7 @@ async function loadConcept(theme, ledgerPane, opts) {
             && Number.isFinite(Number(payload.oldConfidence ?? payload.before))),
         nature: change.nature || (type === 'relation.declared' ? 'structural'
           : type === 'evidence.appended' ? 'quantitative' : 'quantitative'),
-        themeTag: change.themeTag || payload.themeTag || (type === 'confidence.updated' ? '置信度变化'
+        themeTag: change.themeTag || payload.themeTag || (type === 'confidence.updated' ? '权重变化'
           : type === 'evidence.appended' ? '证据追加' : '关系事件'),
         text: payload.title || payload.text?.slice(0, 80) || type,
         source: payload.sourceLabel || payload.url || '',
@@ -587,8 +621,8 @@ async function loadConcept(theme, ledgerPane, opts) {
      */
     const pendingTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'true' }, '待审')
     const processedTab = h('button', { type: 'button', class: 'builder-queue-tab', 'aria-pressed': 'false' }, '已处理')
-    const feedButton = h('button', { type: 'button', class: 'btn btn-sm btn-primary builder-queue-feed' }, '喂一条数据')
-    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '＋ 手动新增一个原子')
+    const feedButton = h('button', { type: 'button', class: 'btn btn-sm btn-primary builder-queue-feed' }, '读入来源')
+    const addNode = h('button', { type: 'button', class: 'btn btn-sm builder-queue-add' }, '新建原子')
     const addManualOpinion = () => {
       // 在右侧详情区内联渲染新增原子表单（非弹窗）
       renderAddAtomForm()
@@ -601,7 +635,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       h('div', { class: 'builder-queue-head-v2' },
         h('div', { class: 'builder-queue-title-row' },
           h('h3', {}, '待处理'), queueCount),
-        h('p', { class: 'builder-queue-desc' }, '待判：一条数据对某个原子是佐证、反对、中立还是不相关。改结构：模型建议新增或修订原子。'),
+        h('p', { class: 'builder-queue-desc' }, '待判：一条外部数据对某个原子是佐证、反对、中立还是不相关。改结构：模型建议新增或修订原子。每张卡底部可归档或冷冻外部数据。'),
         h('div', { class: 'builder-queue-tabs', role: 'group', 'aria-label': '队列状态' }, pendingTab, processedTab),
         h('div', { class: 'builder-queue-actions' }, feedButton, addNode)),
       queueList)
@@ -678,9 +712,9 @@ async function loadConcept(theme, ledgerPane, opts) {
       clear(queueList)
       if (!visible.length) {
         queueList.append(h('p', { class: 'builder-queue-empty' }, queueMode === 'processed'
-          ? '这里会保留已确认或已驳回的建议。' : entries.length ? '当前没有待归因来源、建议或旧信号。' : '收件箱中暂无来源；可以接入一条来源，或手工录入观点。'))
+          ? '这里会保留已确认或已驳回的建议。' : entries.length ? '当前没有待归因来源、建议或旧信号。' : '还没有待判条目；可以读入来源，或新建原子。'))
         if (queueMode === 'pending' && !entries.length) queueList.append(h('div', { class: 'builder-empty-actions' },
-          h('button', { type: 'button', class: 'btn btn-sm', onclick: addManualOpinion }, '手动新增一个原子')))
+          h('button', { type: 'button', class: 'btn btn-sm', onclick: addManualOpinion }, '新建原子')))
         selectedEntryId = null
         persistQueueState()
         renderSelected(null)
@@ -702,7 +736,7 @@ async function loadConcept(theme, ledgerPane, opts) {
         if (entry.kind === 'judge') {
           const judgeItem = entry.judge
           queueList.append(h('button', {
-            type: 'button', class: `builder-queue-item-v2 is-judge${entry.id === selected.id ? ' is-selected' : ''}`,
+            type: 'button', class: `builder-queue-item-v2 is-judge${entry.id === selected.id ? ' is-selected is-on' : ''}`,
             role: 'option', 'aria-selected': String(entry.id === selected.id), 'data-entry-id': entry.id,
             onclick: () => { selectedEntryId = entry.id; persistQueueState(); renderQueue() },
           },
@@ -804,21 +838,25 @@ async function loadConcept(theme, ledgerPane, opts) {
      */
     const renderAddAtomForm = () => {
       clear(detail)
-      /* L2：分类来自当前主题的自定义词表，L1 不写死任何领域类型。
-         词表为空时只给"未分类"，并指向主题设置里的分类管理。 */
+      /* 种类 = 账本 nodeType（概念 / 对象 / 事件 / 观点）；分类 = 主题自定义词表（可选）。
+         以前把词表误标成「类型」且一律写成 viewpoint，不同原子看起来都一样。 */
       const themeConfig = theme.config || {}
       const atomCategories = (Array.isArray(themeConfig.atomCategories) ? themeConfig.atomCategories : [])
         .filter((label) => typeof label === 'string' && label.trim())
-      const typeOptions = atomCategories.length
-        ? atomCategories.map((label) => ({ label, nodeType: 'viewpoint', atomCategory: label }))
-        : [{ label: '未分类', nodeType: 'viewpoint', atomCategory: '' }]
+      const typeOptions = [
+        { key: 'concept', label: NODE_TYPE_META.concept.label },
+        { key: 'object', label: NODE_TYPE_META.object.label },
+        { key: 'event', label: NODE_TYPE_META.event.label },
+        { key: 'viewpoint', label: NODE_TYPE_META.viewpoint.label },
+      ]
       const colorOptions = [
         { name: '紫', value: '#a855f7' }, { name: '青', value: '#14b8a6' },
         { name: '绿', value: '#22c55e' }, { name: '橙', value: '#f59e0b' },
         { name: '蓝', value: '#2563eb' }, { name: '红', value: '#ef4444' },
         { name: '灰', value: '#6b7280' },
       ]
-      let selectedType = typeOptions[0]
+      let selectedType = typeOptions[3] // 默认观点：建设者最常建的是可表态的原子
+      let selectedCategory = ''
       let selectedColor = colorOptions[4]
       const selectedNodeIds = new Set()
       let selectedRel = 'supports'
@@ -828,7 +866,7 @@ async function loadConcept(theme, ledgerPane, opts) {
       const timeInput = h('input', { class: 'txt atom-form-input', type: 'text', maxlength: '20', value: String(new Date().getFullYear()), 'aria-label': '时间起点' })
       const error = h('p', { class: 'cog-entry-error', role: 'alert', hidden: true })
 
-      const typePills = h('div', { class: 'atom-form-pills' })
+      const typePills = h('div', { class: 'atom-form-pills', role: 'group', 'aria-label': '原子种类' })
       for (const opt of typeOptions) {
         const pill = h('button', { type: 'button', class: `atom-form-pill${opt === selectedType ? ' is-selected' : ''}` }, opt.label)
         pill.addEventListener('click', () => {
@@ -838,6 +876,24 @@ async function loadConcept(theme, ledgerPane, opts) {
         })
         typePills.append(pill)
       }
+
+      const categoryPills = h('div', { class: 'atom-form-pills', role: 'group', 'aria-label': '主题分类' })
+      const paintCategory = () => {
+        clear(categoryPills)
+        const options = [{ key: '', label: '不分类' }, ...atomCategories.map((label) => ({ key: label, label }))]
+        for (const opt of options) {
+          const pill = h('button', {
+            type: 'button',
+            class: `atom-form-pill${selectedCategory === opt.key ? ' is-selected' : ''}`,
+          }, opt.label)
+          pill.addEventListener('click', () => {
+            selectedCategory = opt.key
+            paintCategory()
+          })
+          categoryPills.append(pill)
+        }
+      }
+      paintCategory()
 
       const colorPicker = h('div', { class: 'atom-form-colors' })
       for (const color of colorOptions) {
@@ -853,8 +909,9 @@ async function loadConcept(theme, ledgerPane, opts) {
         colorPicker.append(dot)
       }
 
-      // 连接现有节点（可选）
-      const connectableNodes = projectedNodes(viewState.projection).filter((n) => !n.archived && !n.invalidated)
+      // 连接现有节点（可选）：只连非证据原子；证据归「判给」，不在这里做结构边。
+      const connectableNodes = projectedNodes(viewState.projection)
+        .filter((n) => !n.archived && !n.invalidated && !n.external && networkNodeType(n) !== 'evidence')
       const relSelect = h('select', { class: 'txt atom-form-rel', 'aria-label': '关系类型' },
         ...['supports', 'contradicts', 'derives', 'related'].map((v) =>
           h('option', { value: v, selected: v === selectedRel },
@@ -884,9 +941,9 @@ async function loadConcept(theme, ledgerPane, opts) {
         error.hidden = true
         try {
           const result = await m.chainCreateNode(theme.id, {
-            nodeType: selectedType.nodeType, title, detail: descInput.value.trim(),
-            status: selectedType.status || 'pending', applicability: timeInput.value.trim(),
-            atomCategory: selectedType.atomCategory, color: selectedColor.value,
+            nodeType: selectedType.key, title, detail: descInput.value.trim(),
+            status: 'pending', applicability: timeInput.value.trim(),
+            atomCategory: selectedCategory, color: selectedColor.value,
           })
           if (result?.ok === false) throw new Error(result.error || '保存未完成')
           const newNodeId = result.node?.id || result.id
@@ -895,9 +952,9 @@ async function loadConcept(theme, ledgerPane, opts) {
               try { await m.chainDeclareRelation(theme.id, newNodeId, targetId, selectedRel) }
               catch (e) { console.warn('关系追加失败:', e) }
             }
-            toast(`已新增原子「${title}」，并连接到 ${selectedNodeIds.size} 个节点`)
+            toast(`已新增原子「${title}」，并连到 ${selectedNodeIds.size} 个已有原子`)
           } else {
-            toast(`已新增原子「${title}」（孤立节点）`)
+            toast(`已新增原子「${title}」`)
           }
           selectedEntryId = null
           persistQueueState()
@@ -915,12 +972,12 @@ async function loadConcept(theme, ledgerPane, opts) {
         renderQueue()
       }
 
-      const saveBtn = h('button', { type: 'button', class: 'btn btn-primary', onclick: doSave }, '新增原子')
+      const saveBtn = h('button', { type: 'button', class: 'btn btn-primary', onclick: doSave }, '创建')
       detail.append(
         h('div', { class: 'atom-form-card' },
           h('div', { class: 'atom-form-head' },
             h('span', { class: 'atom-badge' }, '新建'),
-            h('h3', {}, '新增原子节点')),
+            h('h3', {}, '新建原子')),
           h('div', { class: 'atom-form-field' },
             h('div', { class: 'atom-form-labelrow' },
               h('span', { class: 'atom-form-label' }, '原子名称'),
@@ -934,22 +991,29 @@ async function loadConcept(theme, ledgerPane, opts) {
           h('div', { class: 'atom-form-2col' },
             h('div', { class: 'atom-form-field' },
               h('div', { class: 'atom-form-labelrow' },
-                h('span', { class: 'atom-form-label' }, '类型'),
-                atomCategories.length ? null : h('span', { class: 'atom-form-hint' }, '可在主题设置中添加分类')),
+                h('span', { class: 'atom-form-label' }, '种类'),
+                h('span', { class: 'atom-form-hint' }, '概念 / 对象 / 事件 / 观点')),
               typePills),
             h('div', { class: 'atom-form-field' },
               h('span', { class: 'atom-form-label' }, '时间起点'), timeInput)),
           h('div', { class: 'atom-form-field' },
+            h('div', { class: 'atom-form-labelrow' },
+              h('span', { class: 'atom-form-label' }, '分类'),
+              atomCategories.length
+                ? h('span', { class: 'atom-form-hint' }, '来自主题设置，可选')
+                : h('span', { class: 'atom-form-hint' }, '可在主题设置中添加分类')),
+            categoryPills),
+          h('div', { class: 'atom-form-field' },
             h('span', { class: 'atom-form-label' }, '颜色'), colorPicker),
           h('div', { class: 'atom-form-field' },
             h('div', { class: 'atom-form-labelrow' },
-              h('span', { class: 'atom-form-label' }, '连接到现有节点'),
-              h('span', { class: 'atom-form-hint' }, '可选；不选则为孤立节点')),
+              h('span', { class: 'atom-form-label' }, '连接到现有原子'),
+              h('span', { class: 'atom-form-hint' }, '可选；不选也可，之后再用判给挂数据')),
             h('div', { class: 'atom-form-relrow' }, h('span', {}, '关系'), relSelect),
             nodeList),
           error,
           h('div', { class: 'atom-form-foot' },
-            h('span', { class: 'atom-form-note' }, '新增原子会改变图谱结构。'),
+            h('span', { class: 'atom-form-note' }, '新增后会出现在左侧「主题原子」，并可在读者页看到。'),
             h('div', { class: 'atom-form-actions' },
               h('button', { type: 'button', class: 'btn', onclick: doCancel }, '取消'),
               saveBtn))))
@@ -1177,6 +1241,8 @@ const EVENT_KIND_LABEL = {
   'settlement.recorded': '结算记录',
   'node.archived': '归档',
   'node.restored': '追加恢复',
+  'node.parked': '冷冻',
+  'node.unparked': '解冻',
   'topic.linked': '主题关联',
 }
 const fmtAt = (at) => {
@@ -1220,6 +1286,10 @@ function eventSummary(e, titleOf) {
       return `归档「${p.title || titleOf?.(p.targetEventId) || '未命名节点'}」${p.reason ? ` · ${p.reason}` : ''}`
     case 'node.restored':
       return `恢复「${p.title || titleOf?.(p.restoredArchiveEventId) || '未命名节点'}」${p.reason ? ` · ${p.reason}` : ''}`
+    case 'node.parked':
+      return `冷冻「${p.title || '未命名外部数据'}」${p.reason ? ` · ${p.reason}` : ''}`
+    case 'node.unparked':
+      return `解冻「${p.title || '未命名外部数据'}」${p.reason ? ` · ${p.reason}` : ''}`
     default:
       return String(p.title || p.coreInfo || p.text || '').slice(0, 60)
   }
@@ -1247,7 +1317,7 @@ function eventObjectLabel(e, events, byId) {
     return `${endpoint(relationPayload.from)} ↔ ${endpoint(relationPayload.to)}`
   }
   if (e.type === 'correction.appended') return titleOf(e.supersedes) || '观点或问题'
-  if (['node.archived', 'node.restored', 'settlement.recorded'].includes(e.type)) {
+  if (['node.archived', 'node.restored', 'node.parked', 'node.unparked', 'settlement.recorded'].includes(e.type)) {
     const result = resolveEventReference(events, p.sourceRef)
     return result.status === 'resolved' ? (result.subjectTitle || '未命名对象') : '来源未解析'
   }
@@ -1817,6 +1887,91 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       focused.kind === 'evidence' ? eventButton(focusedEvent, '所选证据的来源事件') : null)
   }
 
+  /**
+   * 建设者节点检视操作：归档 / 冷冻只对证据（外部数据）；原子只留详情。
+   */
+  function renderPointInspectorOps(theme, node, { historical = false, onOpenDetail, onChanged } = {}) {
+    const actions = h('div', { class: 'cog-point-inspector-actions' })
+    const note = h('p', { class: 'cog-point-inspector-note', hidden: true, role: 'status' })
+    const archiveBox = h('div', { class: 'cog-point-archive', hidden: true })
+    const isEvidence = networkNodeType(node) === 'evidence'
+    const archiveReason = h('input', {
+      class: 'txt', type: 'text', maxlength: '500',
+      placeholder: '归档原因（必填）', 'aria-label': '归档原因',
+    })
+    const archiveConfirm = h('button', { type: 'button', class: 'btn btn-primary' }, node.archived ? '追加恢复' : '确认归档')
+    archiveBox.append(
+      h('p', { class: 'cog-point-inspector-note' },
+        node.archived ? '恢复会追加新事件，旧归档记录保留。' : '归档这条外部数据：只追加事件，不删除历史；可在侧栏「归档」里找回。'),
+      archiveReason, archiveConfirm)
+
+    const showNote = (text, isError = false) => {
+      note.hidden = false
+      note.textContent = text
+      note.classList.toggle('is-error', isError)
+    }
+
+    if (!historical && !node.external && isEvidence) {
+      const archiveBtn = h('button', {
+        type: 'button',
+        class: node.archived ? 'btn btn-primary' : 'btn',
+        disabled: !node.sourceRef,
+        title: node.sourceRef ? (node.archived ? '追加恢复事件' : '归档此外部数据') : '缺少来源引用，无法归档',
+        onclick: () => {
+          archiveBox.hidden = !archiveBox.hidden
+          if (!archiveBox.hidden) archiveReason.focus()
+        },
+      }, node.archived ? '恢复' : '归档')
+      archiveConfirm.onclick = async () => {
+        const reason = archiveReason.value.trim()
+        if (!node.archived && !reason) { showNote('请填写归档原因', true); archiveReason.focus(); return }
+        archiveConfirm.disabled = true
+        archiveBtn.disabled = true
+        try {
+          const result = node.archived
+            ? await m.chainRestoreNode(theme.id, node.sourceRef, reason || '从建设者恢复')
+            : await m.chainArchiveNode(theme.id, node.sourceRef, reason)
+          if (result?.ok === false) throw new Error(result.error || '操作未完成')
+          toast(node.archived ? '已追加恢复事件' : '已归档这条外部数据')
+          onChanged?.()
+        } catch (error) {
+          showNote(`${node.archived ? '恢复' : '归档'}失败：${error?.message || error}`, true)
+          archiveConfirm.disabled = false
+          archiveBtn.disabled = false
+        }
+      }
+      actions.append(archiveBtn)
+    }
+
+    if (!historical && !node.external && isEvidence && !node.archived && !node.invalidated && node.sourceRef) {
+      const freezeBtn = h('button', {
+        type: 'button', class: 'btn',
+        title: '冷冻：把这条外部弱信号标成冷库（只改 status，不碰权重）',
+      }, node.cold ? '解冻' : '冷冻')
+      freezeBtn.onclick = async () => {
+        freezeBtn.disabled = true
+        try {
+          const result = node.cold
+            ? await m.chainUnparkNode(theme.id, node.sourceRef, '从建设者解冻')
+            : await m.chainParkNode(theme.id, node.sourceRef, '')
+          if (result?.ok === false) throw new Error(result.error || '操作未完成')
+          toast(node.cold ? '已解冻，外部数据回到主题' : '已冷冻，可在侧栏冷库查看')
+          onChanged?.()
+        } catch (error) {
+          showNote(`操作失败：${error?.message || error}`, true)
+          freezeBtn.disabled = false
+        }
+      }
+      actions.append(freezeBtn)
+    }
+
+    actions.append(h('button', {
+      type: 'button', class: 'btn btn-primary', onclick: onOpenDetail,
+    }, '完整详情'))
+
+    return h('div', { class: 'cog-point-ops' }, actions, isEvidence ? archiveBox : null, note)
+  }
+
   function renderPointInspector(nodeId) {
     clear(pointSummary)
     clear(historyBody)
@@ -1869,7 +2024,7 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
       h('div', { class: 'cog-point-inspector-badges' },
         h('span', { class: 'cog-point-inspector-badge' }, statusLabel),
         h('span', { class: 'cog-point-inspector-badge' }, `类型：${NODE_TYPE_META[nodeType].label}`),
-        confidence ? h('span', { class: 'cog-point-inspector-badge' }, `置信度 ${confidence}`) : null,
+        confidence ? h('span', { class: 'cog-point-inspector-badge' }, `权重 ${confidence}`) : null,
         null),
       node.originalTitle && node.originalTitle !== node.title
         ? h('p', { class: 'cog-point-inspector-note' }, `旧名：${node.originalTitle}`) : null,
@@ -1880,8 +2035,11 @@ function renderGraphTools(stage, theme, proj, opts, handlers = {}) {
         sourceDate ? h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '记录时间'), h('strong', {}, fmtAt(sourceDate))) : null,
         h('div', { class: 'cog-point-inspector-meta-row' }, h('span', {}, '节点历史'), h('strong', {}, `${history.length} 条相关事件`))),
       h('p', { class: 'cog-point-inspector-note' }, '状态与来源按已有记录展示；账本完整性只说明事件链一致，不代表内容或来源已经证实。'),
-      h('div', { class: 'cog-point-inspector-actions' },
-        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => opts.onOpen?.(node, detailOptions) }, '完整详情与操作')),
+      renderPointInspectorOps(theme, node, {
+        historical: currentView.selectedSeq != null,
+        onOpenDetail: () => opts.onOpen?.(node, detailOptions),
+        onChanged: opts.onChanged,
+      }),
       !node.archived && !node.invalidated && !node.external && currentView.selectedSeq == null
         ? renderNodeLifecycleControls(theme, node, opts) : null,
       firstEvent && typeof opts.onJumpToEvent === 'function'
@@ -2161,6 +2319,103 @@ function renderLegend() {
 }
 
 /* ------------------------------------------------------------------ */
+/* 建设者节点操作：归档 / 冷冻只针对外部数据（证据），原子不挂这两项。   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 建设者节点页头部操作。
+ * - 证据（外部数据）：归档 / 冷冻 / 详情（账本事件）
+ * - 原子：只留详情；归档与冷库不按原子维度操作
+ */
+function renderBuilderNodeOps(theme, node, { onChanged, onOpenDetail } = {}) {
+  if (!node || node.external) return null
+  const isEvidence = networkNodeType(node) === 'evidence'
+  const note = h('p', { class: 'builder-node-ops-note', hidden: true, role: 'status' })
+  const detailBtn = onOpenDetail
+    ? h('button', { type: 'button', class: 'btn', onclick: onOpenDetail }, '完整详情')
+    : null
+
+  if (!isEvidence) {
+    if (!detailBtn) return null
+    return h('div', { class: 'builder-node-ops', 'aria-label': '节点操作' },
+      h('div', { class: 'builder-node-ops-actions' }, detailBtn),
+      h('p', { class: 'builder-node-ops-note' }, '归档与冷库针对外部数据源；请在待判卡底部操作。'))
+  }
+
+  const archiveBox = h('div', { class: 'builder-node-archive', hidden: true })
+  const archiveReason = h('input', {
+    class: 'txt', type: 'text', maxlength: '500',
+    placeholder: '归档原因（必填）', 'aria-label': '归档原因',
+  })
+  const archiveConfirm = h('button', { type: 'button', class: 'btn btn-primary' }, node.archived ? '追加恢复' : '确认归档')
+  archiveBox.append(
+    h('p', { class: 'builder-node-ops-note' },
+      node.archived ? '恢复会追加新事件，旧归档记录保留。' : '归档这条外部数据：只追加事件，不删除历史；可在侧栏「归档」里找回。'),
+    archiveReason, archiveConfirm)
+
+  const showNote = (text, isError = false) => {
+    note.hidden = false
+    note.textContent = text
+    note.classList.toggle('is-error', isError)
+  }
+
+  const archiveBtn = h('button', {
+    type: 'button',
+    class: node.archived ? 'btn btn-primary' : 'btn',
+    disabled: !node.sourceRef,
+    title: node.sourceRef ? (node.archived ? '追加恢复事件' : '归档此外部数据') : '缺少来源引用，无法归档',
+    onclick: () => {
+      archiveBox.hidden = !archiveBox.hidden
+      if (!archiveBox.hidden) archiveReason.focus()
+    },
+  }, node.archived ? '恢复' : '归档')
+  archiveConfirm.onclick = async () => {
+    const reason = archiveReason.value.trim()
+    if (!node.archived && !reason) { showNote('请填写归档原因', true); archiveReason.focus(); return }
+    archiveConfirm.disabled = true
+    archiveBtn.disabled = true
+    try {
+      const result = node.archived
+        ? await m.chainRestoreNode(theme.id, node.sourceRef, reason || '从建设者恢复')
+        : await m.chainArchiveNode(theme.id, node.sourceRef, reason)
+      if (result?.ok === false) throw new Error(result.error || '操作未完成')
+      toast(node.archived ? '已追加恢复事件' : '已归档这条外部数据')
+      onChanged?.()
+    } catch (error) {
+      showNote(`${node.archived ? '恢复' : '归档'}失败：${error?.message || error}`, true)
+      archiveConfirm.disabled = false
+      archiveBtn.disabled = false
+    }
+  }
+
+  const freezeBtn = h('button', {
+    type: 'button', class: 'btn',
+    disabled: !node.sourceRef || node.archived || node.invalidated,
+    title: '冷冻：把这条外部弱信号标成冷库（只改 status，不碰权重）',
+  }, node.cold ? '解冻' : '冷冻')
+  if (!node.archived && !node.invalidated && node.sourceRef) {
+    freezeBtn.onclick = async () => {
+      freezeBtn.disabled = true
+      try {
+        const result = node.cold
+          ? await m.chainUnparkNode(theme.id, node.sourceRef, '从建设者解冻')
+          : await m.chainParkNode(theme.id, node.sourceRef, '')
+        if (result?.ok === false) throw new Error(result.error || '操作未完成')
+        toast(node.cold ? '已解冻，外部数据回到主题' : '已冷冻，可在侧栏冷库查看')
+        onChanged?.()
+      } catch (error) {
+        showNote(`操作失败：${error?.message || error}`, true)
+        freezeBtn.disabled = false
+      }
+    }
+  }
+
+  return h('div', { class: 'builder-node-ops', 'aria-label': '外部数据操作' },
+    h('div', { class: 'builder-node-ops-actions' }, archiveBtn, freezeBtn, detailBtn),
+    archiveBox, note)
+}
+
+/* ------------------------------------------------------------------ */
 /* 节点详情抽屉：读投影，不读旧可变链字段                               */
 /* ------------------------------------------------------------------ */
 
@@ -2249,13 +2504,26 @@ export async function openNodeDetail(theme, node, opts = {}) {
           ? await m.chainRestoreNode(theme.id, node.sourceRef, archiveReason.value.trim() || '从归档区恢复')
           : await m.chainArchiveNode(theme.id, node.sourceRef, archiveReason.value.trim())
         if (result?.ok === false) throw new Error(result.error || '操作未完成')
-        toast(node.archived ? '已追加恢复事件' : '已追加归档事件')
+        toast(node.archived ? '已追加恢复事件' : '已归档这条外部数据')
         close()
         opts.onChanged?.()
       } catch (error) { toast((node.archived ? '恢复' : '归档') + '失败：' + (error.message || error), 'var(--red)') }
       finally { button.disabled = false }
     },
-  }, node.archived ? '追加恢复事件' : '追加归档事件')
+  }, node.archived ? '恢复' : '归档')
+
+  const archiveSection = !historical && !node.external && type === 'evidence'
+    ? h('section', { class: 'chain-dsect chain-archive-actions' },
+      h('div', { class: 'chain-detail-h' }, node.archived ? '归档状态' : '外部数据操作'),
+      h('p', { class: 'chain-note' }, node.archived
+        ? '已归档：可追加恢复事件；原归档记录仍保留。'
+        : '归档 / 冷冻针对这条外部数据，不是主题原子。归档只追加事件；冷冻把弱信号暂存到冷库，不碰权重。'),
+      node.archived && node.archiveReason ? h('p', { class: 'chain-note' }, `归档原因：${node.archiveReason}`) : null,
+      node.archived ? null : archiveReason,
+      h('div', { class: 'chain-archive-actions-row' },
+        archiveButton,
+        !node.archived && !node.invalidated ? renderDrawerFreezeButton(theme, node, opts) : null))
+    : null
 
   mount(clear(body),
     h('div', { class: 'chain-drawer-kicker' },
@@ -2266,8 +2534,10 @@ export async function openNodeDetail(theme, node, opts = {}) {
     node.originalTitle && node.originalTitle !== node.title ? h('p', { class: 'chain-note' }, `旧名：${node.originalTitle}`) : null,
     node.nameHistory?.length ? h('p', { class: 'chain-note' }, `名称历史：${node.nameHistory.map((entry) => `${entry.previousTitle} → ${entry.title}`).join('；')}`) : null,
     node.currentText && node.currentText !== node.title ? h('p', { class: 'chain-dcore' }, node.currentText) : null,
-    node.confidence != null ? h('p', { class: 'chain-note' }, `置信度 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
+    node.confidence != null ? h('p', { class: 'chain-note' }, `权重 ${Math.round(node.confidence)}%（只读，来自事件记录）`) : null,
     node.external ? h('p', { class: 'chain-note' }, '外部引用节点：关系端点指向账本外的对象。') : null,
+    // 外部数据（证据）操作放标题正下方，不必滚到底。
+    archiveSection,
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '来源'),
       h('p', { class: `chain-note${readableSource.status === 'unresolved' ? ' is-unresolved' : ''}` },
@@ -2296,12 +2566,29 @@ export async function openNodeDetail(theme, node, opts = {}) {
     h('section', { class: 'chain-dsect' },
       h('div', { class: 'chain-detail-h' }, '证据引用 · 未自动核实来源真实性'),
       ...renderNodeEvidence(relatedEvents, opts)),
-    !historical && !node.external ? h('section', { class: 'chain-dsect chain-archive-actions' },
-      h('div', { class: 'chain-detail-h' }, node.archived ? '归档状态' : '节点操作'),
-      node.archived && node.archiveReason ? h('p', { class: 'chain-note' }, `归档原因：${node.archiveReason}`) : null,
-      node.archived ? null : archiveReason,
-      archiveButton) : null,
   )
+}
+
+/** 抽屉里的冷冻：证据走 node.parked / node.unparked，与冷库页同一口径。 */
+function renderDrawerFreezeButton(theme, node, opts) {
+  if (!node?.sourceRef) return null
+  const button = h('button', { type: 'button', class: 'btn' }, node.cold ? '解冻' : '冷冻')
+  button.onclick = async () => {
+    button.disabled = true
+    try {
+      const result = node.cold
+        ? await m.chainUnparkNode(theme.id, node.sourceRef, '从详情解冻')
+        : await m.chainParkNode(theme.id, node.sourceRef, '')
+      if (result?.ok === false) throw new Error(result.error || '操作未完成')
+      toast(node.cold ? '已解冻，外部数据回到主题' : '已冷冻，可在侧栏冷库查看')
+      closeNodeDetail()
+      opts.onChanged?.()
+    } catch (error) {
+      toast(`操作失败：${error?.message || error}`, 'var(--red)')
+      button.disabled = false
+    }
+  }
+  return button
 }
 
 function collectNodeHistory(node, events) {
@@ -2406,7 +2693,7 @@ function renderNodeLifecycleControls(theme, node, opts) {
     h('label', { class: 'cog-entry-field' }, h('span', {}, '强度（0–100）'), strengthInput),
     h('label', { class: 'cog-entry-field' }, h('span', {}, '理由（可选）'), strengthReason),
     h('p', { class: 'cog-entry-note' }, Number.isFinite(Number(node.confidence))
-      ? `当前强度 ${Math.round(Number(node.confidence))}%；设定会追加一条置信度更新事件，历史保留。`
+      ? `当前强度 ${Math.round(Number(node.confidence))}%；设定会追加一条权重更新事件，历史保留。`
       : '这条观点目前没有强度记录；设定后会以你给的值作为起点，之后证据落账会继续更新它。'),
     strengthError,
     h('button', { type: 'submit', class: 'btn' }, '追加强度事件'))

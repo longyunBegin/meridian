@@ -26,7 +26,7 @@ function emit(name, payload = null) {
 }
 configurePlatformServices({ dataDirectory: userData, emitEvent: emit })
 
-// 结算后立刻刷新 Dock 角标，不等 15 分钟的 scheduler tick。
+// 待确认 / 待判变化后立刻刷新 Dock 角标，不等 15 分钟的 scheduler tick。
 // store 在 registry 之后才 import，用可变引用延迟绑定。
 let refreshBadge = null
 
@@ -40,8 +40,8 @@ const registry = new CommandRegistry({
       return
     }
     if (OUTBOX_CHANNELS.has(name)) recordOutbox(name, args, userData)
-    // 结算命令成功后立刻刷新角标
-    if (name === 'db:settle') refreshBadge?.()
+    // 待确认 / 待判变化后立刻刷新角标，不等 15 分钟 tick
+    if (ATTENTION_BADGE_COMMANDS.has(name)) refreshBadge?.()
   },
 })
 const { load } = await import('../main/store.js')
@@ -50,13 +50,21 @@ const { startAgentServer } = await import('../main/agent-server.js')
 const { ingestReadings } = await import('../main/reading-ingest.js')
 const { startSyncServer } = await import('../main/sync-server.js')
 const { startScheduler } = await import('../main/scheduler.js')
+const { attentionCount, attentionSnapshot } = await import('../main/attention.js')
 const store = await import('../main/store.js')
 
-// 绑定角标刷新函数：结算后立刻 emit，tauri-bootstrap.js 会调 set_dock_badge
+/** 会改变「待确认 + 待判」角标的命令。 */
+const ATTENTION_BADGE_COMMANDS = new Set([
+  'inbox:capture', 'inbox:resolve', 'inbox:resolveMany', 'inbox:dispatch',
+  'inbox:clear', 'inbox:clearUnextracted', 'inbox:deleteIds', 'inbox:extract',
+  'theme:feed', 'chain:judgeEvidence', 'chain:reviewEngineRecommendation',
+  'chain:shelfJudgeItem', 'chain:addUnmappedEvidence', 'chain:addEvidence',
+])
+
+// 角标 = 待确认 + 待判（与今日摘要同一口径）
 refreshBadge = () => {
   try {
-    const count = store.dueSettlements().length
-    emit('system:badge', { count })
+    emit('system:badge', { count: attentionCount() })
   } catch {}
 }
 
@@ -95,9 +103,11 @@ try {
 }
 
 const stopScheduler = startScheduler({
-  due: () => store.dueSettlements(),
+  attention: () => attentionSnapshot(),
   notify: (notice) => emit('system:notification', notice),
-  badge: (count) => emit('system:badge', { count }), onClick: () => emit('due:notify'),
+  badge: (count) => emit('system:badge', { count }),
+  // 点击通知 → 今日待确认；保留 due:notify 事件名以免旧 renderer 脱节
+  onClick: () => emit('due:notify'),
 })
 
 async function readBody(request) {

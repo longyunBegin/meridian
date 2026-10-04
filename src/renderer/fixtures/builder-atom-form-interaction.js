@@ -2,8 +2,8 @@
  * 去领域化 · L2 词表 fixture。
  *
  * 守住两条最容易悄悄退化的验收：
- *  1. 手动新增原子时，「类型」下拉不是写死的领域词，而是 theme.config.atomCategories
- *     （空词表只给「未分类」并指向主题设置）。
+ *  1. 手动新增原子时，「种类」是概念 / 对象 / 事件 / 观点；「分类」才读 theme.config.atomCategories
+ *     （空词表只给「不分类」并提示可去主题设置添加）。
  *  2. 主题设置里的「分类管理」增删都按契约发出 theme:update（带完整词表，而非只发增量）。
  *
  * 注意：relationLabels 目前只做存档（渲染层选择器仍用固定措辞，因为没有统一词表源时
@@ -84,35 +84,48 @@ try {
     return mount
   }
 
-  /** 打开「＋ 手动新增一个原子」，读表单里的控件。 */
+  /** 打开「新建原子」，读表单里的控件。 */
   const openAtomForm = async (theme) => {
     const mount = await mountBuilder(theme)
     mount.querySelector('.builder-queue-add').click()
     await waitFor(() => mount.querySelector('.atom-form-card'), `新增原子表单（${theme.name}）`)
     const card = mount.querySelector('.atom-form-card')
+    const kindRow = [...(card?.querySelectorAll('.atom-form-labelrow') || [])]
+      .find((row) => row.textContent.includes('种类'))
+    const categoryRow = [...(card?.querySelectorAll('.atom-form-labelrow') || [])]
+      .find((row) => row.textContent.includes('分类'))
+    const kindField = kindRow?.closest('.atom-form-field')
+    const categoryField = categoryRow?.closest('.atom-form-field')
     return {
-      pills: [...(card?.querySelectorAll('.atom-form-pill') || [])].map((el) => el.textContent.trim()),
-      selected: card?.querySelector('.atom-form-pill.is-selected')?.textContent.trim() || null,
-      typeHint: [...(card?.querySelectorAll('.atom-form-labelrow') || [])]
-        .find((row) => row.textContent.includes('类型'))?.textContent.replace(/\s+/g, ' ').trim() || null,
+      kindPills: [...(kindField?.querySelectorAll('.atom-form-pill') || [])].map((el) => el.textContent.trim()),
+      kindSelected: kindField?.querySelector('.atom-form-pill.is-selected')?.textContent.trim() || null,
+      categoryPills: [...(categoryField?.querySelectorAll('.atom-form-pill') || [])].map((el) => el.textContent.trim()),
+      categorySelected: categoryField?.querySelector('.atom-form-pill.is-selected')?.textContent.trim() || null,
+      categoryHint: categoryRow?.textContent.replace(/\s+/g, ' ').trim() || null,
+      footNote: card?.querySelector('.atom-form-note')?.textContent.trim() || null,
       relOptions: [...(card?.querySelectorAll('.atom-form-rel option') || [])].map((el) => el.textContent.trim()),
       colors: card?.querySelectorAll('.atom-form-dot').length || 0,
     }
   }
 
   const populated = await openAtomForm(vocabTheme)
-  check('有词表时分类下拉来自 theme.config.atomCategories',
-    JSON.stringify(populated.pills) === JSON.stringify(['技术路线', '关键问题']), JSON.stringify(populated.pills))
-  check('默认选中第一个分类', populated.selected === '技术路线', String(populated.selected))
-  check('有词表时不再提示去主题设置添加分类', populated.typeHint === '类型', String(populated.typeHint))
+  check('种类固定为概念 / 对象 / 事件 / 观点',
+    JSON.stringify(populated.kindPills) === JSON.stringify(['概念', '对象', '事件', '观点']), JSON.stringify(populated.kindPills))
+  check('默认选中观点', populated.kindSelected === '观点', String(populated.kindSelected))
+  check('有词表时分类来自 theme.config.atomCategories',
+    JSON.stringify(populated.categoryPills) === JSON.stringify(['不分类', '技术路线', '关键问题']), JSON.stringify(populated.categoryPills))
+  check('默认不分类', populated.categorySelected === '不分类', String(populated.categorySelected))
+  check('页脚不再提图谱', populated.footNote.includes('主题原子') && !populated.footNote.includes('图谱'), populated.footNote)
   check('关系下拉目前用固定措辞（relationLabels 只存档，未接入选择器）',
     JSON.stringify(populated.relOptions) === JSON.stringify(['支持', '反驳', '推导', '相关']), JSON.stringify(populated.relOptions))
 
   const empty = await openAtomForm(plainTheme)
-  check('空词表只给「未分类」并指向主题设置',
-    JSON.stringify(empty.pills) === JSON.stringify(['未分类'])
-    && String(empty.typeHint || '').includes('可在主题设置中添加分类'),
-    JSON.stringify({ pills: empty.pills, hint: empty.typeHint }))
+  check('空词表分类只给「不分类」并指向主题设置',
+    JSON.stringify(empty.categoryPills) === JSON.stringify(['不分类'])
+    && String(empty.categoryHint || '').includes('可在主题设置中添加分类'),
+    JSON.stringify({ pills: empty.categoryPills, hint: empty.categoryHint }))
+  check('空词表时种类仍是四类',
+    JSON.stringify(empty.kindPills) === JSON.stringify(['概念', '对象', '事件', '观点']), JSON.stringify(empty.kindPills))
   check('空词表时关系下拉同样是固定措辞',
     JSON.stringify(empty.relOptions) === JSON.stringify(['支持', '反驳', '推导', '相关']), JSON.stringify(empty.relOptions))
   check('颜色选择器两种词表下都在（7 色）', populated.colors === 7 && empty.colors === 7,

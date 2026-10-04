@@ -1,6 +1,6 @@
 import { h, icon, clear, toast } from '../lib/dom.js'
-import { state, refresh, settleAndViewTheme } from '../app.js'
-import { confColor, nodePath, inferInboxThemeIds } from './shared.js'
+import { state, refresh, setView } from '../app.js'
+import { inferInboxThemeIds } from './shared.js'
 import { trustMark, periodLabel } from './readings.js'
 import { openThemeBuilder } from './theme.js'
 import { checkSourceUrl, sourceHostOf, sourceUrlOf } from '../../shared/evidence-source.js'
@@ -85,8 +85,8 @@ export async function renderToday(mid) {
   // 序列化过 IPC，而 refresh() 挂在 db:changed 上——改任何东西都会重跑。
   // 窗口随「加载更多」扩大，重渲染不会缩回第一页。
   const pageSize = Math.max(inboxLimit, inboxItems.length)
-  const [due, calib, inboxPage, conflicts, ignored, judgeCounts] = await Promise.all([
-    m.due(), m.calibration(), m.inboxList({ limit: pageSize, offset: 0 }), m.conflicts(), m.inboxIgnored(),
+  const [inboxPage, conflicts, ignored, judgeCounts] = await Promise.all([
+    m.inboxList({ limit: pageSize, offset: 0 }), m.conflicts(), m.inboxIgnored(),
     // 待判数只是去建设者的入口，拿不到不该拖垮今日页
     Promise.resolve().then(() => m.themeJudgeCounts()).catch(() => null),
   ])
@@ -101,9 +101,11 @@ export async function renderToday(mid) {
   const allNodes = await m.allNodes()
   if (seq !== renderSeq || state.view !== 'today') return
   cachedAllNodes = allNodes
-  const themeNodes = allNodes.filter((node) => node.themeId === state.themeId)
 
-  mid.append(h('div', { class: 'page today-page' },
+  // 读数冲突只给摘要入口；命题冲突进建设者。今日不再铺 A/B 裁决整块。
+  const readingConflictCount = (conflicts || []).filter((c) => c && c.type === 'reading' && !c.resolved).length
+
+  const page = h('div', { class: 'page today-page' },
     h('div', { class: 'page-head' },
       h('h1', {}, '今日'),
       h('p', {}, '现在该做什么——不是你拥有什么。'),
@@ -130,13 +132,10 @@ export async function renderToday(mid) {
     ) : null,
 
     /* 页面级状态：一行、次要色、等宽数字。同一批数字全页只出现一次——
-       以前"待确认 4"在这里、在区块头、在统计卡、在页签里各出现一遍，读者要先做减法。 */
+       口径与 Dock 角标 / 系统通知一致：待确认 + 各主题待判（不再含到期结算 / 校准）。 */
     h('p', { class: 'today-summary' },
       h('button', { type: 'button', class: 'today-summary-link', onclick: () => scrollTo(mid, 'inbox-section') },
         '待确认 ', h('b', {}, String(inboxTotal))),
-      h('span', { class: 'today-summary-sep' }, '·'),
-      h('button', { type: 'button', class: 'today-summary-link', onclick: () => scrollTo(mid, 'due-section') },
-        '今日结算 ', h('b', {}, String(due.length))),
       /* 今日只分拣；交出去的数据在各主题建设者里判。这里给每个还有待判的主题一个入口。 */
       ...judgeEntries(judgeCounts).flatMap(({ themeId, total }) => [
         h('span', { class: 'today-summary-sep' }, '·'),
@@ -144,94 +143,32 @@ export async function renderToday(mid) {
           type: 'button', class: 'today-summary-link today-summary-judge', title: `去「${themeName(themeId)}」的建设者判`,
           onclick: () => openThemeBuilder(themeId),
         }, `${themeName(themeId)} 待判 `, h('b', {}, String(total))),
-      ])),
+      ]),
+      /* 读数冲突：轻量入口，裁决在读数详情里做。 */
+      ...(readingConflictCount > 0 ? [
+        h('span', { class: 'today-summary-sep' }, '·'),
+        h('button', {
+          type: 'button',
+          class: 'today-summary-link today-summary-conflict',
+          title: '去读数比较双方后裁决',
+          onclick: () => {
+            state.focusReadingConflicts = true
+            setView('readings')
+          },
+        }, '读数冲突 ', h('b', {}, String(readingConflictCount))),
+      ] : [])),
 
     renderInboxWorkspace(mid, seq, allNodes),
     renderIgnoredProposals(ignored, allNodes),
-
-    // ---- 到期未结算：没有到期项时只留一行提示，不再用空态撑起一整张卡
-    due.length ? h('section', { class: 'card', id: 'due-section' },
-      h('div', { class: 'card-h' },
-        h('h2', {}, '到期未结算'),
-        h('span', { class: 'spacer' }),
-        h('em', {}, String(due.length)),
-      ),
-      h('div', { class: 'sect-b' },
-        due.length ? due.map((q) => h('div', { class: 'q' },
-          h('span', { class: 'dot', style: { background: confColor(q.confidence), marginTop: '6px' } }),
-          h('div', { class: 'q-body' },
-            h('div', { class: 'q-text' }, q.title),
-            h('div', { class: 'q-meta' },
-              h('span', {}, `当时 ${Math.round(q.confidence)}`),
-              h('span', {}, `· 到期 ${q.settlement.date}`),
-              h('span', {}, `· ${nodePath(themeNodes, q.id) || '未归档'}`),
-            ),
-          ),
-          h('div', { class: 'q-acts' },
-            h('button', { class: 'btn btn-hit', onclick: async () => { await settleAndViewTheme(q.id, true); await renderToday(mid) } }, '对了'),
-            h('button', { class: 'btn btn-miss', onclick: async () => { await settleAndViewTheme(q.id, false); await renderToday(mid) } }, '错了'),
-            h('button', {
-              class: 'btn', title: '推迟两周',
-              onclick: async () => {
-                const d = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10)
-                await m.updateNode(q.id, { settlement: { date: d, resolved: null, correct: null } })
-                await renderToday(mid)
-              },
-            }, '再等等'),
-          ),
-        )) : null,
-      ),
-    ) : h('p', { class: 'today-empty-line' },
-      h('b', {}, '到期未结算'), ' · 没有到期的问题。给命题设一个结算日，它就会回来找你。'),
-
-    // ---- 冲突（静默标记，不强制裁决）
-    conflicts.length ? h('section', { class: 'card' },
-      h('div', { class: 'card-h' },
-        h('h2', {}, '冲突'),
-        h('span', { class: 'spacer' }),
-        h('em', {}, String(conflicts.length)),
-      ),
-      h('div', { class: 'sect-b' },
-        ...conflicts.slice(0, 5).map((c) => {
-          const a = themeNodes.find((n) => n.id === c.a)
-          const b = themeNodes.find((n) => n.id === c.b)
-          return h('div', { class: 'q' },
-            h('span', { class: 'cf', style: { marginTop: '6px' } }, '冲突'),
-            h('div', { class: 'q-body' },
-              h('div', { class: 'q-text', style: { fontSize: 'var(--t-body)' } },
-                a?.title || c.a, ' ↔ ', b?.title || c.b),
-              h('div', { class: 'q-meta' },
-                h('span', { style: { color: 'var(--text-3)' } }, c.note || '方向相反'),
-              ),
-            ),
-          )
-        }),
-        conflicts.length > 5 ? h('div', { style: { fontSize: 'var(--t-caption)', color: 'var(--text-3)', padding: '4px 0' } }, `+${conflicts.length - 5} 条`) : null,
-      ),
-    ) : null,
-
-    // ---- 校准曲线详情
-    h('section', { class: 'card' },
-      h('div', { class: 'card-h' },
-        h('h2', {}, '命题校准曲线'),
-        // sparkline 归属到这一组——孤立在最右缘时它是个没有归属的装饰
-        calib.length ? h('span', { class: 'calib-sig', title: '各信心档位的命中率' },
-          ...calib.map((b) => h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } })),
-        ) : null,
-        h('em', {}, calib.length ? `${calib.reduce((s, b) => s + b.total, 0)} 条已结算` : '尚无数据')),
-      h('div', { class: 'sect-b' },
-        calib.length
-          ? h('div', { class: 'calib' }, ...calib.map((b) => h('div', {},
-              h('em', {}, `${Math.round(b.accuracy * 100)}%`),
-              h('i', { style: { height: `${b.accuracy * 100}%`, background: b.accuracy < 0.6 ? 'var(--orange)' : 'var(--accent)' } }),
-              h('span', {}, `${b.bucket}–${b.bucket + 9}`),
-            )))
-          : h('div', { class: 'q' }, h('div', { class: 'q-body' },
-              h('div', { class: 'q-text', style: { color: 'var(--text-3)' } }, '结算几条判断之后，这里会出现你的命中率曲线——这才是复利本身。'),
-            )),
-      ),
-    ),
-  ))
+  )
+  mid.append(page)
+  const focusId = state.focusSection
+  if (focusId) {
+    state.focusSection = null
+    requestAnimationFrame(() => {
+      page.querySelector(`#${CSS.escape(focusId)}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    })
+  }
 }
 
 /** 有待判的存活主题，按主题列表顺序；counts 缺失 / 格式不对时为空。 */
@@ -283,11 +220,11 @@ function dispatchResultToast({ done, proposals, engineErrors, themes, failures }
 
 function renderIgnoredProposals(items, nodes) {
   if (!items.length) return null
-  return h('details', { class: 'card ignored-proposals' },
+  return h('details', { class: 'sect ignored-proposals' },
     h('summary', {}, `已忽略的归位提议 · ${items.length} 条`),
     ...items.map((item) => {
       const promoted = nodes.find((node) => node.id === item.promotedTo)
-      return h('details', { class: 'sect', dataset: { id: item.id }, style: { marginTop: '12px' } },
+      return h('details', { class: 'ignored-proposal-item', dataset: { id: item.id } },
         h('summary', {}, item.title || '归位提议'),
         h('div', { class: 'q-meta' }, `建议主题：${item.matchedTheme?.name || '未指定'} · 忽略于 ${item.ignoredAt}`),
         h('div', { class: 'q-meta' }, `匹配标签：${(item.matchedTags || []).map((tag) => tag.name).join('、') || '无'}`),
@@ -355,8 +292,8 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     return true
   })
 
-  const section = h('section', { class: 'card inbox-workspace inbox2', id: 'inbox-section' },
-    h('div', { class: 'card-h inbox-workspace-head' },
+  const section = h('section', { class: 'sect inbox-workspace inbox2', id: 'inbox-section' },
+    h('div', { class: 'sect-h inbox-workspace-head' },
       h('h2', {}, '待确认'),
       h('span', { class: 'spacer' }), statsRow,
     ),
@@ -373,7 +310,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     return section
   }
 
-  const list = h('div', { class: 'inbox-list enter-stagger', role: 'group', 'aria-label': '待确认信息列表' })
+  const list = h('div', { class: 'inbox-list u-stagger', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
   /* 批量语义提示：哪些选中项已经绑过主题——用户问的就是"都绑定了为什么还要我选主题" */
@@ -490,8 +427,12 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     for (const row of list.querySelectorAll('.inbox-item')) {
       const item = items.find((entry) => entry.id === row.dataset.id)
       if (!item) continue
-      row.dataset.on = String(picked.has(item.id))
-      row.querySelector('.inbox-ck').checked = picked.has(item.id)
+      const checked = picked.has(item.id)
+      row.dataset.on = String(checked)
+      row.classList.toggle('is-selected', checked || row.dataset.sel === 'true')
+      row.classList.toggle('is-checked', checked)
+      // 正在查看的 is-on 由 select() 管理；这里只管勾选态
+      row.querySelector('.inbox-ck').checked = checked
       row.querySelector('.inbox-ck').disabled = !isSelectable(item)
     }
   }
@@ -500,7 +441,10 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     selectedInboxId = id
     for (const row of list.querySelectorAll('.inbox-item')) {
       const selected = row.dataset.id === id
+      const checked = row.classList.contains('is-checked')
       row.dataset.sel = String(selected)
+      row.classList.toggle('is-selected', selected || checked)
+      row.classList.toggle('is-on', selected)
       row.querySelector('.inbox-body').setAttribute('aria-pressed', String(selected))
     }
     renderInboxDetail(detail, items.find((item) => item.id === id), allNodes, resolve, updateBatch, () => select(id))
@@ -670,12 +614,11 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     },
   }, `抽取这 ${unmatchedItems.length} 条`)
 
-  let staggerIdx = 0
   const appendItems = (group, opts = {}) => {
     if (!group.length) return
     if (opts.head) list.append(opts.head)
     for (const item of group) {
-      const el = renderInboxItem(item, () => select(item.id), (checked) => {
+      list.append(renderInboxItem(item, () => select(item.id), (checked) => {
         checked ? picked.add(item.id) : picked.delete(item.id)
         updateBatch()
       }, (direction) => {
@@ -684,9 +627,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         const row = [...list.querySelectorAll('.inbox-item')].find((el) => el.dataset.id === next.id)
         row.querySelector('.inbox-body').focus({ preventScroll: true })
         row.scrollIntoView({ block: 'nearest' })
-      }, isSelectable(item))
-      el.style.setProperty('--i', staggerIdx++)
-      list.append(el)
+      }, isSelectable(item)))
     }
   }
 
@@ -746,8 +687,7 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const relTime = relativeTime(item.createdAt)
   const extracted = item.extracted !== false
   const missingLink = item.kind !== 'reading' && !itemSourceUrl(item)
-  return h('div', { class: 'inbox-item inbox2-item lift-hover enter-item sel-group', dataset: { id: item.id } },
-    h('span', { class: 'sel-bar', 'aria-hidden': 'true' }),
+  return h('div', { class: 'inbox-item inbox2-item', dataset: { id: item.id } },
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,

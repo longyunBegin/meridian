@@ -22,6 +22,56 @@ const flagsLabel = (flags = []) => [...new Set(flags.map((flag) => ({
   'legacy-invalid-value': '旧记录缺少有效数值', 'review-required': '来源有待复核',
 }[flag] || '需复核')))].join(' · ')
 export const isConflicted = (r) => r?.status === 'conflicted' || (r?.trust?.flags || []).some(f => ['sum-violation', 'conflict', 'unit-mismatch'].includes(f))
+
+/** 读数冲突与观测的对应：同 observationId，或双方读数 id 落在本观测上。 */
+function conflictMatchesObservation(c, r) {
+  if (!c || c.type !== 'reading' || c.resolved) return false
+  if (r.observationId && c.observationId === r.observationId) return true
+  const ids = new Set([r.id, r.currentReadingId, ...(Array.isArray(r.ids) ? r.ids : [])].filter(Boolean))
+  return ids.has(c.readingA) || ids.has(c.readingB) || ids.has(c.a) || ids.has(c.b)
+}
+
+/**
+ * 读数冲突裁决卡：A / B / 两者都对。挂在读数详情里，不再占今日整块。
+ * onResolved 在成功写入后调用（通常关对话框并 refresh）。
+ */
+function renderReadingConflictCard(c, onResolved) {
+  const card = h('div', { class: 'conflict', dataset: { id: c.id, type: 'reading' } })
+  const loadPair = async () => {
+    clear(card).append(h('p', { class: 'reading-note', role: 'status' }, '正在读取双方记录…'))
+    try {
+      const [a, b] = await Promise.all([m.getReading(c.readingA || c.a), m.getReading(c.readingB || c.b)])
+      if (!a || !b) throw new Error('missing-record')
+      const actions = h('div', { class: 'acts' })
+      for (const [choice, label, primary] of [['a', 'A 成立', true], ['b', 'B 成立', true], ['both', '两者都对（我搞错了）', false]]) {
+        actions.append(h('button', { class: primary ? 'btn btn-primary' : 'btn', onclick: async () => {
+          actions.querySelectorAll('button').forEach((button) => { button.disabled = true })
+          try {
+            const result = await m.resolveConflict(c.id, choice)
+            if (result?.ok === false) throw new Error('resolve-failed')
+            await onResolved()
+          } catch { toast('裁决未保存，请重试', 'var(--red)') }
+          finally { actions.querySelectorAll('button').forEach((button) => { button.disabled = false }) }
+        } }, label))
+      }
+      const sideDiv = (row, label) => h('div', { class: 'side' },
+        h('b', {}, label),
+        h('span', {}, `${fmtValue(row.value)} ${row.unit || ''}`.trim()),
+        row.source?.label ? h('span', {}, row.source.label) : null)
+      clear(card).append(
+        h('div', { class: 'note' }, `${c.note || '同期间读数不一致'} · 发现于 ${c.at || '未记录'}`),
+        h('div', { class: 'pair' }, sideDiv(a, 'A'), h('span', { class: 'vs' }, 'vs'), sideDiv(b, 'B')),
+        actions)
+    } catch {
+      clear(card).append(
+        h('p', { class: 'reading-note', role: 'status' }, '双方记录暂时无法读取。'),
+        h('button', { class: 'btn', onclick: loadPair }, '重试'))
+    }
+  }
+  loadPair()
+  return card
+}
+
 export function trustMark(r) {
   const count = r.trust?.crossCount || 1
   const warning = isConflicted(r) || (r.trust?.flags || []).length > 0
@@ -75,8 +125,8 @@ function pager(fetchPage, renderItems, limit = 50) {
       clear(content)
       renderItems(content, result.items)
       status.textContent = `第 ${previous.length + 1} 页${result.total != null ? ` · 共 ${result.total} 条` : ''}`
-      // 空状态不画分页器：没有数据时"上一页/第1页·共0条/下一页"只是噪音。
-      pagination.hidden = result.total === 0
+      // 空页、或其实只有一页时不画分页器——否则禁用的上一页/下一页只是占位噪音。
+      pagination.hidden = result.total === 0 || (!previous.length && !nextCursor)
     } catch {
       status.textContent = '读取失败，可重试'
       if (!content.childNodes.length) failure(content, () => load())
@@ -232,7 +282,38 @@ export function openObservation(r, { proof = false } = {}) {
   dialog = h('dialog', { class: 'reading-dialog', 'aria-labelledby': 'reading-detail-title', onclose: releaseDialog },
     h('header', { class: 'reading-dialog-head' }, h('h2', { id: 'reading-detail-title' }, r.title || '读数详情'), h('button', { class: 'btn', onclick: closeDialog, 'aria-label': '关闭读数详情' }, '关闭')), body)
   body.append(note(periodLabel(r)))
-  if (isConflicted(r)) body.append(note('有不同数值，尚无唯一当前值。请到「待裁决冲突」比较后裁决。'))
+  const conflictBox = h('div', { class: 'reading-conflict-box' })
+  if (isConflicted(r)) {
+    body.append(note('有不同数值，尚无唯一当前值。比较双方后在下方裁决。'))
+    if (Array.isArray(r.values) && r.values.length > 1) {
+      body.append(note(`竞争值：${r.values.map((v) => fmtValue(v)).join(' · ')}`))
+    }
+    body.append(conflictBox)
+    clear(conflictBox).append(note('正在查找待裁决冲突…'))
+    Promise.resolve()
+      .then(() => m.conflicts())
+      .then((list) => {
+        if (!conflictBox.isConnected) return
+        const matched = (Array.isArray(list) ? list : []).filter((c) => conflictMatchesObservation(c, r))
+        clear(conflictBox)
+        if (!matched.length) {
+          conflictBox.append(note('未找到可裁决的冲突记录。可先验证序列或稍后重试。'))
+          return
+        }
+        const afterResolve = async () => {
+          closeDialog()
+          toast('已裁决')
+          await refresh()
+        }
+        for (const c of matched) conflictBox.append(renderReadingConflictCard(c, afterResolve))
+      })
+      .catch(() => {
+        if (!conflictBox.isConnected) return
+        clear(conflictBox).append(
+          note('冲突记录暂时读不到。'),
+          h('button', { class: 'btn', onclick: () => openObservation(r, { proof }) }, '重试'))
+      })
+  }
   if (r.pending || !r.indicatorId) body.append(assignment(r, closeDialog, proof))
   if (proof) body.append(h('h3', {}, '本条作证'), readingProof(r))
   const related = h('div')
@@ -367,13 +448,28 @@ function dayFeed(items) {
 }
 
 export function renderReadings(mid) {
-  const list = h('div', { id: 'readings-list' })
+  const focusConflicts = !!state.focusReadingConflicts
+  if (focusConflicts) state.focusReadingConflicts = false
+  const list = h('div', { id: 'readings-list', class: 'u-stagger' })
   const page = h('div', { class: 'page readings-page' }, h('div', { class: 'page-head' }, h('h1', {}, '读数'),
-    h('p', {}, '最近入账的数据。不同来源合为一次观测，有分歧时等你裁决。')), list)
+    h('p', {}, '最近入账的数据。不同来源合为一次观测，有分歧时点开比较后裁决。')),
+    focusConflicts
+      ? h('p', { class: 'reading-conflict-banner', role: 'status' },
+        '标成「待裁决」的是有数值分歧的读数——点开比较双方后裁决。')
+      : null,
+    list)
   clear(mid).append(page)
   list.append(pager(p => m.readingsPage(p), (box, items) => {
     if (!items.length) box.append(note('还没有读数。你可以让助手按主题抓数据推进来，也可以在检视面板给指标记一条。每条都会经过可信度检验后再入账。'))
-    else box.append(dayFeed(items))
+    else {
+      box.append(dayFeed(items))
+      if (focusConflicts) {
+        queueMicrotask(() => {
+          const first = box.querySelector('.feed-row[data-status="conflicted"]')
+          first?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        })
+      }
+    }
   }))
 }
 
@@ -516,6 +612,7 @@ export function renderSources(mid) {
   } }, '导出主题与待裁定判断')
   connection.append(info, exportButton)
   page.append(connection, pager(p => m.sourcesPage(p), (box, items) => {
+    box.classList.add('u-stagger')
     if (!items.length) { box.append(note('尚未收到来源。第一条读数入账后，这里会显示谁提供了它以及可信依据。')); return }
     for (const source of items) {
       const score = typeof source.trust === 'number' ? source.trust : source.trust?.score
@@ -526,13 +623,37 @@ export function renderSources(mid) {
       detail.addEventListener('toggle', () => {
         if (!detail.open || loaded) return
         loaded = true
+        const flagText = flagsLabel(source.flags || source.trust?.flags || [])
         const proofList = pager(p => m.readingEvidence({ sourceId: source.id, ...p }), (content, rows) => {
-          if (!rows.length) content.append(note('暂无可查看的作证记录。'))
-          else rows.forEach(r => content.append(h('button', { class: 'btn source-proof-link', onclick: () => openObservation(r, { proof: true }) }, `${periodLabel(r)} · ${fmtValue(r.value)} ${r.unit || ''} · 查看作证`)))
+          content.classList.add('source-proof-list')
+          if (!rows.length) {
+            content.append(note('暂无可查看的作证记录。'))
+            return
+          }
+          for (const r of rows) {
+            const valueText = `${fmtValue(r.value)}${r.unit ? ` ${r.unit}` : ''}`
+            content.append(h('button', {
+              type: 'button', class: 'source-proof-row',
+              title: `${periodLabel(r)} · ${valueText}`,
+              onclick: () => openObservation(r, { proof: true }),
+            },
+              h('span', { class: 'source-proof-period' }, periodLabel(r)),
+              h('span', { class: 'source-proof-value reading-number' }, valueText),
+              h('span', { class: 'source-proof-go' }, '查看作证')))
+          }
         }, 10)
         const extra = h('div', { class: 'source-record-detail' },
-          note(`首次见到 ${source.firstSeenAt || '未记录'} · 最近见到 ${source.lastSeenAt || '未记录'}`),
-          note(flagsLabel(source.flags || source.trust?.flags || []) || '尚无异常记录'), safeSourceLink(source.url), proofList)
+          h('div', { class: 'source-meta' },
+            h('p', { class: 'source-meta-line' },
+              h('span', {}, `首次 ${fmtTime(source.firstSeenAt)}`),
+              h('span', { class: 'source-meta-sep', 'aria-hidden': 'true' }, '·'),
+              h('span', {}, `最近 ${fmtTime(source.lastSeenAt)}`)),
+            h('p', { class: `source-meta-line${flagText ? ' is-warn' : ''}` },
+              flagText || '尚无异常记录'),
+            safeSourceLink(source.url)),
+          h('div', { class: 'source-proof-block' },
+            h('h3', { class: 'source-proof-title' }, '由此来源入账的读数'),
+            proofList))
         detail.append(extra)
       })
       box.append(detail)

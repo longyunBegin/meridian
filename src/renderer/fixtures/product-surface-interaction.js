@@ -17,7 +17,6 @@ const nodes = [
 ]
 const fixture = {
   items: [],
-  due: [],
   conflicts: [],
   calls: [],
   sourcePages: 0,
@@ -49,8 +48,6 @@ window.meridian = {
   async nodes(themeId) { return nodes.filter((node) => node.themeId === themeId) },
   async allNodes() { return nodes },
   async latestReadings() { return { items: [reading] } },
-  async due() { return fixture.due },
-  async calibration() { return [{ bucket: 70, total: 2, accuracy: 0.75 }] },
   async conflicts() { return fixture.conflicts },
   async inboxIgnored() { return [] },
   async inboxLastAutoImport() { return null },
@@ -159,14 +156,18 @@ window.meridian = {
   async verdicts() { return [] },
   async falseKillByChannel() { return [] },
   async vsInstitution() { return [] },
-  async llmUsage() { return [] },
-  async chainArchives() { return { integrity: { ok: true, count: 0, lastValidSeq: 0 }, nodes: [], edges: [] } },
+  async llmUsage() { return { daily: [], recent: [] } },
+  async chainArchives() { return { themeId: themes[0].id, nodes: [], edges: [] } },
+  async chainParked() { return { themeId: themes[0].id, nodes: [], edges: [] } },
   async chainEvents() { return { events: [], integrity: { ok: true, count: 0, lastValidSeq: 0 } } },
   async chainProjection() { return { nodes: [], allNodes: [], edges: [], allEdges: [], eventCount: 0, integrity: { ok: true, count: 0, lastValidSeq: 0 } } },
   async getReading() { return null },
   async resolveConflict() { return { ok: true } },
   async restoreNode() { return { ok: true } },
   async chainRestoreNode() { return { ok: true } },
+  async chainParkNode() { return { ok: true } },
+  async chainUnparkNode() { return { ok: true } },
+  async chainShelfJudgeItem() { return { ok: true } },
 }
 
 const { state, setView } = await import('../app.js')
@@ -203,8 +204,10 @@ setView('today')
 await waitFor(() => document.querySelector('.inbox-empty-state'), '今日空收件箱')
 check('今日空状态可辨认，待确认数清零', document.querySelector('.inbox-empty-state')?.textContent.includes('待确认已清空')
   && document.querySelector('.today-summary')?.textContent.includes('0'))
-check('今日结算、校准曲线和空态说明同时可见', document.querySelector('.today-page')?.textContent.includes('到期未结算')
-  && document.querySelector('.today-page')?.textContent.includes('命题校准曲线'))
+check('今日不再展示到期未结算与命题校准曲线', !document.querySelector('.today-page')?.textContent.includes('到期未结算')
+  && !document.querySelector('.today-page')?.textContent.includes('命题校准曲线')
+  && !document.querySelector('#due-section')
+  && document.querySelector('#inbox-section'))
 {
   const judgeLinks = [...document.querySelectorAll('.today-summary .today-summary-judge')]
   check('今日摘要只给还有待判的主题一个去建设者的入口', judgeLinks.length === 1
@@ -240,16 +243,22 @@ check('读数详情可查看本地原文并验证序列完整性', document.quer
 document.querySelector('.reading-dialog [aria-label="关闭读数详情"]')?.click()
 await waitFor(() => !document.querySelector('.reading-dialog'), '读数详情关闭')
 
-await clickNav('审计')
+await clickNav('收纳与审计')
 const auditButtons = [...document.querySelectorAll('#vaults .audit-sub')]
-check('审计主入口展开全部五个数据保护子页面', auditButtons.length === 5
-  && ['冷库', '墓碑区', '误杀审计', '复盘', '待裁决冲突'].every((label) => auditButtons.some((el) => el.textContent.includes(label))))
-for (const label of ['冷库', '墓碑区', '误杀审计', '复盘', '待裁决冲突']) {
+check('收纳与审计展开冷库 / 归档 / 系统健康', auditButtons.length === 3
+  && ['冷库', '归档', '系统健康'].every((label) => auditButtons.some((el) => el.textContent.includes(label))))
+for (const label of ['冷库', '归档', '系统健康']) {
   await clickNav(label)
   await waitFor(() => document.querySelector('#mid .page, #mid .audit'), `${label} 页面`)
-  check(`审计路由可达：${label}`, document.querySelector('#mid')?.textContent.includes(label)
-    || document.querySelector('#mid')?.textContent.includes('合成'))
+  const midText = document.querySelector('#mid')?.textContent || ''
+  check(`审计路由可达：${label}`, midText.includes(label)
+    || midText.includes('合成')
+    || (label === '系统健康' && (midText.includes('过滤器') || midText.includes('入库漏斗'))))
 }
+check('系统健康含过滤器与 LLM 段', (() => {
+  const text = document.querySelector('#mid')?.textContent || ''
+  return text.includes('过滤器') && text.includes('LLM 成本')
+})())
 
 fixture.items = [
   inboxItem('extract-synthetic-1'),
@@ -309,7 +318,8 @@ dispatchCheckbox.dispatchEvent(new Event('change', { bubbles: true }))
   const checkedRow = document.querySelector('.inbox-item[data-id="extract-synthetic-1"]')
   const otherRow = [...document.querySelectorAll('#inbox-section .inbox-item')].find((row) => row !== checkedRow && row.dataset.on !== 'true' && row.dataset.sel !== 'true')
   const style = getComputedStyle(checkedRow)
-  check('勾选的行高亮：不透明、底色与未勾选行不同、带左侧强调条', checkedRow.dataset.on === 'true' && style.opacity === '1'
+  // 不查 opacity：u-stagger 入场动画在 headless virtual-time 下可能停在 0，底色与左侧 inset 条才是选中态。
+  check('勾选的行高亮：底色与未勾选行不同、带左侧强调条', checkedRow.dataset.on === 'true'
     && Boolean(otherRow) && style.backgroundColor !== getComputedStyle(otherRow).backgroundColor && style.boxShadow.includes('inset'),
   JSON.stringify({ on: checkedRow.dataset.on, opacity: style.opacity, bg: style.backgroundColor, other: otherRow && getComputedStyle(otherRow).backgroundColor, shadow: style.boxShadow }))
 }
@@ -405,23 +415,27 @@ await waitFor(() => fixture.calls.some((call) => call[0] === 'inboxClearUnextrac
 check('清空未匹配只调用对应清理命令并保留正在抽取排除列表', fixture.calls.some((call) => call[0] === 'inboxClearUnextracted'
   && Array.isArray(call[1])))
 
-fixture.due = [{ id: 'synthetic-due-node', title: '合成到期判断', confidence: 61, settlement: { date: '2026-09-30', resolved: null, correct: null } }]
+fixture.conflicts = Array.from({ length: 3 }, (_, index) => ({
+  id: `synthetic-reading-conflict-${index + 1}`,
+  type: 'reading',
+  readingA: 'synthetic-reading-1',
+  readingB: 'synthetic-reading-2',
+  a: 'synthetic-reading-1',
+  b: 'synthetic-reading-2',
+  note: `合成读数冲突 ${index + 1}`,
+  resolved: null,
+}))
 await import('../app.js').then(({ refresh }) => refresh())
-await waitFor(() => document.querySelector('#due-section button')?.textContent === '对了', '到期结算操作')
-const postpone = [...document.querySelectorAll('#due-section button')].find((button) => button.textContent === '再等等')
-postpone?.click()
-await waitFor(() => fixture.calls.some((call) => call[0] === 'updateNode'), '推迟结算日期')
-const updateCall = fixture.calls.findLast((call) => call[0] === 'updateNode')
-const actualPostponeDate = updateCall?.[2]?.settlement?.date
-const expectedPostponeDate = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10)
-check('到期判断可推迟两周且只更新结算日期、不写结算结论', updateCall?.[1] === 'synthetic-due-node'
-  && updateCall?.[2]?.settlement?.resolved === null && actualPostponeDate === expectedPostponeDate)
-
-fixture.conflicts = Array.from({ length: 7 }, (_, index) => ({ a: 'synthetic-viewpoint-a', b: 'synthetic-viewpoint-b', note: `合成冲突 ${index + 1}` }))
-await import('../app.js').then(({ refresh }) => refresh())
-await waitFor(() => document.querySelector('.today-page')?.textContent.includes('合成冲突 1'), '冲突卡片')
-check('今日冲突卡只展示前五项并清楚提示剩余数量', document.querySelector('.today-page')?.textContent.includes('+2 条')
-  && document.querySelectorAll('.today-page .cf').length >= 5)
+await waitFor(() => document.querySelector('.today-summary-conflict')?.textContent.includes('读数冲突'), '读数冲突摘要入口')
+check('今日不再铺裁决整块，只在摘要给读数冲突入口', !document.querySelector('#pending-judgments')
+  && !document.querySelector('.today-page .conflict')
+  && document.querySelector('.today-summary-conflict')?.textContent.includes('3'))
+document.querySelector('.today-summary-conflict')?.click()
+await waitFor(() => document.querySelector('.readings-page .reading-conflict-banner'), '读数冲突提示条')
+check('点摘要读数冲突进入读数页并提示待裁决', document.querySelector('.app')?.dataset.view === 'readings'
+  && document.querySelector('.reading-conflict-banner')?.textContent.includes('待裁决'))
+await clickNav('今日')
+await waitFor(() => document.querySelector('.today-page'), '回到今日')
 
 fixture.failCaptureOnce = true
 fixture.autoImportId = null

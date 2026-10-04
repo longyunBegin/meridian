@@ -96,6 +96,9 @@ export function buildJudgeQueue({ events = [], nodes = [], edges = [], inboxSour
       date: proposalDate(event),
       points: normalizePoints(event.payload?.sourcePoints),
       weight: proposalWeight(event, source.url),
+      sourceRef: null,
+      archived: false,
+      cold: false,
       suggestion: {
         atomId: atomIds.has(targetId) ? targetId : null,
         atomTitle: text(recommendation.propositionTitle) || null,
@@ -127,6 +130,10 @@ export function buildJudgeQueue({ events = [], nodes = [], edges = [], inboxSour
       date: evidenceDate(node),
       points: normalizePoints(node.points),
       weight: evidenceWeightOf(node),
+      /* 归档 / 冷冻按外部数据（证据）维度，不按原子。判卡上需要稳定的 sourceRef。 */
+      sourceRef: text(node.sourceRef) || null,
+      archived: node.archived === true,
+      cold: node.cold === true,
       suggestion: {
         atomId,
         atomTitle: atomId ? atoms.find((atom) => atom.id === atomId)?.title || null : null,

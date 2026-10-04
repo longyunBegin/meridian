@@ -8,6 +8,7 @@
  * - relation.declared → 语义边（supports / derives / contradicts）
  * - settlement.recorded → 节点标记已结算（correct=false 即已证伪）
  * - node.archived → 节点标记已归档
+ * - node.parked / node.unparked → 外部数据冷冻 / 解冻（冷库；不碰置信度）
  * - topic.linked → 主题归属隐含在事件 themeId 中，投影不单独成边
  *
  * 端点解析：{eventId} → 对应节点；{ref} → 已有节点或外部证据节点；
@@ -223,11 +224,13 @@ export function projectEvents(events) {
       correct: null,
       resolved: null,
       archived: false,
+      cold: false,
       superseded: false,
       createdSeq: e.seq,
       currentText: p.text || p.reason || '',
       sourceKind: p.sourceKind || null,
-      sourceRef: p.sourceRef || null,
+      /* 无显式 sourceRef 时用事件 id 兜底，保证归档 / 恢复 / 冷冻能按同一键找到这条外部数据。 */
+      sourceRef: p.sourceRef || `event:${e.id}`,
       /* P0-3：投影证据节点也要带出处。否则任何从投影出发的 UI（图谱证据节点、检视器、
          未来的快照/回放）都拿不到 URL 与来源，回放出来的模型就失去溯源。 */
       evidenceRefs: uniqueEvidenceRefs(p.evidenceRefs || []),
@@ -466,9 +469,9 @@ export function projectEvents(events) {
     node.evidenceCount = node.evidenceNodeIds.length
   }
 
-  // 结算 / 归档 / 恢复：按 sourceRef 找到节点，状态只由追加事件顺序决定。
+  // 结算 / 归档 / 恢复 / 冷冻 / 解冻：按 sourceRef 找到节点，状态只由追加事件顺序决定。
   for (const e of events) {
-    if (!['settlement.recorded', 'node.archived', 'node.restored'].includes(e.type)) continue
+    if (!['settlement.recorded', 'node.archived', 'node.restored', 'node.parked', 'node.unparked'].includes(e.type)) continue
     const p = e.payload || {}
     if (!p.sourceRef) continue
     const matched = [...nodes.values()].filter((n) => !n.external && n.sourceRef === p.sourceRef)
@@ -487,11 +490,24 @@ export function projectEvents(events) {
         node.archivedAt = p.archivedAt || e.at || null
         node.archiveEventIds ||= []
         node.archiveEventIds.push(e.id)
-      } else {
+      } else if (e.type === 'node.restored') {
         node.archived = false
         node.restoredAt = e.at || null
         node.restoreEventIds ||= []
         node.restoreEventIds.push(e.id)
+      } else if (e.type === 'node.parked') {
+        node.cold = true
+        node.status = 'cold'
+        node.parkReason = p.reason || ''
+        node.parkedAt = p.parkedAt || e.at || null
+        node.parkEventIds ||= []
+        node.parkEventIds.push(e.id)
+      } else {
+        node.cold = false
+        if (node.status === 'cold') node.status = 'pending'
+        node.unparkedAt = e.at || null
+        node.unparkEventIds ||= []
+        node.unparkEventIds.push(e.id)
       }
     }
   }
@@ -1190,6 +1206,125 @@ export function archiveProjectedNode(themeId, sourceRef, reason = '') {
       archivedAt: new Date().toISOString(),
     },
   })
+}
+
+/** 冷冻外部数据：只改投影 cold/status，不碰置信度；可在侧栏冷库解冻。 */
+export function parkProjectedNode(themeId, sourceRef, reason = '') {
+  if (!sourceRef || typeof sourceRef !== 'string') throw new Error('sourceRef 无效')
+  const node = projectEvents(getEvents(themeId)).nodes.find((n) => !n.external && n.sourceRef === sourceRef)
+  if (!node) throw new Error('节点不存在')
+  if (node.archived) throw new Error('已归档的数据请先恢复再冷冻，或直接留在归档')
+  if (node.cold) throw new Error('该数据已在冷库')
+  if (node.nodeType !== 'evidence') throw new Error('冷冻只针对外部数据（证据）')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.parked',
+    payload: {
+      sourceRef,
+      title: node.title,
+      reason: String(reason || '').trim(),
+      parkedAt: new Date().toISOString(),
+    },
+  })
+}
+
+/** 解冻：追加 node.unparked，不改写冷冻历史。 */
+export function unparkProjectedNode(themeId, sourceRef, reason = '') {
+  if (!sourceRef || typeof sourceRef !== 'string') throw new Error('sourceRef 无效')
+  const node = projectEvents(getEvents(themeId)).nodes.find((n) => !n.external && n.sourceRef === sourceRef)
+  if (!node) throw new Error('节点不存在')
+  if (!node.cold) throw new Error('该数据不在冷库')
+  return appendEvent(themeId, {
+    actor: 'user',
+    type: 'node.unparked',
+    payload: {
+      sourceRef,
+      title: node.title,
+      reason: String(reason || '').trim() || '从冷库解冻',
+      unparkedAt: new Date().toISOString(),
+    },
+  })
+}
+
+/**
+ * 建设者判卡「归档 / 冷冻」：维度是外部数据。
+ * - evidence（pending/unmapped）：直接 archive / park
+ * - proposal：驳回建议 + 落入未挂原子证据 + 立刻 archive / park（一条批次，队列立刻清空该项）
+ */
+export function shelfJudgeItem(themeId, input = {}) {
+  const mode = input.mode === 'park' ? 'park' : input.mode === 'archive' ? 'archive' : null
+  if (!mode) throw new Error('请选择归档或冷冻')
+  const reason = String(input.reason || '').trim()
+  if (mode === 'archive' && !reason) throw new Error('请填写归档原因')
+  const kind = String(input.kind || '')
+  const id = String(input.id || '').trim()
+  if (!id) throw new Error('缺少条目')
+
+  if (kind === 'pending' || kind === 'unmapped' || kind === 'evidence') {
+    const projection = projectEvents(getEvents(themeId))
+    const evidence = projection.nodes.find((node) => node.id === id && node.nodeType === 'evidence' && !node.external)
+    if (!evidence) throw new Error('找不到这条外部数据')
+    const sourceRef = evidence.sourceRef || `event:${evidence.id}`
+    const event = mode === 'archive'
+      ? archiveProjectedNode(themeId, sourceRef, reason)
+      : parkProjectedNode(themeId, sourceRef, reason)
+    return { ok: true, mode, kind: 'evidence', sourceRef, event }
+  }
+
+  if (kind !== 'proposal') throw new Error('只能归档或冷冻外部数据')
+
+  const events = getEvents(themeId)
+  const proposal = events.find((event) => event.id === id && event.type === 'engine.recommendation.proposed')
+  if (!proposal) throw new Error('找不到这条模型建议')
+  if (events.some((event) => event.type === 'signal.reviewed' && event.payload?.signalEventId === proposal.id)) {
+    throw new Error('这条建议已有决定，不能再归档或冷冻')
+  }
+  const recommendationId = proposal.payload?.recommendationId || proposal.id
+  const stableId = (suffix) => `evt:shelf:${suffix}:${digest({ themeId, recommendationId, mode }).slice(0, 24)}`
+  const quote = String(proposal.payload?.statement?.sourceText || proposal.payload?.recommendation?.title || '').trim()
+    || '（无引文的外部数据）'
+  const sourceRef = `shelved-proposal:${recommendationId}`
+  const sourceUrl = sourceUrlOf(proposal.payload?.sourceUrl) || sourceUrlOf(input.fallbackSourceUrl) || ''
+  const sourceLabel = String(proposal.payload?.sourceLabel || '').trim()
+  const evidenceId = stableId('evidence')
+  const drafts = [
+    {
+      id: evidenceId, actor: 'user', type: 'evidence.appended',
+      payload: {
+        text: quote,
+        sourceLabel,
+        sourceKind: 'shelved-proposal',
+        sourceRef,
+        ...(sourceUrl ? { sourceUrl, evidenceRefs: [{ type: 'url', id: sourceUrl, title: sourceLabel || sourceUrl }] } : { evidenceRefs: [] }),
+        ...(proposal.payload?.sourcePublishedAt ? { sourcePublishedAt: proposal.payload.sourcePublishedAt } : {}),
+        ...(proposal.payload?.ingestedAt ? { ingestedAt: proposal.payload.ingestedAt } : {}),
+        ...(normalizePoints(proposal.payload?.sourcePoints).length ? { points: normalizePoints(proposal.payload.sourcePoints) } : {}),
+      },
+    },
+    {
+      id: stableId('review'), actor: 'user', type: 'signal.reviewed',
+      payload: { signalEventId: proposal.id, decision: 'rejected', reason: mode === 'park' ? '冷冻入库' : '归档' },
+    },
+    {
+      id: stableId(mode), actor: 'user',
+      type: mode === 'archive' ? 'node.archived' : 'node.parked',
+      payload: mode === 'archive'
+        ? { sourceRef, title: quote.slice(0, 180), reason, evidenceCount: 0, archivedAt: new Date().toISOString() }
+        : { sourceRef, title: quote.slice(0, 180), reason, parkedAt: new Date().toISOString() },
+    },
+  ]
+  const appended = appendEventBatch(themeId, drafts)
+  return { ok: true, mode, kind: 'proposal', sourceRef, events: appended }
+}
+
+/** 冷库浏览：主题投影里 cold 的外部证据（不触发迁移）。 */
+export function getParkedProjectionNodes(themeId) {
+  const projection = projectEvents(getEvents(themeId))
+  return {
+    themeId,
+    nodes: projection.nodes.filter((n) => n.cold && n.nodeType === 'evidence' && !n.archived && !n.external),
+    edges: projection.edges,
+  }
 }
 
 /**

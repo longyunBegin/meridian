@@ -9,6 +9,51 @@ import { ATOM_STATES, STANCE_LABEL } from '../lib/reader-board.js'
 
 /* 每组先显示的条数：被检验过的组多给一些，没被检验的组只露个头。 */
 const GROUP_PREVIEW = { tested: 8, quiet: 5 }
+const STATE_BY_KEY = new Map(ATOM_STATES.map((state) => [state.key, state]))
+
+/** 类型 pill：观察偏「事实」色，观点 / 假设偏强调色；其余中性。 */
+function typeChipClass(typeLabel) {
+  if (typeLabel === '观察') return 'is-fact'
+  if (typeLabel === '观点' || typeLabel === '假设') return 'is-view'
+  return 'is-type'
+}
+
+function formatBalance(value, mode) {
+  const n = Number(value) || 0
+  return mode === 'weight' ? n.toFixed(2) : String(Math.round(n))
+}
+
+/**
+ * 天秤：左绿佐证 / 右红反对；支点按权重（或条数）占比定位。
+ * 没有独立佐证/反对时不画假天秤。
+ */
+function balanceScale(atom) {
+  const balance = atom.balance
+  if (!balance) return null
+  const total = balance.support + balance.against
+  if (!(total > 0)) return null
+  const pct = Math.max(0, Math.min(100, balance.ratio * 100))
+  const unit = balance.mode === 'weight' ? '按权重' : '按条数'
+  const label = `${unit}：佐证 ${formatBalance(balance.support, balance.mode)}，反对 ${formatBalance(balance.against, balance.mode)}`
+  return h('div', {
+    class: `rdr-scale${balance.againstLeads ? ' is-against-leads' : ''}`,
+    role: 'img',
+    'aria-label': label,
+    title: balance.mode === 'weight' && balance.missing
+      ? `${label}（另有 ${balance.missing} 条旧数据没记权重，未计入）`
+      : label,
+  },
+  h('div', { class: 'rdr-scale-track' },
+    h('span', { class: 'rdr-scale-support', style: { width: `${pct}%` } }),
+    h('span', { class: 'rdr-scale-against', style: { width: `${100 - pct}%` } }),
+    h('span', { class: 'rdr-scale-fulcrum', style: { left: `${pct}%` }, 'aria-hidden': 'true' })),
+  h('div', { class: 'rdr-scale-foot' },
+    h('span', { class: 'rdr-scale-support-n' }, '佐证 ', h('b', {}, formatBalance(balance.support, balance.mode))),
+    balance.againstLeads
+      ? h('span', { class: 'rdr-scale-flip' }, '反对占优')
+      : h('span', { class: 'rdr-scale-mid', 'aria-hidden': 'true' }, ''),
+    h('span', { class: 'rdr-scale-against-n' }, '反对 ', h('b', {}, formatBalance(balance.against, balance.mode)))))
+}
 
 export function settleText(settle) {
   if (!settle) return ''
@@ -28,15 +73,6 @@ export function tallyText(tallies) {
 }
 
 export const dateText = (date) => (date ? `${date.day} ${date.kind}` : '日期未记录')
-
-/* 独立数据的表态条：宽度按条数占比；两边算一段独立的颜色。 */
-function stanceBar(tallies) {
-  const total = tallies.support + tallies.against + tallies.both + tallies.neutral
-  if (!total) return null
-  const seg = (key, count) => (count ? h('span', { class: `rdr-stance-seg is-${key}`, style: { flexGrow: String(count) } }) : null)
-  return h('span', { class: 'rdr-stance', 'aria-hidden': 'true' },
-    seg('support', tallies.support), seg('both', tallies.both), seg('against', tallies.against), seg('neutral', tallies.neutral))
-}
 
 /* ① 主题 + 一句话 + 状态条 */
 export function renderReaderBrief({ theme, board }) {
@@ -67,27 +103,31 @@ export function renderReaderBrief({ theme, board }) {
 }
 
 function atomRow(atom, onOpenAtom) {
-  let counts
-  let meta
-  if (atom.independentCount) {
-    counts = tallyText(atom.tallies)
-    meta = atom.latestDay ? `最近 ${atom.latestDay}` : '日期未记录'
-  } else if (atom.origin.length) {
-    counts = '未检验'
-    meta = `出处：${atom.origin[0].sourceName || '来源未标注'}`
-  } else {
-    counts = '—'
-    meta = ''
+  const state = STATE_BY_KEY.get(atom.state) || STATE_BY_KEY.get('none')
+  const scale = balanceScale(atom)
+  let quietNote = null
+  if (!scale) {
+    if (atom.independentCount) quietNote = tallyText(atom.tallies) || '有独立数据，但还没有佐证 / 反对'
+    else if (atom.origin.length) quietNote = `出处：${atom.origin[0].sourceName || '来源未标注'} · 尚未被独立数据检验`
+    else quietNote = '还没有外部数据'
   }
+  const meta = atom.latestDay ? `最近 ${atom.latestDay}` : (atom.origin[0]?.sourceName ? `出处 ${atom.origin[0].sourceName}` : '')
   const button = h('button', {
-    type: 'button', class: 'rdr-atom-row', dataset: { atomId: atom.id },
+    type: 'button',
+    class: `rdr-atom-row${scale ? '' : ' is-quiet-atom'}`,
+    dataset: { atomId: atom.id },
     onclick: () => onOpenAtom?.(atom.id, button),
   },
-  h('span', { class: 'rdr-atom-main' },
-    h('span', { class: 'rdr-atom-title' }, atom.title),
-    h('span', { class: 'rdr-atom-type' }, atom.typeLabel)),
-  h('span', { class: 'rdr-atom-stance' }, stanceBar(atom.tallies), h('span', { class: 'rdr-atom-counts' }, counts)),
-  h('span', { class: 'rdr-atom-meta' }, meta))
+  h('div', { class: 'rdr-atom-head' },
+    h('span', { class: 'rdr-atom-title' }, `「${atom.title}」`),
+    h('span', { class: 'rdr-atom-tags' },
+      h('span', { class: `rdr-chip ${typeChipClass(atom.typeLabel)}` }, atom.typeLabel),
+      h('span', { class: `rdr-chip is-state-${atom.state}` }, state.label),
+      atom.balance?.againstLeads && scale
+        ? h('span', { class: 'rdr-chip is-flip' }, '反对占优')
+        : null)),
+  scale || h('p', { class: 'rdr-atom-quiet' }, quietNote),
+  meta ? h('span', { class: 'rdr-atom-meta' }, meta) : null)
   return h('li', {}, button)
 }
 
@@ -115,9 +155,9 @@ export function renderReaderBoard({ board, onOpenAtom }) {
       list,
       toggle)
   }
-  return h('section', { class: 'rdr-board', 'aria-label': '原子看板' },
+  return h('section', { class: 'rdr-board u-stagger', 'aria-label': '原子看板' },
     h('h2', { class: 'rdr-h2' }, '原子看板 · 外部数据怎么说'),
-    h('p', { class: 'rdr-caption' }, '按检验状态分组；组内先按独立数据条数、再按最近日期排。出处只说明原子从哪来，不算佐证。'),
+    h('p', { class: 'rdr-caption' }, '按检验状态分组；组内先按独立数据条数、再按最近日期排。天秤按佐证 / 反对权重（无权重时按条数）摆位，出处不算佐证。'),
     ...board.groups.map(groupEl))
 }
 

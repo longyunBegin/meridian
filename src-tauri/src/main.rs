@@ -128,7 +128,7 @@ async fn backend_events(state: State<'_, BackendState>) -> Result<Vec<Value>, St
         .map_err(|e| format!("invalid event response: {e}"))
 }
 
-/// 设置 Dock 角标（到期未结算数）。count 为 0 时清除。
+/// 设置 Dock 角标（待确认 + 待判数）。count 为 0 时清除。
 /// 用 Tauri 内置 set_badge_count（macOS/Windows 通用）。
 #[tauri::command]
 fn set_dock_badge(app: tauri::AppHandle, count: i64) -> Result<(), String> {

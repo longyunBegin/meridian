@@ -1043,7 +1043,7 @@ if (rawAutoCap?.imported?.[0]?.id) {
 console.log('\n— R2: 定时器纯函数 —')
 // ============================================================
 
-const { isQuietHours, dueToNotify, buildNotification } = await import('../src/main/scheduler.js')
+const { isQuietHours, freshToNotify, dueToNotify, buildNotification } = await import('../src/main/scheduler.js')
 
 // 时段边界
 ok('scheduler: 10:00 不静默', isQuietHours(new Date('2026-01-01T10:00:00')) === false)
@@ -1053,21 +1053,30 @@ ok('scheduler: 03:00 静默', isQuietHours(new Date('2026-01-01T03:00:00')) === 
 ok('scheduler: 08:59 静默', isQuietHours(new Date('2026-01-01T08:59:00')) === true)
 ok('scheduler: 09:00 不静默', isQuietHours(new Date('2026-01-01T09:00:00')) === false)
 
-// 去重
+// 去重（freshToNotify；dueToNotify 为旧别名）
 const notified = new Set(['a'])
-const dueList = [{ id: 'a', title: '已通知' }, { id: 'b', title: '新到期' }, { id: 'c', title: '也新' }]
-const fresh = dueToNotify(dueList, notified)
+const pendingList = [{ id: 'a', kind: 'inbox', title: '已通知' }, { id: 'b', kind: 'inbox', title: '新待确认' }, { id: 'c', kind: 'judge', title: '1 条新待判' }]
+const fresh = freshToNotify(pendingList, notified)
 ok('scheduler: 去重后只剩 2 条', fresh.length === 2, `实际 ${fresh.length}`)
 ok('scheduler: 去重后是 b 和 c', fresh[0]?.id === 'b' && fresh[1]?.id === 'c')
+ok('scheduler: dueToNotify 仍是 freshToNotify 别名', dueToNotify === freshToNotify)
 
-// 通知构造
-const n1 = buildNotification([{ id: 'x', title: '光模块超预期' }])
-ok('scheduler: 单条标题', n1?.title === 'Meridian · 到期结算', `实际 ${n1?.title}`)
-ok('scheduler: 单条正文', n1?.body === '光模块超预期')
+// 通知构造：待确认 / 待判（不再用到期结算文案）
+const n1 = buildNotification([{ id: 'x', kind: 'inbox', title: '光模块超预期' }])
+ok('scheduler: 单条待确认标题', n1?.title === 'Meridian · 待确认', `实际 ${n1?.title}`)
+ok('scheduler: 单条待确认正文', n1?.body === '光模块超预期')
 
-const n3 = buildNotification([{ id: 'a', title: '第一条' }, { id: 'b', title: '第二条' }, { id: 'c', title: '第三条' }])
-ok('scheduler: 多条标题', n3?.title === 'Meridian · 3 条判断到期', `实际 ${n3?.title}`)
-ok('scheduler: 多条正文取最早', n3?.body === '第一条')
+const nJudge = buildNotification([{ id: 'j', kind: 'judge', title: '2 条新待判', themeName: '半导体' }])
+ok('scheduler: 单条待判标题', nJudge?.title === 'Meridian · 待判', `实际 ${nJudge?.title}`)
+ok('scheduler: 单条待判正文含主题', nJudge?.body.includes('半导体'), `实际 ${nJudge?.body}`)
+
+const n3 = buildNotification([
+  { id: 'a', kind: 'inbox', title: '第一条' },
+  { id: 'b', kind: 'inbox', title: '第二条' },
+  { id: 'c', kind: 'judge', title: '1 条新待判' },
+])
+ok('scheduler: 多条标题', n3?.title === 'Meridian · 3 项待处理', `实际 ${n3?.title}`)
+ok('scheduler: 多条正文含待确认与待判', n3?.body.includes('2 条待确认') && n3?.body.includes('待判'), `实际 ${n3?.body}`)
 
 ok('scheduler: 空列表返回 null', buildNotification([]) === null)
 ok('scheduler: null 返回 null', buildNotification(null) === null)
@@ -1185,13 +1194,16 @@ ok('Fix: 恢复后子节点也 live', store.getNode(softLemma.id)?.status === 'l
 console.log('\n— Fix: buildNotification 带上下文 —')
 // ============================================================
 
-const nCtx = buildNotification([{ id: 'x', title: '光模块超预期', confidence: 85, branchPath: '半导体 / 光模块', downstreamCount: 3 }])
-ok('Fix: 通知正文含置信度', nCtx?.body.includes('85%'), `实际 ${nCtx?.body}`)
-ok('Fix: 通知正文含挂点', nCtx?.body.includes('半导体 / 光模块'), `实际 ${nCtx?.body}`)
-ok('Fix: 通知正文含下游数', nCtx?.body.includes('3 条下游'), `实际 ${nCtx?.body}`)
+const nInbox = buildNotification([{ id: 'x', kind: 'inbox', title: '光模块超预期' }])
+ok('Fix: 待确认通知标题', nInbox?.title === 'Meridian · 待确认', `实际 ${nInbox?.title}`)
+ok('Fix: 待确认通知正文是条目标题', nInbox?.body === '光模块超预期', `实际 ${nInbox?.body}`)
 
-const nNoCtx = buildNotification([{ id: 'y', title: '无上下文命题' }])
-ok('Fix: 无上下文时正文只有标题', nNoCtx?.body === '无上下文命题', `实际 ${nNoCtx?.body}`)
+const nMixed = buildNotification([
+  { id: 'a', kind: 'inbox', title: '待确认 A' },
+  { id: 'b', kind: 'judge', title: '1 条新待判', themeName: '半导体' },
+])
+ok('Fix: 混合通知标题计数', nMixed?.title === 'Meridian · 2 项待处理', `实际 ${nMixed?.title}`)
+ok('Fix: 混合通知正文分项', nMixed?.body.includes('待确认 A') && nMixed?.body.includes('待判'), `实际 ${nMixed?.body}`)
 
 // ============================================================
 console.log('\n— Fix2: bestThemeContext 不选已删主题 —')
@@ -1619,7 +1631,7 @@ const appSrc = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 ok('验收: 审计页用"已确认误杀/待复核"替代模糊口径', auditViewSrc.includes('已确认误杀') && auditViewSrc.includes('待复核'))
 ok('验收: 审计页注明误杀率计算口径', auditViewSrc.includes('误杀率 = 已确认误杀 ÷ 筛掉总数'))
 ok('验收: 审计页不再把未回填说成"后来证明有用"', !auditViewSrc.includes('条后来证明有用'))
-ok('验收: 审计页闸门按已确认误杀数排序', auditViewSrc.includes('a.byGate[y].missed - a.byGate[x].missed'))
+ok('验收: 审计页闸门按已确认误杀数排序', auditViewSrc.includes('audit.byGate[y].missed - audit.byGate[x].missed'))
 ok('验收: 审计页样式收进单一标记块', auditCssSrc.includes('误杀审计页重构 2026-10-01'))
 ok('验收: 侧栏导航加分组小标题', appSrc.includes('fk-navgroup'))
 
@@ -1944,7 +1956,7 @@ ok('tie-break v0.8: 通道引用读数冲突仍裁决', tieConflicted.total === 
 const readingsSrc = readFileSync2(join(ROOT2, 'src/renderer/app.js'), 'utf8')
 ok('tie-break v0.8: 树使用显式最新投影而非全量排序', readingsSrc.includes('latestReadings') && !readingsSrc.includes('await m.allReadings('))
 // ============================================================
-// R5: 轮询器 — 通道已移除，调度器只保留到期结算通知
+// R5: 轮询器 — 通道已移除，调度器按待确认 + 待判提醒
 // ============================================================
 
 console.log('\n— R5: 轮询器（通道已移除） —')
@@ -1954,7 +1966,11 @@ ok('R5: scheduler.js 无 dueChannels', !schedulerR5Src.includes('dueChannels'))
 ok('R5: scheduler.js 无 runChannel', !schedulerR5Src.includes('runChannel'))
 ok('R5: scheduler.js 无 fetcher', !schedulerR5Src.includes('fetcher'))
 ok('R5: scheduler.js 只有一个 setInterval', (schedulerR5Src.match(/setInterval/g) || []).length === 1)
-ok('R5: scheduler.js 保留到期结算通知', schedulerR5Src.includes('dueToNotify'))
+ok('R5: scheduler.js 按待确认/待判提醒', schedulerR5Src.includes('freshToNotify') && schedulerR5Src.includes('待确认'))
+const attentionR5Src = readFileSync2(join(ROOT2, 'src/main/attention.js'), 'utf8')
+ok('R5: attention.js 口径是待确认+待判', attentionR5Src.includes('countJudgeItems') && attentionR5Src.includes('allInbox'))
+const backendR5Src = readFileSync2(join(ROOT2, 'src/tauri/backend.mjs'), 'utf8')
+ok('R5: backend 用 attentionSnapshot 驱动角标', backendR5Src.includes('attentionSnapshot') && backendR5Src.includes('attentionCount'))
 
 const commandsR5Src = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 ok('R5: domain-commands.js 无 channel:fetch', !commandsR5Src.includes('channel:fetch'))
@@ -2097,8 +2113,8 @@ ok('D: inspector.js 有研究观点标题', inspectorSrcD.includes('研究观点
 // --- D: vault.js 有你 vs 机构 ---
 
 const vaultSrcD = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
-ok('D: vault.js 有 vsInstitution', vaultSrcD.includes('vsInstitution'))
-ok('D: vault.js 有 你 vs 机构', vaultSrcD.includes('你 vs 机构'))
+// 你 vs 机构已随复盘页迁出 vault；后端 research:vsInstitution 仍保留（上面已验）
+ok('D: vault.js 不再承载 vsInstitution UI', !vaultSrcD.includes('vsInstitution') && !vaultSrcD.includes('你 vs 机构'))
 
 // --- D: 无加权/汇总/总量/合计 ---
 
@@ -2205,10 +2221,16 @@ ok('I3: app.js 有 restoreTheme 调用', appSrc66.includes('restoreTheme'))
 ok('I3: app.js 有撤销按钮', appSrc66.includes('撤销'))
 ok('I3: app.js toast 4 秒', appSrc66.includes('4000'))
 
-// --- I4: 墓碑区主题名 ---
+// --- I4: 冷库条目带主题名 ---
 
-ok('I4: vault.js 墓碑区有主题名', vaultSrc66.includes("state.themes.find((t) => t.id === n.themeId)?.name"))
+ok('I4: vault.js 冷库有主题名解析', vaultSrc66.includes('state.themes.find((t) => t.id === themeId)?.name')
+  || vaultSrc66.includes("state.themes.find((t) => t.id === n.themeId)?.name"))
 ok('I4: vault.js 已删主题占位', vaultSrc66.includes('已删主题'))
+ok('I4: vault.js 解冻只改 live、查看本页展开、不跳建设者', vaultSrc66.includes("status: 'live'")
+  && vaultSrc66.includes('attachDetailToggle')
+  && !vaultSrc66.includes('openColdInTheme')
+  && !/setView\(['"]theme['"]\)/.test(vaultSrc66.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''))
+  && !vaultSrc66.includes('恢复整条链'))
 
 // --- I5: 已删主题可恢复节点数 ---
 
@@ -2641,6 +2663,7 @@ const { readUsage, __testHooks: llmHooks, SCENARIO_LABELS } = await import('../s
 const { startScheduler, isQuietHours: govQuiet } = await import('../src/main/scheduler.js')
 const domainCommandsSrcGov = readFileSync2(join(ROOT2, 'src/main/domain-commands.js'), 'utf8')
 const vaultSrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/vault.js'), 'utf8')
+const healthSrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/audit.js'), 'utf8')
 const todaySrcGov = readFileSync2(join(ROOT2, 'src/renderer/views/today.js'), 'utf8')
 const storeSrcGov = readFileSync2(join(ROOT2, 'src/main/store.js'), 'utf8')
 const schedulerSrcGov = readFileSync2(join(ROOT2, 'src/main/scheduler.js'), 'utf8')
@@ -2866,19 +2889,24 @@ ok('D: 未匹配 30 天后自动过期', !store.allInbox().some((i) => i.id === 
 ok('D: 过期条目仍在库里（内容不丢）', dDb.inbox.some((i) => i.id === dStale.id))
 dDb.inbox = dDb.inbox.filter((i) => i.id !== dStale.id)
 
-// ---- C1：调度器只做到期结算通知，不再轮询通道 ----
+// ---- C1：调度器按待确认+待判提醒，不再轮询通道 / 到期结算 ----
 
-const { dueToNotify: govDueToNotify, buildNotification: govBuildNotification } = await import('../src/main/scheduler.js')
-ok('C1: scheduler 导出 dueToNotify', typeof govDueToNotify === 'function')
+const { freshToNotify: govFreshToNotify, buildNotification: govBuildNotification } = await import('../src/main/scheduler.js')
+ok('C1: scheduler 导出 freshToNotify', typeof govFreshToNotify === 'function')
 ok('C1: scheduler 导出 buildNotification', typeof govBuildNotification === 'function')
-ok('C1: dueToNotify 过滤已通知', govDueToNotify([{ id: 'a' }, { id: 'b' }], new Set(['a'])).length === 1)
+ok('C1: freshToNotify 过滤已通知', govFreshToNotify([{ id: 'a' }, { id: 'b' }], new Set(['a'])).length === 1)
 ok('C1: buildNotification 空返回 null', govBuildNotification([]) === null)
-ok('C1: buildNotification 带标题', govBuildNotification([{ title: 't' }]).title.includes('到期'))
-// startScheduler 只接受到期结算相关参数
-const schedNotified = []
-const stopSched = startScheduler({ due: () => [{ id: 's1', title: '到期判断' }], notify: (n) => schedNotified.push(n), badge: () => {}, onClick: () => {} })
+ok('C1: buildNotification 待确认标题', govBuildNotification([{ id: 't', kind: 'inbox', title: 't' }]).title.includes('待确认'))
+const schedBadges = []
+const stopSched = startScheduler({
+  attention: () => ({ count: 1, items: [{ id: 's1', kind: 'inbox', title: '待确认条目' }] }),
+  notify: () => {},
+  badge: (count) => schedBadges.push(count),
+  onClick: () => {},
+})
 await new Promise((r) => setTimeout(r, 20))
 stopSched()
+ok('C1: startScheduler 接受 attention 快照并刷角标', schedBadges.includes(1))
 ok('C1: startScheduler 不再接受 channels 参数', !schedulerSrcGov.includes('channels'))
 ok('C1: scheduler 无通道轮询', !schedulerSrcGov.includes('dueChannels') && !schedulerSrcGov.includes('runChannel'))
 
@@ -2893,9 +2921,15 @@ ok('C6 v0.8: 来源声誉只作参考不停用', readingUiSrcV8.includes('只作
 const c5Usage = await fire('llm:usage')
 ok('C5: llm:usage 返回按天账本', Array.isArray(c5Usage?.daily) && Array.isArray(c5Usage?.recent))
 ok('C5: 账本里有今天的调用', c5Usage.daily.some((d) => d.date === store.today() && d.calls > 0))
-ok('C5: 复盘页有 LLM 段', vaultSrcGov.includes('LLM 调用') && vaultSrcGov.includes('今日 token') && vaultSrcGov.includes('SCENARIO_LABELS'))
-ok('C5: 复盘页说明 token 来源', vaultSrcGov.includes('模型不返回时按 0 计'))
+ok('C5: 系统健康有 LLM 段', healthSrcGov.includes('LLM 成本') && healthSrcGov.includes('今日 Token') && healthSrcGov.includes('llmUsage'))
+ok('C5: 系统健康说明只读', healthSrcGov.includes('只读，不写'))
+ok('C5: 系统健康含过滤器闸门与漏斗', healthSrcGov.includes('fk-gates') && healthSrcGov.includes('摩擦率') && healthSrcGov.includes('filterCalibration'))
+ok('C5: 系统健康不再单独导出 renderAudit', !healthSrcGov.includes('export async function renderAudit'))
 ok('C5: 场景名有中文映射', Object.keys(SCENARIO_LABELS).includes('extract') && SCENARIO_LABELS.extract === '抽取')
+ok('C5: 冷库不再混用软删恢复', vaultSrcGov.includes("status: 'live'") && !vaultSrcGov.includes('恢复整条链'))
+ok('C5: 归档查看本页展开详情，不跳建设者', vaultSrcGov.includes('attachDetailToggle')
+  && !vaultSrcGov.includes('openArchiveInTheme')
+  && !/setView\(['"]theme['"]\)/.test(vaultSrcGov.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')))
 
 // ---- D：界面与 命令 接线 ----
 

@@ -145,6 +145,47 @@ export function atomState({ support = 0, against = 0, both = 0, neutral = 0, ori
   return 'none'
 }
 
+/**
+ * 天秤两端：
+ * - 佐证/反对（及「两边」）全都记了权重 → 按权重求和（与抽屉「按权重」同口径）
+ * - 否则按条数（「两边」各算一端 1），避免一边有权重、一边旧数据无权重时天秤失真
+ * 不编造历史支点——没有上月数据就不画「上月」标记。
+ */
+export function atomBalance(atom) {
+  const rows = Array.isArray(atom?.independent) ? atom.independent : []
+  let supportW = 0
+  let againstW = 0
+  let weighted = 0
+  let missing = 0
+  for (const row of rows) {
+    if (row?.stance !== 'support' && row?.stance !== 'against' && row?.stance !== 'both') continue
+    const value = Number(row.weight?.value)
+    if (!Number.isFinite(value)) { missing += 1; continue }
+    weighted += 1
+    if (row.stance === 'support') supportW += value
+    else if (row.stance === 'against') againstW += value
+    else { supportW += value / 2; againstW += value / 2 }
+  }
+  if (weighted > 0 && missing === 0) {
+    return {
+      support: supportW, against: againstW, mode: 'weight', weighted, missing,
+      ratio: supportW + againstW > 0 ? supportW / (supportW + againstW) : 0.5,
+      againstLeads: againstW > supportW,
+    }
+  }
+  const tallies = atom?.tallies || {}
+  let support = Number(tallies.support) || 0
+  let against = Number(tallies.against) || 0
+  const both = Number(tallies.both) || 0
+  support += both
+  against += both
+  return {
+    support, against, mode: 'count', weighted, missing,
+    ratio: support + against > 0 ? support / (support + against) : 0.5,
+    againstLeads: against > support,
+  }
+}
+
 /* 行内排序：日期新的在前；同日（或都没日期）按进账本的先后，新的在前；最后按 id 定序。 */
 const compareRows = (a, b) => {
   const x = a.date?.day || '', y = b.date?.day || ''
@@ -251,7 +292,7 @@ export function buildAtomBoard({ nodes = [], edges = [], today = null, now = Dat
     for (const row of independent) tallies[row.stance] += 1
     const title = text(node.title) || '未命名'
     const current = text(node.currentText)
-    return {
+    const draft = {
       id: String(node.id),
       title,
       currentText: current && current !== title ? current : null,
@@ -268,6 +309,7 @@ export function buildAtomBoard({ nodes = [], edges = [], today = null, now = Dat
       falsifier: text(node.falsifier) || null,
       seq: finiteOrNull(node.createdSeq),
     }
+    return { ...draft, balance: atomBalance(draft) }
   })
   const rank = new Map(atoms.map((atom, index) => [atom.id, index]))
 

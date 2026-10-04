@@ -1,5 +1,5 @@
 import { h, clear, confirmToast, toast } from '../lib/dom.js'
-import { state } from '../app.js'
+import { state, setView } from '../app.js'
 import { checkForUpdates, updaterAvailable } from '../lib/updater.js'
 
 const m = window.meridian
@@ -86,10 +86,14 @@ export async function renderSettings(mid) {
     }, label)),
   )
 
-  const stats = await m.stats()
-  const raw = await m.rawStats()
-  const deletedTs = await m.deletedThemes()
-  const purgePreview = await m.purgeDead('all', { dryRun: true })
+  const [stats, raw, deletedTs, purgePreview] = await Promise.all([
+    m.stats(),
+    m.rawStats(),
+    m.deletedThemes(),
+    m.purgeDead('all', { dryRun: true }),
+  ])
+  // stats.conflicts 已与今日摘要同口径：只计未解决的读数冲突。
+  const readingConflictCount = stats.conflicts || 0
 
   const toast = h('div', { style: { fontSize: 'var(--t-body)', color: 'var(--text-2)', padding: '6px 0', minHeight: '18px' } }, '')
   const flash = (msg, color = 'var(--text-2)') => {
@@ -419,21 +423,24 @@ export async function renderSettings(mid) {
     h('section', { class: 'sect' },
       h('div', { class: 'sect-h' }, h('h2', {}, '数据与存储')),
       h('div', { class: 'sect-b' },
-        // L3 caption 带。七个数字零层级读不出「哪个需要我操心」——
-        // 所以非零的异常项（待裁决冲突 / 待结算）单独升格并上语义色
+        // L3 caption 带。库存数字与异常项混排时，非零的读数冲突升格上语义色。
         h('div', { class: 'stat-band' },
           h('span', {}, `${stats.themes} 主题`),
           h('span', {}, `${stats.lemmas} 命题`),
           h('span', {}, `${stats.verdicts} 裁决`),
           h('span', {}, `${stats.readings} 读数`),
-          stats.conflicts > 0
-            ? h('b', { class: 'stat-alert' }, `${stats.conflicts} 待裁决冲突`)
-            : h('span', {}, '无待裁决冲突'),
-          stats.due > 0
-            ? h('b', { class: 'stat-alert' }, `${stats.due} 待结算`)
-            : h('span', {}, '无待结算'),
-          (stats.cold || stats.dead)
-            ? h('span', {}, `${stats.cold} 冷库 / ${stats.dead} 墓碑`)
+          readingConflictCount > 0
+            ? h('button', {
+              type: 'button', class: 'stat-alert stat-alert-link',
+              title: '去读数比较双方后裁决',
+              onclick: () => {
+                state.focusReadingConflicts = true
+                setView('readings')
+              },
+            }, `${readingConflictCount} 读数冲突`)
+            : h('span', {}, '无读数冲突'),
+          stats.cold
+            ? h('span', {}, `${stats.cold} 冷库`)
             : null,
         ),
         h('p', { style: { margin: '0 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-2)', lineHeight: '1.6' } },
@@ -522,7 +529,7 @@ export async function renderSettings(mid) {
       h('div', { class: 'sect-h' }, h('h2', {}, '已删主题'), h('em', {}, String(deletedTs.length))),
       h('div', { class: 'sect-b' },
         h('p', { style: { margin: '6px 0 10px', fontSize: 'var(--t-body)', color: 'var(--text-3)', lineHeight: '1.6' } },
-          '软删的主题可恢复。节点仍在墓碑区，恢复后整棵子树复活。'),
+          '软删的主题可恢复。节点仍在账本中，恢复后整棵子树复活。'),
         ...deletedTs.map((t) => h('div', { class: 'q' },
           h('div', { class: 'q-body' },
             h('div', { class: 'q-text' }, t.name),
@@ -533,7 +540,7 @@ export async function renderSettings(mid) {
               class: 'btn',
               disabled: !t.restorableCount,
               style: t.restorableCount ? {} : { opacity: '0.5', cursor: 'not-allowed' },
-              title: t.restorableCount ? '' : '无可恢复节点（墓碑区已清空）',
+              title: t.restorableCount ? '' : '无可恢复节点',
               onclick: async () => { if (!t.restorableCount) return; await m.restoreTheme(t.id); flash(`已恢复主题「${t.name}」`, 'var(--green)'); await renderSettings(mid) },
             }, `恢复 (${t.restorableCount || 0})`),
             h('button', {

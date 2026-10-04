@@ -15,7 +15,7 @@ export const STANCE_RELS = new Set(['supports', 'contradicts'])
 export const PROPOSAL_STANCE_OF_REL = { supports: 'supports', contradicts: 'contradicts', related: 'related' }
 
 const isLiveEvidence = (node) => Boolean(node) && node.nodeType === 'evidence'
-  && !node.external && !node.archived && !node.invalidated
+  && !node.external && !node.archived && !node.invalidated && !node.cold
 
 /**
  * @param {object} evidence 投影出的证据节点

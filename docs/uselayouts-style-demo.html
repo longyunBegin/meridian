@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>useLayouts 风格 · 我对它的理解</title>
+<style>
+  /* —— 从 design-system.css 抽出来的真值（演示用，不另造一套） —— */
+  :root {
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    --t-caption: 11px; --t-footnote: 12px; --t-body: 13px; --t-title: 15px;
+    --t-subhead: 17px; --t-head: 20px; --t-hero: 28px;
+    --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 32px;
+    --r-xs: 4px; --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-xl: 18px; --r-pill: 999px;
+    --r-card: var(--r-lg); --r-control: var(--r-sm);
+    --bg: #f5f5f7; --surface-solid: #fff; --surface: rgba(255,255,255,.72);
+    --text: #1d1d1f; --text-1: #1d1d1f; --text-2: #6e6e73; --text-3: #8e8e93;
+    --hover: rgba(0,0,0,.04); --active: rgba(0,0,0,.06);
+    --hairline: rgba(0,0,0,.09); --hairline-soft: rgba(0,0,0,.05); --hairline-strong: rgba(0,0,0,.14);
+    --sh-1: 0 1px 2px rgba(0,0,0,.04), 0 2px 4px rgba(0,0,0,.03);
+    --sh-2: 0 6px 16px -2px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.04);
+    --sh-3: 0 20px 44px -8px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.06);
+    --accent: #0071e3; --accent-strong: #0066cc; --accent-text: #0066cc;
+    --accent-soft: rgba(0,113,227,.1);
+    --green-text: #1a7f37; --red-text: #c0261c; --orange-text: #a35800;
+    --green-soft: rgba(52,199,89,.14); --red-soft: rgba(255,59,48,.12); --orange-soft: rgba(255,149,0,.14);
+    --ease-out-soft: cubic-bezier(.22,.61,.36,1);
+    --ease-spring: cubic-bezier(.34,1.36,.64,1);
+    --ease-in-out-soft: cubic-bezier(.4,0,.2,1);
+    --dur-1: 100ms; --dur-2: 160ms; --dur-3: 240ms; --stagger-1: 28ms;
+    --focus-ring: 0 0 0 3px rgba(0,113,227,.32);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --surface-solid: #2a2a2c; --surface: rgba(38,38,40,.72);
+      --text: #f5f5f7; --text-1: #f5f5f7; --text-2: #a1a1a6; --text-3: #6e6e73;
+      --hover: rgba(255,255,255,.06); --active: rgba(255,255,255,.1);
+      --hairline: rgba(255,255,255,.1); --hairline-soft: rgba(255,255,255,.06); --hairline-strong: rgba(255,255,255,.16);
+      --sh-1: 0 1px 2px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.28);
+      --sh-2: 0 6px 18px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.28);
+      --sh-3: 0 18px 44px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.3);
+      --accent: #0a84ff; --accent-strong: #409cff; --accent-text: #4aa3ff;
+      --accent-soft: rgba(10,132,255,.18);
+      --green-text: #30d158; --red-text: #ff5a54; --orange-text: #ffa02e;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; animation-delay: 0ms !important;
+      transition-duration: .001ms !important;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; font: var(--fw-regular) var(--t-body)/1.5 var(--font);
+    color: var(--text); background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(0,113,227,.08), transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, rgba(52,199,89,.06), transparent 50%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  button, [role="button"] {
+    font: inherit; color: inherit; transition:
+      background-color var(--dur-1) var(--ease-out-soft),
+      color var(--dur-1) var(--ease-out-soft),
+      border-color var(--dur-1) var(--ease-out-soft),
+      box-shadow var(--dur-2) var(--ease-out-soft),
+      opacity var(--dur-1) var(--ease-out-soft),
+      transform var(--dur-1) var(--ease-out-soft);
+  }
+  button:active:not(:disabled) { transform: scale(.985); }
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+
+  @keyframes u-rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes u-pop-in { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+  .u-rise { animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; }
+  .u-pop { animation: u-pop-in var(--dur-2) var(--ease-spring) both; }
+  .u-num-bump { animation: u-pop-in var(--dur-1) var(--ease-spring) both; }
+  .u-stagger > * { animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; }
+  .u-stagger > *:nth-child(1) { animation-delay: calc(var(--stagger-1) * 0); }
+  .u-stagger > *:nth-child(2) { animation-delay: calc(var(--stagger-1) * 1); }
+  .u-stagger > *:nth-child(3) { animation-delay: calc(var(--stagger-1) * 2); }
+  .u-stagger > *:nth-child(4) { animation-delay: calc(var(--stagger-1) * 3); }
+  .u-stagger > *:nth-child(5) { animation-delay: calc(var(--stagger-1) * 4); }
+  .u-stagger > *:nth-child(6) { animation-delay: calc(var(--stagger-1) * 5); }
+  .u-stagger > *:nth-child(7) { animation-delay: calc(var(--stagger-1) * 6); }
+
+  .page { max-width: 1120px; margin: 0 auto; padding: 40px 24px 64px; }
+  .hero { display: grid; gap: 10px; margin-bottom: 28px; }
+  .eyebrow { margin: 0; color: var(--accent-text); font-size: var(--t-caption); font-weight: var(--fw-semibold); letter-spacing: .06em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: var(--t-hero); font-weight: var(--fw-semibold); letter-spacing: -.02em; line-height: 1.15; }
+  .lede { margin: 0; max-width: 62ch; color: var(--text-2); font-size: var(--t-title); line-height: 1.55; }
+  .principles {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 22px 0 28px;
+  }
+  .principle {
+    padding: 14px 16px; border: 1px solid var(--hairline); border-radius: var(--r-card);
+    background: var(--surface-solid); box-shadow: var(--sh-1);
+  }
+  .principle b { display: block; margin-bottom: 4px; font-size: var(--t-footnote); }
+  .principle span { color: var(--text-2); font-size: var(--t-caption); line-height: 1.5; }
+
+  .shell {
+    display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(280px, 340px);
+    min-height: 520px; border: 1px solid var(--hairline); border-radius: var(--r-xl);
+    background: var(--surface-solid); box-shadow: var(--sh-2); overflow: hidden;
+  }
+  .side {
+    display: flex; flex-direction: column; gap: 2px; padding: 14px 10px;
+    background: color-mix(in srgb, var(--bg) 70%, var(--surface-solid));
+    border-right: 1px solid var(--hairline);
+  }
+  .brand { padding: 8px 10px 14px; font-size: var(--t-title); font-weight: var(--fw-semibold); letter-spacing: -.01em; }
+  .nav-item, .row, .chip {
+    position: relative; display: flex; align-items: center; gap: 8px; width: 100%;
+    min-height: 32px; padding: 7px 10px; border: 0; border-radius: var(--r-control);
+    background: transparent; text-align: left; cursor: pointer; color: var(--text-2);
+  }
+  .nav-item:hover, .row:hover, .chip:hover { background: var(--hover); color: var(--text); }
+  .is-selected { position: relative; color: var(--text); font-weight: var(--fw-semibold); background: var(--active); }
+  .is-selected::before {
+    content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 0;
+    border-radius: var(--r-pill); background: var(--accent);
+    transform: scaleX(0); transform-origin: left;
+    transition: transform var(--dur-2) var(--ease-out-soft), width var(--dur-2) var(--ease-out-soft);
+  }
+  .is-selected.is-on::before { width: 3px; transform: scaleX(1); }
+
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .main-head {
+    display: flex; align-items: end; justify-content: space-between; gap: 12px;
+    padding: 18px 20px 12px; border-bottom: 1px solid var(--hairline-soft);
+  }
+  .main-head h2 { margin: 0; font-size: var(--t-subhead); font-weight: var(--fw-semibold); letter-spacing: -.01em; }
+  .main-head p { margin: 4px 0 0; color: var(--text-3); font-size: var(--t-footnote); }
+  .seg {
+    display: inline-flex; padding: 2px; border-radius: var(--r-sm); background: var(--hover);
+  }
+  .seg button {
+    min-height: 28px; padding: 4px 10px; border: 0; border-radius: var(--r-xs);
+    background: transparent; color: var(--text-2); cursor: pointer; font-size: var(--t-footnote);
+  }
+  .seg button[aria-selected="true"] {
+    background: var(--surface-solid); color: var(--text); font-weight: var(--fw-semibold); box-shadow: var(--sh-1);
+  }
+  .list { display: grid; gap: 2px; padding: 10px 12px 16px; }
+  .row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+    gap: 10px; min-height: 52px; padding: 10px 12px; border-radius: var(--r-sm);
+  }
+  .row strong { display: block; font-size: var(--t-body); font-weight: var(--fw-semibold); color: var(--text-1); }
+  .row small { color: var(--text-3); font-size: var(--t-caption); }
+  .badge {
+    flex: none; padding: 2px 8px; border-radius: var(--r-xs); font-size: var(--t-caption);
+    font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+  }
+  .badge.is-high { color: var(--green-text); background: var(--green-soft); }
+  .badge.is-mid { color: var(--text-1); background: var(--hover); }
+  .badge.is-low { color: var(--orange-text); background: var(--orange-soft); }
+
+  .detail {
+    display: flex; flex-direction: column; gap: 12px; padding: 18px 16px;
+    border-left: 1px solid var(--hairline); background: color-mix(in srgb, var(--bg) 35%, var(--surface-solid));
+  }
+  .card {
+    display: grid; gap: 12px; padding: 16px; border: 1px solid var(--hairline);
+    border-radius: var(--r-card); background: var(--surface-solid); box-shadow: var(--sh-1);
+  }
+  .card:hover { transform: scale(1.006); box-shadow: var(--sh-2); }
+  .card h3 { margin: 0; font-size: var(--t-title); font-weight: var(--fw-semibold); }
+  .quote {
+    margin: 0; padding: 10px 12px; border-left: 3px solid var(--hairline-strong);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--hover);
+    color: var(--text-1); font-size: var(--t-body); line-height: 1.65;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-3); font-size: var(--t-caption); }
+  .weight-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .weight-value { min-width: 64px; font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
+  .hardness {
+    display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-sm); background: var(--hover);
+  }
+  .hardness button {
+    padding: 3px 8px; border: 0; border-radius: var(--r-xs); background: transparent;
+    color: var(--text-2); cursor: pointer; font-size: var(--t-caption);
+  }
+  .hardness button[aria-pressed="true"] {
+    background: var(--surface-solid); color: var(--text-1); font-weight: var(--fw-semibold);
+    box-shadow: var(--sh-1);
+  }
+  .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 36px; padding: 0 12px; border: 1px solid var(--hairline-strong);
+    border-radius: var(--r-control); background: var(--surface-solid); cursor: pointer;
+    font-weight: var(--fw-semibold);
+  }
+  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--sh-2); filter: brightness(1.02); }
+  .btn-primary { border-color: transparent; background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-strong); color: #fff; }
+  .btn.is-supports { color: var(--green-text); background: var(--green-soft); border-color: transparent; }
+  .btn.is-contradicts { color: var(--red-text); background: var(--red-soft); border-color: transparent; }
+  .note { margin: 0; color: var(--text-3); font-size: var(--t-caption); line-height: 1.55; }
+
+  .compare {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 28px;
+  }
+  .compare .panel {
+    padding: 16px; border-radius: var(--r-card); border: 1px solid var(--hairline); background: var(--surface-solid);
+  }
+  .compare h3 { margin: 0 0 8px; font-size: var(--t-title); }
+  .compare ul { margin: 0; padding-left: 1.1em; color: var(--text-2); font-size: var(--t-footnote); line-height: 1.7; }
+  .bad { box-shadow: 0 8px 24px rgba(0,0,0,.28); border: 2px solid #7c3aed; background: linear-gradient(135deg, #f5f3ff, #fff); }
+  .bad .fake-glow { box-shadow: 0 0 24px rgba(124,58,237,.55); border-radius: 999px; padding: 6px 12px; display: inline-block; margin-top: 8px; }
+
+  .float {
+    position: fixed; right: 20px; bottom: 20px; max-width: 280px; padding: 12px 14px;
+    border: 1px solid var(--hairline); border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+    backdrop-filter: blur(12px) saturate(1.2); box-shadow: var(--sh-3);
+    color: var(--text-2); font-size: var(--t-caption); line-height: 1.5;
+  }
+  .float b { color: var(--text-1); }
+
+  @media (max-width: 900px) {
+    .principles { grid-template-columns: 1fr 1fr; }
+    .shell { grid-template-columns: 1fr; }
+    .side, .detail { border: 0; border-top: 1px solid var(--hairline); }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="page u-rise">
+    <header class="hero">
+      <p class="eyebrow">Meridian · design-system.css</p>
+      <h1>useLayouts，按我的理解</h1>
+      <p class="lede">不是一套花哨皮肤，而是四条可执行的规则：层级靠留白与字阶，颜色只表语义，层次靠发丝线与柔和阴影，动效短、跟手、可关闭。下面这块可点的小工作台，就是这些规则叠在一起的样子。</p>
+    </header>
+
+    <section class="principles u-stagger" aria-label="四条原则">
+      <div class="principle"><b>1. 读得懂优先</b><span>字阶与留白建层级，不加粗边框堆盒子。</span></div>
+      <div class="principle"><b>2. 颜色有语义</b><span>蓝强调、绿佐证、红反对；不做装饰渐变。</span></div>
+      <div class="principle"><b>3. 质感克制</b><span>细边 + `--sh-1/2/3`；列表不抬，卡片才抬。</span></div>
+      <div class="principle"><b>4. 动效有目的</b><span>入场 rise、数字 pop、选中条滑入；常态不动。</span></div>
+    </section>
+
+    <section class="shell" aria-label="可交互 demo">
+      <aside class="side" aria-label="侧栏">
+        <div class="brand">Meridian</div>
+        <button class="nav-item" type="button" data-nav>今日</button>
+        <button class="nav-item" type="button" data-nav>数据源</button>
+        <button class="nav-item" type="button" data-nav>读数</button>
+        <button class="nav-item is-selected is-on" type="button" data-nav>主题 · Sivers</button>
+        <button class="nav-item" type="button" data-nav>冷库</button>
+        <button class="nav-item" type="button" data-nav>设置</button>
+      </aside>
+
+      <div class="main">
+        <div class="main-head">
+          <div>
+            <h2>待判</h2>
+            <p>列表行只换底色；当前项用左侧 3px 色条。</p>
+          </div>
+          <div class="seg" role="tablist" aria-label="队列状态">
+            <button type="button" aria-selected="true">待判</button>
+            <button type="button" aria-selected="false">已处理</button>
+          </div>
+        </div>
+        <div class="list u-stagger" id="queue" role="listbox" aria-label="待判队列">
+          <button class="row is-selected is-on" type="button" role="option" aria-selected="true" data-i="0">
+            <span><strong>硅光渗透率已达 35%</strong><small>行业报告 · 2026-09-28</small></span>
+            <span class="badge is-high">权重 0.95</span>
+          </button>
+          <button class="row" type="button" role="option" aria-selected="false" data-i="1">
+            <span><strong>光子业务毛利率承压</strong><small>券商研报 · 2026-09-20</small></span>
+            <span class="badge is-mid">权重 0.56</span>
+          </button>
+          <button class="row" type="button" role="option" aria-selected="false" data-i="2">
+            <span><strong>有人说良率到了 90%</strong><small>群聊转发 · 缺硬数据</small></span>
+            <span class="badge is-low">权重 0.25</span>
+          </button>
+          <button class="row" type="button" role="option" aria-selected="false" data-i="3">
+            <span><strong>产能爬坡慢于预期</strong><small>供应链 · 2026-09-12</small></span>
+            <span class="badge is-mid">权重 0.65</span>
+          </button>
+        </div>
+      </div>
+
+      <aside class="detail">
+        <article class="card" id="judge">
+          <div class="meta">
+            <span>模型建议</span><span>行业报告</span><span>2026-09-28</span><span style="margin-left:auto;color:var(--accent)">原文 ↗</span>
+          </div>
+          <h3 id="judge-title">硅光渗透率已达 35%</h3>
+          <p class="quote" id="judge-quote">Yole Group 最新报告指出，硅光技术在数据中心光模块中的渗透率已达 35%，预计 2027 年将超过 50%。</p>
+          <div>
+            <div class="weight-row">
+              <span>权重</span>
+              <strong class="weight-value" id="weight">0.95 · 高</strong>
+              <div class="hardness" role="group" aria-label="硬度">
+                <button type="button" data-hard="hard" aria-pressed="true">硬数据 ×1.0</button>
+                <button type="button" data-hard="soft" aria-pressed="false">观点 ×0.7</button>
+              </div>
+            </div>
+            <p class="note" id="formula">= 财报 / 公告 0.95 × 硬数据 1.0 · 建议值，可改。</p>
+          </div>
+          <div class="actions">
+            <button class="btn is-supports" type="button">佐证</button>
+            <button class="btn is-contradicts" type="button">反对</button>
+            <button class="btn" type="button">中立</button>
+            <button class="btn btn-primary" type="button">确认</button>
+          </div>
+        </article>
+        <p class="note">卡片才用柔和阴影与微缩放；按钮 hover 轻抬 + `--sh-2`；改硬度时数字会 `.u-num-bump` 一下。</p>
+      </aside>
+    </section>
+
+    <section class="compare">
+      <div class="panel">
+        <h3>我认为「是」</h3>
+        <ul>
+          <li>发丝线 + 柔和多层阴影，不靠粗框</li>
+          <li>列表不跳、卡片才抬</li>
+          <li>选中 = 左侧细色条滑入，不是整圈霓虹</li>
+          <li>入场 stagger，数字变化轻 pop</li>
+          <li>语义色克制；字重最多到 600</li>
+          <li>`prefers-reduced-motion` 一刀切掉动画</li>
+        </ul>
+      </div>
+      <div class="panel bad">
+        <h3>我认为「不是」</h3>
+        <ul>
+          <li>紫靛渐变、黑重投影、玻璃霜乱洒</li>
+          <li>每行都抬升、到处 glow</li>
+          <li>选中描一圈蓝光 / 胶囊贴纸堆叠</li>
+          <li>常态循环动画、滚动数字表演</li>
+          <li>另起一套私有蓝边蓝底（demo 皮肤）</li>
+        </ul>
+        <div class="fake-glow">这种光晕就不是</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="float u-pop"><b>怎么看这份 demo</b><br />点侧栏与队列看选中条；点硬度看数字回弹；悬停卡片与按钮看抬升。系统开「减少动态效果」时这些都会消失。</div>
+
+<script>
+  const items = [
+    { title: '硅光渗透率已达 35%', quote: 'Yole Group 最新报告指出，硅光技术在数据中心光模块中的渗透率已达 35%，预计 2027 年将超过 50%。', hard: 0.95, soft: 0.67, label: '财报 / 公告' },
+    { title: '光子业务毛利率承压', quote: '研报认为光子业务短期毛利率承压，主要来自新品导入期的良率爬坡。', hard: 0.80, soft: 0.56, label: '券商研报' },
+    { title: '有人说良率到了 90%', quote: '群里有人转发：良率已经到 90%。没有原始出处，只能当弱信号。', hard: 0.35, soft: 0.25, label: '群聊转发' },
+    { title: '产能爬坡慢于预期', quote: '供应链反馈产能爬坡慢于预期，交期被再度拉长两到三周。', hard: 0.65, soft: 0.46, label: '独立媒体' },
+  ]
+  let hardness = 'hard'
+  let index = 0
+
+  const weightEl = document.getElementById('weight')
+  const formulaEl = document.getElementById('formula')
+  const titleEl = document.getElementById('judge-title')
+  const quoteEl = document.getElementById('judge-quote')
+
+  function renderWeight() {
+    const item = items[index]
+    const value = hardness === 'hard' ? item.hard : item.soft
+    const tier = value >= 0.75 ? '高' : value >= 0.45 ? '中' : '低'
+    weightEl.textContent = `${value.toFixed(2)} · ${tier}`
+    weightEl.classList.remove('u-num-bump')
+    void weightEl.offsetWidth
+    weightEl.classList.add('u-num-bump')
+    formulaEl.textContent = `= ${item.label} ${hardness === 'hard' ? item.hard.toFixed(2) : (item.hard).toFixed(2)} × ${hardness === 'hard' ? '硬数据 1.0' : '观点 0.7'} · 建议值，可改。`
+  }
+
+  document.querySelectorAll('[data-nav]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-nav]').forEach((b) => b.classList.remove('is-selected', 'is-on'))
+      btn.classList.add('is-selected', 'is-on')
+    })
+  })
+
+  document.querySelectorAll('.seg button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-selected', 'false'))
+      btn.setAttribute('aria-selected', 'true')
+    })
+  })
+
+  document.querySelectorAll('#queue .row').forEach((row) => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('#queue .row').forEach((r) => {
+        r.classList.remove('is-selected', 'is-on')
+        r.setAttribute('aria-selected', 'false')
+      })
+      row.classList.add('is-selected', 'is-on')
+      row.setAttribute('aria-selected', 'true')
+      index = Number(row.dataset.i)
+      titleEl.textContent = items[index].title
+      quoteEl.textContent = items[index].quote
+      renderWeight()
+      const card = document.getElementById('judge')
+      card.classList.remove('u-rise')
+      void card.offsetWidth
+      card.classList.add('u-rise')
+    })
+  })
+
+  document.querySelectorAll('[data-hard]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      hardness = btn.dataset.hard
+      document.querySelectorAll('[data-hard]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)))
+      renderWeight()
+    })
+  })
+</script>
+</body>
+</html>
