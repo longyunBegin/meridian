@@ -373,7 +373,7 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     return section
   }
 
-  const list = h('div', { class: 'inbox-list', role: 'group', 'aria-label': '待确认信息列表' })
+  const list = h('div', { class: 'inbox-list enter-stagger', role: 'group', 'aria-label': '待确认信息列表' })
   const detail = h('section', { class: 'inbox-detail', id: 'inbox-detail', 'aria-labelledby': 'inbox-detail-title' })
   const count = h('span')
   /* 批量语义提示：哪些选中项已经绑过主题——用户问的就是"都绑定了为什么还要我选主题" */
@@ -670,11 +670,12 @@ function renderInboxWorkspace(mid, seq, allNodes) {
     },
   }, `抽取这 ${unmatchedItems.length} 条`)
 
+  let staggerIdx = 0
   const appendItems = (group, opts = {}) => {
     if (!group.length) return
     if (opts.head) list.append(opts.head)
     for (const item of group) {
-      list.append(renderInboxItem(item, () => select(item.id), (checked) => {
+      const el = renderInboxItem(item, () => select(item.id), (checked) => {
         checked ? picked.add(item.id) : picked.delete(item.id)
         updateBatch()
       }, (direction) => {
@@ -683,7 +684,9 @@ function renderInboxWorkspace(mid, seq, allNodes) {
         const row = [...list.querySelectorAll('.inbox-item')].find((el) => el.dataset.id === next.id)
         row.querySelector('.inbox-body').focus({ preventScroll: true })
         row.scrollIntoView({ block: 'nearest' })
-      }, isSelectable(item)))
+      }, isSelectable(item))
+      el.style.setProperty('--i', staggerIdx++)
+      list.append(el)
     }
   }
 
@@ -743,7 +746,8 @@ function renderInboxItem(item, onSelect, onPick, onNavigate, pickable = true) {
   const relTime = relativeTime(item.createdAt)
   const extracted = item.extracted !== false
   const missingLink = item.kind !== 'reading' && !itemSourceUrl(item)
-  return h('div', { class: 'inbox-item inbox2-item', dataset: { id: item.id } },
+  return h('div', { class: 'inbox-item inbox2-item lift-hover enter-item sel-group', dataset: { id: item.id } },
+    h('span', { class: 'sel-bar', 'aria-hidden': 'true' }),
     h('input', {
       type: 'checkbox', class: 'inbox-ck', 'aria-label': `选择 ${title}`,
       disabled: !pickable,

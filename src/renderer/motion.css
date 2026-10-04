@@ -114,6 +114,11 @@
   transform: translateY(-50%) scaleY(1);
   opacity: 1;
 }
+/* 收件箱用 data-sel 标记选中 */
+[data-sel="true"] .sel-bar {
+  transform: translateY(-50%) scaleY(1);
+  opacity: 1;
+}
 /* tab 式背景 pill（JS 设置 --pill-x/--pill-w，或用 :has 方案） */
 .sel-pill {
   position: absolute;
