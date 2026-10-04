@@ -210,12 +210,15 @@ button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-q
 @keyframes u-swipe-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes u-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
 @keyframes u-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes u-grow-y { from { transform: scaleY(0.55); } to { transform: scaleY(1); } }
+@keyframes u-grow-x { from { transform: scaleX(0.4); } to { transform: scaleX(1); } }
 
 .u-rise{ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; }
 .u-pop{ animation: u-pop-in var(--dur-2) var(--ease-spring) both; }
 .u-fade{ animation: u-fade-in var(--dur-2) var(--ease-out-soft) both; }
 .u-swipe{ animation: u-swipe-in var(--dur-2) var(--ease-out-soft) both; }
 .u-toast{ animation: u-toast-in var(--dur-2) var(--ease-spring) both; }
+.u-grow{ transform-origin: bottom; animation: u-grow-y var(--dur-3) var(--ease-out-soft) both; }
 
 /* 逐项入场：按兄弟序号错开 --stagger-1；上限 20 项，超出不再加延迟（保持克制）。 */
 .u-stagger > *:nth-child(1){ animation: u-rise-in var(--dur-3) var(--ease-out-soft) both; animation-delay: calc(var(--stagger-1) * 0); }
