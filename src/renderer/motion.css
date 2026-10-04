@@ -239,6 +239,39 @@
   .rdr-cluster-bubble:hover .rdr-cluster-circle { filter: none; }
 }
 
+
+/* ============ 其他页面：统一质感（审计/读数/设置/检视器） ============ */
+/* 通用卡片轻抬 */
+.vault .card, .readings .card, .settings .card {
+  transition: transform var(--dur-move) var(--spring-snappy),
+              box-shadow var(--dur-micro) var(--ease-out-quint);
+}
+.vault .card:hover, .readings .card:hover, .settings .card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+/* 通用按钮三态 */
+.vault .btn, .readings .btn, .settings .btn {
+  transition: background var(--dur-micro), transform var(--dur-micro) ease-out;
+}
+.vault .btn:active, .readings .btn:active, .settings .btn:active {
+  transform: scale(.96);
+}
+/* 读数条目入场 */
+.feed-day {
+  animation: m-rdr-item var(--dur-item) var(--ease-out-quint);
+}
+/* 检视器面板玻璃 */
+.inspector {
+  background: rgba(255, 255, 255, .8);
+  -webkit-backdrop-filter: blur(var(--blur-glass));
+  backdrop-filter: blur(var(--blur-glass));
+}
+@media (prefers-reduced-motion: reduce) {
+  .vault .card:hover, .readings .card:hover, .settings .card:hover { transform: none; }
+  .feed-day { animation: none; }
+}
+
 /* ============ reduced-motion：全部禁用 ============ */
 @media (prefers-reduced-motion: reduce) {
   .lift-visual, .lift-hover, .m-btn, .sel-bar, .sel-pill, .icon-swap {
