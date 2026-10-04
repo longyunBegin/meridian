@@ -204,6 +204,41 @@
   .cog-ev:hover, .cog-wb-queue-card:hover { transform: none; }
 }
 
+
+/* ============ 读者：抽屉弹簧 + 玻璃 + 气泡悬浮 ============ */
+/* 抽屉：弹簧滑入 + 玻璃拟态 */
+.rdr-detail {
+  transition: transform var(--dur-move) var(--spring-snappy),
+              opacity var(--dur-micro) var(--ease-out-quint) !important;
+  background: rgba(255, 255, 255, .88) !important;
+  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+}
+/* 气泡 hover：视觉层光晕（命中层不动，沿用分层原则） */
+.rdr-cluster-bubble .rdr-cluster-circle {
+  transition: stroke-width var(--dur-micro) var(--ease-out-quint),
+              fill-opacity var(--dur-micro) var(--ease-out-quint),
+              filter var(--dur-micro) var(--ease-out-quint);
+}
+.rdr-cluster-bubble:hover .rdr-cluster-circle,
+.rdr-cluster-bubble:focus-visible .rdr-cluster-circle {
+  stroke-width: 3;
+  fill-opacity: .38;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .18));
+}
+/* 读者信息卡入场 */
+.rdr-detail-body > * {
+  animation: m-rdr-item var(--dur-item) var(--ease-out-quint);
+}
+@keyframes m-rdr-item {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rdr-detail-body > * { animation: none; }
+  .rdr-cluster-bubble:hover .rdr-cluster-circle { filter: none; }
+}
+
 /* ============ reduced-motion：全部禁用 ============ */
 @media (prefers-reduced-motion: reduce) {
   .lift-visual, .lift-hover, .m-btn, .sel-bar, .sel-pill, .icon-swap {
