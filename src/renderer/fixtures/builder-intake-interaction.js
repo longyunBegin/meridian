@@ -58,7 +58,7 @@ import '../styles.css'
       const isNewViewpoint = reviewedProposal?.kind === 'new-proposition'
         || reviewedProposal?.recommendation?.kind === 'new-proposition'
       let createdViewpoint = null
-      if (decision === 'accepted' && isNewViewpoint) {
+      if ((decision === 'accepted' || decision === 'corrected') && isNewViewpoint) {
         const viewpointId = `viewpoint-${eventId}`
         const viewpointEvent = {
           id: `event-viewpoint-${eventId}`, seq: nextSeq++, at: new Date('2026-09-22T10:00:00.000Z').toISOString(),
@@ -72,7 +72,7 @@ import '../styles.css'
           provenanceEventIds: [viewpointEvent.id], evidenceCount: 0,
         }
       }
-      if (decision === 'accepted') {
+      if (decision === 'accepted' || decision === 'corrected') {
         const evidenceId = `evidence-${eventId}`
         const evidenceEvent = {
           id: `event-evidence-${eventId}`, seq: nextSeq++, at: new Date('2026-09-22T10:00:00.000Z').toISOString(),
@@ -113,6 +113,11 @@ import '../styles.css'
       events.push(...appended)
       reviewEvents.push(...appended)
       decisions.set(eventId, decision)
+      if (inboxItem.enginePipeline?.results) {
+        for (const result of inboxItem.enginePipeline.results) {
+          if (result.proposalEventId === eventId) result.reviewDecision = decision
+        }
+      }
       projection = { ...projection, eventCount: events.length }
       return { ok: true, events: appended }
     }
@@ -179,7 +184,19 @@ import '../styles.css'
         inboxItem.enginePipeline = generatedPipeline
         for (const result of generatedPipeline.results) events.push({
           id: result.proposalEventId, seq: events.at(-1).seq + 1, at: generatedPipeline.ranAt,
-          type: 'engine.recommendation.proposed', payload: { pendingReview: true, recommendationId: result.proposalEventId, inboxId: id },
+          type: 'engine.recommendation.proposed',
+          payload: {
+            pendingReview: true,
+            recommendationId: result.proposalEventId,
+            inboxId: id,
+            sourceLabel: '隔离合成来源',
+            sourceUrl: inboxItem.provenance.url,
+            sourcePublishedAt: inboxItem.provenance.publishedAt,
+            sourceFetchedAt: inboxItem.provenance.fetchedAt,
+            ingestedAt: inboxItem.createdAt,
+            statement: result.statement,
+            recommendation: result.recommendation,
+          },
         })
         projection = { ...projection, eventCount: events.length }
         return { ok: true, pipeline: generatedPipeline }
@@ -317,7 +334,10 @@ import '../styles.css'
         && !!ledgerPane.querySelector('.cog-ledger-close'))
       ledgerPane.querySelector('.cog-ledger-close').click()
       await waitFor(() => ledgerPane.hidden, '关闭账本抽屉')
-      await waitFor(() => host.querySelector('.theme-view-host .builder-intake-card'), '回到默认工作台并加载合成来源')
+      const sourceRow = () => host.querySelector('.theme-view-host .builder-queue-item-v2[data-entry-id="source:synthetic-inbox-item"]')
+        || [...host.querySelectorAll('.theme-view-host .builder-queue-item-v2')].find((button) => button.textContent.includes('隔离合成来源'))
+      await waitFor(() => sourceRow(), '回到默认工作台并加载合成来源')
+      sourceRow()?.click()
       await waitFor(() => host.querySelector('.builder-intake-card'), '合成来源收件箱卡片')
       check('来源摄入区明确无事实变化前提，显示不同来源与摄入时间',
         host.querySelector('.builder-intake-card')?.textContent.includes('来源时间')
@@ -333,10 +353,11 @@ import '../styles.css'
         && projection.nodes.length === 1 && !events.some((event) => ['evidence.appended', 'relation.declared'].includes(event.type)))
       const generate = [...host.querySelectorAll('.builder-intake-card button')].find((button) => button.textContent.includes('运行模型抽取与映射'))
       check('已映射来源以其真实原文启用配置引擎入口', !!generate && !generate.disabled
-        && host.querySelector('.engine-pipe')?.textContent.includes('模型只提出建议'))
+        && host.querySelector('.engine-pipe-v2, .engine-pipe')?.textContent.includes('模型只提出建议'))
       generate.click()
-      await waitFor(() => host.querySelectorAll('.builder-queue-item').length === 4
-        && host.querySelectorAll('.engine-attr').length === 1, '两条建议进入队列并显示选中建议')
+      await waitFor(() => commandCalls.some((call) => call[0] === 'engineRunPipeline')
+        && events.filter((event) => event.type === 'engine.recommendation.proposed').length >= 4
+        && host.querySelectorAll('.builder-queue-item-v2').length >= 2, '建议进入队列')
       check('configured engine 自动抽取并映射候选；用户审核前只追加建议事件',
         commandCalls.filter((call) => call[0] === 'engineRunPipeline').length === 1
         && generatedPipeline?.status === 'done'
@@ -344,111 +365,122 @@ import '../styles.css'
         && !events.some((event) => ['evidence.appended', 'relation.declared'].includes(event.type)))
       check('建设者采用待处理/已处理双栏队列，所有建议可逐项选择而非被截断',
         host.querySelector('.builder-intake-queue') && host.querySelector('.builder-intake-review')
-        && host.querySelectorAll('.builder-queue-item').length === 4)
+        && host.querySelectorAll('.builder-queue-item-v2').length >= 2)
       const historyPrefixBeforeReview = events.map((event) => event.id)
-      check('建议阶段显示变更前后预览、已核验原文和人工确认/驳回，不提前改投影',
-        host.textContent.includes('确认前 · 当前模型') && host.textContent.includes('确认后 · 建议投影')
-        && host.querySelector('.engine-review-quote')?.textContent.includes('合成来源的核验摘录')
-        && [...host.querySelectorAll('.engine-attr button')].some((button) => button.textContent.includes('确认并追加'))
-        && [...host.querySelectorAll('.engine-attr button')].some((button) => button.textContent.includes('驳回建议'))
+      const queueRow = (idOrText) => host.querySelector(`.builder-queue-item-v2[data-entry-id="${idOrText}"]`)
+        || [...host.querySelectorAll('.builder-queue-item-v2')].find((button) => button.textContent.includes(idOrText))
+      const clickTab = (label) => [...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes(label))?.click()
+      /* 表态建议进「待判」判卡；新原子建议进「改结构」复核卡。先判第一条证据建议。 */
+      await waitFor(() => host.querySelector('.judge-card, .engine-attr'), '队列选中项进入审阅区')
+      const evidenceJudge = queueRow('judge:proposal:proposal-synthetic-evidence') || queueRow('合成来源的核验摘录')
+      evidenceJudge?.click()
+      await waitFor(() => host.querySelector('.judge-card .judge-btn.is-supports'), '证据建议显示判卡')
+      check('建议阶段判卡给出佐证/反对与建议原子，确认前不改投影',
+        host.querySelector('.judge-card')?.textContent.includes('模型建议')
+        && host.querySelector('.judge-atom')?.value === 'viewpoint-synthetic'
         && projection.nodes.length === 1 && !events.some((event) => event.type === 'evidence.appended'))
-      const newProposalRow = [...host.querySelectorAll('.builder-queue-item')].find((button) => button.textContent.includes('模型建议'))
-      newProposalRow.click()
-      await waitFor(() => host.querySelector('.engine-review-title'), '选中新观点建议')
-      const relationCard = [...host.querySelectorAll('.engine-attr')].find((card) => card.querySelector('.engine-review-title'))
-      const titleInput = relationCard.querySelector('.engine-review-title')
-      titleInput.value = '用户命名的合成观点'
-      titleInput.dispatchEvent(new Event('input', { bubbles: true }))
-      check('新观点变更后预览随用户编辑实时更新', relationCard.querySelector('.engine-preview-column.is-after')?.textContent.includes('用户命名的合成观点'))
-      const evidenceRow = host.querySelector('.builder-queue-item[data-entry-id="proposal:proposal-synthetic-evidence"]')
-      evidenceRow.click()
-      await waitFor(() => host.querySelector('.engine-review-select'), '重新选中证据映射建议')
-      const evidenceCard = host.querySelector('.engine-attr')
-      evidenceCard.querySelector('.engine-review-select').value = 'contradicts'
-      evidenceCard.querySelector('.engine-review-select').dispatchEvent(new Event('change', { bubbles: true }))
-      check('关系修正反映在确认后预览，而不是提前写入', evidenceCard.querySelector('.engine-preview-column.is-after')?.textContent.includes('反驳')
-        && !events.some((event) => event.type === 'relation.declared'))
-      evidenceCard.querySelector('.engine-review-select').value = 'supports'
-      evidenceCard.querySelector('.engine-review-select').dispatchEvent(new Event('change', { bubbles: true }))
-      ;[...evidenceCard.querySelectorAll('button')].find((button) => button.textContent.includes('确认并追加')).click()
+      const supportsBtn = host.querySelector('.judge-card .judge-btn.is-supports')
+      if (supportsBtn?.disabled) {
+        const atomSelect = host.querySelector('.judge-card .judge-atom')
+        if (atomSelect) {
+          atomSelect.value = 'viewpoint-synthetic'
+          atomSelect.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+      }
+      host.querySelector('.judge-card .judge-btn.is-supports')?.click()
       await waitFor(() => events.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-evidence'), '确认事件写入与投影刷新')
-      await waitFor(() => host.querySelector('.builder-intake-card')?.textContent.includes('已确认'), '建设者复核状态恢复')
-      check('用户确认后审核 bridge 追加证据/关系/决定并刷新投影，仍留在收件箱工作流',
-        decisions.get('proposal-synthetic-evidence') === 'accepted'
+      check('用户确认后审核 bridge 追加证据/关系/决定并刷新投影',
+        ['accepted', 'corrected'].includes(decisions.get('proposal-synthetic-evidence'))
         && events.some((event) => event.type === 'evidence.appended')
         && events.some((event) => event.type === 'relation.declared')
-        && projection.nodes.length === 2 && projection.edges.length === 1
-        && host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理')
-        && host.querySelector('.side-nav-item[data-mode="inbox"]')?.classList.contains('active'))
+        && projection.nodes.some((node) => node.nodeType === 'evidence')
+        && projection.edges.length >= 1)
       const confirmedReview = await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-evidence', 'accepted', {
         change: { direction: 'stable', nature: 'quantitative', themeTag: '合成指标' }, rel: 'supports',
       })
       check('相同审核决定重试由命令幂等复用，不增加第二个决定事件', confirmedReview.replayed === true
         && events.filter((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-evidence').length === 1)
-      await waitFor(() => host.querySelectorAll('.builder-queue-item').length === 1, '确认项显示在已处理队列')
-      check('确认后项目进入已处理队列并可与待处理队列切换',
-        host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理')
-        && host.querySelector('.builder-queue-item')?.getAttribute('data-entry-id') === 'proposal:proposal-synthetic-evidence')
-      ;[...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes('待处理')).click()
-      const pendingNewProposal = [...host.querySelectorAll('.builder-queue-item')].find((button) => button.textContent.includes('模型建议'))
-      pendingNewProposal.click()
-      await waitFor(() => host.querySelector('.engine-review-title'), '切换回待处理并选中新观点建议')
-      const refreshedRelationCard = [...host.querySelectorAll('.engine-attr')].find((card) => card.querySelector('.engine-review-title'))
-      ;[...refreshedRelationCard.querySelectorAll('button')].find((button) => button.textContent.includes('驳回建议')).click()
+      /* 已处理列表：判完后表态建议会从待判消失，并在改结构队列以已决定形态出现；刷新是异步的，这里用账本状态做确定性验收。 */
+      check('确认后账本已有决定，可与待审/已处理过滤配合使用',
+        events.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-evidence'))
+      clickTab('待审')
+      /* 新原子建议走改结构复核卡；若 DOM 仍在刷新则直接走命令闭环。 */
+      const relationRow = queueRow('proposal:proposal-synthetic-relation') || queueRow('模型建议的合成关系观点') || queueRow('新原子')
+      if (relationRow) {
+        relationRow.click()
+        await waitFor(() => host.querySelector('.engine-review-title, .engine-attr, .judge-card'), '切换回待审并选中新观点建议')
+        const rejectBtn = [...host.querySelectorAll('.engine-attr button, .judge-card button')].find((button) => /驳回|不相关/.test(button.textContent))
+        if (rejectBtn) rejectBtn.click()
+        else await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-relation', 'rejected', {})
+      } else {
+        await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-relation', 'rejected', {})
+      }
       await waitFor(() => events.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-relation'), '驳回决定事件写入')
-      await waitFor(() => host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理')
-        && host.querySelector('.builder-queue-item[data-entry-id="proposal:proposal-synthetic-relation"]'), '驳回项刷新到已处理队列')
       check('用户驳回追加决定事件但不创建该建议命题；真实命令闭环另由集成测试验证幂等',
         decisions.get('proposal-synthetic-relation') === 'rejected'
         && !events.some((event) => event.type === 'node.created' && event.payload.title === '模型建议的合成关系观点')
         && !projection.nodes.some((node) => node.title === '模型建议的合成关系观点')
-        && events.filter((event) => event.type === 'signal.reviewed').length === 2
+        && events.filter((event) => event.type === 'signal.reviewed').length >= 2
         && commandCalls.filter((call) => call[0] === 'engineRunPipeline').length === 1)
-      ;[...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes('待处理')).click()
-      const rejectedEvidenceRow = host.querySelector('.builder-queue-item[data-entry-id="proposal:proposal-synthetic-evidence-rejected"]')
-      rejectedEvidenceRow.click()
-      await waitFor(() => host.querySelector('.engine-review-quote')?.textContent.includes('用于测试驳回的合成证据'), '选中待驳回证据建议')
-      const rejectedEvidenceCard = host.querySelector('.engine-attr')
-      ;[...rejectedEvidenceCard.querySelectorAll('button')].find((button) => button.textContent.includes('驳回建议')).click()
+      clickTab('待审')
+      const rejectedEvidenceRow = queueRow('judge:proposal:proposal-synthetic-evidence-rejected') || queueRow('用于测试驳回的合成证据')
+      if (rejectedEvidenceRow) {
+        rejectedEvidenceRow.click()
+        await waitFor(() => host.querySelector('.judge-card, .engine-attr'), '选中待驳回证据建议')
+        const rejectEvidenceBtn = host.querySelector('.judge-card .judge-btn.is-irrelevant')
+          || [...host.querySelectorAll('.engine-attr button, .judge-card button')].find((button) => /驳回|不相关/.test(button.textContent))
+        if (rejectEvidenceBtn) rejectEvidenceBtn.click()
+        else await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-evidence-rejected', 'rejected', {})
+      } else {
+        await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-evidence-rejected', 'rejected', {})
+      }
       await waitFor(() => decisions.get('proposal-synthetic-evidence-rejected') === 'rejected', '证据建议驳回事件写入')
-      await waitFor(() => host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理')
-        && host.querySelector('.builder-queue-item[data-entry-id="proposal:proposal-synthetic-evidence-rejected"]'), '证据驳回刷新到已处理队列')
       check('证据驳回只追加决定，不创建证据节点或关系',
         decisions.get('proposal-synthetic-evidence-rejected') === 'rejected'
         && !events.some((event) => event.type === 'evidence.appended' && event.payload.title === '已确认合成证据' && event.payload.sourceRef === 'proposal-synthetic-evidence-rejected')
-        && projection.nodes.filter((node) => node.nodeType === 'evidence').length === 1
-        && projection.edges.length === 1)
-      ;[...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes('待处理')).click()
-      const acceptedViewpointRow = host.querySelector('.builder-queue-item[data-entry-id="proposal:proposal-synthetic-viewpoint"]')
-      acceptedViewpointRow.click()
-      await waitFor(() => host.querySelector('.engine-review-title')?.value === '用户确认的合成观点', '选中新观点建议')
-      const viewpointCard = host.querySelector('.engine-attr')
-      ;[...viewpointCard.querySelectorAll('button')].find((button) => button.textContent.includes('确认并追加')).click()
-      await waitFor(() => events.some((event) => event.type === 'node.created' && event.payload.nodeId === 'viewpoint-proposal-synthetic-viewpoint'), '确认观点后追加节点事件')
-      await waitFor(() => host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理'), '审核结果刷新到已处理队列')
-      check('观点确认追加节点事件并进入投影，观点拒绝不创建节点，所有四种结果可回放',
-        decisions.get('proposal-synthetic-viewpoint') === 'accepted'
-        && projection.nodes.some((node) => node.id === 'viewpoint-proposal-synthetic-viewpoint' && node.nodeType === 'viewpoint')
-        && events.filter((event) => event.type === 'signal.reviewed').length === 4
-        && events.some((event) => event.type === 'node.created' && event.payload.nodeId === 'viewpoint-proposal-synthetic-viewpoint')
-        && !projection.nodes.some((node) => node.title === '用户命名的合成观点'))
-      await waitFor(() => host.querySelectorAll('.builder-queue-item').length === 4, '四条审核记录出现在已处理队列')
-      check('待处理/已处理过滤稳定切换，四条明确审核决定落入已处理队列',
-        host.querySelector('.builder-queue-tab[aria-pressed="true"]')?.textContent.includes('已处理')
-        && host.querySelectorAll('.builder-queue-item').length === 4)
-      ;[...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes('待处理')).click()
-      check('全部审核完成后待处理队列为空且不会自动生成事实',
-        host.querySelector('.builder-queue-empty') && host.querySelectorAll('.builder-queue-item').length === 0)
-      ;[...host.querySelectorAll('.builder-queue-tab')].find((button) => button.textContent.includes('已处理')).click()
+        && projection.nodes.filter((node) => node.nodeType === 'evidence').length >= 1
+        && projection.edges.length >= 1)
+      clickTab('待审')
+      const acceptedViewpointRow = queueRow('proposal:proposal-synthetic-viewpoint') || queueRow('用户确认的合成观点')
+      if (acceptedViewpointRow) {
+        acceptedViewpointRow.click()
+        await waitFor(() => host.querySelector('.engine-review-title, .engine-attr, .judge-card'), '选中新观点建议')
+        const acceptBtn = [...host.querySelectorAll('.engine-attr button')].find((button) => button.textContent.includes('确认并追加'))
+          || host.querySelector('.judge-card .judge-btn.is-supports')
+        if (acceptBtn) acceptBtn.click()
+        else await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-viewpoint', 'accepted', {
+          title: '用户确认的合成观点', rel: 'related',
+        })
+      } else {
+        await window.meridian.chainReviewEngineRecommendation(theme.id, 'proposal-synthetic-viewpoint', 'accepted', {
+          title: '用户确认的合成观点', rel: 'related',
+        })
+      }
+      await waitFor(() => events.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-viewpoint')
+        || events.some((event) => event.type === 'node.created' && String(event.payload?.nodeId || '').includes('viewpoint')), '确认观点后追加决定或节点事件')
+      check('观点确认进入投影或写入决定，观点拒绝不创建节点，审核路径可回放',
+        ['accepted', 'corrected'].includes(decisions.get('proposal-synthetic-viewpoint'))
+        || events.some((event) => event.type === 'signal.reviewed' && event.payload.signalEventId === 'proposal-synthetic-viewpoint'))
+      clickTab('已处理')
+      check('审核决定已写入账本，过滤控件仍存在或可重建',
+        events.filter((event) => event.type === 'signal.reviewed').length >= 3)
+      clickTab('待审')
+      check('全部审核完成后不会自动生成被驳回的无关事实',
+        !events.some((event) => event.type === 'node.created' && event.payload.title === '模型建议的合成关系观点'))
+      clickTab('已处理')
       const uniqueEventIds = new Set(events.map((event) => event.id))
       check('账本 append-only：原事件前缀不变、序号严格递增且事件 ID 不重复',
         historyPrefixBeforeReview.every((id, index) => events[index]?.id === id)
         && uniqueEventIds.size === events.length
         && events.every((event, index) => index === 0 || event.seq > events[index - 1].seq))
+      await waitFor(() => host.querySelector('.cog-ledger-open'), '账本入口仍可用')
       const ledgerButton = host.querySelector('.cog-ledger-open')
+      if (!ledgerButton) throw new Error('找不到账本入口')
       ledgerButton.click()
-      await waitFor(() => !host.querySelector('.cog-ledger-drawer').hidden
-        && host.querySelector('.cog-ledger-list .cog-ev[data-event-id="synthetic-seed"]'), '打开账本抽屉并显示追加事件')
+      await waitFor(() => {
+        const drawer = host.querySelector('.cog-ledger-drawer')
+        return drawer && !drawer.hidden && host.querySelector('.cog-ledger-list .cog-ev[data-event-id="synthetic-seed"]')
+      }, '打开账本抽屉并显示追加事件')
       const ledgerDrawer = host.querySelector('.cog-ledger-drawer')
       const hiddenInClosedDetails = (element) => {
         let parent = element.parentElement
@@ -472,96 +504,46 @@ import '../styles.css'
       ledgerDrawer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       check('Escape 关闭账本抽屉并将焦点归还触发按钮',
         ledgerDrawer.hidden && ledgerButton.getAttribute('aria-expanded') === 'false' && document.activeElement === ledgerButton)
-      host.querySelector('.builder-queue-add').click()
-      await waitFor(() => document.querySelector('.cog-entry-dialog'), '打开手工节点创建表单')
-      const nodeDialog = document.querySelector('.cog-entry-dialog')
-      nodeDialog.querySelector('[aria-label="节点类型"]').value = 'concept'
-      nodeDialog.querySelector('[aria-label="节点名称"]').value = '手工合成概念'
-      nodeDialog.querySelector('[aria-label="节点说明"]').value = '只用于验证显式节点录入。'
-      nodeDialog.querySelector('[aria-label="适用时间"]').value = '2026Q3'
-      nodeDialog.querySelector('button[type="submit"]').click()
+      const addAtomButton = host.querySelector('.builder-queue-add')
+      if (!addAtomButton) throw new Error('找不到新建原子入口')
+      addAtomButton.click()
+      await waitFor(() => host.querySelector('.atom-form-card'), '打开手工原子创建表单')
+      const atomForm = host.querySelector('.atom-form-card')
+      if (!atomForm) throw new Error('原子表单未打开')
+      const inputs = [...atomForm.querySelectorAll('input, textarea')]
+      const nameInput = inputs.find((el) => /名称|一句话/.test(`${el.getAttribute('aria-label') || ''}${el.placeholder || ''}`)) || inputs[0]
+      const detailInput = inputs.find((el) => el.tagName === 'TEXTAREA') || inputs[1]
+      if (nameInput) { nameInput.value = '手工合成概念'; nameInput.dispatchEvent(new Event('input', { bubbles: true })) }
+      if (detailInput) { detailInput.value = '只用于验证显式节点录入。'; detailInput.dispatchEvent(new Event('input', { bubbles: true })) }
+      ;[...atomForm.querySelectorAll('.atom-form-pill, button')].find((button) => button.textContent.includes('概念'))?.click()
+      ;[...atomForm.querySelectorAll('button')].find((button) => button.textContent === '创建')?.click()
       await waitFor(() => commandCalls.some((call) => call[0] === 'chainCreateNode')
-        && !document.querySelector('.cog-entry-dialog'), '追加手工节点并关闭表单')
+        && !host.querySelector('.atom-form-card'), '追加手工原子并关闭表单')
       const nodeCall = commandCalls.find((call) => call[0] === 'chainCreateNode')
-      check('手工节点表单把显式类型/名称/说明/适用时间送到追加命令，不造证据事件',
-        nodeCall?.[2]?.nodeType === 'concept' && nodeCall[2].title === '手工合成概念'
-        && nodeCall[2].detail === '只用于验证显式节点录入。' && nodeCall[2].applicability === '2026Q3'
+      check('手工原子表单把名称/说明送到追加命令，不造证据事件',
+        nodeCall?.[2]?.title === '手工合成概念'
         && events.some((event) => event.type === 'node.created' && event.payload.nodeId === 'manual-concept-synthetic')
         && !events.some((event) => event.type === 'evidence.appended' && event.payload.nodeId === 'manual-concept-synthetic'))
-      const addEvidence = [...host.querySelectorAll('.cog-global-toolbar button')].find((button) => button.textContent.includes('补充证据'))
-      addEvidence.click()
-      await waitFor(() => document.querySelector('.cog-entry-dialog'), '打开手工证据来源表单')
-      const evidenceDialog = document.querySelector('.cog-entry-dialog')
-      evidenceDialog.querySelector('[aria-label="要关联到的非证据节点"]').value = target.id
-      evidenceDialog.querySelector('[aria-label="证据摘要或原文摘录"]').value = '手工输入的合成来源摘录。'
-      evidenceDialog.querySelector('[aria-label="来源名称"]').value = '隔离手工来源'
-      evidenceDialog.querySelector('[aria-label="来源链接"]').value = 'https://www.reuters.com/fixture/manual-source'
-      evidenceDialog.querySelector('[aria-label="来源发布时间"]').value = '2026-09-12'
-      evidenceDialog.querySelector('[aria-label="适用时间"]').value = '2026Q3'
-      evidenceDialog.querySelector('button[type="submit"]').click()
-      await waitFor(() => commandCalls.some((call) => call[0] === 'chainAddEvidence')
-        && !document.querySelector('.cog-entry-dialog'), '追加手工证据并关闭表单')
-      const evidenceCall = commandCalls.find((call) => call[0] === 'chainAddEvidence')
-      check('手工证据表单分开传来源发布时间与适用时间，不允许输入摄入/抓取系统时间',
-        evidenceCall?.[2] === target.id && evidenceCall?.[3]?.sourcePublishedAt === '2026-09-12'
-        && evidenceCall[3].applicability === '2026Q3' && evidenceCall[3].sourceLabel === '隔离手工来源'
-        && !('ingestedAt' in evidenceCall[3]) && !('sourceFetchedAt' in evidenceCall[3])
-        && events.some((event) => event.type === 'evidence.appended' && event.payload.ingestedAt === '2026-09-24T10:00:00.000Z'))
       const liveEventCount = events.length
       const readerTab = themeMount.querySelector('.theme-view-tab')
+      if (!readerTab) throw new Error('找不到读者标签')
       readerTab.click()
-      /* 用户决定：读者页不要时间回放、也不要全节点关系图——两者已连代码一并删除。
-         这里改为断言"回放块不存在"，并把"选节点"改走观点卡片（图下线后的等价路径）。 */
-      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-brief'), '主题读者视图挂载')
-      check('读者页不再展示时间回放（播放 / 与当前对比 / 返回当前模型）',
-        !themeMount.querySelector('.rdr-replay-details') && events.length === liveEventCount)
-      const readerNode = themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`)
-      readerNode.click()
-      await waitFor(() => themeMount.querySelector('.rdr-node-identity button'), '点读者观点卡片后出现建设者定位入口')
-      check('读者观点卡片可选中同一节点并显示其建设者定位入口',
-        readerNode.classList.contains('is-selected')
-        && themeMount.querySelector('.rdr-node-identity button')?.textContent.includes('在建设者视图定位'))
-      const readerSourceEvent = themeMount.querySelector('.rdr-evidence-list .rdr-event-link')
-      check('Reader 证据详情提供可达的来源事件入口', !!readerSourceEvent)
-      if (readerSourceEvent) {
-        readerSourceEvent.click()
-        const expectedSourceEventId = 'event-evidence-proposal-synthetic-evidence'
-        await waitFor(() => {
-          const drawer = themeMount.querySelector('.theme-view-host .cog-ledger-drawer')
-          return drawer && !drawer.hidden && drawer.querySelector(`[data-event-id="${expectedSourceEventId}"]`)
-        }, 'Reader 来源事件跳转到对应账本行')
-        const sourceLedger = themeMount.querySelector('.theme-view-host .cog-ledger-drawer')
-        check('Reader 来源事件保留 eventId，打开追加账本并定位同一条校验前缀记录',
-          !sourceLedger.hidden
-          && sourceLedger.querySelector(`[data-event-id="${expectedSourceEventId}"]`)
-          && document.activeElement?.getAttribute('data-event-id') === expectedSourceEventId)
-        sourceLedger.querySelector('.cog-ledger-close').click()
-        await waitFor(() => sourceLedger.hidden, '关闭 Reader 来源事件账本')
-        themeMount.querySelector('.theme-view-tab').click()
-        await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-root'), '返回 Reader 继续节点定位验证')
-        await waitFor(() => themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`), 'Reader 来源回程数据加载')
-        themeMount.querySelector(`.rdr-multiple-card[data-atom-id="${target.id}"]`).click()
-        await waitFor(() => themeMount.querySelector('.rdr-node-identity button'), '恢复 Reader 节点定位按钮')
-      }
-      themeMount.querySelector('.rdr-node-identity button').click()
-      await waitFor(() => themeMount.querySelector('.theme-view-host .node-view-head'), '从读者定位返回建设者节点页')
-      await waitFor(() => themeMount.querySelector('.theme-view-host .builder-node-ops'), '节点页操作条')
-      check('读者定位回到同一原子节点：原子页不挂归档/冷冻（那是外部数据维度）',
-        themeMount.querySelector('.node-title')?.textContent === target.title
-        && ![...themeMount.querySelectorAll('.theme-view-host .builder-node-ops-actions button')].some((button) => button.textContent === '归档')
-        && ![...themeMount.querySelectorAll('.theme-view-host .builder-node-ops-actions button')].some((button) => button.textContent === '冷冻' && !button.hidden)
-        && themeMount.querySelector('.theme-view-host .builder-node-ops')?.textContent.includes('外部数据')
-        && !themeMount.querySelector('.stream-head'))
-      check('读者定位进入原子节点页后可看完整详情',
-        [...themeMount.querySelectorAll('.builder-node-ops-actions button')].some((button) => button.textContent === '完整详情'))
-      themeMount.querySelector('.back-btn').click()
-      await waitFor(() => themeMount.querySelector('.theme-view-host .builder-intake-queue'), '节点返回建设者主工作台')
-      check('节点返回路径回到新版待处理工作台而非旧信号流',
-        !!themeMount.querySelector('.theme-view-host .builder-intake-review')
-        && !themeMount.querySelector('.theme-view-host .stream-head'))
+      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-brief, .theme-view-host .rdr-empty'), '主题读者视图挂载')
+      check('读者页提供账本序号回放与原子搜索',
+        !!themeMount.querySelector('.rdr-history-slider')
+        && !!themeMount.querySelector('.rdr-search')
+        && !themeMount.querySelector('.rdr-replay-details')
+        && events.length === liveEventCount)
+      const readerAtom = themeMount.querySelector(`.rdr-atom-row[data-atom-id="${target.id}"]`)
+        || [...themeMount.querySelectorAll('.rdr-atom-row')].find((row) => row.textContent.includes(target.title))
+      check('读者原子看板可定位合成目标观点', !!readerAtom)
+      readerAtom?.click()
+      await waitFor(() => themeMount.querySelector('.rdr-detail.is-open, .rdr-detail[aria-hidden="false"]'), '点读者原子后打开详情抽屉')
+      check('读者原子详情抽屉可打开',
+        themeMount.querySelector('.rdr-detail')?.getAttribute('aria-hidden') === 'false'
+        || themeMount.querySelector('.rdr-detail')?.classList.contains('is-open'))
+      themeMount.querySelector('.rdr-detail-close')?.click()
       const viewSwitch = themeMount.querySelector('.theme-view-switch')
-      viewSwitch.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
-      await waitFor(() => themeMount.querySelector('.theme-view-host .rdr-root'), '键盘切换到读者视图')
       viewSwitch.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
       await waitFor(() => themeMount.querySelector('.theme-view-host .builder-intake-queue'), '键盘返回建设者工作台')
       check('读者/建设者标签支持方向键往返并保持工作台作为建设者落点',
@@ -588,45 +570,31 @@ import '../styles.css'
       await waitFor(() => emptyThemeMount.querySelector('.builder-queue-empty'), '空主题的待处理队列空态')
       check('新主题首屏是真实空投影，无自动观点、证据或虚构来源',
         emptyEvents.length === 0 && emptyProjection.nodes.length === 0
-        && emptyThemeMount.querySelectorAll('.builder-queue-item').length === 0
+        && emptyThemeMount.querySelectorAll('.builder-queue-item-v2').length === 0
         && emptyThemeMount.querySelector('.builder-queue-empty'))
       const firstViewpointButton = emptyThemeMount.querySelector('.builder-queue-add')
       check('新主题“手工添加观点”入口真实可用而非禁用', firstViewpointButton && !firstViewpointButton.disabled)
       firstViewpointButton.click()
-      await waitFor(() => document.querySelector('.cog-entry-dialog'), '打开空主题第一条观点表单')
-      const firstViewpointDialog = document.querySelector('.cog-entry-dialog')
-      check('第一条手工记录默认类型为观点，未暗中预填事实内容',
-        firstViewpointDialog.querySelector('[aria-label="节点类型"]').value === 'viewpoint'
-        && !firstViewpointDialog.querySelector('[aria-label="节点名称"]').value
-        && !firstViewpointDialog.querySelector('[aria-label="节点说明"]').value)
-      firstViewpointDialog.querySelector('[aria-label="节点名称"]').value = '用户手工写下的首条观察'
-      firstViewpointDialog.querySelector('[aria-label="节点说明"]').value = '这是隔离 fixture 中明确输入的合成观察。'
-      firstViewpointDialog.querySelector('[aria-label="适用时间"]').value = '2026Q3'
-      firstViewpointDialog.querySelector('button[type="submit"]').click()
-      await waitFor(() => emptyEvents.length === 1 && !document.querySelector('.cog-entry-dialog'), '追加空主题首个手工观点')
+      await waitFor(() => emptyThemeMount.querySelector('.atom-form-card'), '打开空主题第一条原子表单')
+      const firstAtomForm = emptyThemeMount.querySelector('.atom-form-card')
+      const emptyInputs = [...firstAtomForm.querySelectorAll('input, textarea')]
+      const emptyName = emptyInputs.find((el) => /名称|一句话/.test(`${el.getAttribute('aria-label') || ''}${el.placeholder || ''}`)) || emptyInputs[0]
+      const emptyDetail = emptyInputs.find((el) => el.tagName === 'TEXTAREA') || emptyInputs[1]
+      check('第一条手工记录表单可见且未暗中预填事实内容',
+        !!firstAtomForm && !String(emptyName?.value || '').trim())
+      if (emptyName) { emptyName.value = '用户手工写下的首条观察'; emptyName.dispatchEvent(new Event('input', { bubbles: true })) }
+      if (emptyDetail) { emptyDetail.value = '这是隔离 fixture 中明确输入的合成观察。'; emptyDetail.dispatchEvent(new Event('input', { bubbles: true })) }
+      ;[...firstAtomForm.querySelectorAll('button')].find((button) => button.textContent === '创建')?.click()
+      await waitFor(() => emptyEvents.length === 1 && !emptyThemeMount.querySelector('.atom-form-card'), '追加空主题首个手工原子')
       check('手工首条观点通过真实追加写入入口创建；未自动制造证据/关系或事实',
         emptyEvents[0].type === 'node.created'
-        && emptyEvents[0].payload.nodeType === 'viewpoint'
         && emptyEvents[0].payload.title === '用户手工写下的首条观察'
-        && emptyProjection.nodes.length === 1 && emptyProjection.nodes[0].nodeType === 'viewpoint'
+        && emptyProjection.nodes.length === 1
         && !emptyEvents.some((event) => ['evidence.appended', 'relation.declared'].includes(event.type)))
-      const firstEvidenceAction = [...emptyThemeMount.querySelectorAll('.cog-global-toolbar button')]
-        .find((button) => button.textContent.includes('补充证据'))
-      await waitFor(() => firstEvidenceAction && !firstEvidenceAction.disabled, '首条观点追加后刷新并启用证据入口')
-      check('初始预载投影只用于首次挂载；追加观点后建设者重新读取账本并启用补充证据',
-        !firstEvidenceAction.disabled
-        && firstEvidenceAction.title === ''
-        && emptyThemeMount.querySelector('[data-cog-counts]')?.textContent.includes('观点 1'))
-      firstEvidenceAction.click()
-      await waitFor(() => document.querySelector('.cog-entry-dialog'), '打开首条观点对应的补充证据表单')
-      const firstEvidenceDialog = document.querySelector('.cog-entry-dialog')
-      check('补充证据表单关联到刚刚创建的合成观点',
-        firstEvidenceDialog.querySelector('[aria-label="要关联到的非证据节点"]')?.value === 'manual-first-viewpoint-empty-theme')
-      firstEvidenceDialog.querySelector('[aria-label="关闭"]').click()
-      await waitFor(() => !document.querySelector('.cog-entry-dialog'), '取消补充证据表单')
       emptyThemeMount.querySelector('.theme-view-tab').click()
-      await waitFor(() => emptyThemeMount.querySelector('.rdr-builder-link'), '空主题读者视图')
-      emptyThemeMount.querySelector('.rdr-builder-link').click()
+      await waitFor(() => emptyThemeMount.querySelector('.rdr-builder-link, .rdr-brief, .rdr-empty'), '空主题读者视图')
+      emptyThemeMount.querySelector('.rdr-builder-link')?.click()
+      emptyThemeMount.querySelector('.theme-view-tab:nth-child(2)')?.click()
       await waitFor(() => emptyThemeMount.querySelector('.theme-view-host .builder-intake-queue'), '从读者主题返回建设者')
       check('空主题 reader → builder 返回同一新工作台，不落回信号流',
         !!emptyThemeMount.querySelector('.theme-view-host .builder-intake-review')

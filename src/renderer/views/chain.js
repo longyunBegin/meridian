@@ -666,6 +666,8 @@ async function loadConcept(theme, ledgerPane, opts) {
       judgeAtoms = judge.atoms
       const judgeEntries = judge.items.map((item) => ({ id: `judge:${item.key}`, kind: 'judge', judge: item, decision: null }))
       const structural = buildWorkbenchEntries(items, buildSignals(), resolvedReviews(), verdictState).filter((entry) => {
+        // 尚未跑模型的收件箱来源仍进队列，供「映射到主题 / 运行模型」；已拆成表态建议的进待判，不在这里重复。
+        if (entry.kind === 'source') return true
         if (entry.kind === 'legacy-signal') return entry.signal.type !== 'evidence.appended' || Boolean(entry.decision)
         if (entry.kind !== 'proposal') return false
         const rec = entry.result?.recommendation || {}
@@ -1067,7 +1069,9 @@ async function loadConcept(theme, ledgerPane, opts) {
           themeId: theme.id,
           api: m,
           onJudged: () => {
-            selectedEntryId = nextPendingEntryId(entry.id)
+            const nextId = nextPendingEntryId(entry.id)
+            selectedEntryId = nextId
+            queueMode = nextId ? 'pending' : 'processed'
             persistQueueState()
             opts.onChanged?.()
           },

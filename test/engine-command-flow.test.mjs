@@ -11,7 +11,6 @@ mkdirSync(DATA, { recursive: true })
 const { registry, invoke } = createCommandTestHarness(DATA)
 const store = await import('../src/main/store.js')
 const { registerDomainCommands } = await import('../src/main/domain-commands.js')
-const { deriveReaderModel } = await import('../src/renderer/lib/reader-model.js')
 const { estimateStrength, updateConfidence } = await import('../src/main/engine-confidence.js')
 const { appendEvent } = await import('../src/main/chain-events.js')
 registerDomainCommands({ registry })
@@ -147,12 +146,8 @@ try {
   check('按序号历史回放保留旧观点与旧置信度；当前 projection 显示用户确认的新观点', historicTarget?.confidence === 60
     && !historyProjection.nodes.some((node) => node.title === '用户确认的供应链交付观点')
     && currentProjection.nodes.some((node) => node.title === '用户确认的供应链交付观点'), JSON.stringify({ beforeSeq, historyNodes: historyProjection.nodes.map((node) => [node.title, node.confidence]), currentNames: currentProjection.nodes.map((node) => node.title) }))
-  const historicalModel = deriveReaderModel(historyProjection, proposalsBefore)
-  const currentModel = deriveReaderModel(currentProjection, afterReview)
-  const historicalReaderNode = Object.values(historicalModel.nodesByDirection).flat().find((node) => node.id === targetId)
-  const currentReaderNode = Object.values(currentModel.nodesByDirection).flat().find((node) => node.id === targetId)
-  check('Node 可安全导入的 reader model 显示历史/当前百分比差异', historicalReaderNode?.confidence === 60
-    && currentReaderNode?.confidence === expectedConfidence)
+  check('历史/当前投影节点强度差异可直接从 projection 读取（读者页已不再经 deriveReaderModel）', historicTarget?.confidence === 60
+    && currentTarget?.confidence === expectedConfidence)
 
   const duplicateCount = afterReview.length
   const replayed = await invoke('chain:reviewEngineRecommendation', theme.id, knownTime.proposalEventId, 'accepted', {

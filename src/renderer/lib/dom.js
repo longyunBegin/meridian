@@ -47,12 +47,22 @@ export function mount(parent, ...children) {
 export const $ = (sel, root = document) => root.querySelector(sel)
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)]
 
-/** 临时浮层提示，4 秒后自动消失。替代 alert()。 */
+/** 当前可见 toast；新提示替换旧的，避免同位置叠字。 */
+let activeToast = null
+
+/** 临时浮层提示，4 秒后自动消失。替代 alert()。连续调用时后一条替换前一条，不叠盖。 */
 export function toast(msg, color = 'var(--text-2)', action = null) {
+  if (activeToast?.el?.isConnected) {
+    clearTimeout(activeToast.timer)
+    activeToast.el.remove()
+  }
   const el = document.createElement('div')
   el.className = 'toast' + (color === 'var(--red)' ? ' toast-error' : '')
   el.append(document.createTextNode(msg))
-  let timer = setTimeout(() => el.remove(), 4000)
+  let timer = setTimeout(() => {
+    el.remove()
+    if (activeToast?.el === el) activeToast = null
+  }, 4000)
   if (action) {
     const button = document.createElement('button')
     button.className = 'toast-btn'
@@ -60,11 +70,13 @@ export function toast(msg, color = 'var(--text-2)', action = null) {
     button.addEventListener('click', async () => {
       clearTimeout(timer)
       el.remove()
+      if (activeToast?.el === el) activeToast = null
       await action.onClick()
     })
     el.append(button)
   }
   document.body.append(el)
+  activeToast = { el, timer }
   return el
 }
 

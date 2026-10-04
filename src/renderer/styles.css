@@ -1800,6 +1800,14 @@ body.tauri-macos{
 .rdr-h2 { margin: 0 0 var(--sp-2); color: var(--text-1); font-size: var(--t-title); font-weight: var(--fw-semibold); }
 .rdr-caption { margin: 0 0 var(--sp-4); color: var(--text-3); font-size: var(--t-caption); line-height: 1.6; }
 
+.rdr-tools { display: grid; gap: var(--sp-3); margin: 0 0 var(--sp-5); }
+.rdr-history { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r); background: var(--surface); }
+.rdr-history-kicker { color: var(--text-3); font-size: var(--t-caption); font-weight: 600; letter-spacing: .04em; }
+.rdr-history-slider { flex: 1 1 180px; min-width: 140px; }
+.rdr-history-label { color: var(--text-2); font-size: var(--t-caption); font-variant-numeric: tabular-nums; }
+.rdr-search-wrap { display: flex; align-items: center; gap: 10px; }
+.rdr-search { flex: 1 1 220px; min-width: 160px; }
+.rdr-search-status { color: var(--text-3); font-size: var(--t-caption); white-space: nowrap; }
 .rdr-brief { margin: 0 0 var(--sp-8); }
 .rdr-brief-kicker { margin: 0 0 4px; color: var(--text-3); font-size: var(--t-caption); letter-spacing: .06em; }
 .rdr-brief-question { margin: 0 0 var(--sp-4); color: var(--text-1); font-size: var(--t-largeTitle); font-weight: var(--fw-semibold); line-height: 1.3; }
