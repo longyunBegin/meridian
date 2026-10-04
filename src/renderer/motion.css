@@ -161,6 +161,49 @@
 }
 .icon-swap.is-hidden { opacity: 0; transform: scale(.8); pointer-events: none; }
 
+
+/* ============ 建设者：CSS 覆盖层（不动 JS 逻辑） ============ */
+/* 账本抽屉玻璃拟态 */
+.cog-ledger-pane {
+  background: rgba(255, 255, 255, .85);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border-left: 1px solid rgba(0, 0, 0, .08);
+  box-shadow: -18px 0 40px rgba(0,0,0,.12);
+}
+/* 弹窗入场：已有 transform 过渡，加弹簧 */
+.cog-entry-dialog {
+  transition: opacity .16s var(--ease-out-quint), transform .32s var(--spring-snappy);
+}
+/* 建设者按钮三态 */
+.builder .btn, .cog-concept .btn {
+  transition: background var(--dur-micro), transform var(--dur-micro) ease-out,
+              box-shadow var(--dur-micro);
+}
+.builder .btn:hover, .cog-concept .btn:hover { filter: brightness(.97); }
+.builder .btn:active, .cog-concept .btn:active { transform: scale(.96); }
+/* 建设者卡片轻抬 */
+.cog-ev, .cog-wb-queue-card, .cog-wb-detail-card {
+  transition: transform var(--dur-move) var(--spring-snappy),
+              box-shadow var(--dur-micro) var(--ease-out-quint);
+}
+.cog-ev:hover, .cog-wb-queue-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+/* 建设者主舞台入场 */
+.builder-main {
+  animation: m-builder-enter var(--dur-enter) var(--spring-snappy);
+}
+@keyframes m-builder-enter {
+  from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .builder-main { animation: none; }
+  .cog-ev:hover, .cog-wb-queue-card:hover { transform: none; }
+}
+
 /* ============ reduced-motion：全部禁用 ============ */
 @media (prefers-reduced-motion: reduce) {
   .lift-visual, .lift-hover, .m-btn, .sel-bar, .sel-pill, .icon-swap {
