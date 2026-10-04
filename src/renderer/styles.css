@@ -586,8 +586,8 @@ input[type="text"], input[type="url"], input[type="number"], input[type="date"],
   font-size: var(--t-caption);
   font-weight: 600;
   color: var(--text-2);
-  transition: background 120ms var(--ease), color 120ms var(--ease);
-}.seg button[aria-selected="true"]{background: var(--surface-solid); color: var(--text); box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.12); }/* 选项少的 seg 不拉伸：两个选项各占一半，按钮里全是空白 */
+  transition: background-color var(--dur-2) var(--ease-out-soft), color var(--dur-1) var(--ease-out-soft), box-shadow var(--dur-2) var(--ease-out-soft);
+}.seg button:active{transform: scale(0.98); }.seg button[aria-selected="true"]{background: var(--surface-solid); color: var(--text); box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.12); }/* 选项少的 seg 不拉伸：两个选项各占一半，按钮里全是空白 */
 .seg-fit{flex: none; }.seg-fit button{flex: none; min-width: 76px; }/* Jev 备用模型：一行折叠开关 + 收起来的三项配置。
    开关是个按钮但长期没有对应样式，渲染成浏览器默认按钮——和周围完全两个语言。 */
 /* 三种接入方式并列：名字 + 一句说明 + 一个复制动作 */
@@ -957,11 +957,11 @@ input[type="text"], input[type="url"], input[type="number"], input[type="date"],
   font-size: var(--t-body); font-weight: 400; z-index: 9999;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--hairline);
   display: flex; align-items: center; gap: 10px;
-  animation: toast-in 0.3s var(--ease, cubic-bezier(0.25, 0.46, 0.45, 0.94));
+  animation: toast-in var(--dur-3) var(--ease-spring) both;
 }.toast-error{background: var(--red); color: white; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2); }.toast-btn{padding: 3px 10px; font-size: var(--t-body); font-weight: 600; color: var(--accent); background: none; border: none; cursor: pointer; border-radius: var(--r-sm); }.toast-btn:hover{background: var(--hover); }.toast-btn:disabled{color: var(--text-3); cursor: default; }/* 抽取进度浮层：复用 toast 底座，加进度条与取消按钮 */
 .extract-progress-toast{min-width: 260px; }.extract-progress-text{font-variant-numeric: tabular-nums; white-space: nowrap; }.extract-progress-track{flex: 1; height: 4px; min-width: 80px; border-radius: var(--r-xs); background: var(--fill-2); overflow: hidden; }.extract-progress-fill{display: block; height: 100%; width: 0%; border-radius: var(--r-xs); background: var(--accent); transition: width 0.3s ease; }/* 收件箱行内抽取状态徽标 */
 .extracting{color: var(--text-3); }.extract-ok{color: var(--green-text); }.extract-fail{color: var(--red-text); }
-@keyframes toast-in {from{opacity: 0; transform: translateX(-50%) translateY(8px); }to{opacity: 1; transform: translateX(-50%) translateY(0); } }.review-day-header{font-size: var(--t-caption); color: var(--text-3); padding: 2px 0; font-variant-numeric: tabular-nums; }/* ============================================================
+@keyframes toast-in {from{opacity: 0; transform: translateX(-50%) translateY(-8px); }to{opacity: 1; transform: translateX(-50%) translateY(0); } }.review-day-header{font-size: var(--t-caption); color: var(--text-3); padding: 2px 0; font-variant-numeric: tabular-nums; }/* ============================================================
    R11 · 尊重系统减动效偏好：全部退化为直接显隐。
    动效是增强不是依赖——晕动症用户拿到的是同一个产品，只是不晃。
    ============================================================ */
@@ -1413,7 +1413,8 @@ body.tauri-macos{
   color: var(--text-2); font-size: var(--t-body); font-family: var(--font);
   padding: 6px 14px; border-radius: var(--r); cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
-}.cr-tab.is-active{background: var(--accent-soft); border-color: var(--accent); color: var(--text-1); font-weight: 600; }.cr-tab-flag{font-size: var(--t-caption); color: var(--orange-text); border: 1px solid var(--orange); border-radius: var(--r-xs); padding: 0 4px; }.cr-candidate-note{
+  transition: background-color var(--dur-2) var(--ease-out-soft), border-color var(--dur-2) var(--ease-out-soft), color var(--dur-1) var(--ease-out-soft);
+}.cr-tab:hover{background: var(--hover); }.cr-tab.is-active{background: var(--accent-soft); border-color: var(--accent); color: var(--text-1); font-weight: 600; }.cr-tab-flag{font-size: var(--t-caption); color: var(--orange-text); border: 1px solid var(--orange); border-radius: var(--r-xs); padding: 0 4px; }.cr-candidate-note{
   font-size: var(--t-caption); color: var(--text-3); background: var(--hover);
   border-radius: var(--r); padding: 8px 12px; margin: 0 0 12px;
 }.cr-flow{list-style: none; margin: 0; padding: 0; }.cr-step{

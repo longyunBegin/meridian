@@ -298,3 +298,14 @@ button, [role="button"], select, .theme-view-tab, .inbox2-status-tab, .builder-q
   animation: u-shimmer 1.4s var(--ease-in-out-soft) infinite;
 }
 
+/* ---------- 全局组件：空态与加载占位 ---------- */
+/* 空态：一次性轻量上浮淡入（容器静态，不会随数据高频重渲染） */
+@keyframes u-pulse-soft{ 0%, 100%{ opacity: 0.55; } 50%{ opacity: 1; } }
+.empty, .empty-state, .inbox-empty-state, .cr-empty, .rdr-empty, .fk-empty, .cog-network-empty{
+  animation: u-rise-in var(--dur-3) var(--ease-out-soft) both;
+}
+/* 加载占位：呼吸而非闪烁，节奏与骨架屏一致（1.4s） */
+.rdr-loading, .cr-loading, .hud-spin{
+  animation: u-pulse-soft 1.4s var(--ease-in-out-soft) infinite;
+}
+
