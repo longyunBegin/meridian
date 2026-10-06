@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f8">
+  <meta name="description" content="Meridian：捕获信息，由人判断并标注，添加来源链接、归入主题，对照读数与外部数据，检查追加式事件历史与审计。">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Meridian — 从信息到可审阅的主题脉络</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='3' y='3' width='58' height='58' rx='18' fill='%231d2939'/%3E%3Cpath d='M17 43V22h5l10 12 10-12h5v21h-6V31L32 42 23 31v12z' fill='white'/%3E%3C/svg%3E">
+  <style>
+:root{color-scheme:light;--ink:#17202d;--muted:#718096;--soft:#9aa5b2;--line:#e8ecf1;--paper:#f5f6f8;--white:#fff;--blue:#276ef1;--blue-soft:#edf4ff;--green:#177b57;--green-soft:#edf8f3;--red:#bd4c54;--red-soft:#fff1f1;--amber:#9a6a18;--amber-soft:#fff7e8;--shadow:0 22px 68px rgba(20,37,61,.085);--radius:18px;--sans:"DM Sans","SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;--display:"Manrope","SF Pro Display","PingFang SC",sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased}a{color:inherit;text-decoration:none}button,input,select{font:inherit}button{color:inherit}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid rgba(39,110,241,.26);outline-offset:2px}.wrap{width:min(1240px,calc(100% - 64px));margin-inline:auto}
+.synthetic-strip{min-height:34px;padding:7px 18px;display:flex;justify-content:center;align-items:center;gap:9px;background:#202b39;color:#e7edf4;font-size:11px;letter-spacing:.01em;text-align:center}.synthetic-strip strong{color:#fff;font-weight:650}.synthetic-dot{width:6px;height:6px;border-radius:50%;background:#efbc64;box-shadow:0 0 0 3px rgba(239,188,100,.13)}
+.site-header{height:76px;width:min(1240px,calc(100% - 64px));margin:0 auto;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(23,32,45,.075)}.wordmark{display:inline-flex;align-items:center;gap:9px;font-family:var(--display);font-size:16px;font-weight:800;letter-spacing:-.06em}.brand-mark{width:28px;height:28px;border-radius:9px;background:#1d2939;color:white;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.09em}.site-links{display:flex;align-items:center;gap:34px;color:#697587;font-size:12px}.site-links a:hover,.site-footer>a:last-child:hover{color:var(--blue)}.header-cta{height:36px;padding:0 13px;display:inline-flex;align-items:center;gap:9px;border:1px solid #dfe4eb;border-radius:9px;background:rgba(255,255,255,.72);font-size:11px;font-weight:650;transition:.18s}.header-cta:hover{border-color:#bac9de;background:#fff;transform:translateY(-1px)}
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(390px,.93fr);align-items:center;gap:58px;padding:66px 0 60px;min-height:496px}.eyebrow{display:flex;align-items:center;gap:9px;margin:0 0 14px;color:#7f8a99;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.eyebrow-rule{width:22px;height:1px;background:#93a3b8}.hero h1{margin:0;color:#1a2432;font-family:var(--display);font-size:clamp(43px,5.1vw,68px);font-weight:650;letter-spacing:-.075em;line-height:1.07}.hero h1 em{color:#5478b7;font-family:Georgia,serif;font-weight:500;letter-spacing:-.06em}.hero-lede{max-width:530px;margin:20px 0 0;color:#687587;font-size:15px;line-height:1.9;letter-spacing:-.01em}.hero-actions{display:flex;align-items:center;gap:10px;margin-top:25px}.button{min-height:42px;padding:0 16px;border:1px solid transparent;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:10px;font-size:12px;font-weight:650;transition:transform .18s,box-shadow .18s,background .18s}.button:hover{transform:translateY(-1px)}.button.primary{background:#1d2939;color:white;box-shadow:0 8px 18px rgba(29,41,57,.13)}.button.primary:hover{background:#2d4058;box-shadow:0 11px 20px rgba(29,41,57,.17)}.button.quiet{background:rgba(255,255,255,.52);border-color:#e2e7ed;color:#506074}.button.quiet:hover{background:#fff}.hero-disclaimer{display:flex;align-items:center;gap:7px;margin:19px 0 0;color:#8490a0;font-size:10px}.tiny-check{width:15px;height:15px;border:1px solid #cbd8d2;border-radius:50%;display:grid;place-items:center;color:#4c8b73;font-size:9px}
+.hero-visual{position:relative;padding:20px 21px 15px;border:1px solid #e3e8ef;border-radius:20px;background:linear-gradient(145deg,rgba(255,255,255,.95),rgba(248,250,252,.86));box-shadow:0 20px 50px rgba(43,62,90,.055);overflow:hidden}.hero-visual:before{content:"";position:absolute;width:240px;height:240px;right:-130px;top:-140px;border-radius:50%;background:radial-gradient(circle,#dce9ff 0,rgba(220,233,255,0) 70%)}.visual-topline{position:relative;display:flex;justify-content:space-between;padding:2px 0 13px;border-bottom:1px solid #edf0f3;color:#97a1af;font-size:8px;font-weight:700;letter-spacing:.12em}.flow-list{position:relative;padding-top:5px}.flow-item{min-height:62px;display:grid;grid-template-columns:23px 30px minmax(0,1fr) auto;align-items:center;gap:10px;border-bottom:1px solid #f0f2f5}.flow-item:last-child{border-bottom:0}.flow-num{color:#a7b0bd;font-size:9px;font-variant-numeric:tabular-nums}.flow-icon{width:27px;height:27px;border-radius:8px;display:grid;place-items:center;background:#f2f5fa;color:#647b9e;font-size:14px}.flow-item:nth-child(2) .flow-icon{background:#eef3ff;color:#5474b1}.flow-item:nth-child(3) .flow-icon{background:#eff7f2;color:#40816a}.flow-copy{display:grid;gap:3px}.flow-copy b{font-size:11px;font-weight:650}.flow-copy small{color:#919cab;font-size:9px}.flow-status{padding:4px 7px;border:1px solid #ebeff4;border-radius:999px;color:#7d8999;font-size:8px;white-space:nowrap}.visual-foot{display:flex;align-items:center;gap:8px;padding-top:11px;color:#929dac;font-size:9px}.visual-line{width:18px;height:1px;background:#9cabc0}
+.workflow-section{padding:54px 0 74px}.section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px}.section-heading .eyebrow{margin-bottom:11px}.section-heading h2,.notes-card h2{margin:0;font-family:var(--display);font-size:clamp(25px,3.1vw,38px);font-weight:650;letter-spacing:-.06em;line-height:1.15}.section-heading>p{max-width:390px;margin:0 0 3px;color:#7c8795;font-size:12px;line-height:1.8}.workflow-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.workflow-card{min-height:171px;padding:17px 17px 15px;border:1px solid #e6eaf0;border-radius:14px;background:rgba(255,255,255,.75);transition:transform .18s,border-color .18s,box-shadow .18s}.workflow-card:hover{transform:translateY(-2px);border-color:#d6e0ee;box-shadow:0 12px 30px rgba(31,49,76,.05)}.card-step{color:#8793a3;font-size:9px;font-weight:700;letter-spacing:.1em}.workflow-card h3{margin:16px 0 6px;font-size:13px;font-weight:650;letter-spacing:-.02em}.workflow-card p{margin:0;color:#7b8796;font-size:10px;line-height:1.8}.card-arrow{display:inline-flex;margin-top:12px;color:#6780a6;font-size:9px;font-weight:650;letter-spacing:.03em}
+.demo-section{padding:55px 0 64px;background:#eef1f5}.demo-heading{margin-bottom:24px}.demo-heading>p{max-width:420px}.app-window{border:1px solid #dce2ea;border-radius:15px;background:#fff;overflow:hidden;box-shadow:var(--shadow)}.app-chrome{height:45px;padding:0 15px;display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;border-bottom:1px solid #e9edf2;background:linear-gradient(180deg,#fff,#fafbfc)}.chrome-left{display:flex;align-items:center;gap:6px}.window-dot{width:7px;height:7px;border-radius:50%}.dot-red{background:#eb887f}.dot-yellow{background:#e7bd61}.dot-green{background:#72bc8a}.chrome-title{margin-left:8px;color:#8994a2;font-size:9px}.chrome-center{justify-self:center;color:#9aa3ae;font-size:9px}.chrome-search{justify-self:end;min-width:70px;height:26px;padding:0 8px;border:1px solid #eceff3;border-radius:6px;background:#fff;color:#9ba5b1;font-size:10px}.chrome-search span{font-size:9px}.app-layout{display:grid;grid-template-columns:190px minmax(0,1fr);min-height:584px}.app-sidebar{position:relative;display:flex;flex-direction:column;padding:14px 10px 0;border-right:1px solid #e9edf2;background:#fafbfc}.workspace-name{min-height:44px;padding:4px 6px;display:flex;align-items:center;gap:8px}.workspace-glyph{width:25px;height:25px;border-radius:7px;display:grid;place-items:center;background:#1d2939;color:#fff;font-family:var(--display);font-size:12px;font-weight:700}.workspace-name>span:nth-child(2),.sidebar-bottom>span:nth-child(2){display:grid;gap:2px;min-width:0}.workspace-name b,.sidebar-bottom b{font-size:10px;font-weight:650}.workspace-name small,.sidebar-bottom small{color:#929ca9;font-size:8px}.chevron{margin-left:auto;color:#9ca6b2;font-size:11px}.side-label{margin:18px 7px 7px;color:#a2abb7;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}.app-nav{display:grid;gap:3px}.app-nav-item{height:31px;width:100%;padding:0 8px;border:0;border-radius:7px;background:transparent;display:flex;align-items:center;gap:8px;text-align:left;color:#687587;font-size:10px;cursor:pointer;transition:background .15s,color .15s}.app-nav-item:hover{background:#f0f3f7;color:#34445a}.app-nav-item.is-active{background:#eaf1fc;color:#2c5fb4;font-weight:650}.nav-ico{width:15px;color:#8794a4;font-size:13px;text-align:center}.app-nav-item.is-active .nav-ico{color:#3972cf}.nav-count{margin-left:auto;color:#919cab;font-size:9px;font-variant-numeric:tabular-nums}.nav-count-blue{color:#4777c7}.side-label-lower{margin-top:23px}.sidebar-bottom{margin-top:auto;margin-inline:-10px;padding:12px;border-top:1px solid #e9edf2;display:flex;align-items:center;gap:8px}.avatar{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;background:#e7ebf1;color:#6b7889;font-size:9px;font-weight:700}.more{margin-left:auto;color:#9aa4b1;letter-spacing:1px}.app-main{min-width:0;background:#fff}.app-main-top{height:41px;padding:0 20px;border-bottom:1px solid #eff1f4;display:flex;align-items:center;justify-content:space-between}.breadcrumbs{display:flex;align-items:center;gap:8px;color:#99a3b0;font-size:9px}.breadcrumbs b{color:#4c5868;font-weight:600}.crumb-sep{color:#ced3db}.today-chip{display:flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid #eceff3;border-radius:999px;color:#8994a2;font-size:8px}.live-dot{width:5px;height:5px;border-radius:50%;background:#dfaf59}.screen-root{min-height:520px;padding:22px 24px 28px}.app-window-foot{height:28px;padding:0 12px;border-top:1px solid #e9edf2;display:flex;align-items:center;justify-content:space-between;color:#a0a9b4;font-size:8px}.app-window-foot>span:first-child{display:flex;align-items:center;gap:6px}.foot-dot{width:5px;height:5px;border-radius:50%;background:#a5b8d1}
+.page-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:15px;margin-bottom:15px}.page-heading h2{margin:0;font-family:var(--display);font-size:22px;letter-spacing:-.055em;font-weight:700}.page-heading p{margin:5px 0 0;color:#8b96a4;font-size:10px;line-height:1.6}.eyebrow-small{margin:0 0 6px;color:#8995a5;font-size:8px;font-weight:700;letter-spacing:.11em}.sample-label{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;background:#fff7e8;color:#987027;font-size:8px;font-weight:650;white-space:nowrap}.sample-label:before{content:"";width:4px;height:4px;border-radius:50%;background:#d5a752}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:0 0 14px}.summary-card{padding:11px 12px;border:1px solid #edf0f4;border-radius:10px;background:#fcfcfd}.summary-card .summary-num{font-family:var(--display);font-size:19px;font-weight:700;letter-spacing:-.05em;font-variant-numeric:tabular-nums}.summary-card .summary-label{margin-top:4px;color:#8994a2;font-size:9px}.summary-card .summary-help{margin-top:4px;color:#a2abb6;font-size:8px}.section-line{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:17px 0 8px}.section-line h3{margin:0;font-size:11px;font-weight:650}.section-line span{color:#99a3af;font-size:9px}.inbox-list{display:grid;gap:8px}.inbox-card{padding:12px 13px;border:1px solid #e9edf2;border-radius:11px;background:#fff;transition:border-color .15s,box-shadow .15s}.inbox-card:hover{border-color:#d9e3f0;box-shadow:0 5px 17px rgba(21,40,66,.035)}.inbox-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.item-source{display:flex;align-items:center;gap:6px;color:#718096;font-size:9px}.source-avatar{width:18px;height:18px;border:1px solid #e7ebf1;border-radius:6px;display:grid;place-items:center;background:#f7f9fb;color:#6f819a;font-size:8px;font-weight:700}.item-time{color:#a2abb6;font-size:8px}.item-copy{margin:9px 0 10px;color:#344154;font-size:11px;line-height:1.65}.item-controls{display:grid;grid-template-columns:minmax(120px,.5fr) minmax(180px,1fr) auto;align-items:center;gap:7px}.compact-select,.source-input,.builder-select{width:100%;height:29px;padding:0 8px;border:1px solid #e5e9ef;border-radius:7px;background:#fff;color:#637185;font-size:9px}.source-input::placeholder{color:#b4bdc8}.route-btn,.mini-btn,.record-btn{height:29px;padding:0 10px;border:1px solid #e4e9f0;border-radius:7px;background:#fff;color:#64748a;font-size:9px;font-weight:600;white-space:nowrap;cursor:pointer;transition:.15s}.route-btn:hover,.mini-btn:hover{border-color:#c9d8ee;background:#f8fbff;color:#3568bb}.route-btn:disabled,.record-btn:disabled{opacity:.43;cursor:not-allowed}.item-foot{margin-top:8px;display:flex;justify-content:space-between;gap:10px;color:#a2abb5;font-size:8px}.item-foot a,.source-link{color:#4975ba;text-decoration:underline;text-decoration-color:#b5c7e2;text-underline-offset:2px}.source-required{color:#b87d24;font-size:8px}.inline-note{margin-top:11px;padding:9px 10px;border:1px solid #edf0f3;border-radius:8px;background:#fafbfd;color:#8793a2;font-size:9px;line-height:1.6}
+.source-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.source-group{padding:13px;border:1px solid #e9edf2;border-radius:11px;background:#fff}.source-group-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid #f0f2f5}.source-group-head b{font-size:10px;font-weight:650}.source-count{color:#8995a4;font-size:9px;font-variant-numeric:tabular-nums}.source-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0 0}.source-row-main{min-width:0;display:flex;align-items:center;gap:8px}.source-bullet{width:22px;height:22px;flex:none;border-radius:7px;display:grid;place-items:center;background:#f2f5f9;color:#73849b;font-size:9px}.source-row-copy{display:grid;gap:3px;min-width:0}.source-row-copy b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#465466;font-size:9px;font-weight:600}.source-row-copy small{color:#9ba5b0;font-size:8px}.source-open{flex:none;color:#5a7dae;font-size:9px}
+.reading-table{width:100%;border:1px solid #e9edf2;border-radius:10px;border-spacing:0;overflow:hidden;background:#fff}.reading-table th{padding:9px 10px;background:#f8f9fb;color:#9aa4b0;font-size:8px;font-weight:600;text-align:left;border-bottom:1px solid #edf0f3}.reading-table td{padding:10px;border-bottom:1px solid #f0f2f5;color:#586678;font-size:9px;vertical-align:middle}.reading-table tr:last-child td{border-bottom:0}.reading-table td:first-child{color:#8994a2;white-space:nowrap;font-variant-numeric:tabular-nums}.reading-name{display:grid;gap:3px}.reading-name b{color:#37465a;font-size:9px;font-weight:600}.reading-name small{color:#a0a9b4;font-size:8px}.reading-value{color:#26374a!important;font-family:var(--display);font-size:12px!important;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.status-pill,.flag-pill,.stance-pill{display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border-radius:999px;font-size:8px;white-space:nowrap}.status-disclosed{background:#eff7f2;color:#478268}.status-estimated{background:#f5f4ff;color:#7061a5}.flag-single{background:#f3f5f8;color:#7b8797}.flag-review{background:#fff5e6;color:#9b702b}.reading-footnote{margin-top:10px;color:#a1aab5;font-size:8px;line-height:1.6}
+.topic-intro{padding:15px;border:1px solid #e9edf2;border-radius:11px;background:linear-gradient(135deg,#fbfcfe,#f7f9fc)}.topic-kicker{color:#8290a2;font-size:8px;font-weight:700;letter-spacing:.1em}.topic-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-top:7px}.topic-title-row h3{margin:0;font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:-.045em}.topic-title-row p{margin:5px 0 0;color:#7c899a;font-size:9px;line-height:1.6}.topic-tag{padding:4px 7px;border-radius:6px;background:#eef3fa;color:#7386a2;font-size:8px;white-space:nowrap}.topic-context{display:grid;grid-template-columns:1.05fr 1.4fr;gap:10px;margin:10px 0}.reading-context,.replay-card{padding:11px 12px;border:1px solid #e9edf2;border-radius:10px;background:#fff}.subhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;color:#5f6e81;font-size:9px;font-weight:650}.subhead small{color:#a1aab5;font-size:8px;font-weight:400}.context-reading{display:flex;align-items:center;justify-content:space-between;gap:7px;padding:5px 0;border-top:1px solid #f1f3f6}.context-reading:first-of-type{border-top:0}.context-reading span:first-child{color:#6d7a8b;font-size:8px}.context-reading b{color:#34445a;font-family:var(--display);font-size:10px}.replay-control{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px}.replay-control label{color:#8290a0;font-size:8px;white-space:nowrap}.replay-control input{width:100%;accent-color:#4779d2}.replay-value{color:#5275ac;font-size:8px;font-variant-numeric:tabular-nums;white-space:nowrap}.replay-note{margin:8px 0 0;color:#9ba5b1;font-size:8px}.branch-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 9px}.branch-count{padding:9px 10px;border:1px solid #e9edf2;border-radius:9px;background:#fff}.branch-count span{display:block;color:#8591a1;font-size:8px}.branch-count b{display:block;margin-top:3px;font-family:var(--display);font-size:15px;letter-spacing:-.04em}.branch-count.support b{color:#367b5d}.branch-count.oppose b{color:#b55e64}.branch-count.neutral b{color:#65758c}.branch-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.branch-card{min-width:0;padding:10px;border:1px solid #ebeff3;border-radius:9px;background:#fff}.branch-card-head{display:flex;align-items:center;justify-content:space-between;gap:5px}.branch-card-title{color:#47566a;font-size:9px;font-weight:650;line-height:1.45}.stance-pill.support{background:#edf8f3;color:#357b5b}.stance-pill.oppose{background:#fff0f0;color:#b34f59}.stance-pill.neutral{background:#f1f4f8;color:#718096}.branch-card p{margin:7px 0;color:#7c8897;font-size:8px;line-height:1.65}.branch-card-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;color:#a1aab5;font-size:8px}.branch-card-foot a{color:#5175ad;text-decoration:underline;text-underline-offset:2px}.topic-bottom-note{margin-top:10px;color:#9aa4b0;font-size:8px}
+.builder-layout{display:grid;grid-template-columns:176px minmax(0,1fr);gap:11px;align-items:start}.queue-panel,.builder-card{border:1px solid #e8edf2;border-radius:11px;background:#fff;overflow:hidden}.queue-head{padding:11px 12px;border-bottom:1px solid #edf0f3;display:flex;align-items:center;justify-content:space-between}.queue-head b{font-size:9px;font-weight:650}.queue-head span{color:#9ba5b1;font-size:8px}.queue-row{width:100%;padding:10px 11px;border:0;border-bottom:1px solid #f0f2f5;background:#fff;display:grid;gap:5px;text-align:left;cursor:pointer}.queue-row:last-child{border-bottom:0}.queue-row:hover{background:#fafbfd}.queue-row.is-current{background:#f2f6fc}.queue-row b{color:#48586d;font-size:8px;font-weight:600;line-height:1.5}.queue-row small{color:#9aa4b1;font-size:8px}.queue-state{color:#7390be!important}.builder-card{padding:14px}.builder-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.builder-source{display:flex;align-items:center;gap:6px;color:#738197;font-size:8px}.builder-quote{margin:12px 0;padding:11px 12px;border-left:2px solid #91acd5;border-radius:0 7px 7px 0;background:#f7f9fc;color:#4c5b6f;font-size:10px;line-height:1.7}.builder-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field-label{display:grid;gap:5px;color:#8b97a5;font-size:8px}.source-url-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}.builder-select{height:29px}.weight-panel{margin-top:9px;padding:10px;border:1px solid #edf0f3;border-radius:8px;background:#fafbfd}.weight-line{display:flex;align-items:center;justify-content:space-between;gap:8px}.weight-line>span:first-child{color:#8491a0;font-size:8px}.weight-value{color:#2f5d9e;font-family:var(--display);font-size:13px;font-weight:700}.weight-selects{display:flex;gap:6px;align-items:center}.weight-selects select{max-width:145px;height:25px;padding:0 5px;border:1px solid #e3e8ef;border-radius:6px;background:#fff;color:#718096;font-size:8px}.hardness-buttons{display:flex;gap:4px;margin-top:7px}.hardness-btn{height:24px;padding:0 7px;border:1px solid #e5e9ef;border-radius:6px;background:#fff;color:#8792a0;font-size:8px;cursor:pointer}.hardness-btn.is-selected{border-color:#b8cbe8;background:#f0f5fd;color:#3e6cae}.weight-formula{margin:7px 0 0;color:#929dab;font-size:8px}.weight-note{margin:5px 0 0;color:#a0aab5;font-size:8px}.stance-select{display:flex;flex-wrap:wrap;gap:5px;margin-top:11px}.stance-button{min-height:28px;padding:0 9px;border:1px solid #e5e9ef;border-radius:7px;background:#fff;color:#778597;font-size:8px;font-weight:600;cursor:pointer;transition:.15s}.stance-button:hover{background:#f8fafc;border-color:#d5dfe9}.stance-button.is-selected[data-stance="supports"]{border-color:#a6d1bb;background:#eff8f3;color:#317857}.stance-button.is-selected[data-stance="opposes"]{border-color:#e7b5b8;background:#fff2f2;color:#aa4d55}.stance-button.is-selected[data-stance="neutral"]{border-color:#cad3df;background:#f2f5f8;color:#607188}.stance-button.is-selected[data-stance="unrelated"]{border-color:#d5dbe3;background:#f4f5f7;color:#788493}.builder-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}.builder-hint{color:#9ba5b1;font-size:8px;line-height:1.5}.record-btn{height:31px;padding:0 12px;background:#1d2939;border-color:#1d2939;color:#fff;font-size:9px}.record-btn:hover{background:#2c405a}.builder-status{margin-top:8px;color:#718b79;font-size:8px;min-height:12px}
+.ledger-list{border:1px solid #e8edf2;border-radius:10px;background:#fff;overflow:hidden}.ledger-row{display:grid;grid-template-columns:43px minmax(0,1fr) 110px;gap:10px;align-items:center;padding:10px 12px;border-bottom:1px solid #eef1f4}.ledger-row:last-child{border-bottom:0}.ledger-seq{color:#9ba5b1;font-family:var(--display);font-size:9px;font-variant-numeric:tabular-nums}.ledger-body{display:grid;gap:4px}.ledger-body b{color:#4b5a6c;font-size:9px;font-weight:600}.ledger-body small{color:#9ca6b1;font-size:8px}.ledger-time{color:#9da7b3;font-size:8px;text-align:right;white-space:nowrap}.ledger-tag{display:inline-flex;width:max-content;padding:3px 6px;border-radius:5px;background:#f1f4f8;color:#708096;font-size:7px}.ledger-note{margin-top:10px;padding:9px 10px;border:1px solid #edf0f3;border-radius:8px;background:#fafbfd;color:#9aa4b0;font-size:8px;line-height:1.6}.health-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.health-metric{padding:12px;border:1px solid #e9edf2;border-radius:10px;background:#fff}.health-metric .metric-value{font-family:var(--display);font-size:19px;font-weight:700;letter-spacing:-.05em}.health-metric .metric-label{margin-top:4px;color:#7f8c9d;font-size:8px}.health-metric .metric-sub{margin-top:4px;color:#a1abb6;font-size:8px}.funnel-card{margin-top:11px;padding:12px;border:1px solid #e9edf2;border-radius:10px;background:#fff}.funnel-row{display:grid;grid-template-columns:100px minmax(40px,1fr) 30px;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid #f0f2f5}.funnel-row:last-child{border-bottom:0}.funnel-label{color:#758294;font-size:8px}.funnel-track{height:6px;border-radius:99px;background:#f0f3f6;overflow:hidden}.funnel-fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,#a8c2ed,#608ad2)}.funnel-num{color:#67768b;font-size:8px;text-align:right;font-variant-numeric:tabular-nums}.audit-pairs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:11px}.audit-chip{padding:10px;border:1px solid #e9edf2;border-radius:9px;background:#fcfcfd}.audit-chip b{display:block;color:#35455b;font-family:var(--display);font-size:14px}.audit-chip span{display:block;margin-top:4px;color:#8995a3;font-size:8px}.toast{position:fixed;z-index:100;left:50%;bottom:22px;transform:translate(-50%,12px);padding:10px 14px;border-radius:9px;background:#202b39;color:white;font-size:11px;box-shadow:0 8px 28px rgba(20,35,55,.18);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s}.toast.is-visible{opacity:1;transform:translate(-50%,0)}
+.notes-section{padding:45px 0 52px}.notes-card{padding:20px 22px;display:grid;grid-template-columns:.8fr 1.2fr;gap:30px;align-items:center;border:1px solid #e5e9ef;border-radius:15px;background:rgba(255,255,255,.73)}.notes-card .eyebrow{margin-bottom:10px}.notes-card h2{font-size:24px}.notes-card>p{margin:0;color:#7e8997;font-size:10px;line-height:1.85}.site-footer{min-height:68px;border-top:1px solid rgba(23,32,45,.08);display:flex;align-items:center;justify-content:space-between;color:#919ba8;font-size:9px}.site-footer .wordmark{color:#253246;font-size:13px}.site-footer .brand-mark{width:23px;height:23px;border-radius:7px;font-size:16px}.site-footer>a:last-child{color:#758295}
+@media(max-width:960px){.wrap,.site-header{width:min(100% - 40px,780px)}.hero{grid-template-columns:1fr;gap:32px;padding:55px 0 45px}.hero-copy{max-width:650px}.hero-visual{max-width:650px}.workflow-section{padding-bottom:54px}.workflow-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.app-layout{grid-template-columns:165px minmax(0,1fr)}.screen-root{padding:18px 16px 22px}.app-main-top{padding:0 16px}.topic-context{grid-template-columns:1fr}.builder-layout{grid-template-columns:145px minmax(0,1fr)}}
+@media(max-width:680px){.synthetic-strip{justify-content:flex-start;padding:7px 12px;font-size:9px}.synthetic-strip span:last-child{line-height:1.4}.site-header{height:63px}.site-links{display:none}.wrap,.site-header{width:calc(100% - 28px)}.hero{padding:42px 0 38px;min-height:0}.hero h1{font-size:43px}.hero-lede{font-size:13px}.hero-visual{padding:15px 13px 12px}.flow-item{grid-template-columns:18px 27px minmax(0,1fr) auto;gap:7px;min-height:58px}.flow-copy small{font-size:8px}.flow-status{font-size:7px;padding:4px 5px}.section-heading{display:block}.section-heading>p{margin-top:10px}.workflow-section{padding:38px 0 42px}.workflow-cards{gap:8px}.workflow-card{min-height:167px;padding:13px}.workflow-card h3{margin-top:12px;font-size:12px}.demo-section{padding:38px 0 40px}.app-chrome{grid-template-columns:1fr auto;height:39px}.chrome-center{display:none}.app-layout{grid-template-columns:1fr;min-height:0}.app-sidebar{padding:8px 8px 6px;border-right:0;border-bottom:1px solid #e9edf2}.workspace-name{min-height:30px;padding:0 4px}.workspace-glyph{width:22px;height:22px}.workspace-name b{font-size:9px}.workspace-name small,.workspace-name .chevron,.side-label,.sidebar-bottom{display:none}.app-nav{display:flex;gap:4px;overflow:auto;padding-top:7px;scrollbar-width:none}.app-nav::-webkit-scrollbar{display:none}.app-nav-item{width:auto;min-width:max-content;height:29px;padding:0 8px;font-size:9px}.app-nav-item .nav-ico{font-size:11px}.app-nav-item .nav-count{display:none}.side-label-lower{display:none}.app-main-top{height:35px;padding:0 12px}.screen-root{padding:15px 11px 19px;min-height:480px}.page-heading{align-items:flex-start}.page-heading h2{font-size:19px}.page-heading p{max-width:340px}.summary-grid{gap:6px}.summary-card{padding:9px}.summary-card .summary-num{font-size:16px}.summary-card .summary-label{font-size:8px}.item-controls{grid-template-columns:1fr 1fr}.item-controls .route-btn{grid-column:1/-1}.item-copy{font-size:10px}.source-groups{grid-template-columns:1fr}.reading-table th,.reading-table td{padding:8px 6px}.reading-table th{font-size:7px}.reading-table td{font-size:8px}.reading-table td:first-child{white-space:normal}.reading-table .flag-pill{font-size:7px;padding:4px 5px}.reading-value{font-size:10px!important}.branch-cards{grid-template-columns:1fr}.branch-card{padding:9px}.branch-card p{font-size:9px}.topic-context{gap:8px}.branch-summary{gap:5px}.branch-count{padding:8px}.builder-layout{grid-template-columns:1fr}.queue-panel{display:flex;overflow:auto}.queue-head{flex:none;border:0;padding:10px}.queue-row{min-width:150px;border:0;border-left:1px solid #f0f2f5}.builder-fields{grid-template-columns:1fr}.weight-selects select{max-width:none}.ledger-row{grid-template-columns:33px minmax(0,1fr) 70px;gap:6px;padding:9px}.health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.audit-pairs{grid-template-columns:1fr}.notes-section{padding:34px 0}.notes-card{grid-template-columns:1fr;gap:13px;padding:16px}.site-footer{gap:10px;min-height:60px}.site-footer>span{display:none}.app-window-foot{font-size:7px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}
+
+  </style>
+</head>
+<body>
+  <div class="synthetic-strip" role="note">
+    <span class="synthetic-dot" aria-hidden="true"></span>
+    <strong>开发演示 · 合成数据</strong>
+    <span>条目、读数、日期、来源内容和审计数字均为示意，不代表真实数据。</span>
+  </div>
+  <header class="site-header">
+    <a class="wordmark" href="#top" aria-label="Meridian 首页">
+      <span class="brand-mark" aria-hidden="true">m</span>
+      <span>meridian</span>
+    </a>
+    <nav class="site-links" aria-label="网站导航">
+      <a href="#workflow">工作流</a>
+      <a href="#demo">交互演示</a>
+      <a href="#notes">数据说明</a>
+    </nav>
+    <a class="header-cta" href="#demo">打开演示 <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="top">
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="eyebrow-rule"></span>为人的判断留出位置</p>
+        <h1>信息先到。<br><em>判断由人完成。</em></h1>
+        <p class="hero-lede">把零散信息收进来，在写入之前由人标注；补上真实来源链接、归入主题，再对照读数与支持、反对或中立的外部数据。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#demo">探索交互演示 <span aria-hidden="true">↓</span></a>
+          <a class="button quiet" href="#workflow">了解工作流</a>
+        </div>
+        <p class="hero-disclaimer"><span class="tiny-check" aria-hidden="true">✓</span>仅展示信息整理与审阅流程，不提供金融建议。</p>
+      </div>
+      <div class="hero-visual" aria-label="五步信息审阅流程示意">
+        <div class="visual-topline"><span>MERIDIAN WORKFLOW</span><span>01 — 05</span></div>
+        <div class="flow-list">
+          <div class="flow-item"><span class="flow-num">01</span><span class="flow-icon icon-inbox" aria-hidden="true">↓</span><span class="flow-copy"><b>捕获信息</b><small>先留在待确认收件箱</small></span><span class="flow-status">待确认</span></div>
+          <div class="flow-item"><span class="flow-num">02</span><span class="flow-icon icon-human" aria-hidden="true">◎</span><span class="flow-copy"><b>由人判断并标注</b><small>支持 · 反对 · 中立 · 不相关</small></span><span class="flow-status">先判断</span></div>
+          <div class="flow-item"><span class="flow-num">03</span><span class="flow-icon icon-link" aria-hidden="true">↗</span><span class="flow-copy"><b>补来源，归入主题</b><small>没有真实链接，不作为外部证据</small></span><span class="flow-status">有出处</span></div>
+          <div class="flow-item"><span class="flow-num">04</span><span class="flow-icon icon-compare" aria-hidden="true">≋</span><span class="flow-copy"><b>比较读数与外部数据</b><small>并列查看不同方向的材料</small></span><span class="flow-status">可比较</span></div>
+          <div class="flow-item"><span class="flow-num">05</span><span class="flow-icon icon-history" aria-hidden="true">↶</span><span class="flow-copy"><b>检查历史与审计</b><small>查看追加事件及收录漏斗</small></span><span class="flow-status">可追看</span></div>
+        </div>
+        <div class="visual-foot"><span class="visual-line"></span><span>每一步都能回到具体来源与人的决定</span></div>
+      </div>
+    </section>
+
+    <section class="workflow-section wrap" id="workflow">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span class="eyebrow-rule"></span>从捕获到审阅</p><h2>先看出处，再写入主题。</h2></div>
+        <p>把信息变成可回看的脉络，不替人下判断。</p>
+      </div>
+      <div class="workflow-cards">
+        <article class="workflow-card"><span class="card-step">01 / 收件箱</span><h3>先确认，再分主题</h3><p>新条目停在待确认区。人补齐来源链接、选择所属主题，再送去逐条判断。</p><span class="card-arrow">捕获 → 确认</span></article>
+        <article class="workflow-card"><span class="card-step">02 / 建设者</span><h3>明确表态后才记下</h3><p>每条外部数据先选支持、反对、中立或不相关；确认写入前，先核对引文与来源。</p><span class="card-arrow">阅读 → 标注</span></article>
+        <article class="workflow-card"><span class="card-step">03 / 主题</span><h3>把不同方向放在一起</h3><p>主题页并列呈现读数、支持、反对与中立材料，并可按事件序号回看当时状态。</p><span class="card-arrow">对照 → 回放</span></article>
+        <article class="workflow-card"><span class="card-step">04 / 审计</span><h3>查看变更从哪来</h3><p>追加式事件历史记录新增与修改；系统健康页展示拒收、复核与收录漏斗。</p><span class="card-arrow">事件 → 审计</span></article>
+      </div>
+    </section>
+
+    <section class="demo-section" id="demo">
+      <div class="wrap">
+        <div class="section-heading demo-heading">
+          <div><p class="eyebrow"><span class="eyebrow-rule"></span>产品交互演示</p><h2>沿着信息的路径，逐屏查看。</h2></div>
+          <p>切换左侧页面，尝试确认、标注、添加来源与回放。演示操作仅保存在当前页面会话中。</p>
+        </div>
+        <div class="app-window" aria-label="Meridian 产品演示窗口">
+          <div class="app-chrome">
+            <div class="chrome-left"><span class="window-dot dot-red"></span><span class="window-dot dot-yellow"></span><span class="window-dot dot-green"></span><span class="chrome-title">Meridian · 工作区</span></div>
+            <div class="chrome-center">开发演示 · 全部数据为合成示例</div>
+            <button class="chrome-search" type="button" aria-label="搜索演示内容" title="演示中不可搜索">⌕ <span>搜索</span></button>
+          </div>
+          <div class="app-layout">
+            <aside class="app-sidebar">
+              <div class="workspace-name"><span class="workspace-glyph">M</span><span><b>研究工作区</b><small>个人空间</small></span><span class="chevron">⌄</span></div>
+              <div class="side-label">工作区</div>
+              <nav class="app-nav" aria-label="演示页面">
+                <button class="app-nav-item is-active" data-view="today"><span class="nav-ico">↓</span><span>今日</span><span class="nav-count">03</span></button>
+                <button class="app-nav-item" data-view="sources"><span class="nav-ico">▤</span><span>数据源</span><span class="nav-count">11</span></button>
+                <button class="app-nav-item" data-view="readings"><span class="nav-ico">⌁</span><span>读数</span></button>
+                <button class="app-nav-item" data-view="topic"><span class="nav-ico">◉</span><span>主题</span></button>
+                <button class="app-nav-item" data-view="builder"><span class="nav-ico">✳</span><span>建设者</span><span class="nav-count nav-count-blue">03</span></button>
+                <div class="side-label side-label-lower">记录与审阅</div>
+                <button class="app-nav-item" data-view="ledger"><span class="nav-ico">≡</span><span>事件历史</span></button>
+                <button class="app-nav-item" data-view="health"><span class="nav-ico">⌘</span><span>系统健康</span></button>
+              </nav>
+              <div class="sidebar-bottom"><span class="avatar">E</span><span><b>演示用户</b><small>本地交互 · 不连接账户</small></span><span class="more">···</span></div>
+            </aside>
+            <div class="app-main">
+              <div class="app-main-top"><div class="breadcrumbs"><span>研究工作区</span><span class="crumb-sep">/</span><b id="crumb-label">今日</b></div><div class="today-chip"><span class="live-dot"></span>合成开发数据</div></div>
+              <div id="screen-root" class="screen-root" aria-live="polite"></div>
+            </div>
+          </div>
+          <div class="app-window-foot"><span><i class="foot-dot"></i>演示模式</span><span>数据不会写入真实服务</span><span>Meridian · Preview</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="notes-section wrap" id="notes">
+      <div class="notes-card"><div><p class="eyebrow"><span class="eyebrow-rule"></span>演示范围</p><h2>示意工作流，不是实时数据源。</h2></div><p>本页展示的所有条目、日期、指标值、来源描述、队列数与审核数字均为合成示例。公开链接只用于演示来源链接的形式，不代表链接内容支持示例数值。交互状态仅在当前浏览器页面中模拟。Meridian 用于信息整理与审阅，不构成投资建议；事件时间线也不作区块链级不可变性的承诺。</p></div>
+    </section>
+  </main>
+  <footer class="site-footer wrap"><a class="wordmark" href="#top"><span class="brand-mark" aria-hidden="true">m</span><span>meridian</span></a><span>研究工作流演示 · <span id="year">2026</span></span><a href="#notes">关于合成数据 ↑</a></footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+const EIA_URL = 'https://www.eia.gov/electricity/data.php'
+const DOE_URL = 'https://www.energy.gov/eere/vehicles/articles/fotw-1335-june-17-2024-2023-ev-battery-packs-prices-fell-14'
+const SOURCE_QUALITY = {
+  '财报 / 公告': 0.95,
+  '一手数据': 0.90,
+  '券商研报': 0.80,
+  '独立媒体': 0.65,
+  '自媒体': 0.50,
+  '群聊转发': 0.35,
+  '道听途说': 0.20,
+}
+const SOURCE_TYPES = Object.keys(SOURCE_QUALITY)
+const STANCE_LABEL = { supports: '支持', opposes: '反对', neutral: '中立', unrelated: '不相关' }
+const STANCE_CLASS = { supports: 'support', opposes: 'oppose', neutral: 'neutral' }
+
+const state = {
+  view: 'today',
+  builderId: 'q1',
+  stance: '',
+  replaySeq: null,
+  inbox: [
+    { id: 'i1', source: 'EIA · 示例入口', initial: 'E', date: '2026-10-06 09:14', text: '示例：公用事业级储能装机规划出现新的月度变化。此段文字为演示内容。', url: EIA_URL, topic: '', status: '待确认' },
+    { id: 'i2', source: '电网观察 · 合成条目', initial: '电', date: '2026-10-06 08:42', text: '示例：部分区域项目仍在等待并网评估，项目时间表可能继续调整。此段文字为演示内容。', url: '', topic: '', status: '待确认' },
+    { id: 'i3', source: '能源简报 · 示例入口', initial: '能', date: '2026-10-05 17:26', text: '示例：新型储能采购活动与长期电力需求的讨论同时增加。此段文字为演示内容。', url: DOE_URL, topic: 'grid', status: '待确认' },
+  ],
+  queue: [
+    { id: 'q1', title: '新增装机继续扩大', source: 'EIA · 示例链接', date: '2026-10-06', quote: '合成示例：本期新增储能装机约 1.8 GW，高于上一观察期。该文字和数值仅供界面演示。', url: EIA_URL, sourceType: '一手数据', hardness: 'hard', status: '待判断' },
+    { id: 'q2', title: '并网周期仍是约束', source: '区域规划简报 · 合成条目', date: '2026-10-05', quote: '合成示例：多项储能项目的投运时间仍取决于并网研究进度。此段文字为演示内容。', url: EIA_URL, sourceType: '独立媒体', hardness: 'soft', status: '待判断' },
+    { id: 'q3', title: '采购意向维持稳定', source: 'DOE · 示例链接', date: '2026-10-04', quote: '合成示例：公开讨论同时提及新采购计划与既有项目交付节奏。此段文字为演示内容。', url: DOE_URL, sourceType: '财报 / 公告', hardness: 'hard', status: '待判断' },
+  ],
+  topicRecords: [
+    { id: 'r1', seq: 3, stance: 'supports', title: '新增装机继续扩大', source: 'EIA · 示例链接', date: '2026-10-06', body: '合成示例：本期新增储能装机高于上一观察期。', url: EIA_URL },
+    { id: 'r2', seq: 4, stance: 'opposes', title: '并网周期仍是约束', source: '区域规划简报 · 合成条目', date: '2026-10-05', body: '合成示例：并网评估进度仍可能拉长项目时间表。', url: EIA_URL },
+    { id: 'r3', seq: 5, stance: 'neutral', title: '采购意向与交付并列出现', source: 'DOE · 示例链接', date: '2026-10-04', body: '合成示例：同一材料同时提及新采购计划与项目交付。', url: DOE_URL },
+  ],
+  ledger: [
+    { seq: 1, title: '创建主题：大规模储能建设', detail: '主题工作区 · 合成示例', type: '主题', time: '10:02' },
+    { seq: 2, title: '添加读数：规划装机容量', detail: '2026-10-06 · 18.4 GW · 估算', type: '读数', time: '10:08' },
+    { seq: 3, title: '外部数据标注为支持', detail: '新增装机继续扩大 · 人工确认', type: '人工标注', time: '10:12' },
+    { seq: 4, title: '外部数据标注为反对', detail: '并网周期仍是约束 · 人工确认', type: '人工标注', time: '10:18' },
+    { seq: 5, title: '外部数据标注为中立', detail: '采购意向与交付并列出现 · 人工确认', type: '人工标注', time: '10:24' },
+  ],
+}
+
+const screenRoot = document.getElementById('screen-root')
+const crumb = document.getElementById('crumb-label')
+const viewLabels = { today: '今日', sources: '数据源', readings: '读数', topic: '主题', builder: '建设者', ledger: '事件历史', health: '系统健康' }
+const topics = [{ id: 'grid', name: '大规模储能建设' }, { id: 'power', name: '电力需求观察' }, { id: 'supply', name: '电池供应链' }]
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
+const validUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || '').trim())
+    return ['https:', 'http:'].includes(parsed.protocol) && Boolean(parsed.hostname) && !parsed.username && !parsed.password
+  } catch { return false }
+}
+const topicName = (id) => topics.find((item) => item.id === id)?.name || '选择主题…'
+function openLink(url) { if (validUrl(url)) window.open(url, '_blank', 'noopener,noreferrer') }
+function showToast(text) {
+  const toast = document.getElementById('toast')
+  toast.textContent = text
+  toast.classList.add('is-visible')
+  clearTimeout(showToast.timer)
+  showToast.timer = setTimeout(() => toast.classList.remove('is-visible'), 2100)
+}
+function appendEvent(title, detail, type) {
+  const seq = (state.ledger.at(-1)?.seq || 0) + 1
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
+  state.ledger.push({ seq, title, detail, type, time })
+  state.replaySeq = null
+  return seq
+}
+function pill(text, cls) { return `<span class="${cls}">${esc(text)}</span>` }
+function pageHeading(kicker, title, detail, badge = '合成示例') {
+  return `<div class="page-heading"><div><p class="eyebrow-small">${esc(kicker)}</p><h2>${esc(title)}</h2><p>${esc(detail)}</p></div>${pill(badge, 'sample-label')}</div>`
+}
+function renderToday() {
+  const pending = state.inbox.filter((item) => item.status === '待确认').length
+  const queued = state.inbox.filter((item) => item.status !== '待确认').length
+  return `${pageHeading('收件箱 / 人工分拣', '今日', '先确认来源与所属主题，再将信息送去逐条判断。')}
+    <div class="summary-grid">
+      <div class="summary-card"><div class="summary-num">${String(pending).padStart(2, '0')}</div><div class="summary-label">待确认</div><div class="summary-help">尚未进入主题记录</div></div>
+      <div class="summary-card"><div class="summary-num">03</div><div class="summary-label">主题</div><div class="summary-help">均为演示工作区</div></div>
+      <div class="summary-card"><div class="summary-num">${String(queued).padStart(2, '0')}</div><div class="summary-label">已送去人工判断</div><div class="summary-help">不会在此自动写入主题</div></div>
+    </div>
+    <div class="section-line"><h3>等待确认的条目</h3><span>选择主题 · 补充来源链接 · 确认送审</span></div>
+    <div class="inbox-list">${state.inbox.map((item) => `
+      <article class="inbox-card" data-inbox-card="${esc(item.id)}">
+        <div class="inbox-card-top"><div class="item-source"><span class="source-avatar">${esc(item.initial)}</span>${esc(item.source)}</div><span class="item-time">${esc(item.date)}</span></div>
+        <p class="item-copy">${esc(item.text)}</p>
+        <div class="item-controls">
+          <select class="compact-select" data-inbox-topic="${esc(item.id)}" aria-label="${esc(item.title || '选择所属主题')}">
+            <option value="">选择主题…</option>${topics.map((topic) => `<option value="${topic.id}" ${item.topic === topic.id ? 'selected' : ''}>${esc(topic.name)}</option>`).join('')}
+          </select>
+          <input class="source-input" data-inbox-url="${esc(item.id)}" type="url" value="${esc(item.url)}" placeholder="粘贴真实来源网址（必填）" aria-label="${esc(item.source)} 的来源链接">
+          <button class="route-btn" type="button" data-route="${esc(item.id)}" ${item.status !== '待确认' || !item.topic || !validUrl(item.url) ? 'disabled' : ''}>${item.status === '待确认' ? '确认并送去判断 ↗' : '已送去人工判断 ✓'}</button>
+        </div>
+        <div class="item-foot"><span>${item.url && validUrl(item.url) ? `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">查看示例来源链接 ↗</a>` : '<span class="source-required">需要有效的 http(s) 来源链接</span>'}</span><span>${item.topic ? `主题：${esc(topicName(item.topic))}` : '尚未归入主题'}</span></div>
+      </article>`).join('')}</div>
+    <div class="inline-note">这一步只将条目送入建设者的待判断队列。支持、反对、中立或不相关的人工标注完成后，才会追加对应事件。</div>`
+}
+function renderSources() {
+  const groups = [
+    { name: '公共数据', count: '03', rows: [['E', 'EIA · Electricity Data', '官方数据门户 · 示例链接', EIA_URL], ['D', 'U.S. Department of Energy', '公开资料入口 · 示例链接', DOE_URL], ['F', 'FERC · 数据与报告', '公共资料目录 · 示例入口', EIA_URL]] },
+    { name: '公司披露', count: '02', rows: [['A', '储能项目公告', '合成来源条目 · 未连接', ''], ['C', '采购与交付说明', '合成来源条目 · 未连接', '']] },
+    { name: '独立媒体', count: '04', rows: [['R', '行业报道 A', '示意记录 · 示例链接', EIA_URL], ['N', '行业报道 B', '示意记录 · 示例链接', DOE_URL], ['M', '能源通讯 C', '合成来源条目 · 未连接', '']] },
+    { name: '研究与其他', count: '02', rows: [['P', '研究简报', '合成来源条目 · 未连接', ''], ['S', '观察笔记', '合成来源条目 · 未连接', '']] },
+  ]
+  return `${pageHeading('来源目录 / 按来源分组', '数据源', '按来源类别查看示例条目与链接。这里只展示分组和来源数量，不对来源做自动判断。')}
+    <div class="summary-grid"><div class="summary-card"><div class="summary-num">11</div><div class="summary-label">示例来源</div><div class="summary-help">合成分组计数</div></div><div class="summary-card"><div class="summary-num">04</div><div class="summary-label">来源分组</div><div class="summary-help">按目录类型整理</div></div><div class="summary-card"><div class="summary-num">02</div><div class="summary-label">带示例链接</div><div class="summary-help">链接不佐证合成数值</div></div></div>
+    <div class="source-groups">${groups.map((group) => `<section class="source-group"><div class="source-group-head"><b>${esc(group.name)}</b><span class="source-count">${group.count} 个来源</span></div>${group.rows.map(([icon, name, info, url]) => `<div class="source-row"><div class="source-row-main"><span class="source-bullet">${esc(icon)}</span><span class="source-row-copy"><b>${esc(name)}</b><small>${esc(info)}</small></span></div>${url ? `<a class="source-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="打开 ${esc(name)} 示例链接">↗</a>` : '<span class="source-open" title="合成条目">—</span>'}</div>`).join('')}</section>`).join('')}</div>
+    <p class="reading-footnote">公共链接用于演示来源链接的样式；本页记录的内容与数字均为合成示例，不代表链接页面中的实际数据。</p>`
+}
+function renderReadings() {
+  const rows = [
+    ['2026-10-06', '规划装机容量', '18.4 GW', '估算', '单一来源'],
+    ['2026-10-05', '公用事业级储能容量', '16.9 GW', '已披露', '需复核'],
+    ['2026-10-03', '典型储能时长', '4.2 小时', '已披露', '单一来源'],
+    ['2026-10-01', '新增项目队列', '2,140 MW', '估算', '需复核'],
+  ]
+  return `${pageHeading('按日期排列 / 指标记录', '读数', '查看每个日期记录的指标值、披露口径和来源审阅标记。')}
+    <div class="summary-grid"><div class="summary-card"><div class="summary-num">04</div><div class="summary-label">示例记录</div><div class="summary-help">按日期排列</div></div><div class="summary-card"><div class="summary-num">02</div><div class="summary-label">已披露</div><div class="summary-help">示意口径</div></div><div class="summary-card"><div class="summary-num">02</div><div class="summary-label">估算</div><div class="summary-help">示意口径</div></div></div>
+    <div class="section-line"><h3>近期指标值</h3><span>全部数值均为合成示例</span></div>
+    <table class="reading-table"><thead><tr><th>日期</th><th>指标</th><th>数值</th><th>口径</th><th>来源状态</th></tr></thead><tbody>${rows.map(([date, title, value, basis, flag]) => `<tr><td>${esc(date)}</td><td><span class="reading-name"><b>${esc(title)}</b><small>主题 · 大规模储能建设</small></span></td><td class="reading-value">${esc(value)}</td><td>${pill(basis, basis === '估算' ? 'status-pill status-estimated' : 'status-pill status-disclosed')}</td><td>${pill(flag, flag === '需复核' ? 'flag-pill flag-review' : 'flag-pill flag-single')}</td></tr>`).join('')}</tbody></table>
+    <p class="reading-footnote">“已披露 / 估算”描述示例记录口径；“单一来源 / 需复核”提示来源覆盖或审阅状态。此处不连接实时数据。</p>`
+}
+function renderTopicBranches(sequence) {
+  const visible = state.topicRecords.filter((record) => record.seq <= sequence)
+  const counts = { supports: 0, opposes: 0, neutral: 0 }
+  visible.forEach((record) => { if (counts[record.stance] != null) counts[record.stance]++ })
+  const branches = [
+    ['supports', '支持', 'support'],
+    ['opposes', '反对', 'oppose'],
+    ['neutral', '中立', 'neutral'],
+  ]
+  const countsHtml = branches.map(([key, label, klass]) => `<div class="branch-count ${klass}"><span>${label} · 外部数据</span><b>${String(counts[key]).padStart(2, '0')}</b></div>`).join('')
+  const cardsHtml = branches.map(([key, label, klass]) => {
+    const matches = visible.filter((record) => record.stance === key)
+    return `<div class="branch-card"><div class="branch-card-head"><span class="branch-card-title">${label}分支</span>${pill(label, `stance-pill ${klass}`)}</div>${matches.length ? matches.map((record) => `<p><b>${esc(record.title)}</b><br>${esc(record.body)}</p><div class="branch-card-foot"><span>${esc(record.date)} · 合成条目</span><a href="${esc(record.url)}" target="_blank" rel="noopener noreferrer">示例链接 ↗</a></div>`).join('') : '<p>该历史位置还没有此类外部数据。</p>'}</div>`
+  }).join('')
+  const countsNode = document.getElementById('branch-summary')
+  const cardsNode = document.getElementById('branch-cards')
+  if (countsNode) countsNode.innerHTML = countsHtml
+  if (cardsNode) cardsNode.innerHTML = cardsHtml
+}
+function renderTopic() {
+  const max = state.ledger.at(-1)?.seq || 1
+  const current = state.replaySeq ?? max
+  const visibleCount = state.topicRecords.filter((record) => record.seq <= current).length
+  return `${pageHeading('主题 / 读者视图', '大规模储能建设', '将指标读数与不同方向的外部数据并列查看，再按账本序号回看历史状态。')}
+    <div class="topic-intro"><div class="topic-kicker">主题范围 · 演示工作区</div><div class="topic-title-row"><div><h3>大规模储能建设</h3><p>关心新增容量、项目并网与采购交付节奏。主题内容全部为合成示例。</p></div><span class="topic-tag">电力系统 · 示例标签</span></div></div>
+    <div class="topic-context"><section class="reading-context"><div class="subhead"><span>相关读数</span><small>与外部数据并列检查</small></div><div class="context-reading"><span>2026-10-06 · 规划装机</span><b>18.4 GW · 估算</b></div><div class="context-reading"><span>2026-10-05 · 公用事业级容量</span><b>16.9 GW · 已披露</b></div><div class="context-reading"><span>来源标记</span><b>单一来源 · 需复核</b></div></section>
+      <section class="replay-card"><div class="subhead"><span>账本回放</span><small>只读查看历史前缀</small></div><div class="replay-control"><label for="replay-slider">事件序号</label><input id="replay-slider" type="range" min="1" max="${max}" value="${current}" aria-label="按事件序号回放主题"><span class="replay-value" id="replay-value">${state.replaySeq == null ? `当前 · #${max}` : `历史 · #${current}`}</span></div><p class="replay-note">此位置显示 ${visibleCount} 条已标注的外部数据；拖动滑块查看较早状态。</p></section></div>
+    <div class="section-line"><h3>外部数据 · <span id="topic-external-count">${String(visibleCount).padStart(2, '0')}</span> 条</h3><span>支持 / 反对 / 中立分支</span></div><div id="branch-summary" class="branch-summary"></div><div id="branch-cards" class="branch-cards"></div>
+    <p class="topic-bottom-note">历史位置由追加事件构成的演示投影展示；交互不会连接远端账本或修改真实数据。</p>`
+}
+function weightFor(type, hardness) {
+  const sourceHundredths = Math.round((SOURCE_QUALITY[type] ?? 0.65) * 100)
+  const factorTenths = hardness === 'hard' ? 10 : 7
+  return Math.round((sourceHundredths * factorTenths) / 10) / 100
+}
+function renderBuilder() {
+  const item = state.queue.find((entry) => entry.id === state.builderId) || state.queue[0]
+  if (!item) return `${pageHeading('建设者 / 逐条审阅', '建设者', '队列为空。')}`
+  const sourceType = item.sourceType || '独立媒体'
+  const hardness = item.hardness || 'hard'
+  const weight = weightFor(sourceType, hardness)
+  const queued = state.queue.filter((entry) => entry.status === '待判断').length
+  const selected = state.stance
+  const canRecord = Boolean(selected) && validUrl(item.url) && (selected === 'unrelated' || Boolean(item.atom))
+  return `${pageHeading('建设者 / 人工决定', '建设者', '每条外部数据先由人明确分类；确认后才追加到主题事件历史。')}
+    <div class="builder-layout"><aside class="queue-panel"><div class="queue-head"><b>待判断</b><span>${String(queued).padStart(2, '0')} 条</span></div>${state.queue.map((entry) => `<button type="button" class="queue-row ${entry.id === item.id ? 'is-current' : ''}" data-builder-item="${esc(entry.id)}"><b>${esc(entry.title)}</b><small>${esc(entry.source)}</small><small class="queue-state">${esc(entry.status)}</small></button>`).join('')}</aside>
+      <article class="builder-card"><div class="builder-top"><div class="builder-source"><span class="source-avatar">${esc(item.source.slice(0, 1))}</span>${esc(item.source)} · ${esc(item.date)}</div>${pill('合成条目', 'sample-label')}</div>
+        <blockquote class="builder-quote">“${esc(item.quote)}”</blockquote>
+        <div class="builder-fields"><label class="field-label">主题<select class="builder-select" data-builder-topic><option value="grid">大规模储能建设</option><option value="power">电力需求观察</option><option value="supply">电池供应链</option></select></label><label class="field-label">关联指标<select class="builder-select" data-builder-atom><option value="capacity">规划装机容量</option><option value="interconnection">项目并网周期</option><option value="procurement">采购与交付</option></select></label></div>
+        <label class="field-label" style="margin-top:9px">来源链接 · 写入前必须有真实 http(s) 网页地址<div class="source-url-row"><input class="source-input" data-builder-url type="url" value="${esc(item.url)}" placeholder="https://…" aria-label="外部数据来源网址">${validUrl(item.url) ? `<button class="mini-btn" type="button" data-open-url>打开链接 ↗</button>` : '<span class="source-required">必填</span>'}</div></label>
+        <div class="weight-panel"><div class="weight-line"><span>权重 · 来源类型 × 数据硬度</span><strong class="weight-value" data-weight>${weight.toFixed(2)}</strong></div><div class="weight-selects"><select data-source-type aria-label="来源类型">${SOURCE_TYPES.map((type) => `<option value="${esc(type)}" ${type === sourceType ? 'selected' : ''}>${esc(type)} ${SOURCE_QUALITY[type].toFixed(2)}</option>`).join('')}</select><div class="hardness-buttons"><button class="hardness-btn ${hardness === 'hard' ? 'is-selected' : ''}" type="button" data-hardness="hard">硬数据 ×1.0</button><button class="hardness-btn ${hardness === 'soft' ? 'is-selected' : ''}" type="button" data-hardness="soft">观点 / 叙述 ×0.7</button></div></div><p class="weight-formula" data-weight-formula>${esc(sourceType)} ${SOURCE_QUALITY[sourceType].toFixed(2)} × ${hardness === 'hard' ? '硬数据 1.0' : '观点 / 叙述 0.7'} = ${weight.toFixed(2)}</p><p class="weight-note">只展示来源类型与数据硬度构成的权重；标注本身仍由人决定。</p></div>
+        <div class="section-line"><h3>这条数据如何关联该主题？</h3><span>先选择，再记录</span></div><div class="stance-select" role="group" aria-label="选择人工标注">${[['supports', '支持'], ['opposes', '反对'], ['neutral', '中立'], ['unrelated', '不相关']].map(([key, label]) => `<button class="stance-button ${selected === key ? 'is-selected' : ''}" type="button" data-stance="${key}" aria-pressed="${selected === key}">${label}</button>`).join('')}</div>
+        <div class="builder-footer"><span class="builder-hint">选择一种表态，并确认来源链接后，才会记入此演示的事件历史。</span><button class="record-btn" type="button" data-record ${canRecord ? '' : 'disabled'}>确认并记录</button></div><div class="builder-status" role="status" data-builder-status>${selected ? `已选择「${STANCE_LABEL[selected]}」，尚未记录。` : '尚未选择表态。'}</div>
+      </article></div>`
+}
+function renderLedger() {
+  return `${pageHeading('事件历史 / 追加记录', '事件历史', '按顺序查看演示中的新增、人工标注与修改。新事件追加在列表末尾。')}
+    <div class="summary-grid"><div class="summary-card"><div class="summary-num">${String(state.ledger.length).padStart(2, '0')}</div><div class="summary-label">示例事件</div><div class="summary-help">仅当前页面会话</div></div><div class="summary-card"><div class="summary-num">${String(state.topicRecords.length).padStart(2, '0')}</div><div class="summary-label">主题标注</div><div class="summary-help">支持 / 反对 / 中立</div></div><div class="summary-card"><div class="summary-num">仅追加</div><div class="summary-label">演示序列</div><div class="summary-help">未连接外部服务</div></div></div>
+    <div class="section-line"><h3>从早到晚</h3><span>最新事件位于列表底部</span></div><div class="ledger-list">${state.ledger.map((event) => `<div class="ledger-row"><span class="ledger-seq">#${String(event.seq).padStart(3, '0')}</span><span class="ledger-body"><b>${esc(event.title)}</b><small>${esc(event.detail)}</small>${pill(event.type, 'ledger-tag')}</span><span class="ledger-time">2026-10-06 · ${esc(event.time)}</span></div>`).join('')}</div>
+    <div class="ledger-note">这是交互原型中的追加式事件时间线，用于演示如何检查信息变更。它不连接真实数据存储，也不作区块链级不可变性的承诺。</div>`
+}
+function renderHealth() {
+  const metrics = [
+    ['18', '来源检查拒收', '30 天合成示例'], ['08', '人工复核', '30 天合成示例'], ['03', '复核后重新纳入', '30 天合成示例'],
+  ]
+  const funnel = [['捕获', 144], ['通过来源检查', 109], ['进入待确认', 38], ['人工确认', 27], ['人工拒绝', 11]]
+  const max = Math.max(...funnel.map(([, value]) => value))
+  return `${pageHeading('系统健康 / 审计摘要', '系统健康', '只读概览：拒收记录、人工复核与信息收录漏斗。所有数字均为合成示例。')}
+    <div class="health-grid">${metrics.map(([value, label, sub]) => `<div class="health-metric"><div class="metric-value">${value}</div><div class="metric-label">${label}</div><div class="metric-sub">${sub}</div></div>`).join('')}</div>
+    <section class="funnel-card"><div class="subhead"><span>近 30 天 · 收录漏斗</span><small>样例计数</small></div>${funnel.map(([label, value]) => `<div class="funnel-row"><span class="funnel-label">${label}</span><span class="funnel-track"><i class="funnel-fill" style="display:block;width:${Math.round(value / max * 100)}%"></i></span><span class="funnel-num">${value}</span></div>`).join('')}</section>
+    <div class="audit-pairs"><div class="audit-chip"><b>11</b><span>人工拒绝 · 示例</span></div><div class="audit-chip"><b>08</b><span>重新检查 · 示例</span></div><div class="audit-chip"><b>03</b><span>重新纳入 · 示例</span></div></div>
+    <div class="inline-note">指标仅演示系统健康页的审计与漏斗呈现方式，不代表真实使用情况。</div>`
+}
+const renderers = { today: renderToday, sources: renderSources, readings: renderReadings, topic: renderTopic, builder: renderBuilder, ledger: renderLedger, health: renderHealth }
+function renderView(view) {
+  state.view = view
+  crumb.textContent = viewLabels[view]
+  document.querySelectorAll('.app-nav-item').forEach((button) => {
+    const active = button.dataset.view === view
+    button.classList.toggle('is-active', active)
+    if (active) button.setAttribute('aria-current', 'page')
+    else button.removeAttribute('aria-current')
+  })
+  screenRoot.innerHTML = renderers[view]()
+  if (view === 'topic') renderTopicBranches(state.replaySeq ?? (state.ledger.at(-1)?.seq || 1))
+}
+function syncInboxCard(id) {
+  const item = state.inbox.find((entry) => entry.id === id)
+  const card = document.querySelector(`[data-inbox-card="${CSS.escape(id)}"]`)
+  if (!item || !card) return
+  const button = card.querySelector('[data-route]')
+  const hasLink = validUrl(item.url)
+  button.disabled = item.status !== '待确认' || !item.topic || !hasLink
+  const helper = card.querySelector('.item-foot span:first-child')
+  helper.innerHTML = hasLink ? `<a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">查看示例来源链接 ↗</a>` : '<span class="source-required">需要有效的 http(s) 来源链接</span>'
+  card.querySelector('.item-foot > span:last-child').textContent = item.topic ? `主题：${topicName(item.topic)}` : '尚未归入主题'
+}
+function updateBuilderWeight() {
+  const item = state.queue.find((entry) => entry.id === state.builderId)
+  if (!item) return
+  const sourceType = document.querySelector('[data-source-type]')?.value || item.sourceType
+  const hardness = item.hardness || 'hard'
+  const weight = weightFor(sourceType, hardness)
+  const valueNode = document.querySelector('[data-weight]')
+  const formulaNode = document.querySelector('[data-weight-formula]')
+  if (valueNode) valueNode.textContent = weight.toFixed(2)
+  if (formulaNode) formulaNode.textContent = `${sourceType} ${SOURCE_QUALITY[sourceType].toFixed(2)} × ${hardness === 'hard' ? '硬数据 1.0' : '观点 / 叙述 0.7'} = ${weight.toFixed(2)}`
+}
+function syncBuilderRecord() {
+  const item = state.queue.find((entry) => entry.id === state.builderId)
+  const urlField = document.querySelector('[data-builder-url]')
+  const url = urlField ? urlField.value : (item?.url || '')
+  const atom = document.querySelector('[data-builder-atom]')?.value || ''
+  const button = document.querySelector('[data-record]')
+  if (button) button.disabled = item?.status !== '待判断' || !state.stance || !validUrl(url) || (state.stance !== 'unrelated' && !atom)
+  const status = document.querySelector('[data-builder-status]')
+  if (status) status.textContent = state.stance ? `已选择「${STANCE_LABEL[state.stance]}」，尚未记录。` : '尚未选择表态。'
+}
+function routeInbox(id) {
+  const item = state.inbox.find((entry) => entry.id === id)
+  if (!item) return
+  if (!item.topic || !validUrl(item.url)) return showToast('请先选择主题并提供有效来源链接。')
+  item.status = '已送去人工判断'
+  if (!state.queue.some((entry) => entry.id === `from-${id}`)) {
+    state.queue.unshift({ id: `from-${id}`, title: item.text.slice(0, 18) + '…', source: item.source, date: item.date.slice(0, 10), quote: item.text, url: item.url, sourceType: '独立媒体', hardness: 'soft', status: '待判断' })
+  }
+  appendEvent('收件箱条目送去人工判断', `${item.source} · ${topicName(item.topic)} · 尚未写入主题`, '分拣')
+  showToast('已送去建设者待判断队列')
+  renderView('today')
+}
+function recordBuilderDecision() {
+  const item = state.queue.find((entry) => entry.id === state.builderId)
+  const urlField = document.querySelector('[data-builder-url]')
+  const url = urlField ? urlField.value.trim() : (item?.url || '')
+  if (!item || item.status !== '待判断' || !state.stance || !validUrl(url)) return
+  item.url = url
+  const atomName = document.querySelector('[data-builder-atom]')?.selectedOptions[0]?.textContent || '主题'
+  const sourceType = document.querySelector('[data-source-type]')?.value || item.sourceType
+  const hardness = item.hardness || 'hard'
+  const weight = weightFor(sourceType, hardness)
+  const stance = state.stance
+  const seq = appendEvent(`外部数据标注为${STANCE_LABEL[stance]}`, `${item.title} · ${atomName} · 权重 ${weight.toFixed(2)} · 人工确认`, '人工标注')
+  if (stance !== 'unrelated') state.topicRecords.push({ id: `r-${seq}`, seq, stance, title: item.title, source: item.source, date: item.date, body: item.quote, url: item.url })
+  item.status = '已记录'
+  state.stance = ''
+  showToast(stance === 'unrelated' ? '已记录为不相关' : `已记录为${STANCE_LABEL[stance]}`)
+  renderView('builder')
+}
+function moveReplay(value) {
+  const slider = document.getElementById('replay-slider')
+  if (!slider) return
+  const sequence = Math.max(Number(slider.min), Math.min(Number(slider.max), Number(value)))
+  state.replaySeq = sequence === Number(slider.max) ? null : sequence
+  const label = document.getElementById('replay-value')
+  if (label) label.textContent = state.replaySeq == null ? `当前 · #${sequence}` : `历史 · #${sequence}`
+  const recordCount = state.topicRecords.filter((record) => record.seq <= sequence).length
+  const count = document.getElementById('topic-external-count')
+  if (count) count.textContent = String(recordCount).padStart(2, '0')
+  const note = document.querySelector('.replay-note')
+  if (note) note.textContent = `此位置显示 ${recordCount} 条已标注的外部数据；拖动滑块查看较早状态。`
+  renderTopicBranches(sequence)
+}
+
+document.querySelectorAll('.app-nav-item').forEach((button) => button.addEventListener('click', () => renderView(button.dataset.view)))
+screenRoot.addEventListener('change', (event) => {
+  const target = event.target
+  if (target.matches('[data-inbox-topic]')) {
+    const item = state.inbox.find((entry) => entry.id === target.dataset.inboxTopic)
+    if (item) { item.topic = target.value; syncInboxCard(item.id) }
+  }
+  if (target.matches('[data-source-type]')) {
+    const item = state.queue.find((entry) => entry.id === state.builderId)
+    if (item) item.sourceType = target.value
+    updateBuilderWeight()
+  }
+  if (target.matches('[data-builder-topic]')) {
+    const item = state.queue.find((entry) => entry.id === state.builderId)
+    if (item) item.topic = target.value
+  }
+  if (target.matches('[data-builder-url]')) {
+    const item = state.queue.find((entry) => entry.id === state.builderId)
+    if (item) item.url = target.value.trim()
+    syncBuilderRecord()
+  }
+  if (target.matches('[data-builder-atom]')) syncBuilderRecord()
+})
+screenRoot.addEventListener('input', (event) => {
+  const target = event.target
+  if (target.matches('[data-inbox-url]')) {
+    const item = state.inbox.find((entry) => entry.id === target.dataset.inboxUrl)
+    if (item) { item.url = target.value.trim(); syncInboxCard(item.id) }
+  }
+  if (target.matches('[data-builder-url]')) {
+    const item = state.queue.find((entry) => entry.id === state.builderId)
+    if (item) item.url = target.value.trim()
+    syncBuilderRecord()
+  }
+  if (target.matches('#replay-slider')) moveReplay(target.value)
+})
+screenRoot.addEventListener('click', (event) => {
+  const target = event.target.closest('button')
+  if (!target) return
+  if (target.dataset.route) return routeInbox(target.dataset.route)
+  if (target.dataset.builderItem) {
+    state.builderId = target.dataset.builderItem
+    state.stance = ''
+    return renderView('builder')
+  }
+  if (target.dataset.stance) {
+    state.stance = target.dataset.stance
+    screenRoot.querySelectorAll('[data-stance]').forEach((button) => {
+      const active = button.dataset.stance === state.stance
+      button.classList.toggle('is-selected', active)
+      button.setAttribute('aria-pressed', String(active))
+    })
+    return syncBuilderRecord()
+  }
+  if (target.dataset.hardness) {
+    const item = state.queue.find((entry) => entry.id === state.builderId)
+    if (item) item.hardness = target.dataset.hardness
+    screenRoot.querySelectorAll('[data-hardness]').forEach((button) => button.classList.toggle('is-selected', button.dataset.hardness === target.dataset.hardness))
+    updateBuilderWeight()
+    return
+  }
+  if (target.hasAttribute('data-open-url')) {
+    const url = screenRoot.querySelector('[data-builder-url]')?.value
+    if (validUrl(url)) openLink(url)
+    return
+  }
+  if (target.hasAttribute('data-record')) return recordBuilderDecision()
+})
+
+document.getElementById('year').textContent = String(new Date().getFullYear())
+renderView('today')
+
+  </script>
+</body>
+</html>
