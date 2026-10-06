@@ -94,6 +94,7 @@ export async function renderVault(mid, kind) {
  * - 旧命题库：status==='cold' 的 lemma（兼容历史）
  */
 async function renderCold(mid, meta) {
+  clear(mid)
   const themes = Array.isArray(state.themes) ? state.themes.filter((t) => t && typeof t.id === 'string') : []
   const [lemmas, parkedResults] = await Promise.all([
     m.allNodes().catch(() => null),

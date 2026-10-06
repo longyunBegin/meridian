@@ -19,6 +19,7 @@
     <div id="corrupt-fixture"></div>
     <div id="unparsed-fixture"></div>
     <div id="cold-fixture"></div>
+    <div id="cold-thaw-fixture"></div>
   </main>
   <pre id="fixture-report">Fixture starting…</pre>
   <script type="module">
@@ -92,6 +93,8 @@
       confidence: 51,
     }
     let activeFixtureNodes = []
+    let activeColdNodes = [...fixtures['cold-theme'].parked.nodes]
+    let failNextUnpark = false
     let restoreCalls = 0
     let restoreRef = ''
     window.meridian = {
@@ -100,12 +103,22 @@
       settings: async () => ({}),
       async allNodes() { return activeFixtureNodes },
       async chainArchives(themeId) { return fixtures[themeId]?.archive },
-      async chainParked(themeId) { return fixtures[themeId]?.parked || { themeId, nodes: [], edges: [] } },
+      async chainParked(themeId) {
+        if (themeId === 'cold-theme') return { ...fixtures[themeId].parked, nodes: activeColdNodes }
+        return fixtures[themeId]?.parked || { themeId, nodes: [], edges: [] }
+      },
       async chainProjection(themeId) {
         throw new Error(`projection must not be required for ${themeId}`)
       },
       async chainRestoreNode(_themeId, sourceRef) { restoreCalls++; restoreRef = sourceRef; return { ok: true } },
-      async chainUnparkNode() { return { ok: true } },
+      async chainUnparkNode(_themeId, sourceRef) {
+        if (failNextUnpark) {
+          failNextUnpark = false
+          throw new Error('synthetic unpark failure')
+        }
+        activeColdNodes = activeColdNodes.filter((node) => node.sourceRef !== sourceRef)
+        return { ok: true }
+      },
       async updateNode() { return { ok: true } },
       async restoreNode() { return { ok: true } },
     }
@@ -219,6 +232,59 @@
       && cold.querySelector('.vault-row.is-open .vault-detail:not([hidden])')?.textContent.includes('未证实样品')
       && state.themeId === themeBeforeColdView
       && state.view === viewBeforeColdView)
+
+    const coldThaw = document.querySelector('#cold-thaw-fixture')
+    const coldSource = fixtures['cold-theme'].parked.nodes[0]
+    activeFixtureNodes = []
+    state.themes = [themes.cold]
+    activeColdNodes = [{ ...coldSource, id: 'thaw-one', title: '合成唯一冷库条目', currentText: '唯一条目内容', sourceRef: 'fixture:thaw-one' }]
+    failNextUnpark = true
+    await renderVault(coldThaw, 'cold')
+    const singleUnpark = coldThaw.querySelector('.vault-row .btn-primary')
+    singleUnpark?.click()
+    await settled()
+    check('单条冷库解冻失败时保留唯一条目并恢复可重试按钮', coldThaw.querySelectorAll('.vault-entries .vault-row').length === 1
+      && singleUnpark?.disabled === false
+      && coldThaw.querySelectorAll('.vault-page').length === 1)
+    singleUnpark?.click()
+    await settled()
+    check('唯一条目解冻后列表清零且只显示一个空态（无旧行残留）', coldThaw.querySelectorAll('.vault-entries .vault-row').length === 0
+      && coldThaw.querySelectorAll('.tomb-empty-state').length === 1
+      && coldThaw.querySelectorAll('.vault-page').length === 1
+      && coldThaw.textContent.includes('冷库是空的'))
+
+    activeColdNodes = [
+      { ...coldSource, id: 'thaw-many-1', title: '合成多条冷库：先解冻', currentText: '第一条内容', sourceRef: 'fixture:thaw-many-1' },
+      { ...coldSource, id: 'thaw-many-2', title: '合成多条冷库：保留项', currentText: '保留项详情正文', sourceRef: 'fixture:thaw-many-2' },
+    ]
+    await renderVault(coldThaw, 'cold')
+    coldThaw.querySelector('.vault-row .btn-primary')?.click()
+    await settled()
+    const remainingColdRow = coldThaw.querySelector('.vault-entries .vault-row')
+    check('多条冷库解冻一条后仅保留另一条，标题和详情对应正确', coldThaw.querySelectorAll('.vault-entries .vault-row').length === 1
+      && remainingColdRow?.textContent.includes('合成多条冷库：保留项')
+      && !coldThaw.textContent.includes('合成多条冷库：先解冻'))
+    remainingColdRow?.querySelector('.vault-view-btn')?.click()
+    check('多条解冻后的剩余项详情没有串到已解冻条目', remainingColdRow?.querySelector('.vault-detail:not([hidden])')?.textContent.includes('保留项详情正文')
+      && remainingColdRow?.querySelector('.vault-detail:not([hidden])')?.textContent.includes('fixture:thaw-many-2'))
+
+    const originalAllNodes = window.meridian.allNodes
+    window.meridian.allNodes = async () => { throw new Error('synthetic cold read failure') }
+    activeColdNodes = []
+    await renderVault(coldThaw, 'cold')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      coldThaw.querySelector('.vault-page button')?.click()
+      await settled()
+    }
+    check('连续错误重试不叠加页面或告警 DOM', coldThaw.querySelectorAll('.vault-page').length === 1
+      && coldThaw.querySelectorAll('[role="alert"]').length === 1
+      && coldThaw.querySelectorAll('.tomb-empty-state').length === 0)
+    window.meridian.allNodes = originalAllNodes
+    coldThaw.querySelector('.vault-page button')?.click()
+    await settled()
+    check('错误恢复后的重复渲染仅保留一个冷库页和一个空态', coldThaw.querySelectorAll('.vault-page').length === 1
+      && coldThaw.querySelectorAll('.tomb-empty-state').length === 1
+      && coldThaw.querySelectorAll('.vault-entries').length === 0)
 
     let downloadCalls = 0
     let installCalls = 0
