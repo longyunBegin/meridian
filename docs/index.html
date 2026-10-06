@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Meridian 是本地优先的研究工作台：捕获信息，由人审阅，再按主题对照读数、外部材料与变更历史。">
+  <meta name="theme-color" content="#101313">
+  <title>Meridian — 本地优先的研究工作台</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101313;
+      --panel: #171c1b;
+      --panel-2: #1c2321;
+      --text: #f1f2ed;
+      --muted: #a6b0a9;
+      --line: rgba(218, 231, 220, .13);
+      --accent: #b9e3a1;
+      --accent-dark: #1c3528;
+      --warm: #e7cfa0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(ellipse at 86% 4%, rgba(103, 147, 116, .18), transparent 34rem),
+        radial-gradient(ellipse at 8% 35%, rgba(132, 111, 78, .11), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    .wrap { width: min(1100px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 26px 0; border-bottom: 1px solid var(--line); }
+    .nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; font-weight: 680; letter-spacing: .02em; }
+    .brand-mark { width: 34px; height: 34px; border: 1px solid rgba(185, 227, 161, .48); border-radius: 11px; display: grid; place-items: center; color: var(--accent); font-size: 18px; background: rgba(185, 227, 161, .08); }
+    .nav-links { display: flex; flex-wrap: wrap; gap: 24px; color: var(--muted); font-size: 13px; }
+    .nav-links a { text-decoration: none; }
+    .nav-links a:hover, .text-link:hover { color: var(--accent); }
+    main { padding: 76px 0 84px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--accent); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--accent); }
+    .hero { max-width: 770px; }
+    h1 { max-width: 760px; margin: 18px 0 18px; font-size: clamp(42px, 7vw, 76px); line-height: 1.08; letter-spacing: -.055em; font-weight: 560; }
+    h1 em { color: var(--accent); font-style: normal; }
+    .lead { max-width: 640px; color: #bec6bf; font-size: clamp(16px, 2vw, 19px); line-height: 1.8; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 56px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 46px; padding: 0 18px; border: 1px solid var(--line); border-radius: 9px; text-decoration: none; font-size: 14px; font-weight: 600; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+    .button:hover { transform: translateY(-2px); border-color: rgba(185, 227, 161, .45); }
+    .button.primary { color: #152019; background: var(--accent); border-color: var(--accent); }
+    .button.secondary { color: var(--text); background: rgba(255,255,255,.025); }
+    .preview { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #151918; box-shadow: 0 28px 90px rgba(0,0,0,.26); }
+    .preview img { display: block; width: 100%; height: auto; }
+    .preview-caption { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 15px 19px; color: var(--muted); font-size: 12px; }
+    .preview-caption a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+    section { margin-top: 72px; }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+    .section-head h2 { margin: 0; font-size: 26px; letter-spacing: -.03em; font-weight: 560; }
+    .section-head p { max-width: 430px; margin: 0; color: var(--muted); font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .card { min-height: 178px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, rgba(255,255,255,.035), rgba(255,255,255,.012)); }
+    .number { color: var(--warm); font-variant-numeric: tabular-nums; font-size: 12px; }
+    .card h3 { margin: 18px 0 8px; font-size: 16px; font-weight: 600; }
+    .card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .resources { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .resource { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 19px 20px; border: 1px solid var(--line); border-radius: 11px; text-decoration: none; background: rgba(255,255,255,.018); }
+    .resource:hover { border-color: rgba(185, 227, 161, .42); background: rgba(185, 227, 161, .035); }
+    .resource strong { display: block; font-size: 14px; font-weight: 580; }
+    .resource small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .arrow { color: var(--accent); font-size: 18px; }
+    .note { margin-top: 42px; padding: 20px 22px; border-left: 2px solid var(--warm); background: rgba(231, 207, 160, .055); color: #c7c3b8; font-size: 13px; }
+    footer { border-top: 1px solid var(--line); padding: 22px 0 32px; color: #859089; font-size: 12px; }
+    footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    @media (max-width: 760px) {
+      main { padding-top: 54px; }
+      .grid { grid-template-columns: repeat(2, 1fr); }
+      .section-head { display: block; }
+      .section-head p { margin-top: 9px; }
+    }
+    @media (max-width: 520px) {
+      .wrap { width: min(100% - 28px, 1100px); }
+      .nav { align-items: flex-start; }
+      .nav-links { gap: 11px; justify-content: flex-end; font-size: 12px; }
+      .grid, .resources { grid-template-columns: 1fr; }
+      .card { min-height: 0; }
+      .preview-caption { align-items: flex-start; flex-direction: column; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap nav">
+      <a class="brand" href="#top" aria-label="Meridian 首页">
+        <span class="brand-mark" aria-hidden="true">脉</span><span>Meridian</span>
+      </a>
+      <nav class="nav-links" aria-label="页面导航">
+        <a href="#workflow">工作流</a>
+        <a href="#resources">演示与文档</a>
+        <a href="https://github.com/longyunBegin/meridian" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+  <main id="top" class="wrap">
+    <div class="hero">
+      <div class="eyebrow">本地优先 · 研究工作台</div>
+      <h1>信息先到。<br><em>判断由人完成。</em></h1>
+      <p class="lead">Meridian 把分散的信息组织成可回看的主题脉络。来源链接、指标读数、人工表态和事件记录在同一个桌面工作流中呈现，帮助你检查材料从何而来、如何被归类；最终判断仍由人作出。</p>
+      <div class="actions">
+        <a class="button primary" href="meridian-promo-demo.html">打开交互演示 <span aria-hidden="true">↗</span></a>
+        <a class="button secondary" href="#workflow">了解工作流</a>
+      </div>
+    </div>
+
+    <a class="preview" href="meridian-promo-demo.html" aria-label="打开 Meridian 交互演示">
+      <img src="meridian-promo-demo-preview.png" alt="Meridian 今日收件箱界面预览，使用合成示例数据">
+      <div class="preview-caption"><span>Meridian 界面预览 · 合成示例数据</span><span>查看交互演示 →</span></div>
+    </a>
+
+    <section id="workflow" aria-labelledby="workflow-title">
+      <div class="section-head">
+        <h2 id="workflow-title">从信息到可审阅的主题脉络</h2>
+        <p>每一步都保留出处与人工确认，让材料更容易被复核，而不是替人给出结论。</p>
+      </div>
+      <div class="grid">
+        <article class="card"><span class="number">01 / 捕获</span><h3>确认来源与主题</h3><p>新信息先进入收件箱；核对来源并指定主题后，再送入审阅队列。</p></article>
+        <article class="card"><span class="number">02 / 比较</span><h3>并列查看材料</h3><p>在主题中对照指标读数与外部数据，查看支持、反对和中立分支。</p></article>
+        <article class="card"><span class="number">03 / 判断</span><h3>由人标注与确认</h3><p>关联对象后明确标注立场；确认之后，材料才写入主题记录。</p></article>
+        <article class="card"><span class="number">04 / 回看</span><h3>检查变化历史</h3><p>追加式事件记录保留变更脉络，便于在应用内追溯较早状态。</p></article>
+      </div>
+    </section>
+
+    <section id="resources" aria-labelledby="resources-title">
+      <div class="section-head">
+        <h2 id="resources-title">继续探索</h2>
+        <p>查看交互样例、设计提案与桌面应用开发说明。</p>
+      </div>
+      <div class="resources">
+        <a class="resource" href="meridian-promo-demo.html"><span><strong>产品交互演示</strong><small>单文件演示，可在浏览器中直接体验</small></span><span class="arrow" aria-hidden="true">↗</span></a>
+        <a class="resource" href="demo.html"><span><strong>主题阅读 Demo</strong><small>主题、读者视图与信息脉络原型</small></span><span class="arrow" aria-hidden="true">↗</span></a>
+        <a class="resource" href="ROADMAP.html"><span><strong>路线图</strong><small>查看项目方向与计划事项</small></span><span class="arrow" aria-hidden="true">↗</span></a>
+        <a class="resource" href="TAURI_MIGRATION.html"><span><strong>Tauri 迁移说明</strong><small>了解桌面宿主与 Node 侧车集成</small></span><span class="arrow" aria-hidden="true">↗</span></a>
+      </div>
+      <div class="note"><strong>演示与用途说明。</strong> 页面中的条目、读数、日期、来源描述和审计数字均为合成示例，不佐证真实内容；交互状态只保留在当前页面，不会写入 Meridian 数据或连接产品服务。Meridian 用于信息整理与审阅，不提供金融建议。</div>
+    </section>
+  </main>
+  <footer><div class="wrap"><span>Meridian · 本地优先的研究工作台</span><span>数据留在本机的设计目标，不等于完全离线；使用网络服务时请核对目标地址与数据处理方式。</span></div></footer>
+</body>
+</html>

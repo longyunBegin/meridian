@@ -34,7 +34,7 @@ const cargoVersion = readFileSync(resolve(configDir, 'Cargo.toml'), 'utf8').matc
 const cargoLockVersion = readFileSync(resolve(configDir, 'Cargo.lock'), 'utf8').match(/\[\[package\]\]\nname = "meridian"\nversion = "([^"]+)"/)?.[1]
 assert.equal(config.version, cargoVersion, 'Cargo version must match the app version')
 assert.equal(config.version, cargoLockVersion, 'Cargo lockfile package must match the app version')
-assert.equal(config.version, '0.1.4', 'the release package and Tauri app version must be 0.1.4')
+assert.match(config.version, /^\d+\.\d+\.\d+$/, 'the release package and Tauri app version must use stable SemVer')
 assert.match(config.plugins?.updater?.pubkey || '', /^dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6/)
 assert.equal(config.plugins?.updater?.requireSignedVersion, true, 'the manifest version must match the signed updater artifact version')
 assert.equal(config.plugins?.updater?.allowDowngrades, false, 'the updater must reject older releases')
