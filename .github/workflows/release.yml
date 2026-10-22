@@ -24,7 +24,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '26'
           cache: npm
       - name: Install frontend dependencies
         run: npm ci
@@ -53,7 +53,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '26'
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
