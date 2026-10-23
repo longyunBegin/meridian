@@ -1254,6 +1254,11 @@ ok('Fix3: 真删 removed > 0', realResult.removed > 0)
 console.log('\n— Fix3: 复盘页聚合逻辑 —')
 // ============================================================
 
+// 相对今天取日期（本地时区 YYYY-MM-DD），避免固定日期滑出 intakeSeries(30) 窗口
+const aggFmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const aggDate1 = aggFmt(new Date(Date.now() - 2 * 864e5))
+const aggDate2 = aggFmt(new Date(Date.now() - 864e5))
+
 // 构造多天 intakeEvents，含 overridden
 const aggTheme = store.addTheme('聚合测试主题')
 const aggBranch = store.addNode({ themeId: aggTheme.id, kind: 'branch', title: '聚合环节', propagation: 0.5 })
@@ -1262,17 +1267,17 @@ for (let i = 0; i < 200; i++) {
 }
 
 // 第一天：3 条捕获，1 条 overridden
-store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['a'], overridden: true })
-store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['b'] })
-store.addIntakeEvent({ at: '2026-09-20', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['c'] })
+store.addIntakeEvent({ at: aggDate1, themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['a'], overridden: true })
+store.addIntakeEvent({ at: aggDate1, themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['b'] })
+store.addIntakeEvent({ at: aggDate1, themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['c'] })
 
 // 第二天：2 条捕获，1 条 overridden
-store.addIntakeEvent({ at: '2026-09-21', themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['d'], overridden: true })
-store.addIntakeEvent({ at: '2026-09-21', themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['e'] })
+store.addIntakeEvent({ at: aggDate2, themeId: aggTheme.id, outcome: 'inbox', gate: { pass: false }, label: { kind: '自媒体' }, lemmas: ['d'], overridden: true })
+store.addIntakeEvent({ at: aggDate2, themeId: aggTheme.id, outcome: 'auto', gate: { pass: true }, label: { kind: '一手数据' }, lemmas: ['e'] })
 
 const aggSeries = store.intakeSeries(30)
-const day20 = aggSeries.find((b) => b.date === '2026-09-20')
-const day21 = aggSeries.find((b) => b.date === '2026-09-21')
+const day20 = aggSeries.find((b) => b.date === aggDate1)
+const day21 = aggSeries.find((b) => b.date === aggDate2)
 
 ok('Fix3: day20 captured = 3', day20?.captured === 3, `实际 ${day20?.captured}`)
 ok('Fix3: day20 overridden = 1', day20?.overridden === 1, `实际 ${day20?.overridden}`)
